@@ -116,8 +116,21 @@ The lifecycle is rooted **per tenant** (ADR-0007): each tenant has its own inges
 folders so a dropped file's owner is unambiguous.
 
 A successful document produces canonical artifacts under `docs.active/{document_id}/`:
-`original`, `manifest.json`, `content.md`, `content.json`, `pages/page-NNNN.json`, and optionally
-`normalized/searchable.pdf`. Not every document has every artifact.
+
+```
+docs.active/{document_id}/
+  original.<ext>          original file, kept with its real extension (openable)
+  manifest.json           metadata + which artifact is the canonical "system document"
+  content.md              canonical extracted text (plain UTF-8; chunked/embedded in M4)
+  content.json            structured extraction (pages, method)
+  pages/page-NNNN.json    per-page structured text
+  normalized/
+    searchable.pdf        derived OCR'd PDF (images + text layer); created by OCR in M3
+```
+
+The **system document** (named in `manifest.json`) is the canonical openable representation: the OCR'd
+`normalized/searchable.pdf` when present (scanned input), otherwise the `original.<ext>` (born-digital
+input). The original is always preserved. Not every document has every artifact.
 
 ## 8. Ingestion pipeline and state machine
 

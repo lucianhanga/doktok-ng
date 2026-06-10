@@ -145,10 +145,11 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
     original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name
 
     job.status = JobStatus.ACTIVATING
-    storage_path = write_document_artifacts(
+    artifacts = write_document_artifacts(
         services.file_storage,
         services.layout,
         document_id,
+        tenant_id=services.tenant_id,
         original_source_path=job.source_path,
         original_filename=original_filename,
         sha256=job.sha256 or "",
@@ -166,12 +167,14 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         detected_mime=job.detected_mime,
         title=Path(original_filename).stem or original_filename,
         status=DocumentStatus.ACTIVE,
-        storage_path=storage_path,
+        storage_path=artifacts.storage_path,
         created_at=now,
         activated_at=now,
         metadata={
             "extraction_method": result.extraction_method,
             "page_count": result.page_count,
+            "original": artifacts.original,
+            "system_document": artifacts.system_document,
         },
     )
     services.document_repo.add(document)

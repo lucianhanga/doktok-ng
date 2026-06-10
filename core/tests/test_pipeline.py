@@ -83,10 +83,14 @@ def test_text_file_becomes_active_document(tmp_path: Path) -> None:
     assert document.status.value == "active"
 
     active = layout.active_dir(job.document_id)
-    assert (active / "original").read_bytes() == b"hello world"
+    # original keeps its extension and is the canonical "system document"
+    assert (active / "original.txt").read_bytes() == b"hello world"
     assert (active / "content.md").read_text() == "hello world"
     manifest = json.loads((active / "manifest.json").read_text())
     assert manifest["extraction_method"] == "text"
+    assert manifest["system_document"] == "original.txt"
+    assert manifest["artifacts"]["original"] == "original.txt"
+    assert manifest["artifacts"]["normalized_pdf"] is None
     assert not layout.job_workdir(job.id).exists()  # working dir cleaned up
 
 
@@ -105,6 +109,7 @@ def test_born_digital_pdf_is_extracted(tmp_path: Path) -> None:
 
     assert job.status is JobStatus.ACTIVE
     active = layout.active_dir(job.document_id)  # type: ignore[arg-type]
+    assert (active / "original.pdf").exists()
     assert "Quarterly numbers" in (active / "content.md").read_text()
 
 

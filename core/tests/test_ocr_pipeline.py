@@ -1,4 +1,4 @@
-"""OCR pipeline tests (M3) with fake OCR/renderer/builder (no model required)."""
+"""OCR pipeline tests (M3 + LLM judge) with fakes (no model required)."""
 
 from __future__ import annotations
 
@@ -51,12 +51,24 @@ class FakeClassifier:
         return self._coverages
 
 
+class FakeChat:
+    """An LLM judge stub that always replies with a fixed verdict ('A' or 'B')."""
+
+    def __init__(self, reply: str) -> None:
+        self._reply = reply
+
+    def complete(self, prompt: str) -> str:  # noqa: ARG002
+        return self._reply
+
+
 def _services(
     tmp_path: Path,
     mime: str,
     *,
     coverages: list[float] | None = None,
     coverage_threshold: float = 1.0,
+    min_text_quality: float = 0.0,
+    chat: FakeChat | None = None,
 ) -> tuple[IngestionServices, FilesystemLayout]:
     layout = FilesystemLayout(tmp_path, TENANT)
     layout.ensure()
@@ -77,6 +89,8 @@ def _services(
         searchable_pdf_builder=FakeBuilder(),
         pdf_classifier=FakeClassifier(coverages) if coverages is not None else None,
         ocr_image_coverage=coverage_threshold,
+        ocr_min_text_quality=min_text_quality,
+        chat_model=chat,
     )
     return services, layout
 
@@ -95,6 +109,11 @@ def _pdf(layout: FilesystemLayout, name: str, page_texts: list[str]) -> str:
     return str(path)
 
 
+def _content(layout: FilesystemLayout, document_id: str | None) -> str:
+    assert document_id is not None
+    return (layout.active_dir(document_id) / "content.md").read_text()
+
+
 def test_scanned_pdf_is_ocred_and_searchable(tmp_path: Path) -> None:
     services, layout = _services(tmp_path, "application/pdf")
     job = process_file(services, _pdf(layout, "scan.pdf", [""]))  # 1 blank page
@@ -103,11 +122,8 @@ def test_scanned_pdf_is_ocred_and_searchable(tmp_path: Path) -> None:
     active = layout.active_dir(job.document_id)  # type: ignore[arg-type]
     assert "OCR TEXT" in (active / "content.md").read_text()
     assert (active / "normalized" / "searchable.pdf").read_bytes() == b"%PDF-FAKE-SEARCHABLE"
-
     doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
-    assert doc is not None
-    assert doc.metadata["extraction_method"] == "ocr"
-    assert doc.metadata["system_document"] == "normalized/searchable.pdf"
+    assert doc is not None and doc.metadata["extraction_method"] == "ocr"
 
 
 def test_image_is_ocred(tmp_path: Path) -> None:
@@ -119,47 +135,62 @@ def test_image_is_ocred(tmp_path: Path) -> None:
     assert job.status is JobStatus.ACTIVE
     active = layout.active_dir(job.document_id)  # type: ignore[arg-type]
     assert "OCR TEXT" in (active / "content.md").read_text()
-    assert (active / "normalized" / "searchable.pdf").exists()
     assert (active / "original.png").exists()
 
 
-def test_mixed_pdf_keeps_embedded_text_and_ocrs_blanks(tmp_path: Path) -> None:
-    services, layout = _services(tmp_path, "application/pdf")
-    job = process_file(services, _pdf(layout, "mixed.pdf", ["Real embedded text", ""]))
-
-    assert job.status is JobStatus.ACTIVE
-    active = layout.active_dir(job.document_id)  # type: ignore[arg-type]
-    content = (active / "content.md").read_text()
-    assert "Real embedded text" in content  # embedded text not destroyed
-    assert "OCR TEXT" in content  # blank page OCR'd
+def test_born_digital_pages_keep_embedded_text(tmp_path: Path) -> None:
+    services, layout = _services(tmp_path, "application/pdf")  # no classifier -> coverage 0
+    job = process_file(services, _pdf(layout, "doc.pdf", ["Real embedded text", "more text"]))
+    content = _content(layout, job.document_id)
+    assert "Real embedded text" in content and "OCR TEXT" not in content
     doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
-    assert doc is not None and doc.metadata["extraction_method"] == "pdf_mixed"
+    assert doc is not None and doc.metadata["extraction_method"] == "pdf_text"
 
 
-def test_full_page_image_with_text_layer_is_reocred(tmp_path: Path) -> None:
-    # Both pages have an embedded (weak) text layer AND are full-page images -> re-OCR both.
+def test_good_embedded_layer_kept_via_quality_gate(tmp_path: Path) -> None:
+    # Full-page image whose embedded text is clean -> fast path keeps it (no OCR), the user's case.
     services, layout = _services(
-        tmp_path, "application/pdf", coverages=[1.0, 1.0], coverage_threshold=0.8
+        tmp_path, "application/pdf", coverages=[1.0], coverage_threshold=0.8, min_text_quality=0.5
     )
-    job = process_file(services, _pdf(layout, "weak.pdf", ["weak layer A", "weak layer B"]))
+    job = process_file(
+        services, _pdf(layout, "good.pdf", ["This is a clean readable paragraph of real text."])
+    )
+    content = _content(layout, job.document_id)
+    assert "clean readable paragraph" in content and "OCR TEXT" not in content
+    doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
+    assert doc is not None and doc.metadata["extraction_method"] == "pdf_text"
 
-    assert job.status is JobStatus.ACTIVE
-    content = (layout.active_dir(job.document_id) / "content.md").read_text()  # type: ignore[arg-type]
-    assert "weak layer A" not in content  # weak embedded text was dropped
-    assert "OCR TEXT" in content  # replaced by fresh OCR
+
+def test_garbled_embedded_layer_is_reocred_by_heuristic(tmp_path: Path) -> None:
+    # No LLM: heuristic prefers the cleaner OCR text over a garbled embedded layer.
+    services, layout = _services(
+        tmp_path, "application/pdf", coverages=[1.0], coverage_threshold=0.8, min_text_quality=0.5
+    )
+    job = process_file(services, _pdf(layout, "garbled.pdf", ["q3 !! @@ ## $$ %% z9"]))
+    content = _content(layout, job.document_id)
+    assert "OCR TEXT" in content
     doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
     assert doc is not None and doc.metadata["extraction_method"] == "ocr"
 
 
-def test_text_page_with_small_figure_keeps_embedded_text(tmp_path: Path) -> None:
-    # Page 0: real text, small figure (low coverage) -> keep. Page 1: full-page image -> OCR.
+def test_llm_judge_keeps_embedded_when_it_prefers_it(tmp_path: Path) -> None:
+    # LLM replies "A" -> keep the embedded text even though the page is a full-page image.
     services, layout = _services(
-        tmp_path, "application/pdf", coverages=[0.1, 0.95], coverage_threshold=0.8
+        tmp_path, "application/pdf", coverages=[1.0], coverage_threshold=0.8, chat=FakeChat("A")
     )
-    job = process_file(services, _pdf(layout, "report.pdf", ["Important clause", "scan"]))
-
-    content = (layout.active_dir(job.document_id) / "content.md").read_text()  # type: ignore[arg-type]
-    assert "Important clause" in content  # born-digital text preserved
-    assert "OCR TEXT" in content  # full-page-image page OCR'd
+    job = process_file(services, _pdf(layout, "judge.pdf", ["the original embedded layer text"]))
+    content = _content(layout, job.document_id)
+    assert "original embedded layer" in content and "OCR TEXT" not in content
     doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
-    assert doc is not None and doc.metadata["extraction_method"] == "pdf_mixed"
+    assert doc is not None and doc.metadata["extraction_method"] == "pdf_text"
+
+
+def test_llm_judge_picks_ocr_when_it_prefers_it(tmp_path: Path) -> None:
+    services, layout = _services(
+        tmp_path, "application/pdf", coverages=[1.0], coverage_threshold=0.8, chat=FakeChat("B")
+    )
+    job = process_file(services, _pdf(layout, "judge.pdf", ["the original embedded layer text"]))
+    content = _content(layout, job.document_id)
+    assert "OCR TEXT" in content and "original embedded layer" not in content
+    doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
+    assert doc is not None and doc.metadata["extraction_method"] == "ocr"

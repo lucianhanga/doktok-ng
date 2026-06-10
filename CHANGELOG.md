@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Scanned PDF pages that already have an embedded text layer are no longer blindly re-OCR'd: a clean
+  layer is kept (text-quality fast-path), and for ambiguous pages the default LLM
+  (`DOKTOK_DEFAULT_MODEL`) judges whether the embedded text or the fresh OCR is better and keeps the
+  winner (deterministic `text_quality` heuristic as fallback). Adds the Ollama chat adapter and
+  `DOKTOK_OCR_MIN_TEXT_QUALITY`.
 - OCR page selection is now image-coverage based (`PdfClassifier.page_image_coverage` +
   `DOKTOK_OCR_IMAGE_COVERAGE`, default 0.8): a PDF page that is essentially a full-page image is
   re-OCR'd even if it carries an existing (weak) embedded text layer, which is dropped; born-digital

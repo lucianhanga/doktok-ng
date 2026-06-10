@@ -35,6 +35,10 @@ Notes on model selection:
   `DOKTOK_OCR_MODEL` (default `glm-ocr:latest` - a small dedicated OCR model that emits
   Markdown/JSON/LaTeX). Alternatives: `qwen3-vl:8b`, `qwen2.5vl:7b`. A traditional OCR engine
   (OCRmyPDF/Tesseract) may be kept later as a precision fallback for tables/auditable accuracy.
+- For scanned PDF pages that already carry an embedded text layer, the default chat model
+  (`DOKTOK_DEFAULT_MODEL`) acts as an **LLM judge** deciding whether the embedded text or the fresh
+  OCR is better, so a good existing text layer is not destroyed by weaker OCR. A `text_quality`
+  heuristic is the fast-path/fallback (`DOKTOK_OCR_MIN_TEXT_QUALITY`).
 
 Remote providers may be added later behind an adapter, but must be disabled by default.
 

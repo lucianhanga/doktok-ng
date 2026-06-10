@@ -26,6 +26,7 @@ from pathlib import Path
 
 from doktok_contracts.ports import (
     AuditLogRepository,
+    ChatModelProvider,
     Chunker,
     ChunkRepository,
     DocumentRepository,
@@ -97,8 +98,12 @@ class IngestionServices:
     pdf_renderer: PdfRenderer | None = None
     searchable_pdf_builder: SearchablePdfBuilder | None = None
     pdf_classifier: PdfClassifier | None = None
-    # Page image-coverage at/above which a PDF page is treated as scanned and re-OCR'd.
+    # Page image-coverage at/above which a PDF page is treated as a scan candidate.
     ocr_image_coverage: float = 1.0
+    # On a scan-candidate page, keep embedded text if its quality >= this (0 = always judge).
+    ocr_min_text_quality: float = 0.0
+    # LLM judge that decides embedded-vs-OCR text for ambiguous pages (M5.x).
+    chat_model: ChatModelProvider | None = None
     # Activity/audit trail (M3.6). When absent, no audit events are recorded.
     audit_log: AuditLogRepository | None = None
     # Indexing (M4). When all present, documents are chunked + embedded before activation.
@@ -280,6 +285,8 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             builder=services.searchable_pdf_builder,
             classifier=services.pdf_classifier,
             ocr_image_coverage=services.ocr_image_coverage,
+            ocr_min_text_quality=services.ocr_min_text_quality,
+            chat_model=services.chat_model,
         )
     except NeedsOcrError as exc:
         return _fail(services, job, workdir, code="needs_ocr", message=str(exc))

@@ -1,4 +1,7 @@
-"""In-memory ingestion job repository for tests and local/dev runs without a database."""
+"""In-memory ingestion job repository for tests and local/dev runs without a database.
+
+Reads are tenant-scoped to mirror the Postgres adapter (ADR-0007).
+"""
 
 from __future__ import annotations
 
@@ -17,22 +20,27 @@ class InMemoryIngestionJobRepository:
         self._jobs[job.id] = job.model_copy(deep=True)
 
     def update(self, job: IngestionJob) -> None:
-        if job.id not in self._jobs:
+        existing = self._jobs.get(job.id)
+        if existing is None:
             raise KeyError(job.id)
+        if existing.tenant_id != job.tenant_id:
+            raise PermissionError("cannot move a job across tenants")
         self._jobs[job.id] = job.model_copy(deep=True)
 
-    def get(self, job_id: str) -> IngestionJob | None:
+    def get(self, tenant_id: str, job_id: str) -> IngestionJob | None:
         job = self._jobs.get(job_id)
-        return job.model_copy(deep=True) if job else None
+        if job is None or job.tenant_id != tenant_id:
+            return None
+        return job.model_copy(deep=True)
 
-    def list_jobs(self, limit: int = 50, offset: int = 0) -> list[IngestionJob]:
+    def list_jobs(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[IngestionJob]:
         # Newest first, mirroring the Postgres adapter's created_at DESC ordering.
-        jobs = list(reversed(self._jobs.values()))
+        jobs = [job for job in reversed(self._jobs.values()) if job.tenant_id == tenant_id]
         return [job.model_copy(deep=True) for job in jobs[offset : offset + limit]]
 
-    def find_by_sha256(self, sha256: str) -> list[IngestionJob]:
+    def find_by_sha256(self, tenant_id: str, sha256: str) -> list[IngestionJob]:
         return [
             job.model_copy(deep=True)
             for job in reversed(self._jobs.values())
-            if job.sha256 == sha256
+            if job.tenant_id == tenant_id and job.sha256 == sha256
         ]

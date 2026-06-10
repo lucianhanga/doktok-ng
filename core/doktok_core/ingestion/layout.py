@@ -1,7 +1,8 @@
-"""Document lifecycle filesystem layout (ADR-0004, brief section 10).
+"""Per-tenant document lifecycle filesystem layout (ADR-0004, ADR-0007, brief section 10).
 
-Pure path computation (stdlib ``pathlib`` only) so it can live in core; the actual filesystem IO is
-performed by adapters in storage/filesystem.
+Each tenant gets its own lifecycle tree rooted at ``{files_root}/{tenant_id}/`` so a dropped file's
+owner is unambiguous. Pure path computation (stdlib ``pathlib`` only) so it can live in core; the
+actual filesystem IO is performed by adapters in storage/filesystem.
 """
 
 from __future__ import annotations
@@ -10,30 +11,32 @@ from pathlib import Path
 
 
 class FilesystemLayout:
-    """Resolves the ingest/in.process/docs.active/docs.failed/quarantine folders under a root."""
+    """Resolves a tenant's ingest/in.process/docs.active/docs.failed/quarantine folders."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, tenant_id: str) -> None:
         self.root = Path(root)
+        self.tenant_id = tenant_id
+        self.base = self.root / tenant_id
 
     @property
     def ingest(self) -> Path:
-        return self.root / "ingest"
+        return self.base / "ingest"
 
     @property
     def in_process(self) -> Path:
-        return self.root / "in.process"
+        return self.base / "in.process"
 
     @property
     def docs_active(self) -> Path:
-        return self.root / "docs.active"
+        return self.base / "docs.active"
 
     @property
     def docs_failed(self) -> Path:
-        return self.root / "docs.failed"
+        return self.base / "docs.failed"
 
     @property
     def quarantine(self) -> Path:
-        return self.root / "quarantine"
+        return self.base / "quarantine"
 
     def ensure(self) -> None:
         for path in (

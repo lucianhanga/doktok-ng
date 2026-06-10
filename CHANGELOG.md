@@ -20,3 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy (allowlist + size limit, quarantine, dedup by hash), a SQL migration runner with the
   `ingestion_jobs` table, a Postgres ingestion job repository (plus in-memory fake), the
   `GET /api/ingestion/jobs` API, a UI ingestion jobs list, and Postgres integration tests in CI.
+- M1.5 multi-tenancy and token auth: `tenant_id` on every schema and on `ingestion_jobs`
+  (migration 0002), tenant-scoped repositories (per-tenant dedup), per-tenant filesystem lifecycle
+  folders, a multi-tenant worker, bearer-token authentication mapping tokens to tenants
+  (constant-time, fail-closed, loopback default), tenant-scoped ingestion API, a token-injecting UI
+  dev proxy, and ADR-0007/ADR-0008.

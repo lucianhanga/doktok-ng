@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +29,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
 
     no_egress: bool = True
+
+    # API server bind host (loopback by default; ADR-0008).
+    bind_host: str = "127.0.0.1"
+    # Bearer token -> tenant_id map (JSON in env; static now, DB-backed later; ADR-0008).
+    # Example: DOKTOK_TENANT_TOKENS='{"dev-token-default":"default"}'
+    tenant_tokens: dict[str, str] = Field(default_factory=dict)
 
     max_file_mb: int = 200
     max_pages: int = 500

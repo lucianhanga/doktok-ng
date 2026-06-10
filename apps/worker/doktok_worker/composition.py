@@ -1,4 +1,4 @@
-"""Worker composition root: wire ports to concrete adapters (ADR-0001)."""
+"""Worker composition root: wire ports to adapters, one bundle per tenant (ADR-0001, ADR-0007)."""
 
 from __future__ import annotations
 
@@ -15,21 +15,42 @@ from doktok_storage_filesystem import (
 from doktok_storage_postgres import Database, PostgresIngestionJobRepository, migrate
 
 
-def build_services(settings: Settings) -> tuple[IngestionServices, Database]:
-    """Build the ingestion services and a database handle. Ensures folders and runs migrations."""
-    layout = FilesystemLayout(settings.files_root)
-    layout.ensure()
+def tenant_ids(settings: Settings) -> list[str]:
+    """Unique tenant ids the worker should watch, derived from the token map."""
+    seen: dict[str, None] = {}
+    for tenant in settings.tenant_tokens.values():
+        seen.setdefault(tenant, None)
+    return list(seen)
 
+
+def build_services(settings: Settings) -> tuple[list[IngestionServices], Database]:
+    """Build per-tenant ingestion services and a shared database handle.
+
+    Ensures each tenant's lifecycle folders exist and runs migrations once.
+    """
     db = Database(settings.database_url)
     migrate(db)
 
-    services = IngestionServices(
-        job_repo=PostgresIngestionJobRepository(db),
-        file_storage=LocalFileStorage(),
-        hash_service=Sha256HashService(),
-        mime_detector=LibmagicMimeDetector(),
-        security_policy=DefaultSecurityPolicy(max_file_mb=settings.max_file_mb),
-        quarantine_service=QuarantineService(layout),
-        layout=layout,
-    )
+    repo = PostgresIngestionJobRepository(db)
+    file_storage = LocalFileStorage()
+    hash_service = Sha256HashService()
+    mime_detector = LibmagicMimeDetector()
+    security_policy = DefaultSecurityPolicy(max_file_mb=settings.max_file_mb)
+
+    services: list[IngestionServices] = []
+    for tenant_id in tenant_ids(settings):
+        layout = FilesystemLayout(settings.files_root, tenant_id)
+        layout.ensure()
+        services.append(
+            IngestionServices(
+                tenant_id=tenant_id,
+                job_repo=repo,
+                file_storage=file_storage,
+                hash_service=hash_service,
+                mime_detector=mime_detector,
+                security_policy=security_policy,
+                quarantine_service=QuarantineService(layout),
+                layout=layout,
+            )
+        )
     return services, db

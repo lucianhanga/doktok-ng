@@ -11,6 +11,7 @@ from doktok_contracts.schemas import (
 def test_document_defaults() -> None:
     doc = Document(
         id="doc-1",
+        tenant_id="t1",
         sha256="abc",
         original_filename="invoice.pdf",
         created_at=datetime.now(UTC),
@@ -20,7 +21,7 @@ def test_document_defaults() -> None:
 
 
 def test_ingestion_job_defaults_to_queued() -> None:
-    job = IngestionJob(id="job-1", source_path="/ingest/invoice.pdf")
+    job = IngestionJob(id="job-1", tenant_id="t1", source_path="/ingest/invoice.pdf")
     assert job.status is JobStatus.QUEUED
 
 

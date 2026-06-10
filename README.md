@@ -57,43 +57,58 @@ Prerequisites: [`uv`](https://docs.astral.sh/uv/), [`pnpm`](https://pnpm.io/), D
 (macOS: `brew install libmagic`; Debian/Ubuntu: `apt-get install libmagic1`), and (later) Ollama.
 Python 3.12 is fetched automatically by `uv`.
 
+First copy `.env.example` to `.env` (it ships a local dev token and tenant). `make` and the app load
+`.env` automatically.
+
 ```bash
 # 1. Install dependencies (Python uv workspace + JS pnpm workspace)
 make setup
 
 # 2. Start PostgreSQL 17 + pgvector
-#    If host port 5432 is taken, set DOKTOK_DB_PORT (e.g. 5433) first.
+#    If host port 5432 is taken, set DOKTOK_DB_PORT=5433 in .env first.
 make db
 
 # 3. Run the backend (http://localhost:8000)
 make run-backend
-#    Health check: curl http://localhost:8000/health
+#    Health is public:    curl http://localhost:8000/health
+#    The API needs a token (from .env):
+#    curl -H "Authorization: Bearer dev-token-default" http://localhost:8000/api/ingestion/jobs
 
-# 4. In another terminal, run the UI (http://localhost:5173)
-pnpm --filter @doktok/ui dev
+# 4. In another terminal, run the UI (http://localhost:5173).
+#    Use the make target so the dev proxy injects the bearer token for you.
+make run-ui
 
 # Run the full quality gate (Python + JS)
 make check
 ```
 
-Copy `.env.example` to `.env` to override defaults (models, database URL, limits).
+## Authentication and multi-tenancy
+
+DokTok NG is multi-tenant and the API is token-protected (ADR-0007, ADR-0008):
+
+- Send `Authorization: Bearer <token>`; `/health` is public, `/api/*` requires a token.
+- Each token maps to a tenant (`DOKTOK_TENANT_TOKENS` is a JSON `{"<token>": "<tenant_id>"}` map).
+  The default `.env` ships `{"dev-token-default": "default"}`.
+- All data is scoped to the caller's tenant: `tenant_id` on every table, and per-tenant filesystem
+  folders. The backend binds loopback by default and fails closed if no tokens are configured.
+- Static `.env` tokens now; DB-backed, hashed, revocable tokens later.
 
 ### Ingesting documents (M1)
 
 ```bash
-# Start the database, then run the worker (it creates the lifecycle folders and runs migrations)
 make db
-make run-worker
+make run-worker        # creates each tenant's lifecycle folders and runs migrations
 
-# Drop a file into the ingest folder
-cp some-document.pdf storage/files/ingest/
+# Drop a file into the tenant's ingest folder (default tenant shown):
+cp some-document.pdf storage/files/default/ingest/
 ```
 
-The worker waits until the file is stable, moves it into `storage/files/in.process/{job_id}/source`,
-hashes it, detects its MIME type, and records an ingestion job. Watch progress via the API
-(`GET /api/ingestion/jobs`) or the **Ingestion** tab in the UI. Unsupported types are rejected to
-`storage/files/docs.failed/`; dangerous types are isolated to `storage/files/quarantine/`; duplicate
-content (same SHA-256) is flagged. Extraction into active documents arrives in M2.
+The worker waits until the file is stable, moves it into
+`storage/files/{tenant}/in.process/{job_id}/source`, hashes it, detects its MIME type, and records an
+ingestion job tagged with that tenant. Watch progress via the API (`GET /api/ingestion/jobs`, with a
+token) or the **Ingestion** tab in the UI. Unsupported types are rejected to `.../docs.failed/`;
+dangerous types are isolated to `.../quarantine/`; duplicate content (same SHA-256, per tenant) is
+flagged. Extraction into active documents arrives in M2.
 
 ## Repository shape (target)
 

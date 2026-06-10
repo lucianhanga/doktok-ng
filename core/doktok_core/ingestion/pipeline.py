@@ -37,8 +37,9 @@ from doktok_core.ingestion.layout import FilesystemLayout
 
 @dataclass
 class IngestionServices:
-    """Bundle of ports + layout the pipeline depends on (wired at the composition root)."""
+    """Ports + layout the pipeline depends on (wired per tenant at the composition root)."""
 
+    tenant_id: str
     job_repo: IngestionJobRepository
     file_storage: FileStorage
     hash_service: HashService
@@ -59,6 +60,7 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
     original_path = str(source_path)
     job = IngestionJob(
         id=job_id,
+        tenant_id=services.tenant_id,
         source_path=original_path,
         status=JobStatus.QUEUED,
         started_at=now,
@@ -123,7 +125,7 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
 def _is_duplicate(services: IngestionServices, job: IngestionJob) -> bool:
     if not job.sha256:
         return False
-    for other in services.job_repo.find_by_sha256(job.sha256):
+    for other in services.job_repo.find_by_sha256(services.tenant_id, job.sha256):
         if other.id == job.id:
             continue
         if other.status not in (JobStatus.FAILED, JobStatus.QUARANTINED):

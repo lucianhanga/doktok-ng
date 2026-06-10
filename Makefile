@@ -1,7 +1,12 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend db db-down \
+        run-backend run-worker run-ui db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks
+
+# Load local environment from .env (if present) and export it to every recipe.
+# Command-line overrides (e.g. `make db DOKTOK_DB_PORT=5500`) still win.
+-include .env
+export
 
 PY_SRC := contracts core apps/backend apps/worker storage modalities providers tools
 
@@ -31,8 +36,11 @@ arch: ## Enforce hexagonal dependency direction (import-linter)
 run-backend: ## Run the FastAPI backend locally
 	uv run uvicorn doktok_api.main:app --reload --port 8000
 
-run-worker: ## Run the ingestion worker (watches storage/files/ingest)
+run-worker: ## Run the ingestion worker (watches each tenant's ingest folder)
 	uv run doktok-worker
+
+run-ui: ## Run the UI dev server (injects DOKTOK_DEV_TOKEN into proxied API calls)
+	pnpm --filter @doktok/ui dev
 
 db: ## Start local Postgres + pgvector (docker compose)
 	docker compose up -d

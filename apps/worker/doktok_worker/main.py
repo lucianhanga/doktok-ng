@@ -15,7 +15,12 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     settings = get_settings()
+    log = logging.getLogger("doktok.worker")
     services, db = build_services(settings)
+    if not services:
+        log.warning(
+            "no tenants configured (DOKTOK_TENANT_TOKENS is empty); the worker has nothing to watch"
+        )
     worker = IngestionWorker(
         services,
         stability_seconds=settings.file_stability_seconds,

@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PDFs/images flagged `needs_ocr`. The ingestion job now runs through to `active`.
 
 ### Added
+- Activity/audit log: an immutable, append-only, tenant-scoped trail of document activities
+  (`audit_events`, migration 0004). The ingestion pipeline emits `document.received` /
+  `.identified` / `.activated` (with a per-type summary, page count, OCR confidence) / `.failed`
+  (with error code) / `.quarantined`, correlated by job and document. New `AuditEventType`
+  vocabulary, `AuditLogRepository.record`/`list_events` (Postgres + in-memory), the read-only
+  `GET /api/v1/audit` API (optional `document_id` filter), and an Activity tab in the UI.
 - M3 OCR extraction: scanned PDFs and images are OCR'd via a local Ollama vision model
   (`OllamaVisionOcr`, `DOKTOK_OCR_MODEL`); a derived `normalized/searchable.pdf` (images + invisible
   OCR text layer, built with PyMuPDF) becomes the canonical `system_document`. Mixed PDFs keep

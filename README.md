@@ -27,8 +27,9 @@ the *style*, narrowed to documents.
 the canonical "system document" — with the original always kept (`original.<ext>`). Mixed PDFs keep
 embedded text and only OCR blank pages. Each document yields `manifest.json`, `content.md` (plain text
 for embeddings), `content.json`, and `pages/`, surfaced via the tenant-scoped `/api/v1/documents` API
-and the Documents tab. Everything is multi-tenant and token-protected.
-See the [milestone roadmap](docs/milestones/M0-M10.md).
+and the Documents tab. Every document activity is recorded to an immutable, tenant-scoped
+**activity/audit log** (`GET /api/v1/audit` and the **Activity** tab). Everything is multi-tenant and
+token-protected. See the [milestone roadmap](docs/milestones/M0-M10.md).
 
 See [`docs/architecture/doktok-ng-architecture.md`](docs/architecture/doktok-ng-architecture.md),
 the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).

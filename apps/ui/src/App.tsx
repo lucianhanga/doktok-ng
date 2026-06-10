@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { fetchHealth, type HealthStatus } from "./api";
+import { ActivityPanel } from "./ActivityPanel";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { JobsPanel } from "./JobsPanel";
 
@@ -56,7 +57,7 @@ export function HealthPanel() {
   );
 }
 
-type View = "status" | "ingestion" | "documents";
+type View = "status" | "ingestion" | "documents" | "activity";
 
 export default function App() {
   const [view, setView] = useState<View>("status");
@@ -91,11 +92,20 @@ export default function App() {
           >
             Documents
           </button>
+          <button
+            type="button"
+            className={view === "activity" ? "active" : ""}
+            aria-pressed={view === "activity"}
+            onClick={() => setView("activity")}
+          >
+            Activity
+          </button>
         </nav>
       </header>
       {view === "status" && <HealthPanel />}
       {view === "ingestion" && <JobsPanel />}
       {view === "documents" && <DocumentsPanel />}
+      {view === "activity" && <ActivityPanel />}
     </main>
   );
 }

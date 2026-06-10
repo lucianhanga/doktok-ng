@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doktok-contracts"
+version = "0.0.0"
+description = "DokTok NG core ports and schemas (contracts-first)"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["doktok_contracts"]

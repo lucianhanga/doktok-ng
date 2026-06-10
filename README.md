@@ -20,8 +20,10 @@ the *style*, narrowed to documents.
 
 ## Status
 
-Pre-M0. This repository currently contains the architecture, ADRs, milestone roadmap, and the tracked
-backlog. Application code lands milestone by milestone, starting with **M0 (Skeleton)**.
+**M0 (Skeleton).** The repository is a runnable monorepo skeleton: a FastAPI backend with a `/health`
+endpoint, a React + Vite UI shell that displays backend status, PostgreSQL 17 + pgvector via Docker
+Compose, the contracts-first ports and schemas, the DI registry skeleton, and the full
+test/lint/typecheck gate. Real ingestion, extraction, search, RAG, and MCP land in later milestones.
 
 See [`docs/architecture/doktok-ng-architecture.md`](docs/architecture/doktok-ng-architecture.md),
 the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
@@ -49,8 +51,29 @@ documented embedding alternative (`bge-m3:latest`).
 
 ## Quickstart
 
-A working quickstart (`docker compose up`, backend `/health`, UI shell) ships with **M0**. Until then,
-this repository is documentation and roadmap only.
+Prerequisites: [`uv`](https://docs.astral.sh/uv/), [`pnpm`](https://pnpm.io/), Docker, and (later)
+Ollama. Python 3.12 is fetched automatically by `uv`.
+
+```bash
+# 1. Install dependencies (Python uv workspace + JS pnpm workspace)
+make setup
+
+# 2. Start PostgreSQL 17 + pgvector
+#    If host port 5432 is taken, set DOKTOK_DB_PORT (e.g. 5433) first.
+make db
+
+# 3. Run the backend (http://localhost:8000)
+make run-backend
+#    Health check: curl http://localhost:8000/health
+
+# 4. In another terminal, run the UI (http://localhost:5173)
+pnpm --filter @doktok/ui dev
+
+# Run the full quality gate (Python + JS)
+make check
+```
+
+Copy `.env.example` to `.env` to override defaults (models, database URL, limits).
 
 ## Repository shape (target)
 

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doktok-tools-builtin"
+version = "0.0.0"
+description = "Built-in tools (placeholder)"
+requires-python = ">=3.12"
+dependencies = ["doktok-contracts"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["doktok_tools_builtin"]

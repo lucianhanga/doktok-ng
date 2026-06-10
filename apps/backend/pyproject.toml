@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doktok-api"
+version = "0.0.0"
+description = "DokTok NG FastAPI backend"
+requires-python = ">=3.12"
+dependencies = ["doktok-core", "doktok-contracts", "fastapi>=0.115", "uvicorn>=0.30"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["doktok_api"]

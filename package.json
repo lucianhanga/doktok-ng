@@ -1,0 +1,13 @@
+{
+  "name": "doktok-ng",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Local-first, AI-enabled document-intelligence system (JS workspace root)",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "packageManager": "pnpm@11.5.1"
+}

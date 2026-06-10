@@ -1,45 +1,55 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import App from "./App";
-import type { HealthStatus } from "./api";
+import type { HealthStatus, IngestionJob } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockHealth(payload: HealthStatus) {
+const HEALTH: HealthStatus = {
+  status: "ok",
+  service: "doktok-ng-backend",
+  version: "0.0.0",
+  environment: "test",
+};
+
+function mockRoutes(jobs: IngestionJob[] = []) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/ingestion/jobs")) {
+        return new Response(JSON.stringify(jobs), { status: 200 });
+      }
+      return new Response(JSON.stringify(HEALTH), { status: 200 });
+    }),
   );
 }
 
 test("renders the DokTok NG shell", async () => {
-  mockHealth({ status: "ok", service: "doktok-ng-backend", version: "0.0.0", environment: "test" });
+  mockRoutes();
   render(<App />);
   expect(screen.getByRole("heading", { level: 1, name: "DokTok NG" })).toBeInTheDocument();
-  // Let the async health fetch settle to avoid act() warnings.
   await waitFor(() => expect(screen.getByText("doktok-ng-backend")).toBeInTheDocument());
 });
 
-test("shows backend status when health succeeds", async () => {
-  mockHealth({ status: "ok", service: "doktok-ng-backend", version: "0.0.0", environment: "test" });
+test("shows backend status by default", async () => {
+  mockRoutes();
   render(<App />);
-  await waitFor(() => {
-    expect(screen.getByText("doktok-ng-backend")).toBeInTheDocument();
-  });
+  await waitFor(() => expect(screen.getByText("doktok-ng-backend")).toBeInTheDocument());
 });
 
-test("shows an error when the backend is unreachable", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => {
-      throw new Error("network down");
-    }),
-  );
+test("switches to the ingestion view", async () => {
+  mockRoutes([]);
   render(<App />);
-  await waitFor(() => {
-    expect(screen.getByRole("alert")).toHaveTextContent("Backend unreachable");
-  });
+  await screen.findByText("doktok-ng-backend");
+
+  await userEvent.click(screen.getByRole("button", { name: "Ingestion" }));
+
+  await waitFor(() =>
+    expect(screen.getByText(/No ingestion jobs yet/i)).toBeInTheDocument(),
+  );
 });

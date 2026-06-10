@@ -5,9 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "doktok-storage-filesystem"
 version = "0.0.0"
-description = "Local filesystem storage adapter (placeholder)"
+description = "Local filesystem storage adapter"
 requires-python = ">=3.12"
-dependencies = ["doktok-contracts"]
+dependencies = ["doktok-contracts", "doktok-core"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["doktok_storage_filesystem"]

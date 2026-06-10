@@ -3,7 +3,7 @@
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks
 
-PY_SRC := contracts core apps/backend
+PY_SRC := contracts core apps/backend apps/worker storage modalities providers tools
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_.-]+:.*## ' $(MAKEFILE_LIST) | sort | \
@@ -30,6 +30,9 @@ arch: ## Enforce hexagonal dependency direction (import-linter)
 
 run-backend: ## Run the FastAPI backend locally
 	uv run uvicorn doktok_api.main:app --reload --port 8000
+
+run-worker: ## Run the ingestion worker (watches storage/files/ingest)
+	uv run doktok-worker
 
 db: ## Start local Postgres + pgvector (docker compose)
 	docker compose up -d

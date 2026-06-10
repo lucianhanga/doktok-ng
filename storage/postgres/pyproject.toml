@@ -5,9 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "doktok-storage-postgres"
 version = "0.0.0"
-description = "PostgreSQL adapters and migrations (placeholder)"
+description = "PostgreSQL adapters and migrations"
 requires-python = ">=3.12"
-dependencies = ["doktok-contracts"]
+dependencies = [
+    "doktok-contracts",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["doktok_storage_postgres"]

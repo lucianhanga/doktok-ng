@@ -15,3 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   React + Vite UI shell with a backend status panel; PostgreSQL 17 + pgvector via Docker Compose;
   Makefile, GitHub Actions CI, import-linter hexagonal enforcement, pre-commit, secrets baseline,
   and SBOM target.
+- M1 folder ingestion: folder-watching worker with stable-file detection, atomic move into the
+  document lifecycle, streaming SHA-256, content-based MIME detection (libmagic), default security
+  policy (allowlist + size limit, quarantine, dedup by hash), a SQL migration runner with the
+  `ingestion_jobs` table, a Postgres ingestion job repository (plus in-memory fake), the
+  `GET /api/ingestion/jobs` API, a UI ingestion jobs list, and Postgres integration tests in CI.

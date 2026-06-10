@@ -38,6 +38,14 @@ class DocumentStatus(StrEnum):
     QUARANTINED = "quarantined"
 
 
+class SecurityDecision(StrEnum):
+    """Outcome of evaluating an ingested file against the security policy."""
+
+    ALLOW = "allow"
+    QUARANTINE = "quarantine"
+    REJECT = "reject"
+
+
 class EntityType(StrEnum):
     PERSON = "PERSON"
     ORG = "ORG"

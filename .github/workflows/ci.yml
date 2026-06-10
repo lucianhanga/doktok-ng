@@ -16,8 +16,26 @@ jobs:
   python:
     name: Python checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: doktok
+          POSTGRES_PASSWORD: doktok
+          POSTGRES_DB: doktok
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U doktok -d doktok"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DOKTOK_DATABASE_URL: postgresql://doktok:doktok@localhost:5432/doktok
     steps:
       - uses: actions/checkout@v4
+      - name: Install system libraries (libmagic)
+        run: sudo apt-get update && sudo apt-get install -y libmagic1
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
@@ -31,8 +49,8 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
       - name: mypy
-        run: uv run mypy contracts core apps/backend
-      - name: Pytest
+        run: uv run mypy contracts core apps/backend apps/worker storage modalities
+      - name: Pytest (includes Postgres integration)
         run: uv run pytest
       - name: Import boundaries (import-linter)
         run: uv run lint-imports

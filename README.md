@@ -20,10 +20,12 @@ the *style*, narrowed to documents.
 
 ## Status
 
-**M0 (Skeleton).** The repository is a runnable monorepo skeleton: a FastAPI backend with a `/health`
-endpoint, a React + Vite UI shell that displays backend status, PostgreSQL 17 + pgvector via Docker
-Compose, the contracts-first ports and schemas, the DI registry skeleton, and the full
-test/lint/typecheck gate. Real ingestion, extraction, search, RAG, and MCP land in later milestones.
+**M1 (Folder ingestion).** Building on the M0 skeleton, DokTok NG now ingests files dropped into a
+watched folder: a worker detects stable files, atomically moves them into the document lifecycle,
+computes SHA-256, detects MIME by content (libmagic), validates against the security policy
+(allowlist + size limit, quarantine for dangerous types, dedup by hash), and records database-backed
+ingestion jobs. The backend exposes the ingestion job API and the UI lists jobs. Extraction (turning
+files into active documents) arrives in M2. See the [milestone roadmap](docs/milestones/M0-M10.md).
 
 See [`docs/architecture/doktok-ng-architecture.md`](docs/architecture/doktok-ng-architecture.md),
 the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
@@ -51,8 +53,9 @@ documented embedding alternative (`bge-m3:latest`).
 
 ## Quickstart
 
-Prerequisites: [`uv`](https://docs.astral.sh/uv/), [`pnpm`](https://pnpm.io/), Docker, and (later)
-Ollama. Python 3.12 is fetched automatically by `uv`.
+Prerequisites: [`uv`](https://docs.astral.sh/uv/), [`pnpm`](https://pnpm.io/), Docker, `libmagic`
+(macOS: `brew install libmagic`; Debian/Ubuntu: `apt-get install libmagic1`), and (later) Ollama.
+Python 3.12 is fetched automatically by `uv`.
 
 ```bash
 # 1. Install dependencies (Python uv workspace + JS pnpm workspace)
@@ -74,6 +77,23 @@ make check
 ```
 
 Copy `.env.example` to `.env` to override defaults (models, database URL, limits).
+
+### Ingesting documents (M1)
+
+```bash
+# Start the database, then run the worker (it creates the lifecycle folders and runs migrations)
+make db
+make run-worker
+
+# Drop a file into the ingest folder
+cp some-document.pdf storage/files/ingest/
+```
+
+The worker waits until the file is stable, moves it into `storage/files/in.process/{job_id}/source`,
+hashes it, detects its MIME type, and records an ingestion job. Watch progress via the API
+(`GET /api/ingestion/jobs`) or the **Ingestion** tab in the UI. Unsupported types are rejected to
+`storage/files/docs.failed/`; dangerous types are isolated to `storage/files/quarantine/`; duplicate
+content (same SHA-256) is flagged. Extraction into active documents arrives in M2.
 
 ## Repository shape (target)
 

@@ -1,38 +1,53 @@
-"""Ingestion pipeline orchestration (M1).
+"""Ingestion pipeline orchestration (M1 + M2).
 
-Coordinates the early lifecycle of a dropped file using ports only (ADR-0001, ADR-0004):
+Coordinates the full lifecycle of a dropped file using ports only (ADR-0001, ADR-0004, ADR-0007):
 
     move to in.process/{job_id}/source -> hash -> detect MIME -> dedup -> security decision
+      -> extract -> write canonical artifacts -> create active document
 
 Outcomes:
-- ALLOW       -> job parked at ``normalizing`` (validated, awaiting extraction in M2)
-- duplicate   -> job ``failed`` (error_code ``duplicate_hash``), workdir moved to docs.failed/
-- REJECT      -> job ``failed`` (``unsupported_type`` / ``too_large``), workdir -> docs.failed/
-- QUARANTINE  -> job ``quarantined``, workdir moved to quarantine/
+- born-digital text/markdown/PDF -> ``active`` document under docs.active/{document_id}/
+- needs OCR (images, scanned PDF) -> job ``failed`` (``needs_ocr``), pending M3
+- duplicate (same sha256, per tenant) -> job ``failed`` (``duplicate_hash``)
+- disallowed/too large -> job ``failed`` (``unsupported_type`` / ``too_large``)
+- dangerous type -> job ``quarantined``
 
-Extraction, chunking, embedding, and activation arrive in later milestones. This stage never marks a
-document active.
+Jobs are tagged with the tenant from ``IngestionServices`` (ADR-0007).
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from doktok_contracts.ports import (
+    DocumentRepository,
     FileStorage,
     HashService,
     IngestionJobRepository,
     MimeDetector,
+    PdfTextExtractor,
     QuarantineService,
     SecurityPolicy,
+    TextExtractor,
 )
-from doktok_contracts.schemas import IngestionJob, JobStatus, SecurityDecision
+from doktok_contracts.schemas import (
+    Document,
+    DocumentStatus,
+    IngestionJob,
+    JobStatus,
+    SecurityDecision,
+)
 
+from doktok_core.documents.artifacts import write_document_artifacts
+from doktok_core.extraction.service import NeedsOcrError, extract
 from doktok_core.ingestion.layout import FilesystemLayout
+
+DETECTOR_NAME = "libmagic"
 
 
 @dataclass
@@ -41,21 +56,24 @@ class IngestionServices:
 
     tenant_id: str
     job_repo: IngestionJobRepository
+    document_repo: DocumentRepository
     file_storage: FileStorage
     hash_service: HashService
     mime_detector: MimeDetector
     security_policy: SecurityPolicy
     quarantine_service: QuarantineService
+    text_extractor: TextExtractor
+    pdf_extractor: PdfTextExtractor
     layout: FilesystemLayout
 
 
-def _new_job_id() -> str:
+def _new_id() -> str:
     return uuid.uuid4().hex
 
 
 def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
-    """Run the M1 ingestion stage for a single stable file. Returns the resulting job."""
-    job_id = _new_job_id()
+    """Run the full ingestion for a single stable file. Returns the resulting job."""
+    job_id = _new_id()
     now = datetime.now(UTC)
     original_path = str(source_path)
     job = IngestionJob(
@@ -70,17 +88,13 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
 
     workdir = services.layout.job_workdir(job_id)
     try:
-        # Atomically claim the file into the job's working directory.
         dest = services.layout.job_source(job_id)
         job.status = JobStatus.DETECTING
         services.file_storage.move(original_path, str(dest))
         job.source_path = str(dest)
 
-        # Hash for deduplication and provenance.
         job.status = JobStatus.HASHING
         job.sha256 = services.hash_service.sha256(str(dest))
-
-        # Detect MIME by content (never by extension).
         job.detected_mime = services.mime_detector.detect(str(dest))
         services.job_repo.update(job)
 
@@ -108,18 +122,68 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
                 message=f"rejected mime={job.detected_mime} size={size_bytes}",
             )
 
-        # ALLOW: validated and parked, awaiting extraction (M2).
-        job.status = JobStatus.NORMALIZING
-        services.job_repo.update(job)
-        return job
+        return _activate(services, job, workdir)
     except Exception as exc:  # noqa: BLE001 - record any failure on the job, do not crash the worker
-        return _fail(
-            services,
-            job,
-            workdir,
-            code="internal_error",
-            message=str(exc),
+        return _fail(services, job, workdir, code="internal_error", message=str(exc))
+
+
+def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> IngestionJob:
+    """Extract content, write canonical artifacts, and create an active document (M2)."""
+    job.status = JobStatus.EXTRACTING
+    services.job_repo.update(job)
+    try:
+        result = extract(
+            job.detected_mime or "",
+            job.source_path,
+            text_extractor=services.text_extractor,
+            pdf_extractor=services.pdf_extractor,
         )
+    except NeedsOcrError as exc:
+        return _fail(services, job, workdir, code="needs_ocr", message=str(exc))
+
+    document_id = _new_id()
+    original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name
+
+    job.status = JobStatus.ACTIVATING
+    storage_path = write_document_artifacts(
+        services.file_storage,
+        services.layout,
+        document_id,
+        original_source_path=job.source_path,
+        original_filename=original_filename,
+        sha256=job.sha256 or "",
+        detected_mime=job.detected_mime,
+        detector=DETECTOR_NAME,
+        result=result,
+    )
+
+    now = datetime.now(UTC)
+    document = Document(
+        id=document_id,
+        tenant_id=services.tenant_id,
+        sha256=job.sha256 or "",
+        original_filename=original_filename,
+        detected_mime=job.detected_mime,
+        title=Path(original_filename).stem or original_filename,
+        status=DocumentStatus.ACTIVE,
+        storage_path=storage_path,
+        created_at=now,
+        activated_at=now,
+        metadata={
+            "extraction_method": result.extraction_method,
+            "page_count": result.page_count,
+        },
+    )
+    services.document_repo.add(document)
+
+    job.document_id = document_id
+    job.status = JobStatus.ACTIVE
+    job.finished_at = now
+    # The source file has been moved into docs.active/; drop the now-empty working dir.
+    if workdir.exists():
+        shutil.rmtree(workdir, ignore_errors=True)
+    services.job_repo.update(job)
+    return job
 
 
 def _is_duplicate(services: IngestionServices, job: IngestionJob) -> bool:
@@ -145,7 +209,8 @@ def _fail(
     job.error_code = code
     job.error_message = message
     job.finished_at = datetime.now(UTC)
-    _safe_move(services, workdir, services.layout.failed_dir(job.id))
+    if workdir.exists():
+        services.file_storage.move(str(workdir), str(services.layout.failed_dir(job.id)))
     services.job_repo.update(job)
     return job
 
@@ -159,8 +224,3 @@ def _quarantine(services: IngestionServices, job: IngestionJob, workdir: Path) -
         services.quarantine_service.quarantine(str(workdir), reason=job.error_message)
     services.job_repo.update(job)
     return job
-
-
-def _safe_move(services: IngestionServices, source: Path, destination: Path) -> None:
-    if source.exists():
-        services.file_storage.move(str(source), str(destination))

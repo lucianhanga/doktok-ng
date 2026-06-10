@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - API routes are now versioned under `/api/v1` (e.g. `/api/v1/ingestion/jobs`); `/health` stays
   unversioned. Added a `developer` tenant token (`dev-token-developer`) for local manual testing.
+- OCR (M3) model is configurable via `DOKTOK_OCR_MODEL` (default `glm-ocr:latest`).
+- M2 text/PDF extraction: born-digital `.txt`/`.md`/PDF (PyMuPDF) become active documents with
+  canonical artifacts (`manifest.json`, `content.md`, `content.json`, `pages/`); tenant-scoped
+  `documents` table (migration 0003) + repository; `/api/v1/documents` API; Documents UI; scanned
+  PDFs/images flagged `needs_ocr`. The ingestion job now runs through to `active`.
 
 ### Added
 - Project kickoff: architecture proposal, six ADRs, and the M0-M10 milestone roadmap.

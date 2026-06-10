@@ -1,19 +1,22 @@
 """FastAPI dependencies: tenant authentication and lazy composition.
 
-``require_tenant`` enforces bearer-token auth and resolves the caller's tenant (ADR-0008). The job
-repository is resolved from the app's DI registry; if nothing is bound (production), a
-Postgres-backed repository is created lazily on first use and cached, so the health endpoint and
-tests that inject an in-memory repository never touch a database.
+``require_tenant`` enforces bearer-token auth and resolves the caller's tenant (ADR-0008).
+Repositories are resolved from the app's DI registry; if nothing is bound (production),
+Postgres-backed repositories are created lazily on first use over a single shared database handle,
+so the health endpoint and tests that inject in-memory repositories never touch a database.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
-from doktok_contracts.ports import IngestionJobRepository
+from doktok_contracts.ports import DocumentRepository, IngestionJobRepository
 from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_tenant
 from fastapi import Depends, Header, HTTPException, Request, status
+
+if TYPE_CHECKING:
+    from doktok_storage_postgres import Database
 
 _BEARER_PREFIX = "Bearer "
 
@@ -46,24 +49,39 @@ def require_tenant(
     return TenantContext(tenant_id=tenant_id)
 
 
+def _get_database(request: Request) -> Database:
+    database = getattr(request.app.state, "database", None)
+    if database is None:
+        from doktok_storage_postgres import Database, migrate
+
+        settings = request.app.state.settings
+        database = Database(settings.database_url)
+        migrate(database)
+        request.app.state.database = database
+    return database
+
+
 def get_job_repository(request: Request) -> IngestionJobRepository:
     registry = request.app.state.registry
     if registry.is_registered(IngestionJobRepository):
         return cast(IngestionJobRepository, registry.resolve(IngestionJobRepository))
 
-    # Lazy production wiring: build a Postgres-backed repository once and cache it.
-    from doktok_storage_postgres import (
-        Database,
-        PostgresIngestionJobRepository,
-        migrate,
-    )
+    from doktok_storage_postgres import PostgresIngestionJobRepository
 
-    settings = request.app.state.settings
-    database = Database(settings.database_url)
-    migrate(database)
-    repository = PostgresIngestionJobRepository(database)
+    repository = PostgresIngestionJobRepository(_get_database(request))
     registry.register(IngestionJobRepository, repository)
-    request.app.state.database = database
+    return repository
+
+
+def get_document_repository(request: Request) -> DocumentRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(DocumentRepository):
+        return cast(DocumentRepository, registry.resolve(DocumentRepository))
+
+    from doktok_storage_postgres import PostgresDocumentRepository
+
+    repository = PostgresDocumentRepository(_get_database(request))
+    registry.register(DocumentRepository, repository)
     return repository
 
 

@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from doktok_api import __version__
-from doktok_api.routers import ingestion
+from doktok_api.routers import documents, ingestion
 
 SERVICE_NAME = "doktok-ng-backend"
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -77,6 +77,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         )
 
     app.include_router(ingestion.router)
+    app.include_router(documents.router)
 
     return app
 

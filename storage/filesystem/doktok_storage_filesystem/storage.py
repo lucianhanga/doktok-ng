@@ -23,6 +23,16 @@ class LocalFileStorage:
     def read_bytes(self, path: str) -> bytes:
         return Path(path).read_bytes()
 
+    def write_bytes(self, path: str, data: bytes) -> None:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    def write_text(self, path: str, text: str) -> None:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
 
 class Sha256HashService:
     """``HashService`` computing a streaming SHA-256 so large files are not held in memory."""

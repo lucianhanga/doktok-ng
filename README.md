@@ -20,12 +20,12 @@ the *style*, narrowed to documents.
 
 ## Status
 
-**M1 (Folder ingestion).** Building on the M0 skeleton, DokTok NG now ingests files dropped into a
-watched folder: a worker detects stable files, atomically moves them into the document lifecycle,
-computes SHA-256, detects MIME by content (libmagic), validates against the security policy
-(allowlist + size limit, quarantine for dangerous types, dedup by hash), and records database-backed
-ingestion jobs. The backend exposes the ingestion job API and the UI lists jobs. Extraction (turning
-files into active documents) arrives in M2. See the [milestone roadmap](docs/milestones/M0-M10.md).
+**M2 (Text & PDF extraction).** Files dropped into a tenant's ingest folder are detected, validated,
+and now **extracted into active documents**: `.txt`/`.md` and born-digital PDFs (PyMuPDF) produce
+canonical artifacts (`original`, `manifest.json`, `content.md`, `content.json`, `pages/`) under
+`docs.active/{document_id}/`, with a tenant-scoped `documents` table, the `/api/v1/documents` API, and
+a Documents tab in the UI. Scanned PDFs and images are flagged `needs_ocr` (OCR arrives in M3). All of
+this is multi-tenant and token-protected. See the [milestone roadmap](docs/milestones/M0-M10.md).
 
 See [`docs/architecture/doktok-ng-architecture.md`](docs/architecture/doktok-ng-architecture.md),
 the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
@@ -107,11 +107,13 @@ cp some-document.pdf storage/files/default/ingest/
 ```
 
 The worker waits until the file is stable, moves it into
-`storage/files/{tenant}/in.process/{job_id}/source`, hashes it, detects its MIME type, and records an
-ingestion job tagged with that tenant. Watch progress via the API (`GET /api/v1/ingestion/jobs`, with a
-token) or the **Ingestion** tab in the UI. Unsupported types are rejected to `.../docs.failed/`;
-dangerous types are isolated to `.../quarantine/`; duplicate content (same SHA-256, per tenant) is
-flagged. Extraction into active documents arrives in M2.
+`storage/files/{tenant}/in.process/{job_id}/source`, hashes it, detects its MIME type, then **extracts
+content and creates an active document** under `storage/files/{tenant}/docs.active/{document_id}/`
+(`.txt`/`.md`/born-digital PDF in M2). Watch progress via `GET /api/v1/ingestion/jobs` and
+`GET /api/v1/documents` (with a token), or the **Ingestion** / **Documents** tabs in the UI.
+Unsupported types are rejected to `.../docs.failed/`; dangerous types are isolated to
+`.../quarantine/`; duplicate content (same SHA-256, per tenant) is flagged; scanned PDFs and images are
+marked `needs_ocr` (handled in M3).
 
 ## Repository shape (target)
 

@@ -37,3 +37,21 @@ export async function fetchJobs(signal?: AbortSignal): Promise<IngestionJob[]> {
   }
   return (await response.json()) as IngestionJob[];
 }
+
+export interface DokDocument {
+  id: string;
+  original_filename: string;
+  detected_mime: string | null;
+  title: string | null;
+  status: string;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export async function fetchDocuments(signal?: AbortSignal): Promise<DokDocument[]> {
+  const response = await fetch("/api/v1/documents", { signal });
+  if (!response.ok) {
+    throw new Error(`Documents request failed: ${response.status}`);
+  }
+  return (await response.json()) as DokDocument[];
+}

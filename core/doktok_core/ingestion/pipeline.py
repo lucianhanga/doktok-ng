@@ -219,7 +219,7 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
 
     workdir = services.layout.job_workdir(job_id)
     try:
-        dest = services.layout.job_source(job_id)
+        dest = services.layout.job_source(job_id, Path(original_path).suffix)
         job.status = JobStatus.DETECTING
         services.file_storage.move(original_path, str(dest))
         job.source_path = str(dest)

@@ -51,8 +51,9 @@ class FilesystemLayout:
     def job_workdir(self, job_id: str) -> Path:
         return self.in_process / job_id
 
-    def job_source(self, job_id: str) -> Path:
-        return self.job_workdir(job_id) / "source"
+    def job_source(self, job_id: str, suffix: str = "") -> Path:
+        # ``suffix`` (the dropped file's extension) keeps the in-process file openable.
+        return self.job_workdir(job_id) / f"source{suffix}"
 
     def failed_dir(self, job_id: str) -> Path:
         return self.docs_failed / job_id

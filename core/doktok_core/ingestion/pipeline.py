@@ -31,6 +31,7 @@ from doktok_contracts.ports import (
     IngestionJobRepository,
     MimeDetector,
     OcrExtractor,
+    PdfClassifier,
     PdfRenderer,
     PdfTextExtractor,
     QuarantineService,
@@ -72,6 +73,9 @@ class IngestionServices:
     ocr_extractor: OcrExtractor | None = None
     pdf_renderer: PdfRenderer | None = None
     searchable_pdf_builder: SearchablePdfBuilder | None = None
+    pdf_classifier: PdfClassifier | None = None
+    # Page image-coverage at/above which a PDF page is treated as scanned and re-OCR'd.
+    ocr_image_coverage: float = 1.0
 
 
 def _new_id() -> str:
@@ -147,6 +151,8 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             ocr=services.ocr_extractor,
             renderer=services.pdf_renderer,
             builder=services.searchable_pdf_builder,
+            classifier=services.pdf_classifier,
+            ocr_image_coverage=services.ocr_image_coverage,
         )
     except NeedsOcrError as exc:
         return _fail(services, job, workdir, code="needs_ocr", message=str(exc))

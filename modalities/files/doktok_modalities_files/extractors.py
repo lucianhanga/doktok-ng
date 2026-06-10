@@ -30,3 +30,25 @@ class PyMuPdfTextExtractor:
             for page in doc:
                 pages.append(page.get_text("text"))
         return pages
+
+
+class PyMuPdfClassifier:
+    """``PdfClassifier`` reporting how much of each page is covered by its largest image.
+
+    A near-1.0 value means the page is essentially a full-page image (a scan), regardless of any
+    embedded text layer on top of it.
+    """
+
+    def page_image_coverage(self, path: str) -> list[float]:
+        import fitz
+
+        coverages: list[float] = []
+        with fitz.open(path) as doc:
+            for page in doc:
+                page_area = abs(page.rect.width * page.rect.height) or 1.0
+                largest = 0.0
+                for info in page.get_image_info():
+                    bbox = fitz.Rect(info["bbox"])
+                    largest = max(largest, abs(bbox.width * bbox.height) / page_area)
+                coverages.append(min(largest, 1.0))
+        return coverages

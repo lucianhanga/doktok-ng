@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # OCR vision model (used by the M3 OCR adapter; configurable, ADR-0003).
     ocr_model: str = "glm-ocr:latest"
     ollama_base_url: str = "http://localhost:11434"
+    # A PDF page whose largest image covers >= this fraction of the page is treated as scanned and
+    # (re-)OCR'd, dropping any existing (possibly weak) embedded text layer. Set > 1.0 to disable.
+    ocr_image_coverage: float = 0.8
 
     no_egress: bool = True
 

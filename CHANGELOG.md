@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- OCR page selection is now image-coverage based (`PdfClassifier.page_image_coverage` +
+  `DOKTOK_OCR_IMAGE_COVERAGE`, default 0.8): a PDF page that is essentially a full-page image is
+  re-OCR'd even if it carries an existing (weak) embedded text layer, which is dropped; born-digital
+  text pages with small figures keep their embedded text.
 - API routes are now versioned under `/api/v1` (e.g. `/api/v1/ingestion/jobs`); `/health` stays
   unversioned. Added a `developer` tenant token (`dev-token-developer`) for local manual testing.
 - `docs.active/{id}/` layout: the original is stored with its real extension (`original.<ext>`,

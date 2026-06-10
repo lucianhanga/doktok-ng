@@ -30,8 +30,11 @@ from doktok_contracts.ports import (
     HashService,
     IngestionJobRepository,
     MimeDetector,
+    OcrExtractor,
+    PdfRenderer,
     PdfTextExtractor,
     QuarantineService,
+    SearchablePdfBuilder,
     SecurityPolicy,
     TextExtractor,
 )
@@ -44,7 +47,7 @@ from doktok_contracts.schemas import (
 )
 
 from doktok_core.documents.artifacts import write_document_artifacts
-from doktok_core.extraction.service import NeedsOcrError, extract
+from doktok_core.extraction.service import NeedsOcrError, extract_document
 from doktok_core.ingestion.layout import FilesystemLayout
 
 DETECTOR_NAME = "libmagic"
@@ -65,6 +68,10 @@ class IngestionServices:
     text_extractor: TextExtractor
     pdf_extractor: PdfTextExtractor
     layout: FilesystemLayout
+    # OCR services (M3). When absent, files needing OCR fail with ``needs_ocr``.
+    ocr_extractor: OcrExtractor | None = None
+    pdf_renderer: PdfRenderer | None = None
+    searchable_pdf_builder: SearchablePdfBuilder | None = None
 
 
 def _new_id() -> str:
@@ -132,11 +139,14 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
     job.status = JobStatus.EXTRACTING
     services.job_repo.update(job)
     try:
-        result = extract(
+        result, normalized_pdf = extract_document(
             job.detected_mime or "",
             job.source_path,
             text_extractor=services.text_extractor,
             pdf_extractor=services.pdf_extractor,
+            ocr=services.ocr_extractor,
+            renderer=services.pdf_renderer,
+            builder=services.searchable_pdf_builder,
         )
     except NeedsOcrError as exc:
         return _fail(services, job, workdir, code="needs_ocr", message=str(exc))
@@ -156,6 +166,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         detected_mime=job.detected_mime,
         detector=DETECTOR_NAME,
         result=result,
+        normalized_pdf=normalized_pdf,
     )
 
     now = datetime.now(UTC)
@@ -173,6 +184,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         metadata={
             "extraction_method": result.extraction_method,
             "page_count": result.page_count,
+            "ocr_confidence": result.ocr_confidence,
             "original": artifacts.original,
             "system_document": artifacts.system_document,
         },

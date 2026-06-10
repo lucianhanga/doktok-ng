@@ -13,6 +13,7 @@ dependencies = [
     "doktok-storage-postgres",
     "doktok-storage-filesystem",
     "doktok-modalities-files",
+    "doktok-provider-ollama",
 ]
 
 [project.scripts]

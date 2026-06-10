@@ -5,9 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "doktok-provider-ollama"
 version = "0.0.0"
-description = "Ollama chat and embedding adapters (placeholder)"
+description = "Ollama chat, embedding, and vision-OCR adapters"
 requires-python = ">=3.12"
-dependencies = ["doktok-contracts"]
+dependencies = ["doktok-contracts", "httpx>=0.27"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["doktok_provider_ollama"]

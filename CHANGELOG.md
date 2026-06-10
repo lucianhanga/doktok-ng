@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - API routes are now versioned under `/api/v1` (e.g. `/api/v1/ingestion/jobs`); `/health` stays
   unversioned. Added a `developer` tenant token (`dev-token-developer`) for local manual testing.
+- `docs.active/{id}/` layout: the original is stored with its real extension (`original.<ext>`,
+  openable), `manifest.json` is structured and names the canonical `system_document`, and a
+  `normalized/searchable.pdf` slot is reserved for the OCR-derived document (M3).
 - OCR (M3) model is configurable via `DOKTOK_OCR_MODEL` (default `glm-ocr:latest`).
 - M2 text/PDF extraction: born-digital `.txt`/`.md`/PDF (PyMuPDF) become active documents with
   canonical artifacts (`manifest.json`, `content.md`, `content.json`, `pages/`); tenant-scoped

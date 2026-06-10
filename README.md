@@ -22,8 +22,9 @@ the *style*, narrowed to documents.
 
 **M2 (Text & PDF extraction).** Files dropped into a tenant's ingest folder are detected, validated,
 and now **extracted into active documents**: `.txt`/`.md` and born-digital PDFs (PyMuPDF) produce
-canonical artifacts (`original`, `manifest.json`, `content.md`, `content.json`, `pages/`) under
-`docs.active/{document_id}/`, with a tenant-scoped `documents` table, the `/api/v1/documents` API, and
+canonical artifacts (`original.<ext>`, `manifest.json`, `content.md`, `content.json`, `pages/`, plus a
+`normalized/searchable.pdf` slot for OCR in M3) under `docs.active/{document_id}/`, with the
+original kept openable and a tenant-scoped `documents` table, the `/api/v1/documents` API, and
 a Documents tab in the UI. Scanned PDFs and images are flagged `needs_ocr` (OCR arrives in M3). All of
 this is multi-tenant and token-protected. See the [milestone roadmap](docs/milestones/M0-M10.md).
 

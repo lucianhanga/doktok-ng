@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.uv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Node / JS
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+.pnpm-store/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# DokTok runtime storage (never commit ingested documents)
+storage/files/ingest/
+storage/files/in.process/
+storage/files/docs.active/
+storage/files/docs.failed/
+storage/files/quarantine/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Build / supply-chain artifacts
+sbom/*.json
+*.log

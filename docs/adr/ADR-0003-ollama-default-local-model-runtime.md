@@ -31,6 +31,10 @@ Notes on model selection:
   chunks are large or multilingual. The embedding model is configurable and can be switched without
   changing core code.
 - A lighter chat fallback for ~16GB machines is `qwen3:14b`.
+- OCR (M3) uses a local **vision** model rather than bundling Tesseract, configurable via
+  `DOKTOK_OCR_MODEL` (default `glm-ocr:latest` - a small dedicated OCR model that emits
+  Markdown/JSON/LaTeX). Alternatives: `qwen3-vl:8b`, `qwen2.5vl:7b`. A traditional OCR engine
+  (OCRmyPDF/Tesseract) may be kept later as a precision fallback for tables/auditable accuracy.
 
 Remote providers may be added later behind an adapter, but must be disabled by default.
 

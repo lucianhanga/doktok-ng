@@ -26,6 +26,8 @@ class Settings(BaseSettings):
 
     default_model: str = "qwen3.6:35b-a3b"
     embedding_model: str = "mxbai-embed-large:latest"
+    # OCR vision model (used by the M3 OCR adapter; configurable, ADR-0003).
+    ocr_model: str = "glm-ocr:latest"
     ollama_base_url: str = "http://localhost:11434"
 
     no_egress: bool = True

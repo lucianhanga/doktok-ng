@@ -1,0 +1,153 @@
+"""Core ports (interfaces) for DokTok NG.
+
+Core domain logic depends on these Protocols, never on concrete adapters (ADR-0001). Adapters in
+providers/, storage/, modalities/, and retrieval/ implement them. For M0 these are interface
+declarations only; methods are intentionally unimplemented.
+
+See brief section 9 for the full list.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+from doktok_contracts.schemas import (
+    AuditEvent,
+    Document,
+    DocumentArtifact,
+    DocumentChunk,
+    DocumentEntity,
+    DocumentVersion,
+    IngestionJob,
+)
+
+# --- Repositories ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class DocumentRepository(Protocol):
+    def get(self, document_id: str) -> Document | None: ...
+    def add(self, document: Document) -> None: ...
+    def list(self, limit: int = 50, offset: int = 0) -> list[Document]: ...
+
+
+@runtime_checkable
+class DocumentVersionRepository(Protocol):
+    def get(self, version_id: str) -> DocumentVersion | None: ...
+    def add(self, version: DocumentVersion) -> None: ...
+
+
+@runtime_checkable
+class IngestionJobRepository(Protocol):
+    def get(self, job_id: str) -> IngestionJob | None: ...
+    def add(self, job: IngestionJob) -> None: ...
+    def list(self, limit: int = 50, offset: int = 0) -> list[IngestionJob]: ...
+
+
+@runtime_checkable
+class DocumentArtifactRepository(Protocol):
+    def add(self, artifact: DocumentArtifact) -> None: ...
+    def list_for_document(self, document_id: str) -> list[DocumentArtifact]: ...
+
+
+@runtime_checkable
+class AuditLogRepository(Protocol):
+    def record(self, event: AuditEvent) -> None: ...
+
+
+# --- File / IO ------------------------------------------------------------------------------
+
+
+@runtime_checkable
+class FileStorage(Protocol):
+    def move(self, source: str, destination: str) -> None: ...
+    def read_bytes(self, path: str) -> bytes: ...
+
+
+@runtime_checkable
+class MimeDetector(Protocol):
+    def detect(self, path: str) -> str: ...
+
+
+@runtime_checkable
+class HashService(Protocol):
+    def sha256(self, path: str) -> str: ...
+
+
+# --- Extraction -----------------------------------------------------------------------------
+
+
+@runtime_checkable
+class TextExtractor(Protocol):
+    def extract(self, path: str) -> str: ...
+
+
+@runtime_checkable
+class PdfClassifier(Protocol):
+    def is_scanned(self, path: str) -> bool: ...
+
+
+@runtime_checkable
+class PdfTextExtractor(Protocol):
+    def extract(self, path: str) -> str: ...
+
+
+@runtime_checkable
+class OcrExtractor(Protocol):
+    def extract(self, path: str) -> str: ...
+
+
+@runtime_checkable
+class ImageExtractor(Protocol):
+    def extract(self, path: str) -> str: ...
+
+
+@runtime_checkable
+class MarkdownExtractor(Protocol):
+    def extract(self, path: str) -> str: ...
+
+
+# --- Indexing / AI --------------------------------------------------------------------------
+
+
+@runtime_checkable
+class Chunker(Protocol):
+    def chunk(self, text: str) -> list[DocumentChunk]: ...
+
+
+@runtime_checkable
+class EmbeddingProvider(Protocol):
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+@runtime_checkable
+class ChatModelProvider(Protocol):
+    def complete(self, prompt: str) -> str: ...
+
+
+@runtime_checkable
+class EntityExtractor(Protocol):
+    def extract(self, text: str) -> list[DocumentEntity]: ...
+
+
+@runtime_checkable
+class Retriever(Protocol):
+    def search(self, query: str, limit: int = 10) -> list[DocumentChunk]: ...
+
+
+@runtime_checkable
+class RagAnswerer(Protocol):
+    def answer(self, question: str) -> str: ...
+
+
+# --- Security -------------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SecurityPolicy(Protocol):
+    def is_allowed(self, mime: str, size_bytes: int) -> bool: ...
+
+
+@runtime_checkable
+class QuarantineService(Protocol):
+    def quarantine(self, path: str, reason: str) -> None: ...

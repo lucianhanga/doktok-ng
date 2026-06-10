@@ -1,0 +1,129 @@
+[project]
+name = "doktok-ng"
+version = "0.0.0"
+description = "Local-first, AI-enabled document-intelligence system"
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = [
+    "doktok-contracts",
+    "doktok-core",
+    "doktok-api",
+    "doktok-worker",
+    "doktok-mcp",
+    "doktok-provider-ollama",
+    "doktok-storage-postgres",
+    "doktok-storage-filesystem",
+    "doktok-modalities-files",
+    "doktok-retrieval-hybrid",
+    "doktok-tools-builtin",
+    "doktok-tools-mcp",
+]
+
+[tool.uv.workspace]
+members = [
+    "contracts",
+    "core",
+    "apps/backend",
+    "apps/worker",
+    "apps/mcp",
+    "providers/ollama",
+    "storage/postgres",
+    "storage/filesystem",
+    "modalities/files",
+    "retrieval/hybrid",
+    "tools/builtin",
+    "tools/mcp",
+]
+
+[tool.uv.sources]
+doktok-contracts = { workspace = true }
+doktok-core = { workspace = true }
+doktok-api = { workspace = true }
+doktok-worker = { workspace = true }
+doktok-mcp = { workspace = true }
+doktok-provider-ollama = { workspace = true }
+doktok-storage-postgres = { workspace = true }
+doktok-storage-filesystem = { workspace = true }
+doktok-modalities-files = { workspace = true }
+doktok-retrieval-hybrid = { workspace = true }
+doktok-tools-builtin = { workspace = true }
+doktok-tools-mcp = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "import-linter>=2.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["node_modules", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "C4", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["node_modules", "\\.venv"]
+
+[tool.pytest.ini_options]
+addopts = "-q --import-mode=importlib"
+testpaths = [
+    "apps/backend/tests",
+    "core/tests",
+    "contracts/tests",
+]
+
+[tool.coverage.run]
+branch = true
+
+[tool.importlinter]
+root_packages = [
+    "doktok_contracts",
+    "doktok_core",
+    "doktok_api",
+    "doktok_worker",
+    "doktok_mcp",
+    "doktok_provider_ollama",
+    "doktok_storage_postgres",
+    "doktok_storage_filesystem",
+    "doktok_modalities_files",
+    "doktok_retrieval_hybrid",
+    "doktok_tools_builtin",
+    "doktok_tools_mcp",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core and contracts must not depend on infrastructure adapters"
+type = "forbidden"
+source_modules = [
+    "doktok_contracts",
+    "doktok_core",
+]
+forbidden_modules = [
+    "doktok_api",
+    "doktok_worker",
+    "doktok_mcp",
+    "doktok_provider_ollama",
+    "doktok_storage_postgres",
+    "doktok_storage_filesystem",
+    "doktok_modalities_files",
+    "doktok_retrieval_hybrid",
+    "doktok_tools_builtin",
+    "doktok_tools_mcp",
+]
+
+[[tool.importlinter.contracts]]
+name = "Contracts must not depend on core"
+type = "forbidden"
+source_modules = ["doktok_contracts"]
+forbidden_modules = ["doktok_core"]

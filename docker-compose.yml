@@ -1,0 +1,22 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: doktok-db
+    environment:
+      POSTGRES_USER: doktok
+      POSTGRES_PASSWORD: doktok
+      POSTGRES_DB: doktok
+    ports:
+      # Host port is configurable to avoid clashes with other local Postgres instances.
+      - "${DOKTOK_DB_PORT:-5432}:5432"
+    volumes:
+      - doktok-pgdata:/var/lib/postgresql/data
+      - ./storage/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doktok -d doktok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  doktok-pgdata:

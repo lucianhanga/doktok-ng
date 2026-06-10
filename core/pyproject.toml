@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doktok-core"
+version = "0.0.0"
+description = "DokTok NG core domain logic and configuration"
+requires-python = ">=3.12"
+dependencies = ["doktok-contracts", "pydantic>=2.7", "pydantic-settings>=2.3"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["doktok_core"]

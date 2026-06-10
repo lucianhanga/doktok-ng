@@ -1,0 +1,66 @@
+.PHONY: help setup lint format typecheck test arch check \
+        run-backend db db-down \
+        js-install js-typecheck js-lint js-test js \
+        secrets sbom hooks
+
+PY_SRC := contracts core apps/backend
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z0-9_.-]+:.*## ' $(MAKEFILE_LIST) | sort | \
+		awk 'BEGIN {FS = ":.*## "}; {printf "  %-16s %s\n", $$1, $$2}'
+
+setup: ## Install Python (uv) and JS (pnpm) dependencies
+	uv sync --all-packages
+	pnpm install
+
+lint: ## Ruff lint (Python)
+	uv run ruff check .
+
+format: ## Ruff format (Python)
+	uv run ruff format .
+
+typecheck: ## mypy type check (Python)
+	uv run mypy $(PY_SRC)
+
+test: ## Run Python tests
+	uv run pytest
+
+arch: ## Enforce hexagonal dependency direction (import-linter)
+	uv run lint-imports
+
+run-backend: ## Run the FastAPI backend locally
+	uv run uvicorn doktok_api.main:app --reload --port 8000
+
+db: ## Start local Postgres + pgvector (docker compose)
+	docker compose up -d
+
+db-down: ## Stop local Postgres (keep volume)
+	docker compose down
+
+js-install: ## Install JS workspace dependencies
+	pnpm install
+
+js-typecheck: ## Typecheck JS/TS workspaces
+	pnpm -r typecheck
+
+js-lint: ## Lint JS workspaces
+	pnpm -r lint
+
+js-test: ## Test JS/TS workspaces (Vitest)
+	pnpm -r test
+
+js: js-typecheck js-lint js-test ## Run all JS/TS checks
+
+secrets: ## Scan tracked files for secrets (detect-secrets)
+	uvx detect-secrets scan --baseline .secrets.baseline
+
+sbom: ## Generate a CycloneDX SBOM of runtime deps (sbom/python.cdx.json)
+	@mkdir -p sbom
+	uv export --no-dev --format requirements-txt 2>/dev/null | \
+		uvx --from cyclonedx-bom cyclonedx-py requirements - -o sbom/python.cdx.json || \
+		echo "SBOM generation skipped (cyclonedx-bom unavailable); see Makefile target 'sbom'."
+
+hooks: ## Install git pre-commit hooks
+	uvx pre-commit install
+
+check: lint typecheck test arch js ## Run all checks (Python + JS)

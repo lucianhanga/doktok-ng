@@ -196,6 +196,21 @@ class AuditEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SearchHit(BaseModel):
+    """A hybrid-search result (brief section 17)."""
+
+    document_id: str
+    chunk_id: str
+    original_filename: str | None = None
+    title: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    snippet: str
+    score: float
+    vector_score: float | None = None
+    text_score: float | None = None
+
+
 class HealthStatus(BaseModel):
     """Backend health/status payload returned by GET /health."""
 

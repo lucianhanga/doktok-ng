@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from doktok_contracts.media import OcrPageResult, RenderedPage
+from doktok_contracts.media import OcrPageResult, RenderedPage, TextChunk
 from doktok_contracts.schemas import (
     AuditEvent,
     Document,
@@ -20,6 +20,7 @@ from doktok_contracts.schemas import (
     DocumentEntity,
     DocumentVersion,
     IngestionJob,
+    SearchHit,
     SecurityDecision,
 )
 
@@ -142,12 +143,18 @@ class MarkdownExtractor(Protocol):
 
 @runtime_checkable
 class Chunker(Protocol):
-    def chunk(self, text: str) -> list[DocumentChunk]: ...
+    def chunk(self, text: str) -> list[TextChunk]: ...
 
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
     def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+@runtime_checkable
+class ChunkRepository(Protocol):
+    def add_chunks(self, chunks: list[DocumentChunk], embeddings: list[list[float]]) -> None: ...
+    def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
 
 
 @runtime_checkable
@@ -162,7 +169,7 @@ class EntityExtractor(Protocol):
 
 @runtime_checkable
 class Retriever(Protocol):
-    def search(self, query: str, limit: int = 10) -> list[DocumentChunk]: ...
+    def search(self, tenant_id: str, query: str, limit: int = 10) -> list[SearchHit]: ...
 
 
 @runtime_checkable

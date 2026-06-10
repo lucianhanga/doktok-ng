@@ -19,3 +19,13 @@ class RenderedPage:
 
     image_png: bytes
     text: str
+
+
+@dataclass
+class TextChunk:
+    """A deterministic slice of extracted text, ready to embed and index."""
+
+    text: str
+    token_count: int
+    start_offset: int
+    end_offset: int

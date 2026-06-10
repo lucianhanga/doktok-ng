@@ -29,6 +29,7 @@ DSN = (
 def _clean_test_tenants(database: Database) -> None:
     with database.connection() as conn:
         conn.execute("DELETE FROM audit_events WHERE tenant_id LIKE 'test%'")
+        conn.execute("DELETE FROM document_chunks WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM ingestion_jobs WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM documents WHERE tenant_id LIKE 'test%'")
 

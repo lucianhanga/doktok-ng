@@ -7,6 +7,7 @@ from typing import Any
 from doktok_contracts.schemas import (
     AuditEvent,
     Document,
+    DocumentChunk,
     DocumentStatus,
     IngestionJob,
     JobStatus,
@@ -15,6 +16,12 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from doktok_storage_postgres.db import Database
+
+
+def to_vector_literal(values: list[float]) -> str:
+    """Format a float vector as a pgvector literal, e.g. ``[0.1,0.2,0.3]``."""
+    return "[" + ",".join(repr(float(v)) for v in values) + "]"
+
 
 _DOC_COLUMNS = (
     "id, tenant_id, current_version_id, sha256, original_filename, detected_mime, "
@@ -250,3 +257,42 @@ class PostgresAuditLogRepository:
                 tuple(params),
             ).fetchall()
         return [_row_to_event(row) for row in rows]
+
+
+class PostgresChunkRepository:
+    """``ChunkRepository`` storing chunks with their embedding and a generated FTS vector."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def add_chunks(self, chunks: list[DocumentChunk], embeddings: list[list[float]]) -> None:
+        if not chunks:
+            return
+        with self._db.connection() as conn:
+            for chunk, embedding in zip(chunks, embeddings, strict=True):
+                conn.execute(
+                    "INSERT INTO document_chunks "
+                    "(id, tenant_id, document_id, version_id, page_start, page_end, "
+                    "heading_path, text, token_count, embedding, metadata) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s)",
+                    (
+                        chunk.id,
+                        chunk.tenant_id,
+                        chunk.document_id,
+                        chunk.version_id,
+                        chunk.page_start,
+                        chunk.page_end,
+                        Json(chunk.heading_path),
+                        chunk.text,
+                        chunk.token_count,
+                        to_vector_literal(embedding),
+                        Json(chunk.metadata),
+                    ),
+                )
+
+    def delete_for_document(self, tenant_id: str, document_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM document_chunks WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            )

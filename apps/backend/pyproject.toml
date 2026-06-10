@@ -11,6 +11,8 @@ dependencies = [
     "doktok-core",
     "doktok-contracts",
     "doktok-storage-postgres",
+    "doktok-retrieval-hybrid",
+    "doktok-provider-ollama",
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]

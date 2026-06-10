@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PDFs/images flagged `needs_ocr`. The ingestion job now runs through to `active`.
 
 ### Added
+- M4 vector + full-text hybrid search: deterministic fixed-window `Chunker`, Ollama embeddings
+  (`OllamaEmbeddingProvider`, mxbai-embed-large, 1024-dim), `document_chunks` (migration 0005) with a
+  pgvector HNSW index and a generated `tsvector` GIN index, `ChunkRepository` (Postgres + in-memory),
+  `HybridPostgresRetriever` (pgvector + Postgres FTS fused with Reciprocal Rank Fusion), indexing
+  during activation (a document is not active until indexed), `GET /api/v1/search`, and a Search tab.
 - Activity/audit log: an immutable, append-only, tenant-scoped trail of document activities
   (`audit_events`, migration 0004). The ingestion pipeline emits `document.received` /
   `.identified` / `.activated` (with a per-type summary, page count, OCR confidence) / `.failed`

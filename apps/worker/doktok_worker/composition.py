@@ -9,8 +9,11 @@ from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_modalities_files import (
     DirectTextExtractor,
     LibmagicMimeDetector,
+    PyMuPdfRenderer,
     PyMuPdfTextExtractor,
+    SearchablePdfBuilder,
 )
+from doktok_provider_ollama import OllamaVisionOcr
 from doktok_storage_filesystem import (
     LocalFileStorage,
     QuarantineService,
@@ -48,6 +51,9 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     security_policy = DefaultSecurityPolicy(max_file_mb=settings.max_file_mb)
     text_extractor = DirectTextExtractor()
     pdf_extractor = PyMuPdfTextExtractor()
+    ocr_extractor = OllamaVisionOcr(settings.ocr_model, settings.ollama_base_url)
+    pdf_renderer = PyMuPdfRenderer()
+    searchable_pdf_builder = SearchablePdfBuilder()
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
@@ -66,6 +72,9 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 text_extractor=text_extractor,
                 pdf_extractor=pdf_extractor,
                 layout=layout,
+                ocr_extractor=ocr_extractor,
+                pdf_renderer=pdf_renderer,
+                searchable_pdf_builder=searchable_pdf_builder,
             )
         )
     return services, db

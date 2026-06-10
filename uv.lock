@@ -344,10 +344,14 @@ version = "0.0.0"
 source = { editable = "providers/ollama" }
 dependencies = [
     { name = "doktok-contracts" },
+    { name = "httpx" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "doktok-contracts", editable = "contracts" }]
+requires-dist = [
+    { name = "doktok-contracts", editable = "contracts" },
+    { name = "httpx", specifier = ">=0.27" },
+]
 
 [[package]]
 name = "doktok-retrieval-hybrid"
@@ -422,6 +426,7 @@ dependencies = [
     { name = "doktok-contracts" },
     { name = "doktok-core" },
     { name = "doktok-modalities-files" },
+    { name = "doktok-provider-ollama" },
     { name = "doktok-storage-filesystem" },
     { name = "doktok-storage-postgres" },
 ]
@@ -431,6 +436,7 @@ requires-dist = [
     { name = "doktok-contracts", editable = "contracts" },
     { name = "doktok-core", editable = "core" },
     { name = "doktok-modalities-files", editable = "modalities/files" },
+    { name = "doktok-provider-ollama", editable = "providers/ollama" },
     { name = "doktok-storage-filesystem", editable = "storage/filesystem" },
     { name = "doktok-storage-postgres", editable = "storage/postgres" },
 ]

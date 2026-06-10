@@ -20,13 +20,15 @@ the *style*, narrowed to documents.
 
 ## Status
 
-**M2 (Text & PDF extraction).** Files dropped into a tenant's ingest folder are detected, validated,
-and now **extracted into active documents**: `.txt`/`.md` and born-digital PDFs (PyMuPDF) produce
-canonical artifacts (`original.<ext>`, `manifest.json`, `content.md`, `content.json`, `pages/`, plus a
-`normalized/searchable.pdf` slot for OCR in M3) under `docs.active/{document_id}/`, with the
-original kept openable and a tenant-scoped `documents` table, the `/api/v1/documents` API, and
-a Documents tab in the UI. Scanned PDFs and images are flagged `needs_ocr` (OCR arrives in M3). All of
-this is multi-tenant and token-protected. See the [milestone roadmap](docs/milestones/M0-M10.md).
+**M3 (OCR extraction).** Files dropped into a tenant's ingest folder are detected, validated, and
+**extracted into active documents**. Born-digital `.txt`/`.md`/PDF use direct/PyMuPDF extraction;
+**scanned PDFs and images are OCR'd via a local Ollama vision model** (`DOKTOK_OCR_MODEL`, default
+`glm-ocr:latest`) and a derived `normalized/searchable.pdf` (images + invisible OCR text layer) becomes
+the canonical "system document" — with the original always kept (`original.<ext>`). Mixed PDFs keep
+embedded text and only OCR blank pages. Each document yields `manifest.json`, `content.md` (plain text
+for embeddings), `content.json`, and `pages/`, surfaced via the tenant-scoped `/api/v1/documents` API
+and the Documents tab. Everything is multi-tenant and token-protected.
+See the [milestone roadmap](docs/milestones/M0-M10.md).
 
 See [`docs/architecture/doktok-ng-architecture.md`](docs/architecture/doktok-ng-architecture.md),
 the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).

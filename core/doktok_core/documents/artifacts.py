@@ -90,6 +90,7 @@ def write_document_artifacts(
         "document_id": document_id,
         "extraction_method": result.extraction_method,
         "page_count": result.page_count,
+        "ocr_confidence": result.ocr_confidence,
         "pages": [{"page_number": i, "text": text} for i, text in enumerate(result.pages, start=1)],
         "metadata": result.metadata,
     }

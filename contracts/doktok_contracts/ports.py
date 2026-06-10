@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from doktok_contracts.media import OcrPageResult, RenderedPage
 from doktok_contracts.schemas import (
     AuditEvent,
     Document,
@@ -101,7 +102,17 @@ class PdfTextExtractor(Protocol):
 
 @runtime_checkable
 class OcrExtractor(Protocol):
-    def extract(self, path: str) -> str: ...
+    def ocr_image(self, image_png: bytes) -> OcrPageResult: ...
+
+
+@runtime_checkable
+class PdfRenderer(Protocol):
+    def render_pages(self, path: str, dpi: int = 200) -> list[bytes]: ...
+
+
+@runtime_checkable
+class SearchablePdfBuilder(Protocol):
+    def build(self, pages: list[RenderedPage]) -> bytes: ...
 
 
 @runtime_checkable

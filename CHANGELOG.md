@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PDFs/images flagged `needs_ocr`. The ingestion job now runs through to `active`.
 
 ### Added
+- M3 OCR extraction: scanned PDFs and images are OCR'd via a local Ollama vision model
+  (`OllamaVisionOcr`, `DOKTOK_OCR_MODEL`); a derived `normalized/searchable.pdf` (images + invisible
+  OCR text layer, built with PyMuPDF) becomes the canonical `system_document`. Mixed PDFs keep
+  embedded text and OCR only blank pages. OCR confidence is recorded. New ports `OcrExtractor`,
+  `PdfRenderer`, `SearchablePdfBuilder` and the OCR-aware `extract_document` orchestration.
 - Project kickoff: architecture proposal, six ADRs, and the M0-M10 milestone roadmap.
 - Repository metadata, issue templates, and the tracked backlog (granular M0 tickets + M1-M10 epics).
 - M0 skeleton: uv + pnpm monorepo with 12 workspace packages; contracts-first ports and schemas;

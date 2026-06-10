@@ -104,13 +104,16 @@ Initial tables (see brief §16): `documents`, `document_versions`, `ingestion_jo
 ## 7. Filesystem document lifecycle
 
 ```
-storage/files/
+storage/files/{tenant_id}/
   ingest/        user drops files here
   in.process/    worker moves files here while processing ({job_id}/source)
   docs.active/   only fully indexed documents ({document_id}/...)
   docs.failed/   failed processing jobs ({job_id}/...)
   quarantine/    suspicious or disallowed files
 ```
+
+The lifecycle is rooted **per tenant** (ADR-0007): each tenant has its own ingest/in.process/...
+folders so a dropped file's owner is unambiguous.
 
 A successful document produces canonical artifacts under `docs.active/{document_id}/`:
 `original`, `manifest.json`, `content.md`, `content.json`, `pages/page-NNNN.json`, and optionally
@@ -181,6 +184,22 @@ SQL, no arbitrary filesystem access; all MCP access audited.
 
 No microservices, no Kubernetes, no Redis, no Elasticsearch, no Qdrant, no MinIO, no graph database.
 Adapters allow adding any of these later without rewriting core. Do not overbuild.
+
+## 15a. Multi-tenancy and authentication
+
+DokTok NG is multi-tenant from the foundation (ADR-0007, ADR-0008).
+
+- **Isolation:** a single shared PostgreSQL database with a `tenant_id` discriminator on every
+  tenant-owned table. All repository reads are scoped by `tenant_id`; deduplication is per tenant.
+- **Filesystem:** the document lifecycle is rooted per tenant at `storage/files/{tenant_id}/...`.
+- **Authentication:** clients send `Authorization: Bearer <token>`; the backend resolves the token to
+  a tenant (constant-time compare) and scopes the request. `/health` is public; `/api/*` requires a
+  token. The server binds loopback by default and fails closed when no tokens are configured.
+- **Token store:** a static `DOKTOK_TENANT_TOKENS` JSON map (`{"<token>": "<tenant_id>"}`) now;
+  DB-backed `tenants` + `api_tokens` (hashed, revocable) later behind the same interface.
+
+Tenant identity always comes from the authenticated token, never from request input. Every future
+milestone (extraction, search, RAG, MCP) inherits this scoping.
 
 ## 16. Roadmap
 

@@ -11,6 +11,8 @@ from doktok_core.ingestion.pipeline import IngestionServices, process_file
 from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_storage_filesystem import LocalFileStorage, QuarantineService, Sha256HashService
 
+TENANT = "t1"
+
 
 class FakeMimeDetector:
     def __init__(self, mime: str) -> None:
@@ -20,12 +22,18 @@ class FakeMimeDetector:
         return self._mime
 
 
-def build_services(tmp_path: Path, *, mime: str) -> tuple[IngestionServices, FilesystemLayout]:
-    layout = FilesystemLayout(tmp_path)
+def build_services(
+    tmp_path: Path,
+    *,
+    mime: str,
+    tenant: str = TENANT,
+    repo: InMemoryIngestionJobRepository | None = None,
+) -> tuple[IngestionServices, FilesystemLayout]:
+    layout = FilesystemLayout(tmp_path, tenant)
     layout.ensure()
-    repo = InMemoryIngestionJobRepository()
     services = IngestionServices(
-        job_repo=repo,
+        tenant_id=tenant,
+        job_repo=repo or InMemoryIngestionJobRepository(),
         file_storage=LocalFileStorage(),
         hash_service=Sha256HashService(),
         mime_detector=FakeMimeDetector(mime),
@@ -49,11 +57,12 @@ def test_supported_file_is_parked_for_extraction(tmp_path: Path) -> None:
     job = process_file(services, source)
 
     assert job.status is JobStatus.NORMALIZING
+    assert job.tenant_id == TENANT
     assert job.detected_mime == "text/plain"
     assert job.sha256 is not None and len(job.sha256) == 64
     assert not Path(source).exists()  # moved out of ingest
     assert (layout.job_source(job.id)).read_bytes() == b"hello world"
-    assert services.job_repo.get(job.id) is not None
+    assert services.job_repo.get(TENANT, job.id) is not None
 
 
 def test_unsupported_file_goes_to_failed(tmp_path: Path) -> None:
@@ -87,3 +96,17 @@ def test_duplicate_hash_is_handled(tmp_path: Path) -> None:
     assert second.status is JobStatus.FAILED
     assert second.error_code == "duplicate_hash"
     assert first.sha256 == second.sha256
+
+
+def test_dedup_is_per_tenant(tmp_path: Path) -> None:
+    # Same content under two tenants must NOT be treated as duplicates.
+    repo = InMemoryIngestionJobRepository()
+    s1, l1 = build_services(tmp_path, mime="text/plain", tenant="t1", repo=repo)
+    s2, l2 = build_services(tmp_path, mime="text/plain", tenant="t2", repo=repo)
+
+    j1 = process_file(s1, drop(l1, "a.txt", b"shared"))
+    j2 = process_file(s2, drop(l2, "a.txt", b"shared"))
+
+    assert j1.status is JobStatus.NORMALIZING
+    assert j2.status is JobStatus.NORMALIZING
+    assert j1.tenant_id == "t1" and j2.tenant_id == "t2"

@@ -1,16 +1,49 @@
-"""FastAPI dependencies and lazy composition for the backend.
+"""FastAPI dependencies: tenant authentication and lazy composition.
 
-The job repository is resolved from the app's DI registry. If nothing is bound (production), a
+``require_tenant`` enforces bearer-token auth and resolves the caller's tenant (ADR-0008). The job
+repository is resolved from the app's DI registry; if nothing is bound (production), a
 Postgres-backed repository is created lazily on first use and cached, so the health endpoint and
 tests that inject an in-memory repository never touch a database.
 """
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Annotated, cast
 
 from doktok_contracts.ports import IngestionJobRepository
-from fastapi import Request
+from doktok_contracts.schemas import TenantContext
+from doktok_core.security.auth import resolve_tenant
+from fastapi import Depends, Header, HTTPException, Request, status
+
+_BEARER_PREFIX = "Bearer "
+
+
+def require_tenant(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> TenantContext:
+    """Authenticate the request and return its tenant. Fail-closed if no tokens are configured."""
+    tokens = request.app.state.settings.tenant_tokens
+    if not tokens:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="authentication is not configured (set DOKTOK_TENANT_TOKENS)",
+        )
+    if not authorization or not authorization.startswith(_BEARER_PREFIX):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    presented = authorization[len(_BEARER_PREFIX) :]
+    tenant_id = resolve_tenant(tokens, presented)
+    if tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return TenantContext(tenant_id=tenant_id)
 
 
 def get_job_repository(request: Request) -> IngestionJobRepository:
@@ -32,3 +65,6 @@ def get_job_repository(request: Request) -> IngestionJobRepository:
     registry.register(IngestionJobRepository, repository)
     request.app.state.database = database
     return repository
+
+
+Tenant = Annotated[TenantContext, Depends(require_tenant)]

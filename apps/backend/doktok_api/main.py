@@ -13,11 +13,13 @@ from doktok_contracts.schemas import HealthStatus
 from doktok_core.config import Settings, get_settings
 from doktok_core.registry import Registry, build_registry
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from doktok_api import __version__
 from doktok_api.routers import ingestion
 
 SERVICE_NAME = "doktok-ng-backend"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 @asynccontextmanager
@@ -38,6 +40,13 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     settings = settings or get_settings()
     registry = registry or build_registry()
 
+    # Fail-closed: never expose a non-loopback bind without configured tokens (ADR-0008).
+    if settings.bind_host not in _LOOPBACK_HOSTS and not settings.tenant_tokens:
+        raise RuntimeError(
+            f"refusing to bind non-loopback host {settings.bind_host!r} without auth tokens; "
+            "set DOKTOK_TENANT_TOKENS or bind to loopback"
+        )
+
     app = FastAPI(
         title="DokTok NG",
         version=__version__,
@@ -46,6 +55,17 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     )
     app.state.settings = settings
     app.state.registry = registry
+
+    # CORS restricted to loopback dev origins; the bearer token is the real control (ADR-0008).
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
     @app.get("/health", response_model=HealthStatus, tags=["system"])
     def health() -> HealthStatus:

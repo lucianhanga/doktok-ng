@@ -3,6 +3,9 @@
 These Pydantic models are the canonical shapes for documents, ingestion jobs, chunks, entities,
 artifacts, and audit events. They are defined in the contracts package so that core logic and all
 adapters depend on the same shapes. See docs/architecture and brief sections 14-16.
+
+Every tenant-owned entity carries a ``tenant_id`` (ADR-0007). Tenant identity always comes from the
+authenticated token, never from request input (ADR-0008).
 """
 
 from __future__ import annotations
@@ -61,8 +64,15 @@ class EntityType(StrEnum):
     CUSTOM_TOKEN = "CUSTOM_TOKEN"
 
 
+class TenantContext(BaseModel):
+    """The authenticated caller's tenant (ADR-0008)."""
+
+    tenant_id: str
+
+
 class Document(BaseModel):
     id: str
+    tenant_id: str
     current_version_id: str | None = None
     sha256: str
     original_filename: str
@@ -77,6 +87,7 @@ class Document(BaseModel):
 
 class DocumentVersion(BaseModel):
     id: str
+    tenant_id: str
     document_id: str
     version_number: int
     sha256: str
@@ -87,6 +98,7 @@ class DocumentVersion(BaseModel):
 
 class IngestionJob(BaseModel):
     id: str
+    tenant_id: str
     document_id: str | None = None
     source_path: str
     status: JobStatus = JobStatus.QUEUED
@@ -101,6 +113,7 @@ class IngestionJob(BaseModel):
 
 class DocumentPage(BaseModel):
     id: str
+    tenant_id: str
     document_id: str
     version_id: str
     page_number: int
@@ -125,6 +138,7 @@ class ChunkMetadata(BaseModel):
 
 class DocumentChunk(BaseModel):
     id: str
+    tenant_id: str
     document_id: str
     version_id: str
     page_start: int | None = None
@@ -137,6 +151,7 @@ class DocumentChunk(BaseModel):
 
 class DocumentEntity(BaseModel):
     id: str
+    tenant_id: str
     document_id: str
     version_id: str
     chunk_id: str | None = None
@@ -149,6 +164,7 @@ class DocumentEntity(BaseModel):
 
 class DocumentArtifact(BaseModel):
     id: str
+    tenant_id: str
     document_id: str
     version_id: str
     artifact_type: str
@@ -161,6 +177,7 @@ class DocumentArtifact(BaseModel):
 
 class AuditEvent(BaseModel):
     id: str
+    tenant_id: str
     event_type: str
     actor: str
     document_id: str | None = None

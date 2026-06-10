@@ -55,3 +55,21 @@ export async function fetchDocuments(signal?: AbortSignal): Promise<DokDocument[
   }
   return (await response.json()) as DokDocument[];
 }
+
+export interface AuditEvent {
+  id: string;
+  event_type: string;
+  actor: string;
+  document_id: string | null;
+  job_id: string | null;
+  timestamp: string;
+  metadata: Record<string, unknown>;
+}
+
+export async function fetchActivity(signal?: AbortSignal): Promise<AuditEvent[]> {
+  const response = await fetch("/api/v1/audit", { signal });
+  if (!response.ok) {
+    throw new Error(`Activity request failed: ${response.status}`);
+  }
+  return (await response.json()) as AuditEvent[];
+}

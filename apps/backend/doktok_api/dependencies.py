@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, cast
 
-from doktok_contracts.ports import DocumentRepository, IngestionJobRepository
+from doktok_contracts.ports import (
+    AuditLogRepository,
+    DocumentRepository,
+    IngestionJobRepository,
+)
 from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_tenant
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -82,6 +86,18 @@ def get_document_repository(request: Request) -> DocumentRepository:
 
     repository = PostgresDocumentRepository(_get_database(request))
     registry.register(DocumentRepository, repository)
+    return repository
+
+
+def get_audit_repository(request: Request) -> AuditLogRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(AuditLogRepository):
+        return cast(AuditLogRepository, registry.resolve(AuditLogRepository))
+
+    from doktok_storage_postgres import PostgresAuditLogRepository
+
+    repository = PostgresAuditLogRepository(_get_database(request))
+    registry.register(AuditLogRepository, repository)
     return repository
 
 

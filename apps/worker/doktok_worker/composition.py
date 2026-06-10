@@ -22,6 +22,7 @@ from doktok_storage_filesystem import (
 )
 from doktok_storage_postgres import (
     Database,
+    PostgresAuditLogRepository,
     PostgresDocumentRepository,
     PostgresIngestionJobRepository,
     migrate,
@@ -46,6 +47,7 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
 
     job_repo = PostgresIngestionJobRepository(db)
     document_repo = PostgresDocumentRepository(db)
+    audit_log = PostgresAuditLogRepository(db)
     file_storage = LocalFileStorage()
     hash_service = Sha256HashService()
     mime_detector = LibmagicMimeDetector()
@@ -79,6 +81,7 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 searchable_pdf_builder=searchable_pdf_builder,
                 pdf_classifier=pdf_classifier,
                 ocr_image_coverage=settings.ocr_image_coverage,
+                audit_log=audit_log,
             )
         )
     return services, db

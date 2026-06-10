@@ -49,6 +49,16 @@ class SecurityDecision(StrEnum):
     REJECT = "reject"
 
 
+class AuditEventType(StrEnum):
+    """Controlled vocabulary for the immutable activity/audit trail (ADR-0006)."""
+
+    DOCUMENT_RECEIVED = "document.received"
+    DOCUMENT_IDENTIFIED = "document.identified"
+    DOCUMENT_ACTIVATED = "document.activated"
+    DOCUMENT_QUARANTINED = "document.quarantined"
+    DOCUMENT_FAILED = "document.failed"
+
+
 class EntityType(StrEnum):
     PERSON = "PERSON"
     ORG = "ORG"

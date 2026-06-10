@@ -58,7 +58,17 @@ class DocumentArtifactRepository(Protocol):
 
 @runtime_checkable
 class AuditLogRepository(Protocol):
+    """Append-only activity/audit trail (record + read only; events are immutable)."""
+
     def record(self, event: AuditEvent) -> None: ...
+    def list_events(
+        self,
+        tenant_id: str,
+        *,
+        document_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AuditEvent]: ...
 
 
 # --- File / IO ------------------------------------------------------------------------------

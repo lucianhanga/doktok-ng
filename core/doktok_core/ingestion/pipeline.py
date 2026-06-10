@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from doktok_contracts.ports import (
+    AuditLogRepository,
     DocumentRepository,
     FileStorage,
     HashService,
@@ -40,6 +41,7 @@ from doktok_contracts.ports import (
     TextExtractor,
 )
 from doktok_contracts.schemas import (
+    AuditEventType,
     Document,
     DocumentStatus,
     IngestionJob,
@@ -47,11 +49,25 @@ from doktok_contracts.schemas import (
     SecurityDecision,
 )
 
+from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import write_document_artifacts
 from doktok_core.extraction.service import NeedsOcrError, extract_document
 from doktok_core.ingestion.layout import FilesystemLayout
 
 DETECTOR_NAME = "libmagic"
+
+_ACTIVATION_SUMMARY = {
+    "text": "Parsed plain text",
+    "markdown": "Parsed Markdown",
+    "pdf_text": "Extracted embedded PDF text",
+    "ocr": "OCR'd page images; searchable PDF created",
+    "pdf_mixed": "Mixed PDF: embedded text kept, scanned pages OCR'd",
+}
+
+
+def _activation_summary(method: str, page_count: int) -> str:
+    base = _ACTIVATION_SUMMARY.get(method, f"Extracted ({method})")
+    return f"{base} ({page_count} page(s))"
 
 
 @dataclass
@@ -76,6 +92,27 @@ class IngestionServices:
     pdf_classifier: PdfClassifier | None = None
     # Page image-coverage at/above which a PDF page is treated as scanned and re-OCR'd.
     ocr_image_coverage: float = 1.0
+    # Activity/audit trail (M3.6). When absent, no audit events are recorded.
+    audit_log: AuditLogRepository | None = None
+
+
+def _audit(
+    services: IngestionServices,
+    event_type: AuditEventType,
+    job: IngestionJob,
+    *,
+    document_id: str | None = None,
+    **details: object,
+) -> None:
+    if services.audit_log is not None:
+        record_activity(
+            services.audit_log,
+            services.tenant_id,
+            event_type,
+            document_id=document_id,
+            job_id=job.id,
+            details=details,
+        )
 
 
 def _new_id() -> str:
@@ -96,6 +133,13 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
         metadata={"original_ingest_path": original_path},
     )
     services.job_repo.add(job)
+    _audit(
+        services,
+        AuditEventType.DOCUMENT_RECEIVED,
+        job,
+        filename=Path(original_path).name,
+        source=original_path,
+    )
 
     workdir = services.layout.job_workdir(job_id)
     try:
@@ -108,6 +152,13 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
         job.sha256 = services.hash_service.sha256(str(dest))
         job.detected_mime = services.mime_detector.detect(str(dest))
         services.job_repo.update(job)
+        _audit(
+            services,
+            AuditEventType.DOCUMENT_IDENTIFIED,
+            job,
+            mime=job.detected_mime,
+            sha256=job.sha256,
+        )
 
         if _is_duplicate(services, job):
             return _fail(
@@ -204,6 +255,18 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
     if workdir.exists():
         shutil.rmtree(workdir, ignore_errors=True)
     services.job_repo.update(job)
+    _audit(
+        services,
+        AuditEventType.DOCUMENT_ACTIVATED,
+        job,
+        document_id=document_id,
+        filename=original_filename,
+        extraction_method=result.extraction_method,
+        page_count=result.page_count,
+        ocr_confidence=result.ocr_confidence,
+        system_document=artifacts.system_document,
+        summary=_activation_summary(result.extraction_method, result.page_count),
+    )
     return job
 
 
@@ -233,6 +296,15 @@ def _fail(
     if workdir.exists():
         services.file_storage.move(str(workdir), str(services.layout.failed_dir(job.id)))
     services.job_repo.update(job)
+    _audit(
+        services,
+        AuditEventType.DOCUMENT_FAILED,
+        job,
+        document_id=job.document_id,
+        error_code=code,
+        error_message=message,
+        mime=job.detected_mime,
+    )
     return job
 
 
@@ -244,4 +316,11 @@ def _quarantine(services: IngestionServices, job: IngestionJob, workdir: Path) -
     if workdir.exists():
         services.quarantine_service.quarantine(str(workdir), reason=job.error_message)
     services.job_repo.update(job)
+    _audit(
+        services,
+        AuditEventType.DOCUMENT_QUARANTINED,
+        job,
+        mime=job.detected_mime,
+        reason=job.error_message,
+    )
     return job

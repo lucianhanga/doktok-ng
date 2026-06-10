@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from doktok_contracts.schemas import Document, DocumentStatus, IngestionJob, JobStatus
+from doktok_contracts.schemas import (
+    AuditEvent,
+    Document,
+    DocumentStatus,
+    IngestionJob,
+    JobStatus,
+)
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
@@ -181,3 +187,66 @@ class PostgresDocumentRepository:
                 (tenant_id, limit, offset),
             ).fetchall()
         return [_row_to_document(row) for row in rows]
+
+
+_AUDIT_COLUMNS = "id, tenant_id, event_type, actor, document_id, job_id, timestamp, metadata"
+
+
+def _row_to_event(row: dict[str, Any]) -> AuditEvent:
+    return AuditEvent(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        event_type=row["event_type"],
+        actor=row["actor"],
+        document_id=row["document_id"],
+        job_id=row["job_id"],
+        timestamp=row["timestamp"],
+        metadata=row["metadata"] or {},
+    )
+
+
+class PostgresAuditLogRepository:
+    """``AuditLogRepository`` backed by PostgreSQL. Append-only: record + tenant-scoped reads."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def record(self, event: AuditEvent) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                f"INSERT INTO audit_events ({_AUDIT_COLUMNS}) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    event.id,
+                    event.tenant_id,
+                    event.event_type,
+                    event.actor,
+                    event.document_id,
+                    event.job_id,
+                    event.timestamp,
+                    Json(event.metadata),
+                ),
+            )
+
+    def list_events(
+        self,
+        tenant_id: str,
+        *,
+        document_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AuditEvent]:
+        clause = "WHERE tenant_id=%s"
+        params: list[object] = [tenant_id]
+        if document_id is not None:
+            clause += " AND document_id=%s"
+            params.append(document_id)
+        params.extend([limit, offset])
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_AUDIT_COLUMNS} FROM audit_events {clause} "
+                "ORDER BY timestamp DESC, id DESC LIMIT %s OFFSET %s",
+                tuple(params),
+            ).fetchall()
+        return [_row_to_event(row) for row in rows]

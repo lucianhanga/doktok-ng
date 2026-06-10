@@ -1,0 +1,25 @@
+"""In-memory document repository for tests and local/dev runs (tenant-scoped, ADR-0007)."""
+
+from __future__ import annotations
+
+from doktok_contracts.schemas import Document
+
+
+class InMemoryDocumentRepository:
+    def __init__(self) -> None:
+        self._docs: dict[str, Document] = {}
+
+    def add(self, document: Document) -> None:
+        if document.id in self._docs:
+            raise ValueError(f"document {document.id} already exists")
+        self._docs[document.id] = document.model_copy(deep=True)
+
+    def get(self, tenant_id: str, document_id: str) -> Document | None:
+        doc = self._docs.get(document_id)
+        if doc is None or doc.tenant_id != tenant_id:
+            return None
+        return doc.model_copy(deep=True)
+
+    def list_documents(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[Document]:
+        docs = [d for d in reversed(self._docs.values()) if d.tenant_id == tenant_id]
+        return [d.model_copy(deep=True) for d in docs[offset : offset + limit]]

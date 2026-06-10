@@ -4,11 +4,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from doktok_contracts.schemas import IngestionJob, JobStatus
+from doktok_contracts.schemas import Document, DocumentStatus, IngestionJob, JobStatus
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from doktok_storage_postgres.db import Database
+
+_DOC_COLUMNS = (
+    "id, tenant_id, current_version_id, sha256, original_filename, detected_mime, "
+    "title, status, storage_path, created_at, activated_at, metadata"
+)
+
+
+def _row_to_document(row: dict[str, Any]) -> Document:
+    return Document(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        current_version_id=row["current_version_id"],
+        sha256=row["sha256"],
+        original_filename=row["original_filename"],
+        detected_mime=row["detected_mime"],
+        title=row["title"],
+        status=DocumentStatus(row["status"]),
+        storage_path=row["storage_path"],
+        created_at=row["created_at"],
+        activated_at=row["activated_at"],
+        metadata=row["metadata"] or {},
+    )
+
 
 _COLUMNS = (
     "id, tenant_id, document_id, source_path, status, detected_mime, sha256, "
@@ -111,3 +134,50 @@ class PostgresIngestionJobRepository:
                 (tenant_id, sha256),
             ).fetchall()
         return [_row_to_job(row) for row in rows]
+
+
+class PostgresDocumentRepository:
+    """``DocumentRepository`` backed by PostgreSQL. Tenant-scoped reads."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def add(self, document: Document) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                f"INSERT INTO documents ({_DOC_COLUMNS}) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    document.id,
+                    document.tenant_id,
+                    document.current_version_id,
+                    document.sha256,
+                    document.original_filename,
+                    document.detected_mime,
+                    document.title,
+                    document.status.value,
+                    document.storage_path,
+                    document.created_at,
+                    document.activated_at,
+                    Json(document.metadata),
+                ),
+            )
+
+    def get(self, tenant_id: str, document_id: str) -> Document | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                f"SELECT {_DOC_COLUMNS} FROM documents WHERE id=%s AND tenant_id=%s",
+                (document_id, tenant_id),
+            ).fetchone()
+        return _row_to_document(row) if row else None
+
+    def list_documents(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[Document]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_DOC_COLUMNS} FROM documents WHERE tenant_id=%s "
+                "ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (tenant_id, limit, offset),
+            ).fetchall()
+        return [_row_to_document(row) for row in rows]

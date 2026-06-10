@@ -6,13 +6,22 @@ from doktok_core.config import Settings
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.policy import DefaultSecurityPolicy
-from doktok_modalities_files import LibmagicMimeDetector
+from doktok_modalities_files import (
+    DirectTextExtractor,
+    LibmagicMimeDetector,
+    PyMuPdfTextExtractor,
+)
 from doktok_storage_filesystem import (
     LocalFileStorage,
     QuarantineService,
     Sha256HashService,
 )
-from doktok_storage_postgres import Database, PostgresIngestionJobRepository, migrate
+from doktok_storage_postgres import (
+    Database,
+    PostgresDocumentRepository,
+    PostgresIngestionJobRepository,
+    migrate,
+)
 
 
 def tenant_ids(settings: Settings) -> list[str]:
@@ -31,11 +40,14 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     db = Database(settings.database_url)
     migrate(db)
 
-    repo = PostgresIngestionJobRepository(db)
+    job_repo = PostgresIngestionJobRepository(db)
+    document_repo = PostgresDocumentRepository(db)
     file_storage = LocalFileStorage()
     hash_service = Sha256HashService()
     mime_detector = LibmagicMimeDetector()
     security_policy = DefaultSecurityPolicy(max_file_mb=settings.max_file_mb)
+    text_extractor = DirectTextExtractor()
+    pdf_extractor = PyMuPdfTextExtractor()
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
@@ -44,12 +56,15 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
         services.append(
             IngestionServices(
                 tenant_id=tenant_id,
-                job_repo=repo,
+                job_repo=job_repo,
+                document_repo=document_repo,
                 file_storage=file_storage,
                 hash_service=hash_service,
                 mime_detector=mime_detector,
                 security_policy=security_policy,
                 quarantine_service=QuarantineService(layout),
+                text_extractor=text_extractor,
+                pdf_extractor=pdf_extractor,
                 layout=layout,
             )
         )

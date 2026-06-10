@@ -26,12 +26,9 @@ build/
 .env.*
 !.env.example
 
-# DokTok runtime storage (never commit ingested documents)
-storage/files/ingest/
-storage/files/in.process/
-storage/files/docs.active/
-storage/files/docs.failed/
-storage/files/quarantine/
+# DokTok runtime storage (never commit ingested documents).
+# Per-tenant lifecycle folders live under storage/files/{tenant}/..., so ignore the whole tree.
+storage/files/
 
 # OS / editors
 .DS_Store

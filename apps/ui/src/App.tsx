@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { fetchHealth, type HealthStatus } from "./api";
+import { DocumentsPanel } from "./DocumentsPanel";
 import { JobsPanel } from "./JobsPanel";
 
 type HealthState =
@@ -55,7 +56,7 @@ export function HealthPanel() {
   );
 }
 
-type View = "status" | "ingestion";
+type View = "status" | "ingestion" | "documents";
 
 export default function App() {
   const [view, setView] = useState<View>("status");
@@ -82,9 +83,19 @@ export default function App() {
           >
             Ingestion
           </button>
+          <button
+            type="button"
+            className={view === "documents" ? "active" : ""}
+            aria-pressed={view === "documents"}
+            onClick={() => setView("documents")}
+          >
+            Documents
+          </button>
         </nav>
       </header>
-      {view === "status" ? <HealthPanel /> : <JobsPanel />}
+      {view === "status" && <HealthPanel />}
+      {view === "ingestion" && <JobsPanel />}
+      {view === "documents" && <DocumentsPanel />}
     </main>
   );
 }

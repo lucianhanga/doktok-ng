@@ -6,10 +6,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from doktok_contracts.schemas import JobStatus
+from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.ingestion.inmemory import InMemoryIngestionJobRepository
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.policy import DefaultSecurityPolicy
+from doktok_modalities_files import DirectTextExtractor, PyMuPdfTextExtractor
 from doktok_storage_filesystem import LocalFileStorage, QuarantineService, Sha256HashService
 from doktok_worker.worker import IngestionWorker
 
@@ -27,11 +29,14 @@ def _services(
     services = IngestionServices(
         tenant_id=tenant,
         job_repo=repo,
+        document_repo=InMemoryDocumentRepository(),
         file_storage=LocalFileStorage(),
         hash_service=Sha256HashService(),
         mime_detector=FakeMimeDetector(),
         security_policy=DefaultSecurityPolicy(max_file_mb=10),
         quarantine_service=QuarantineService(layout),
+        text_extractor=DirectTextExtractor(),
+        pdf_extractor=PyMuPdfTextExtractor(),
         layout=layout,
     )
     return services, layout
@@ -52,7 +57,7 @@ def test_file_ingested_only_after_it_is_stable(tmp_path: Path) -> None:
     assert worker.run_once() == []  # t=0: observed, not yet stable
     second = worker.run_once()  # t=5: stable -> ingested
     assert len(second) == 1
-    assert second[0].status is JobStatus.NORMALIZING
+    assert second[0].status is JobStatus.ACTIVE
     assert second[0].tenant_id == "t1"
 
 

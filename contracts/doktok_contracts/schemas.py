@@ -196,6 +196,15 @@ class AuditEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class EntitySummary(BaseModel):
+    """A distinct entity for a tenant, with how widely it appears (brief section 17/19)."""
+
+    entity_type: EntityType
+    normalized_value: str
+    document_count: int
+    occurrences: int
+
+
 class SearchHit(BaseModel):
     """A hybrid-search result (brief section 17)."""
 

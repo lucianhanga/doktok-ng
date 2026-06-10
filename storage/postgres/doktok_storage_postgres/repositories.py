@@ -8,7 +8,10 @@ from doktok_contracts.schemas import (
     AuditEvent,
     Document,
     DocumentChunk,
+    DocumentEntity,
     DocumentStatus,
+    EntitySummary,
+    EntityType,
     IngestionJob,
     JobStatus,
 )
@@ -27,6 +30,7 @@ _DOC_COLUMNS = (
     "id, tenant_id, current_version_id, sha256, original_filename, detected_mime, "
     "title, status, storage_path, created_at, activated_at, metadata"
 )
+_DOC_COLUMNS_D = ", ".join(f"d.{c}" for c in _DOC_COLUMNS.split(", "))
 
 
 def _row_to_document(row: dict[str, Any]) -> Document:
@@ -296,3 +300,96 @@ class PostgresChunkRepository:
                 "DELETE FROM document_chunks WHERE tenant_id=%s AND document_id=%s",
                 (tenant_id, document_id),
             )
+
+
+class PostgresEntityRepository:
+    """``EntityRepository`` backed by PostgreSQL. Tenant-scoped."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def add_entities(self, entities: list[DocumentEntity]) -> None:
+        if not entities:
+            return
+        with self._db.connection() as conn:
+            for entity in entities:
+                conn.execute(
+                    "INSERT INTO document_entities "
+                    "(id, tenant_id, document_id, version_id, chunk_id, entity_text, "
+                    "entity_type, normalized_value, frequency, metadata) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        entity.id,
+                        entity.tenant_id,
+                        entity.document_id,
+                        entity.version_id,
+                        entity.chunk_id,
+                        entity.entity_text,
+                        entity.entity_type.value,
+                        entity.normalized_value,
+                        entity.frequency,
+                        Json(entity.metadata),
+                    ),
+                )
+
+    def delete_for_document(self, tenant_id: str, document_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM document_entities WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            )
+
+    def list_distinct(
+        self,
+        tenant_id: str,
+        *,
+        entity_type: EntityType | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EntitySummary]:
+        clause = "WHERE tenant_id=%s"
+        params: list[object] = [tenant_id]
+        if entity_type is not None:
+            clause += " AND entity_type=%s"
+            params.append(entity_type.value)
+        params.extend([limit, offset])
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT entity_type, normalized_value, "
+                "COUNT(DISTINCT document_id) AS document_count, "
+                "COALESCE(SUM(frequency), 0) AS occurrences "
+                f"FROM document_entities {clause} "
+                "GROUP BY entity_type, normalized_value "
+                "ORDER BY occurrences DESC, normalized_value ASC LIMIT %s OFFSET %s",
+                tuple(params),
+            ).fetchall()
+        return [
+            EntitySummary(
+                entity_type=EntityType(row["entity_type"]),
+                normalized_value=row["normalized_value"],
+                document_count=int(row["document_count"]),
+                occurrences=int(row["occurrences"]),
+            )
+            for row in rows
+        ]
+
+    def documents_for_entity(
+        self,
+        tenant_id: str,
+        entity_type: EntityType,
+        normalized_value: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Document]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT DISTINCT {_DOC_COLUMNS_D} FROM documents d "
+                "JOIN document_entities e ON e.document_id = d.id AND e.tenant_id = d.tenant_id "
+                "WHERE d.tenant_id=%s AND e.entity_type=%s AND e.normalized_value=%s "
+                "ORDER BY d.created_at DESC LIMIT %s OFFSET %s",
+                (tenant_id, entity_type.value, normalized_value, limit, offset),
+            ).fetchall()
+        return [_row_to_document(row) for row in rows]

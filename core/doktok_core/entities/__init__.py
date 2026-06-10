@@ -1,0 +1,1 @@
+"""Entity extraction domain logic."""

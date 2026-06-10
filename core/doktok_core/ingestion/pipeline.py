@@ -30,6 +30,8 @@ from doktok_contracts.ports import (
     ChunkRepository,
     DocumentRepository,
     EmbeddingProvider,
+    EntityExtractor,
+    EntityRepository,
     FileStorage,
     HashService,
     IngestionJobRepository,
@@ -47,6 +49,7 @@ from doktok_contracts.schemas import (
     AuditEventType,
     Document,
     DocumentChunk,
+    DocumentEntity,
     DocumentStatus,
     IngestionJob,
     JobStatus,
@@ -102,6 +105,39 @@ class IngestionServices:
     chunker: Chunker | None = None
     embedding_provider: EmbeddingProvider | None = None
     chunk_repo: ChunkRepository | None = None
+    # Entity indexing (M5). When both present, entities are extracted + stored before activation.
+    entity_extractor: EntityExtractor | None = None
+    entity_repo: EntityRepository | None = None
+
+
+def _index_entities(services: IngestionServices, document_id: str, result: ExtractionResult) -> int:
+    """Extract entities, aggregate by value, and store them. Returns the distinct entity count."""
+    extractor = services.entity_extractor
+    repo = services.entity_repo
+    if extractor is None or repo is None:
+        return 0
+
+    aggregated: dict[tuple[str, str], DocumentEntity] = {}
+    for occurrence in extractor.extract(result.content_md):
+        key = (occurrence.entity_type.value, occurrence.normalized_value)
+        existing = aggregated.get(key)
+        if existing is None:
+            aggregated[key] = DocumentEntity(
+                id=_new_id(),
+                tenant_id=services.tenant_id,
+                document_id=document_id,
+                version_id="",
+                entity_text=occurrence.entity_text,
+                entity_type=occurrence.entity_type,
+                normalized_value=occurrence.normalized_value,
+                frequency=1,
+            )
+        else:
+            existing.frequency += 1
+    entities = list(aggregated.values())
+    if entities:
+        repo.add_entities(entities)
+    return len(entities)
 
 
 def _index_document(services: IngestionServices, document_id: str, result: ExtractionResult) -> int:
@@ -256,6 +292,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
     services.job_repo.update(job)
     try:
         chunk_count = _index_document(services, document_id, result)
+        entity_count = _index_entities(services, document_id, result)
     except Exception as exc:  # noqa: BLE001 - indexing failure fails the job, not the worker
         return _fail(services, job, workdir, code="indexing_error", message=str(exc))
 
@@ -291,6 +328,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             "page_count": result.page_count,
             "ocr_confidence": result.ocr_confidence,
             "chunk_count": chunk_count,
+            "entity_count": entity_count,
             "original": artifacts.original,
             "system_document": artifacts.system_document,
         },
@@ -314,6 +352,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         page_count=result.page_count,
         ocr_confidence=result.ocr_confidence,
         chunk_count=chunk_count,
+        entity_count=entity_count,
         system_document=artifacts.system_document,
         summary=_activation_summary(result.extraction_method, result.page_count),
     )

@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PDFs/images flagged `needs_ocr`. The ingestion job now runs through to `active`.
 
 ### Added
+- M5 entity indexing: rule-based `RegexEntityExtractor` (EMAIL, URL, MONEY, DATE, INVOICE_ID,
+  CONTRACT_ID), `document_entities` (migration 0006, tenant-scoped), `EntityRepository` (Postgres +
+  in-memory) with distinct-listing and documents-for-entity, entity extraction during activation,
+  `GET /api/v1/entities` + `/api/v1/entities/documents`, and an Entities UI tab. spaCy NER
+  (PERSON/ORG/GPE) is a documented follow-up.
 - M4 vector + full-text hybrid search: deterministic fixed-window `Chunker`, Ollama embeddings
   (`OllamaEmbeddingProvider`, mxbai-embed-large, 1024-dim), `document_chunks` (migration 0005) with a
   pgvector HNSW index and a generated `tsvector` GIN index, `ChunkRepository` (Postgres + in-memory),

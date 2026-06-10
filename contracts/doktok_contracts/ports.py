@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from doktok_contracts.media import OcrPageResult, RenderedPage, TextChunk
+from doktok_contracts.media import ExtractedEntity, OcrPageResult, RenderedPage, TextChunk
 from doktok_contracts.schemas import (
     AuditEvent,
     Document,
@@ -19,6 +19,8 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentVersion,
+    EntitySummary,
+    EntityType,
     IngestionJob,
     SearchHit,
     SecurityDecision,
@@ -164,7 +166,30 @@ class ChatModelProvider(Protocol):
 
 @runtime_checkable
 class EntityExtractor(Protocol):
-    def extract(self, text: str) -> list[DocumentEntity]: ...
+    def extract(self, text: str) -> list[ExtractedEntity]: ...
+
+
+@runtime_checkable
+class EntityRepository(Protocol):
+    def add_entities(self, entities: list[DocumentEntity]) -> None: ...
+    def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
+    def list_distinct(
+        self,
+        tenant_id: str,
+        *,
+        entity_type: EntityType | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EntitySummary]: ...
+    def documents_for_entity(
+        self,
+        tenant_id: str,
+        entity_type: EntityType,
+        normalized_value: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Document]: ...
 
 
 @runtime_checkable

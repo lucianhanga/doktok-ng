@@ -5,6 +5,7 @@ from doktok_storage_postgres.repositories import (
     PostgresAuditLogRepository,
     PostgresChunkRepository,
     PostgresDocumentRepository,
+    PostgresEntityRepository,
     PostgresIngestionJobRepository,
 )
 
@@ -15,6 +16,7 @@ __all__ = [
     "PostgresAuditLogRepository",
     "PostgresChunkRepository",
     "PostgresDocumentRepository",
+    "PostgresEntityRepository",
     "PostgresIngestionJobRepository",
     "migrate",
 ]

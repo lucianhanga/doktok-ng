@@ -92,3 +92,32 @@ export async function search(query: string, signal?: AbortSignal): Promise<Searc
   }
   return (await response.json()) as SearchHit[];
 }
+
+export interface EntitySummary {
+  entity_type: string;
+  normalized_value: string;
+  document_count: number;
+  occurrences: number;
+}
+
+export async function fetchEntities(type?: string, signal?: AbortSignal): Promise<EntitySummary[]> {
+  const qs = type ? `?type=${encodeURIComponent(type)}` : "";
+  const response = await fetch(`/api/v1/entities${qs}`, { signal });
+  if (!response.ok) {
+    throw new Error(`Entities request failed: ${response.status}`);
+  }
+  return (await response.json()) as EntitySummary[];
+}
+
+export async function fetchEntityDocuments(
+  type: string,
+  value: string,
+  signal?: AbortSignal,
+): Promise<DokDocument[]> {
+  const url = `/api/v1/entities/documents?type=${encodeURIComponent(type)}&value=${encodeURIComponent(value)}`;
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw new Error(`Entity documents request failed: ${response.status}`);
+  }
+  return (await response.json()) as DokDocument[];
+}

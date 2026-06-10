@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from doktok_core.config import Settings
+from doktok_core.entities.extractor import RegexEntityExtractor
 from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
@@ -26,6 +27,7 @@ from doktok_storage_postgres import (
     PostgresAuditLogRepository,
     PostgresChunkRepository,
     PostgresDocumentRepository,
+    PostgresEntityRepository,
     PostgresIngestionJobRepository,
     migrate,
 )
@@ -63,6 +65,8 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     chunker = FixedWindowChunker()
     embedding_provider = OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url)
     chunk_repo = PostgresChunkRepository(db)
+    entity_extractor = RegexEntityExtractor()
+    entity_repo = PostgresEntityRepository(db)
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
@@ -90,6 +94,8 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 chunker=chunker,
                 embedding_provider=embedding_provider,
                 chunk_repo=chunk_repo,
+                entity_extractor=entity_extractor,
+                entity_repo=entity_repo,
             )
         )
     return services, db

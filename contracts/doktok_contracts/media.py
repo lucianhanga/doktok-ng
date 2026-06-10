@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from doktok_contracts.schemas import EntityType
+
 
 @dataclass
 class OcrPageResult:
@@ -27,5 +29,16 @@ class TextChunk:
 
     text: str
     token_count: int
+    start_offset: int
+    end_offset: int
+
+
+@dataclass
+class ExtractedEntity:
+    """A single entity occurrence found in text (before tenant/document association)."""
+
+    entity_text: str
+    entity_type: EntityType
+    normalized_value: str
     start_offset: int
     end_offset: int

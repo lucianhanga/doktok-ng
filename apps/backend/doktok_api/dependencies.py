@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 from doktok_contracts.ports import (
     AuditLogRepository,
     DocumentRepository,
+    EntityRepository,
     IngestionJobRepository,
     Retriever,
 )
@@ -99,6 +100,18 @@ def get_audit_repository(request: Request) -> AuditLogRepository:
 
     repository = PostgresAuditLogRepository(_get_database(request))
     registry.register(AuditLogRepository, repository)
+    return repository
+
+
+def get_entity_repository(request: Request) -> EntityRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(EntityRepository):
+        return cast(EntityRepository, registry.resolve(EntityRepository))
+
+    from doktok_storage_postgres import PostgresEntityRepository
+
+    repository = PostgresEntityRepository(_get_database(request))
+    registry.register(EntityRepository, repository)
     return repository
 
 

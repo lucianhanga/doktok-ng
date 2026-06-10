@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from doktok_api.dependencies import Tenant, get_job_repository
 
-router = APIRouter(prefix="/api/ingestion", tags=["ingestion"])
+router = APIRouter(prefix="/api/v1/ingestion", tags=["ingestion"])
 
 Repo = Annotated[IngestionJobRepository, Depends(get_job_repository)]
 

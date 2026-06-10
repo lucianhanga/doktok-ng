@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- API routes are now versioned under `/api/v1` (e.g. `/api/v1/ingestion/jobs`); `/health` stays
+  unversioned. Added a `developer` tenant token (`dev-token-developer`) for local manual testing.
+
 ### Added
 - Project kickoff: architecture proposal, six ADRs, and the M0-M10 milestone roadmap.
 - Repository metadata, issue templates, and the tracked backlog (granular M0 tickets + M1-M10 epics).

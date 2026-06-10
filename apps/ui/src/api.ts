@@ -31,7 +31,7 @@ export interface IngestionJob {
 }
 
 export async function fetchJobs(signal?: AbortSignal): Promise<IngestionJob[]> {
-  const response = await fetch("/api/ingestion/jobs", { signal });
+  const response = await fetch("/api/v1/ingestion/jobs", { signal });
   if (!response.ok) {
     throw new Error(`Jobs request failed: ${response.status}`);
   }

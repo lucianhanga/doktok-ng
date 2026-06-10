@@ -4,6 +4,7 @@ import { fetchHealth, type HealthStatus } from "./api";
 import { ActivityPanel } from "./ActivityPanel";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { JobsPanel } from "./JobsPanel";
+import { SearchPanel } from "./SearchPanel";
 
 type HealthState =
   | { kind: "loading" }
@@ -57,7 +58,7 @@ export function HealthPanel() {
   );
 }
 
-type View = "status" | "ingestion" | "documents" | "activity";
+type View = "status" | "ingestion" | "documents" | "search" | "activity";
 
 export default function App() {
   const [view, setView] = useState<View>("status");
@@ -94,6 +95,14 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={view === "search" ? "active" : ""}
+            aria-pressed={view === "search"}
+            onClick={() => setView("search")}
+          >
+            Search
+          </button>
+          <button
+            type="button"
             className={view === "activity" ? "active" : ""}
             aria-pressed={view === "activity"}
             onClick={() => setView("activity")}
@@ -105,6 +114,7 @@ export default function App() {
       {view === "status" && <HealthPanel />}
       {view === "ingestion" && <JobsPanel />}
       {view === "documents" && <DocumentsPanel />}
+      {view === "search" && <SearchPanel />}
       {view === "activity" && <ActivityPanel />}
     </main>
   );

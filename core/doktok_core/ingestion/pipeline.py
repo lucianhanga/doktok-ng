@@ -26,7 +26,10 @@ from pathlib import Path
 
 from doktok_contracts.ports import (
     AuditLogRepository,
+    Chunker,
+    ChunkRepository,
     DocumentRepository,
+    EmbeddingProvider,
     FileStorage,
     HashService,
     IngestionJobRepository,
@@ -43,6 +46,7 @@ from doktok_contracts.ports import (
 from doktok_contracts.schemas import (
     AuditEventType,
     Document,
+    DocumentChunk,
     DocumentStatus,
     IngestionJob,
     JobStatus,
@@ -51,7 +55,7 @@ from doktok_contracts.schemas import (
 
 from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import write_document_artifacts
-from doktok_core.extraction.service import NeedsOcrError, extract_document
+from doktok_core.extraction.service import ExtractionResult, NeedsOcrError, extract_document
 from doktok_core.ingestion.layout import FilesystemLayout
 
 DETECTOR_NAME = "libmagic"
@@ -94,6 +98,42 @@ class IngestionServices:
     ocr_image_coverage: float = 1.0
     # Activity/audit trail (M3.6). When absent, no audit events are recorded.
     audit_log: AuditLogRepository | None = None
+    # Indexing (M4). When all present, documents are chunked + embedded before activation.
+    chunker: Chunker | None = None
+    embedding_provider: EmbeddingProvider | None = None
+    chunk_repo: ChunkRepository | None = None
+
+
+def _index_document(services: IngestionServices, document_id: str, result: ExtractionResult) -> int:
+    """Chunk + embed + store the document's content. Returns the number of chunks indexed."""
+    chunker = services.chunker
+    embedder = services.embedding_provider
+    repo = services.chunk_repo
+    if chunker is None or embedder is None or repo is None:
+        return 0
+
+    chunks: list[DocumentChunk] = []
+    for page_number, page_text in enumerate(result.pages, start=1):
+        for piece in chunker.chunk(page_text):
+            chunks.append(
+                DocumentChunk(
+                    id=_new_id(),
+                    tenant_id=services.tenant_id,
+                    document_id=document_id,
+                    version_id="",
+                    page_start=page_number,
+                    page_end=page_number,
+                    heading_path=[],
+                    text=piece.text,
+                    token_count=piece.token_count,
+                    metadata={"start_offset": piece.start_offset, "end_offset": piece.end_offset},
+                )
+            )
+    if not chunks:
+        return 0
+    embeddings = embedder.embed([chunk.text for chunk in chunks])
+    repo.add_chunks(chunks, embeddings)
+    return len(chunks)
 
 
 def _audit(
@@ -211,6 +251,14 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
     document_id = _new_id()
     original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name
 
+    # Index (chunk + embed + store) before activation: a document is not active until indexed.
+    job.status = JobStatus.INDEXING
+    services.job_repo.update(job)
+    try:
+        chunk_count = _index_document(services, document_id, result)
+    except Exception as exc:  # noqa: BLE001 - indexing failure fails the job, not the worker
+        return _fail(services, job, workdir, code="indexing_error", message=str(exc))
+
     job.status = JobStatus.ACTIVATING
     artifacts = write_document_artifacts(
         services.file_storage,
@@ -242,6 +290,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             "extraction_method": result.extraction_method,
             "page_count": result.page_count,
             "ocr_confidence": result.ocr_confidence,
+            "chunk_count": chunk_count,
             "original": artifacts.original,
             "system_document": artifacts.system_document,
         },
@@ -264,6 +313,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         extraction_method=result.extraction_method,
         page_count=result.page_count,
         ocr_confidence=result.ocr_confidence,
+        chunk_count=chunk_count,
         system_document=artifacts.system_document,
         summary=_activation_summary(result.extraction_method, result.page_count),
     )

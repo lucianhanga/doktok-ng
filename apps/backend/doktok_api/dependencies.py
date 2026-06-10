@@ -14,6 +14,7 @@ from doktok_contracts.ports import (
     AuditLogRepository,
     DocumentRepository,
     IngestionJobRepository,
+    Retriever,
 )
 from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_tenant
@@ -99,6 +100,23 @@ def get_audit_repository(request: Request) -> AuditLogRepository:
     repository = PostgresAuditLogRepository(_get_database(request))
     registry.register(AuditLogRepository, repository)
     return repository
+
+
+def get_retriever(request: Request) -> Retriever:
+    registry = request.app.state.registry
+    if registry.is_registered(Retriever):
+        return cast(Retriever, registry.resolve(Retriever))
+
+    from doktok_provider_ollama import OllamaEmbeddingProvider
+    from doktok_retrieval_hybrid import HybridPostgresRetriever
+
+    settings = request.app.state.settings
+    retriever = HybridPostgresRetriever(
+        _get_database(request),
+        OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url),
+    )
+    registry.register(Retriever, retriever)
+    return retriever
 
 
 Tenant = Annotated[TenantContext, Depends(require_tenant)]

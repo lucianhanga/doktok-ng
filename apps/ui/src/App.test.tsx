@@ -24,7 +24,11 @@ function mockRoutes(jobs: IngestionJob[] = []) {
       if (url.includes("/api/v1/ingestion/jobs")) {
         return new Response(JSON.stringify(jobs), { status: 200 });
       }
-      if (url.includes("/api/v1/documents") || url.includes("/api/v1/audit")) {
+      if (
+        url.includes("/api/v1/documents") ||
+        url.includes("/api/v1/audit") ||
+        url.includes("/api/v1/search")
+      ) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       return new Response(JSON.stringify(HEALTH), { status: 200 });

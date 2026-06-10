@@ -73,3 +73,22 @@ export async function fetchActivity(signal?: AbortSignal): Promise<AuditEvent[]>
   }
   return (await response.json()) as AuditEvent[];
 }
+
+export interface SearchHit {
+  document_id: string;
+  chunk_id: string;
+  original_filename: string | null;
+  title: string | null;
+  page_start: number | null;
+  page_end: number | null;
+  snippet: string;
+  score: number;
+}
+
+export async function search(query: string, signal?: AbortSignal): Promise<SearchHit[]> {
+  const response = await fetch(`/api/v1/search?q=${encodeURIComponent(query)}`, { signal });
+  if (!response.ok) {
+    throw new Error(`Search request failed: ${response.status}`);
+  }
+  return (await response.json()) as SearchHit[];
+}

@@ -20,6 +20,11 @@ the *style*, narrowed to documents.
 
 ## Status
 
+**M4 (Vector + full-text search).** On top of M3, every activated document is **chunked, embedded
+(Ollama `mxbai-embed-large` → pgvector) and full-text indexed** before it goes active. **Hybrid search**
+(semantic vector + Postgres FTS, fused with Reciprocal Rank Fusion) is exposed at `GET /api/v1/search`
+and a **Search** tab in the UI — tenant-scoped and token-protected. Earlier milestones below.
+
 **M3 (OCR extraction).** Files dropped into a tenant's ingest folder are detected, validated, and
 **extracted into active documents**. Born-digital `.txt`/`.md`/PDF use direct/PyMuPDF extraction;
 **scanned PDFs and images are OCR'd via a local Ollama vision model** (`DOKTOK_OCR_MODEL`, default

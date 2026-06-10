@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from doktok_core.config import Settings
+from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.policy import DefaultSecurityPolicy
@@ -14,7 +15,7 @@ from doktok_modalities_files import (
     PyMuPdfTextExtractor,
     SearchablePdfBuilder,
 )
-from doktok_provider_ollama import OllamaVisionOcr
+from doktok_provider_ollama import OllamaEmbeddingProvider, OllamaVisionOcr
 from doktok_storage_filesystem import (
     LocalFileStorage,
     QuarantineService,
@@ -23,6 +24,7 @@ from doktok_storage_filesystem import (
 from doktok_storage_postgres import (
     Database,
     PostgresAuditLogRepository,
+    PostgresChunkRepository,
     PostgresDocumentRepository,
     PostgresIngestionJobRepository,
     migrate,
@@ -58,6 +60,9 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
     pdf_classifier = PyMuPdfClassifier()
+    chunker = FixedWindowChunker()
+    embedding_provider = OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url)
+    chunk_repo = PostgresChunkRepository(db)
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
@@ -82,6 +87,9 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 pdf_classifier=pdf_classifier,
                 ocr_image_coverage=settings.ocr_image_coverage,
                 audit_log=audit_log,
+                chunker=chunker,
+                embedding_provider=embedding_provider,
+                chunk_repo=chunk_repo,
             )
         )
     return services, db

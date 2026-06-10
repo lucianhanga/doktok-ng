@@ -215,6 +215,8 @@ source = { editable = "apps/backend" }
 dependencies = [
     { name = "doktok-contracts" },
     { name = "doktok-core" },
+    { name = "doktok-provider-ollama" },
+    { name = "doktok-retrieval-hybrid" },
     { name = "doktok-storage-postgres" },
     { name = "fastapi" },
     { name = "uvicorn" },
@@ -224,6 +226,8 @@ dependencies = [
 requires-dist = [
     { name = "doktok-contracts", editable = "contracts" },
     { name = "doktok-core", editable = "core" },
+    { name = "doktok-provider-ollama", editable = "providers/ollama" },
+    { name = "doktok-retrieval-hybrid", editable = "retrieval/hybrid" },
     { name = "doktok-storage-postgres", editable = "storage/postgres" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "uvicorn", specifier = ">=0.30" },
@@ -359,10 +363,16 @@ version = "0.0.0"
 source = { editable = "retrieval/hybrid" }
 dependencies = [
     { name = "doktok-contracts" },
+    { name = "doktok-storage-postgres" },
+    { name = "psycopg" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "doktok-contracts", editable = "contracts" }]
+requires-dist = [
+    { name = "doktok-contracts", editable = "contracts" },
+    { name = "doktok-storage-postgres", editable = "storage/postgres" },
+    { name = "psycopg", specifier = ">=3.2" },
+]
 
 [[package]]
 name = "doktok-storage-filesystem"

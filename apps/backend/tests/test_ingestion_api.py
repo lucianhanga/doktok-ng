@@ -55,22 +55,22 @@ def test_health_is_public() -> None:
 
 def test_missing_token_is_401() -> None:
     client = _client(TOKENS, _job("j1", "tenant-a"))
-    assert client.get("/api/ingestion/jobs").status_code == 401
+    assert client.get("/api/v1/ingestion/jobs").status_code == 401
 
 
 def test_invalid_token_is_401() -> None:
     client = _client(TOKENS, _job("j1", "tenant-a"))
-    assert client.get("/api/ingestion/jobs", headers=_auth("nope")).status_code == 401
+    assert client.get("/api/v1/ingestion/jobs", headers=_auth("nope")).status_code == 401
 
 
 def test_fail_closed_when_no_tokens_configured() -> None:
     client = _client({}, _job("j1", "tenant-a"))
-    assert client.get("/api/ingestion/jobs", headers=_auth("tok-a")).status_code == 503
+    assert client.get("/api/v1/ingestion/jobs", headers=_auth("tok-a")).status_code == 503
 
 
 def test_lists_only_callers_tenant() -> None:
     client = _client(TOKENS, _job("a-job", "tenant-a"), _job("b-job", "tenant-b"))
-    response = client.get("/api/ingestion/jobs", headers=_auth("tok-a"))
+    response = client.get("/api/v1/ingestion/jobs", headers=_auth("tok-a"))
     assert response.status_code == 200
     assert [row["id"] for row in response.json()] == ["a-job"]
 
@@ -78,5 +78,5 @@ def test_lists_only_callers_tenant() -> None:
 def test_cannot_read_another_tenants_job() -> None:
     client = _client(TOKENS, _job("a-job", "tenant-a"), _job("b-job", "tenant-b"))
     # tenant-a's token must not see tenant-b's job.
-    assert client.get("/api/ingestion/jobs/b-job", headers=_auth("tok-a")).status_code == 404
-    assert client.get("/api/ingestion/jobs/a-job", headers=_auth("tok-a")).status_code == 200
+    assert client.get("/api/v1/ingestion/jobs/b-job", headers=_auth("tok-a")).status_code == 404
+    assert client.get("/api/v1/ingestion/jobs/a-job", headers=_auth("tok-a")).status_code == 200

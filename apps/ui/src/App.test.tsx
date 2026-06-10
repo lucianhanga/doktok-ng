@@ -21,7 +21,7 @@ function mockRoutes(jobs: IngestionJob[] = []) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/ingestion/jobs")) {
+      if (url.includes("/api/v1/ingestion/jobs")) {
         return new Response(JSON.stringify(jobs), { status: 200 });
       }
       return new Response(JSON.stringify(HEALTH), { status: 200 });

@@ -71,8 +71,8 @@ make db
 # 3. Run the backend (http://localhost:8000)
 make run-backend
 #    Health is public:    curl http://localhost:8000/health
-#    The API needs a token (from .env):
-#    curl -H "Authorization: Bearer dev-token-default" http://localhost:8000/api/ingestion/jobs
+#    The API is versioned under /api/v1 and needs a token (from .env):
+#    curl -H "Authorization: Bearer dev-token-default" http://localhost:8000/api/v1/ingestion/jobs
 
 # 4. In another terminal, run the UI (http://localhost:5173).
 #    Use the make target so the dev proxy injects the bearer token for you.
@@ -84,11 +84,14 @@ make check
 
 ## Authentication and multi-tenancy
 
-DokTok NG is multi-tenant and the API is token-protected (ADR-0007, ADR-0008):
+DokTok NG is multi-tenant and the API is token-protected (ADR-0007, ADR-0008). HTTP routes are
+versioned under `/api/v1` (`/health` is unversioned and public):
 
-- Send `Authorization: Bearer <token>`; `/health` is public, `/api/*` requires a token.
+- Send `Authorization: Bearer <token>`; `/health` is public, `/api/v1/*` requires a token.
 - Each token maps to a tenant (`DOKTOK_TENANT_TOKENS` is a JSON `{"<token>": "<tenant_id>"}` map).
-  The default `.env` ships `{"dev-token-default": "default"}`.
+  The default `.env` ships two: `dev-token-default` -> tenant `default` (used by the UI dev proxy)
+  and `dev-token-developer` -> tenant `developer` (for your manual API testing). Example:
+  `curl -H "Authorization: Bearer dev-token-developer" http://localhost:8000/api/v1/ingestion/jobs`
 - All data is scoped to the caller's tenant: `tenant_id` on every table, and per-tenant filesystem
   folders. The backend binds loopback by default and fails closed if no tokens are configured.
 - Static `.env` tokens now; DB-backed, hashed, revocable tokens later.
@@ -105,7 +108,7 @@ cp some-document.pdf storage/files/default/ingest/
 
 The worker waits until the file is stable, moves it into
 `storage/files/{tenant}/in.process/{job_id}/source`, hashes it, detects its MIME type, and records an
-ingestion job tagged with that tenant. Watch progress via the API (`GET /api/ingestion/jobs`, with a
+ingestion job tagged with that tenant. Watch progress via the API (`GET /api/v1/ingestion/jobs`, with a
 token) or the **Ingestion** tab in the UI. Unsupported types are rejected to `.../docs.failed/`;
 dangerous types are isolated to `.../quarantine/`; duplicate content (same SHA-256, per tenant) is
 flagged. Extraction into active documents arrives in M2.

@@ -16,7 +16,11 @@ from doktok_modalities_files import (
     PyMuPdfTextExtractor,
     SearchablePdfBuilder,
 )
-from doktok_provider_ollama import OllamaEmbeddingProvider, OllamaVisionOcr
+from doktok_provider_ollama import (
+    OllamaChatModelProvider,
+    OllamaEmbeddingProvider,
+    OllamaVisionOcr,
+)
 from doktok_storage_filesystem import (
     LocalFileStorage,
     QuarantineService,
@@ -67,6 +71,7 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     chunk_repo = PostgresChunkRepository(db)
     entity_extractor = RegexEntityExtractor()
     entity_repo = PostgresEntityRepository(db)
+    chat_model = OllamaChatModelProvider(settings.default_model, settings.ollama_base_url)
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
@@ -90,6 +95,8 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 searchable_pdf_builder=searchable_pdf_builder,
                 pdf_classifier=pdf_classifier,
                 ocr_image_coverage=settings.ocr_image_coverage,
+                ocr_min_text_quality=settings.ocr_min_text_quality,
+                chat_model=chat_model,
                 audit_log=audit_log,
                 chunker=chunker,
                 embedding_provider=embedding_provider,

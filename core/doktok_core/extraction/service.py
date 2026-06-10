@@ -4,9 +4,9 @@ Maps a MIME type to extracted content, transparently falling back to OCR when th
 text and OCR services are available:
 
 - text/plain, text/markdown        -> direct text
-- born-digital PDF (has text)      -> embedded text (PyMuPDF)
-- scanned PDF (no embedded text)   -> OCR every page (M3)
-- mixed PDF (some blank pages)     -> embedded text kept; only blank pages OCR'd (M3)
+- born-digital PDF (text pages)    -> embedded text (PyMuPDF)
+- PDF page with no text OR a full-page image (>= coverage threshold) -> OCR that page, dropping any
+  existing (possibly weak) embedded text layer; other pages keep their embedded text
 - image                            -> OCR (M3)
 
 Returns the extraction result and an optional ``normalized/searchable.pdf`` (images + OCR text
@@ -21,6 +21,7 @@ from pathlib import Path
 from doktok_contracts.media import RenderedPage
 from doktok_contracts.ports import (
     OcrExtractor,
+    PdfClassifier,
     PdfRenderer,
     PdfTextExtractor,
     SearchablePdfBuilder,
@@ -64,6 +65,8 @@ def extract_document(
     ocr: OcrExtractor | None = None,
     renderer: PdfRenderer | None = None,
     builder: SearchablePdfBuilder | None = None,
+    classifier: PdfClassifier | None = None,
+    ocr_image_coverage: float = 1.0,
 ) -> tuple[ExtractionResult, bytes | None]:
     if mime in (MIME_TEXT, MIME_MARKDOWN):
         text = text_extractor.extract(path)
@@ -71,7 +74,9 @@ def extract_document(
         return ExtractionResult(text, [text], method, 1), None
 
     if mime == MIME_PDF:
-        return _extract_pdf(path, pdf_extractor, ocr, renderer, builder)
+        return _extract_pdf(
+            path, pdf_extractor, ocr, renderer, builder, classifier, ocr_image_coverage
+        )
 
     if mime.startswith("image/"):
         if ocr is None:
@@ -91,28 +96,39 @@ def _extract_pdf(
     ocr: OcrExtractor | None,
     renderer: PdfRenderer | None,
     builder: SearchablePdfBuilder | None,
+    classifier: PdfClassifier | None,
+    ocr_image_coverage: float,
 ) -> tuple[ExtractionResult, bytes | None]:
     pages = pdf_extractor.extract_pages(path)
-    blanks = [i for i, text in enumerate(pages) if not text.strip()]
+    coverage = classifier.page_image_coverage(path) if classifier is not None else []
 
-    if not blanks:
+    def _cov(i: int) -> float:
+        return coverage[i] if i < len(coverage) else 0.0
+
+    # A page needs OCR if it has no embedded text, or it is essentially a full-page image
+    # (a scan) -- in which case any existing embedded text layer is dropped and re-OCR'd.
+    needs_ocr = [
+        i for i in range(len(pages)) if not pages[i].strip() or _cov(i) >= ocr_image_coverage
+    ]
+
+    if not needs_ocr:
         return ExtractionResult(_pdf_markdown(pages), pages, "pdf_text", len(pages)), None
 
     if ocr is None or renderer is None:
-        if len(blanks) == len(pages):
+        if all(not text.strip() for text in pages):
             raise NeedsOcrError("PDF has no embedded text; OCR required")
-        # Mixed PDF without OCR: keep the embedded text, leave blank pages empty (do not fail).
+        # No OCR available: keep whatever embedded text exists rather than failing.
         return ExtractionResult(_pdf_markdown(pages), pages, "pdf_text", len(pages)), None
 
     images = renderer.render_pages(path)
     confidences: list[float | None] = []
-    for i in blanks:
+    for i in needs_ocr:
         if i < len(images):
             page = ocr.ocr_image(images[i])
-            pages[i] = page.text
+            pages[i] = page.text  # drop any prior (weak) text layer for this page
             confidences.append(page.confidence)
 
-    fully_ocr = len(blanks) == len(pages)
+    fully_ocr = len(needs_ocr) == len(pages)
     method = "ocr" if fully_ocr else "pdf_mixed"
     result = ExtractionResult(
         _pdf_markdown(pages), pages, method, len(pages), _average(confidences)

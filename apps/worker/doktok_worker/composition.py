@@ -9,6 +9,7 @@ from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_modalities_files import (
     DirectTextExtractor,
     LibmagicMimeDetector,
+    PyMuPdfClassifier,
     PyMuPdfRenderer,
     PyMuPdfTextExtractor,
     SearchablePdfBuilder,
@@ -54,6 +55,7 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     ocr_extractor = OllamaVisionOcr(settings.ocr_model, settings.ollama_base_url)
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
+    pdf_classifier = PyMuPdfClassifier()
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
@@ -75,6 +77,8 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 ocr_extractor=ocr_extractor,
                 pdf_renderer=pdf_renderer,
                 searchable_pdf_builder=searchable_pdf_builder,
+                pdf_classifier=pdf_classifier,
+                ocr_image_coverage=settings.ocr_image_coverage,
             )
         )
     return services, db

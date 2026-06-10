@@ -43,7 +43,21 @@ class FakeBuilder:
         return b"%PDF-FAKE-SEARCHABLE"
 
 
-def _services(tmp_path: Path, mime: str) -> tuple[IngestionServices, FilesystemLayout]:
+class FakeClassifier:
+    def __init__(self, coverages: list[float]) -> None:
+        self._coverages = coverages
+
+    def page_image_coverage(self, path: str) -> list[float]:  # noqa: ARG002
+        return self._coverages
+
+
+def _services(
+    tmp_path: Path,
+    mime: str,
+    *,
+    coverages: list[float] | None = None,
+    coverage_threshold: float = 1.0,
+) -> tuple[IngestionServices, FilesystemLayout]:
     layout = FilesystemLayout(tmp_path, TENANT)
     layout.ensure()
     services = IngestionServices(
@@ -61,6 +75,8 @@ def _services(tmp_path: Path, mime: str) -> tuple[IngestionServices, FilesystemL
         ocr_extractor=FakeOcr(),
         pdf_renderer=FakeRenderer(),
         searchable_pdf_builder=FakeBuilder(),
+        pdf_classifier=FakeClassifier(coverages) if coverages is not None else None,
+        ocr_image_coverage=coverage_threshold,
     )
     return services, layout
 
@@ -116,5 +132,34 @@ def test_mixed_pdf_keeps_embedded_text_and_ocrs_blanks(tmp_path: Path) -> None:
     content = (active / "content.md").read_text()
     assert "Real embedded text" in content  # embedded text not destroyed
     assert "OCR TEXT" in content  # blank page OCR'd
+    doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
+    assert doc is not None and doc.metadata["extraction_method"] == "pdf_mixed"
+
+
+def test_full_page_image_with_text_layer_is_reocred(tmp_path: Path) -> None:
+    # Both pages have an embedded (weak) text layer AND are full-page images -> re-OCR both.
+    services, layout = _services(
+        tmp_path, "application/pdf", coverages=[1.0, 1.0], coverage_threshold=0.8
+    )
+    job = process_file(services, _pdf(layout, "weak.pdf", ["weak layer A", "weak layer B"]))
+
+    assert job.status is JobStatus.ACTIVE
+    content = (layout.active_dir(job.document_id) / "content.md").read_text()  # type: ignore[arg-type]
+    assert "weak layer A" not in content  # weak embedded text was dropped
+    assert "OCR TEXT" in content  # replaced by fresh OCR
+    doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
+    assert doc is not None and doc.metadata["extraction_method"] == "ocr"
+
+
+def test_text_page_with_small_figure_keeps_embedded_text(tmp_path: Path) -> None:
+    # Page 0: real text, small figure (low coverage) -> keep. Page 1: full-page image -> OCR.
+    services, layout = _services(
+        tmp_path, "application/pdf", coverages=[0.1, 0.95], coverage_threshold=0.8
+    )
+    job = process_file(services, _pdf(layout, "report.pdf", ["Important clause", "scan"]))
+
+    content = (layout.active_dir(job.document_id) / "content.md").read_text()  # type: ignore[arg-type]
+    assert "Important clause" in content  # born-digital text preserved
+    assert "OCR TEXT" in content  # full-page-image page OCR'd
     doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
     assert doc is not None and doc.metadata["extraction_method"] == "pdf_mixed"

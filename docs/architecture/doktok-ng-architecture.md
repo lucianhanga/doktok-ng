@@ -164,6 +164,15 @@ RAG answers must include citations (document id, title/filename, page, chunk id,
 OCR confidence where relevant). The answerer must be able to say it could not find enough evidence,
 rather than producing ungrounded answers.
 
+### OCR routing (M3)
+
+OCR runs on a local Ollama vision model (`DOKTOK_OCR_MODEL`). A PDF page is OCR'd when it has no
+embedded text **or** its largest image covers at least `DOKTOK_OCR_IMAGE_COVERAGE` of the page (a
+full-page scan). In the latter case any existing embedded text layer is **dropped and re-OCR'd**, so
+pages OCR'd by a weaker engine are redone. Born-digital pages (real text, only small figures) keep
+their embedded text; mixed PDFs combine both per page. Fully-OCR'd documents also get a derived
+`normalized/searchable.pdf` (page images + an invisible OCR text layer) as the system document.
+
 ## 11. Entity extraction
 
 Start with spaCy NER plus rule-based/regex patterns (PERSON, ORG, GPE/LOCATION, DATE, EMAIL, URL,

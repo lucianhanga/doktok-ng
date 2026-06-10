@@ -92,7 +92,9 @@ class TextExtractor(Protocol):
 
 @runtime_checkable
 class PdfClassifier(Protocol):
-    def is_scanned(self, path: str) -> bool: ...
+    def page_image_coverage(self, path: str) -> list[float]:
+        """Per page, the fraction (0-1) of the page area covered by its largest embedded image."""
+        ...
 
 
 @runtime_checkable

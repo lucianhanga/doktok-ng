@@ -79,8 +79,10 @@ exclude = ["node_modules", "\\.venv"]
 addopts = "-q --import-mode=importlib"
 testpaths = [
     "apps/backend/tests",
+    "apps/worker/tests",
     "core/tests",
     "contracts/tests",
+    "storage/postgres/tests",
 ]
 
 [tool.coverage.run]

@@ -49,3 +49,59 @@ body {
 .status-error {
   color: #b60205;
 }
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.tabs button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.tabs button.active {
+  background: rgba(127, 127, 127, 0.18);
+  font-weight: 600;
+}
+
+.empty {
+  opacity: 0.7;
+}
+
+table.jobs {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.jobs th,
+table.jobs td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+.badge {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: rgba(127, 127, 127, 0.18);
+}
+
+.badge.status-active,
+.badge.status-normalizing {
+  background: rgba(46, 160, 67, 0.2);
+}
+
+.badge.status-failed {
+  background: rgba(182, 2, 5, 0.2);
+}
+
+.badge.status-quarantined {
+  background: rgba(251, 202, 4, 0.25);
+}

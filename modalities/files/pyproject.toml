@@ -5,9 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "doktok-modalities-files"
 version = "0.0.0"
-description = "File modality handling (placeholder)"
+description = "File modality handling"
 requires-python = ">=3.12"
-dependencies = ["doktok-contracts"]
+dependencies = [
+    "doktok-contracts",
+    "python-magic>=0.4.27",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["doktok_modalities_files"]

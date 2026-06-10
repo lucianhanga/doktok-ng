@@ -1,10 +1,13 @@
-"""DokTok NG FastAPI backend (M0 skeleton).
+"""DokTok NG FastAPI backend.
 
-Exposes a health endpoint and wires the application settings and DI registry. Real document,
-ingestion, search, and chat routes arrive in later milestones.
+Exposes a health endpoint and the ingestion job API, and wires application settings and the DI
+registry. Document, search, and chat routes arrive in later milestones.
 """
 
 from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from doktok_contracts.schemas import HealthStatus
 from doktok_core.config import Settings, get_settings
@@ -12,8 +15,18 @@ from doktok_core.registry import Registry, build_registry
 from fastapi import FastAPI
 
 from doktok_api import __version__
+from doktok_api.routers import ingestion
 
 SERVICE_NAME = "doktok-ng-backend"
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    # Close a lazily-created database pool, if one was opened during the app's lifetime.
+    database = getattr(app.state, "database", None)
+    if database is not None:
+        database.close()
 
 
 def create_app(settings: Settings | None = None, registry: Registry | None = None) -> FastAPI:
@@ -29,6 +42,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         title="DokTok NG",
         version=__version__,
         summary="Local-first document-intelligence system",
+        lifespan=_lifespan,
     )
     app.state.settings = settings
     app.state.registry = registry
@@ -41,6 +55,8 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             version=__version__,
             environment=settings.env,
         )
+
+    app.include_router(ingestion.router)
 
     return app
 

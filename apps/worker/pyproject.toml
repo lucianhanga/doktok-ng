@@ -5,9 +5,18 @@ build-backend = "hatchling.build"
 [project]
 name = "doktok-worker"
 version = "0.0.0"
-description = "DokTok NG ingestion worker (placeholder)"
+description = "DokTok NG ingestion worker"
 requires-python = ">=3.12"
-dependencies = ["doktok-core", "doktok-contracts"]
+dependencies = [
+    "doktok-core",
+    "doktok-contracts",
+    "doktok-storage-postgres",
+    "doktok-storage-filesystem",
+    "doktok-modalities-files",
+]
+
+[project.scripts]
+doktok-worker = "doktok_worker.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["doktok_worker"]

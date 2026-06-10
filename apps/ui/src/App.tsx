@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { fetchHealth, type HealthStatus } from "./api";
+import { JobsPanel } from "./JobsPanel";
 
 type HealthState =
   | { kind: "loading" }
@@ -54,14 +55,36 @@ export function HealthPanel() {
   );
 }
 
+type View = "status" | "ingestion";
+
 export default function App() {
+  const [view, setView] = useState<View>("status");
+
   return (
     <main className="app">
       <header className="app-header">
         <h1>DokTok NG</h1>
         <p className="tagline">Local-first document intelligence</p>
+        <nav className="tabs" aria-label="Sections">
+          <button
+            type="button"
+            className={view === "status" ? "active" : ""}
+            aria-pressed={view === "status"}
+            onClick={() => setView("status")}
+          >
+            Status
+          </button>
+          <button
+            type="button"
+            className={view === "ingestion" ? "active" : ""}
+            aria-pressed={view === "ingestion"}
+            onClick={() => setView("ingestion")}
+          >
+            Ingestion
+          </button>
+        </nav>
       </header>
-      <HealthPanel />
+      {view === "status" ? <HealthPanel /> : <JobsPanel />}
     </main>
   );
 }

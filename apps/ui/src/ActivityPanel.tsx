@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { fetchActivity, type AuditEvent } from "./api";
+import { useInterval } from "./hooks";
 
 type State =
   | { kind: "loading" }
@@ -24,20 +25,25 @@ function summary(event: AuditEvent): string {
 export function ActivityPanel() {
   const [state, setState] = useState<State>({ kind: "loading" });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchActivity(controller.signal)
+  const load = useCallback(() => {
+    fetchActivity()
       .then((events) => setState({ kind: "ok", events }))
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
-      });
-    return () => controller.abort();
+      .catch((err: unknown) =>
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
+      );
   }, []);
+
+  useEffect(load, [load]);
+  useInterval(load, 5000);
 
   return (
     <section aria-label="Activity" className="panel">
-      <h2>Activity</h2>
+      <div className="result-head">
+        <h2>Activity</h2>
+        <button type="button" onClick={load}>
+          Refresh
+        </button>
+      </div>
       {state.kind === "loading" && <p role="status">Loading activity...</p>}
       {state.kind === "error" && (
         <p role="alert" className="status-error">

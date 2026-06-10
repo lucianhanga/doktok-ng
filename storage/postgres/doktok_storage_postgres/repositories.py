@@ -14,6 +14,7 @@ from doktok_contracts.schemas import (
     EntityType,
     IngestionJob,
     JobStatus,
+    StatsSummary,
 )
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -393,3 +394,63 @@ class PostgresEntityRepository:
                 (tenant_id, entity_type.value, normalized_value, limit, offset),
             ).fetchall()
         return [_row_to_document(row) for row in rows]
+
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, tenant_id, document_id, version_id, chunk_id, entity_text, "
+                "entity_type, normalized_value, frequency, metadata "
+                "FROM document_entities WHERE tenant_id=%s AND document_id=%s "
+                "ORDER BY frequency DESC, normalized_value ASC",
+                (tenant_id, document_id),
+            ).fetchall()
+        return [
+            DocumentEntity(
+                id=row["id"],
+                tenant_id=row["tenant_id"],
+                document_id=row["document_id"],
+                version_id=row["version_id"] or "",
+                chunk_id=row["chunk_id"],
+                entity_text=row["entity_text"],
+                entity_type=EntityType(row["entity_type"]),
+                normalized_value=row["normalized_value"],
+                frequency=row["frequency"],
+                metadata=row["metadata"] or {},
+            )
+            for row in rows
+        ]
+
+
+class PostgresStatsRepository:
+    """``StatsRepository`` computing at-a-glance tenant counts."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def _scalar(self, cur: Any, sql: str, tenant_id: str) -> int:
+        row = cur.execute(sql, (tenant_id,)).fetchone()
+        return int(row["n"]) if row else 0
+
+    def summary(self, tenant_id: str) -> StatsSummary:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            documents = self._scalar(
+                cur, "SELECT COUNT(*) AS n FROM documents WHERE tenant_id=%s", tenant_id
+            )
+            job_rows = cur.execute(
+                "SELECT status, COUNT(*) AS n FROM ingestion_jobs WHERE tenant_id=%s "
+                "GROUP BY status",
+                (tenant_id,),
+            ).fetchall()
+            entities = self._scalar(
+                cur,
+                "SELECT COUNT(DISTINCT (entity_type, normalized_value)) AS n "
+                "FROM document_entities WHERE tenant_id=%s",
+                tenant_id,
+            )
+        return StatsSummary(
+            documents=documents,
+            jobs={row["status"]: int(row["n"]) for row in job_rows},
+            entities=entities,
+        )

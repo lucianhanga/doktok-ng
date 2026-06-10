@@ -1,30 +1,35 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { fetchDocuments, type DokDocument } from "./api";
+import { useInterval } from "./hooks";
 
 type DocsState =
   | { kind: "loading" }
   | { kind: "ok"; docs: DokDocument[] }
   | { kind: "error"; message: string };
 
-export function DocumentsPanel() {
+export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [state, setState] = useState<DocsState>({ kind: "loading" });
-  const [selected, setSelected] = useState<DokDocument | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchDocuments(controller.signal)
+  const load = useCallback(() => {
+    fetchDocuments()
       .then((docs) => setState({ kind: "ok", docs }))
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
-      });
-    return () => controller.abort();
+      .catch((err: unknown) =>
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
+      );
   }, []);
+
+  useEffect(load, [load]);
+  useInterval(load, 4000);
 
   return (
     <section aria-label="Documents" className="panel">
-      <h2>Documents</h2>
+      <div className="result-head">
+        <h2>Documents</h2>
+        <button type="button" onClick={load}>
+          Refresh
+        </button>
+      </div>
       {state.kind === "loading" && <p role="status">Loading documents...</p>}
       {state.kind === "error" && (
         <p role="alert" className="status-error">
@@ -32,7 +37,7 @@ export function DocumentsPanel() {
         </p>
       )}
       {state.kind === "ok" && state.docs.length === 0 && (
-        <p className="empty">No active documents yet. Ingest a .txt, .md, or text PDF.</p>
+        <p className="empty">No active documents yet. Ingest a .txt, .md, PDF, or image.</p>
       )}
       {state.kind === "ok" && state.docs.length > 0 && (
         <table className="jobs">
@@ -46,7 +51,7 @@ export function DocumentsPanel() {
           </thead>
           <tbody>
             {state.docs.map((doc) => (
-              <tr key={doc.id} onClick={() => setSelected(doc)} style={{ cursor: "pointer" }}>
+              <tr key={doc.id} onClick={() => onOpenDocument?.(doc.id)} style={{ cursor: "pointer" }}>
                 <td>{doc.title ?? "-"}</td>
                 <td>{doc.original_filename}</td>
                 <td>{doc.detected_mime ?? "-"}</td>
@@ -57,29 +62,6 @@ export function DocumentsPanel() {
             ))}
           </tbody>
         </table>
-      )}
-      {selected && (
-        <aside className="doc-detail" aria-label="Document detail">
-          <h3>{selected.title ?? selected.original_filename}</h3>
-          <dl className="status-ok">
-            <div>
-              <dt>File</dt>
-              <dd>{selected.original_filename}</dd>
-            </div>
-            <div>
-              <dt>Type</dt>
-              <dd>{selected.detected_mime ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Pages</dt>
-              <dd>{String(selected.metadata?.page_count ?? "-")}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{selected.status}</dd>
-            </div>
-          </dl>
-        </aside>
       )}
     </section>
   );

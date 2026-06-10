@@ -7,6 +7,7 @@ from doktok_storage_postgres.repositories import (
     PostgresDocumentRepository,
     PostgresEntityRepository,
     PostgresIngestionJobRepository,
+    PostgresStatsRepository,
 )
 
 __version__ = "0.0.0"
@@ -18,5 +19,6 @@ __all__ = [
     "PostgresDocumentRepository",
     "PostgresEntityRepository",
     "PostgresIngestionJobRepository",
+    "PostgresStatsRepository",
     "migrate",
 ]

@@ -25,6 +25,9 @@ emails, URLs, money, dates, invoice/contract IDs) into a tenant-scoped `document
 and filterable via `GET /api/v1/entities` (+ `/documents`) and an **Entities** tab. (PERSON/ORG NER via
 spaCy is a documented follow-up.)
 
+The **UI** has an Overview dashboard, a document viewer (extracted text + entities + activity per
+document), live auto-refresh, and cross-linking (search hit / entity / job → open the document).
+
 **M4 (Vector + full-text search).** On top of M3, every activated document is **chunked, embedded
 (Ollama `mxbai-embed-large` → pgvector) and full-text indexed** before it goes active. **Hybrid search**
 (semantic vector + Postgres FTS, fused with Reciprocal Rank Fusion) is exposed at `GET /api/v1/search`

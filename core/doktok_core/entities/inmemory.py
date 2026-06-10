@@ -60,3 +60,10 @@ class InMemoryEntityRepository:
     ) -> list[Document]:
         # Document resolution requires the document repository; not available in-memory.
         return []
+
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
+        return [
+            e.model_copy(deep=True)
+            for e in self.entities
+            if e.tenant_id == tenant_id and e.document_id == document_id
+        ]

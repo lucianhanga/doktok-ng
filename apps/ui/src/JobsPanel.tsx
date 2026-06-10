@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { fetchJobs, type IngestionJob } from "./api";
+import { useInterval } from "./hooks";
 
 type JobsState =
   | { kind: "loading" }
@@ -17,23 +18,28 @@ function basename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-export function JobsPanel() {
+export function JobsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [state, setState] = useState<JobsState>({ kind: "loading" });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchJobs(controller.signal)
+  const load = useCallback(() => {
+    fetchJobs()
       .then((jobs) => setState({ kind: "ok", jobs }))
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
-      });
-    return () => controller.abort();
+      .catch((err: unknown) =>
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
+      );
   }, []);
+
+  useEffect(load, [load]);
+  useInterval(load, 4000);
 
   return (
     <section aria-label="Ingestion jobs" className="panel">
-      <h2>Ingestion jobs</h2>
+      <div className="result-head">
+        <h2>Ingestion jobs</h2>
+        <button type="button" onClick={load}>
+          Refresh
+        </button>
+      </div>
       {state.kind === "loading" && <p role="status">Loading jobs...</p>}
       {state.kind === "error" && (
         <p role="alert" className="status-error">
@@ -41,7 +47,7 @@ export function JobsPanel() {
         </p>
       )}
       {state.kind === "ok" && state.jobs.length === 0 && (
-        <p className="empty">No ingestion jobs yet. Drop a file into storage/files/ingest.</p>
+        <p className="empty">No ingestion jobs yet. Drop a file into the tenant ingest folder.</p>
       )}
       {state.kind === "ok" && state.jobs.length > 0 && (
         <table className="jobs">
@@ -55,10 +61,15 @@ export function JobsPanel() {
           </thead>
           <tbody>
             {state.jobs.map((job) => (
-              <tr key={job.id}>
+              <tr
+                key={job.id}
+                onClick={() => job.document_id && onOpenDocument?.(job.document_id)}
+                style={{ cursor: job.document_id ? "pointer" : "default" }}
+              >
                 <td>{basename(job.source_path)}</td>
                 <td>
                   <span className={`badge status-${job.status}`}>{job.status}</span>
+                  {job.error_code && <span className="muted"> ({job.error_code})</span>}
                 </td>
                 <td>{job.detected_mime ?? "-"}</td>
                 <td>

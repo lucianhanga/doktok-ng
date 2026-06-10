@@ -24,6 +24,7 @@ from doktok_contracts.schemas import (
     IngestionJob,
     SearchHit,
     SecurityDecision,
+    StatsSummary,
 )
 
 # --- Repositories ---------------------------------------------------------------------------
@@ -173,6 +174,7 @@ class EntityExtractor(Protocol):
 class EntityRepository(Protocol):
     def add_entities(self, entities: list[DocumentEntity]) -> None: ...
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]: ...
     def list_distinct(
         self,
         tenant_id: str,
@@ -200,6 +202,11 @@ class Retriever(Protocol):
 @runtime_checkable
 class RagAnswerer(Protocol):
     def answer(self, question: str) -> str: ...
+
+
+@runtime_checkable
+class StatsRepository(Protocol):
+    def summary(self, tenant_id: str) -> StatsSummary: ...
 
 
 # --- Security -------------------------------------------------------------------------------

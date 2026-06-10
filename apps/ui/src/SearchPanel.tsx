@@ -8,7 +8,7 @@ type State =
   | { kind: "ok"; hits: SearchHit[]; query: string }
   | { kind: "error"; message: string };
 
-export function SearchPanel() {
+export function SearchPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [query, setQuery] = useState("");
   const [state, setState] = useState<State>({ kind: "idle" });
 
@@ -50,7 +50,12 @@ export function SearchPanel() {
       {state.kind === "ok" && state.hits.length > 0 && (
         <ol className="results">
           {state.hits.map((hit) => (
-            <li key={hit.chunk_id} className="result">
+            <li
+              key={hit.chunk_id}
+              className="result"
+              onClick={() => onOpenDocument?.(hit.document_id)}
+              style={{ cursor: onOpenDocument ? "pointer" : "default" }}
+            >
               <div className="result-head">
                 <strong>{hit.title ?? hit.original_filename ?? hit.document_id.slice(0, 8)}</strong>
                 {hit.page_start != null && <span className="page">p.{hit.page_start}</span>}

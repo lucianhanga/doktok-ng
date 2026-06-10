@@ -121,3 +121,50 @@ export async function fetchEntityDocuments(
   }
   return (await response.json()) as DokDocument[];
 }
+
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+export interface DocEntity {
+  entity_type: string;
+  normalized_value: string | null;
+  frequency: number;
+}
+
+export interface Stats {
+  documents: number;
+  jobs: Record<string, number>;
+  entities: number;
+}
+
+export function fetchDocument(id: string, signal?: AbortSignal): Promise<DokDocument> {
+  return getJson<DokDocument>(`/api/v1/documents/${encodeURIComponent(id)}`, signal);
+}
+
+export async function fetchDocumentContent(id: string, signal?: AbortSignal): Promise<string> {
+  const data = await getJson<{ document_id: string; content: string }>(
+    `/api/v1/documents/${encodeURIComponent(id)}/content`,
+    signal,
+  );
+  return data.content;
+}
+
+export function fetchDocumentEntities(id: string, signal?: AbortSignal): Promise<DocEntity[]> {
+  return getJson<DocEntity[]>(`/api/v1/documents/${encodeURIComponent(id)}/entities`, signal);
+}
+
+export function fetchDocumentActivity(id: string, signal?: AbortSignal): Promise<AuditEvent[]> {
+  return getJson<AuditEvent[]>(
+    `/api/v1/audit?document_id=${encodeURIComponent(id)}`,
+    signal,
+  );
+}
+
+export function fetchStats(signal?: AbortSignal): Promise<Stats> {
+  return getJson<Stats>("/api/v1/stats", signal);
+}

@@ -7,7 +7,7 @@ type State =
   | { kind: "ok"; entities: EntitySummary[] }
   | { kind: "error"; message: string };
 
-export function EntitiesPanel() {
+export function EntitiesPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selected, setSelected] = useState<EntitySummary | null>(null);
   const [docs, setDocs] = useState<DokDocument[]>([]);
@@ -81,7 +81,11 @@ export function EntitiesPanel() {
           ) : (
             <ul>
               {docs.map((d) => (
-                <li key={d.id}>
+                <li
+                  key={d.id}
+                  onClick={() => onOpenDocument?.(d.id)}
+                  style={{ cursor: onOpenDocument ? "pointer" : "default" }}
+                >
                   {d.title ?? d.original_filename} <code>({d.detected_mime ?? "?"})</code>
                 </li>
               ))}

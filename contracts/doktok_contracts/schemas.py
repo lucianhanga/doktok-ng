@@ -220,6 +220,21 @@ class SearchHit(BaseModel):
     text_score: float | None = None
 
 
+class DocumentContent(BaseModel):
+    """The canonical extracted text of a document (content.md)."""
+
+    document_id: str
+    content: str
+
+
+class StatsSummary(BaseModel):
+    """At-a-glance tenant counts for the overview dashboard."""
+
+    documents: int
+    jobs: dict[str, int] = Field(default_factory=dict)
+    entities: int
+
+
 class HealthStatus(BaseModel):
     """Backend health/status payload returned by GET /health."""
 

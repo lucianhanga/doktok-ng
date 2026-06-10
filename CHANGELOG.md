@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PDFs/images flagged `needs_ocr`. The ingestion job now runs through to `active`.
 
 ### Added
+- UI usability pass: an Overview dashboard (document/entity/job counts + recent activity), a document
+  detail viewer (metadata + extracted text + entities + activity), live auto-refresh + manual Refresh
+  on Ingestion/Documents/Activity, and cross-linking (search hit / entity / job -> open the document).
+  New read endpoints: `GET /api/v1/documents/{id}/content`, `/api/v1/documents/{id}/entities`,
+  and `GET /api/v1/stats`.
 - M5 entity indexing: rule-based `RegexEntityExtractor` (EMAIL, URL, MONEY, DATE, INVOICE_ID,
   CONTRACT_ID), `document_entities` (migration 0006, tenant-scoped), `EntityRepository` (Postgres +
   in-memory) with distinct-listing and documents-for-entity, entity extraction during activation,

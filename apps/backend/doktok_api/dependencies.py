@@ -16,6 +16,7 @@ from doktok_contracts.ports import (
     EntityRepository,
     IngestionJobRepository,
     Retriever,
+    StatsRepository,
 )
 from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_tenant
@@ -130,6 +131,18 @@ def get_retriever(request: Request) -> Retriever:
     )
     registry.register(Retriever, retriever)
     return retriever
+
+
+def get_stats_repository(request: Request) -> StatsRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(StatsRepository):
+        return cast(StatsRepository, registry.resolve(StatsRepository))
+
+    from doktok_storage_postgres import PostgresStatsRepository
+
+    repository = PostgresStatsRepository(_get_database(request))
+    registry.register(StatsRepository, repository)
+    return repository
 
 
 Tenant = Annotated[TenantContext, Depends(require_tenant)]

@@ -30,6 +30,9 @@ class FakeEntityRepository:
 
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
 
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
+        return []
+
     def list_distinct(
         self,
         tenant_id: str,

@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 
 import { fetchHealth, type HealthStatus } from "./api";
 import { ActivityPanel } from "./ActivityPanel";
+import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { EntitiesPanel } from "./EntitiesPanel";
 import { JobsPanel } from "./JobsPanel";
+import { OverviewPanel } from "./OverviewPanel";
 import { SearchPanel } from "./SearchPanel";
 
 type HealthState =
@@ -59,10 +61,26 @@ export function HealthPanel() {
   );
 }
 
-type View = "status" | "ingestion" | "documents" | "search" | "entities" | "activity";
+type View = "overview" | "status" | "ingestion" | "documents" | "search" | "entities" | "activity";
+
+const TABS: { id: View; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "documents", label: "Documents" },
+  { id: "search", label: "Search" },
+  { id: "entities", label: "Entities" },
+  { id: "ingestion", label: "Ingestion" },
+  { id: "activity", label: "Activity" },
+  { id: "status", label: "Status" },
+];
 
 export default function App() {
-  const [view, setView] = useState<View>("status");
+  const [view, setView] = useState<View>("overview");
+  const [openDoc, setOpenDoc] = useState<string | null>(null);
+
+  function go(next: View) {
+    setOpenDoc(null);
+    setView(next);
+  }
 
   return (
     <main className="app">
@@ -70,62 +88,33 @@ export default function App() {
         <h1>DokTok NG</h1>
         <p className="tagline">Local-first document intelligence</p>
         <nav className="tabs" aria-label="Sections">
-          <button
-            type="button"
-            className={view === "status" ? "active" : ""}
-            aria-pressed={view === "status"}
-            onClick={() => setView("status")}
-          >
-            Status
-          </button>
-          <button
-            type="button"
-            className={view === "ingestion" ? "active" : ""}
-            aria-pressed={view === "ingestion"}
-            onClick={() => setView("ingestion")}
-          >
-            Ingestion
-          </button>
-          <button
-            type="button"
-            className={view === "documents" ? "active" : ""}
-            aria-pressed={view === "documents"}
-            onClick={() => setView("documents")}
-          >
-            Documents
-          </button>
-          <button
-            type="button"
-            className={view === "search" ? "active" : ""}
-            aria-pressed={view === "search"}
-            onClick={() => setView("search")}
-          >
-            Search
-          </button>
-          <button
-            type="button"
-            className={view === "entities" ? "active" : ""}
-            aria-pressed={view === "entities"}
-            onClick={() => setView("entities")}
-          >
-            Entities
-          </button>
-          <button
-            type="button"
-            className={view === "activity" ? "active" : ""}
-            aria-pressed={view === "activity"}
-            onClick={() => setView("activity")}
-          >
-            Activity
-          </button>
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={view === tab.id && !openDoc ? "active" : ""}
+              aria-pressed={view === tab.id && !openDoc}
+              onClick={() => go(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </nav>
       </header>
-      {view === "status" && <HealthPanel />}
-      {view === "ingestion" && <JobsPanel />}
-      {view === "documents" && <DocumentsPanel />}
-      {view === "search" && <SearchPanel />}
-      {view === "entities" && <EntitiesPanel />}
-      {view === "activity" && <ActivityPanel />}
+
+      {openDoc ? (
+        <DocumentDetail id={openDoc} onClose={() => setOpenDoc(null)} />
+      ) : (
+        <>
+          {view === "overview" && <OverviewPanel />}
+          {view === "documents" && <DocumentsPanel onOpenDocument={setOpenDoc} />}
+          {view === "search" && <SearchPanel onOpenDocument={setOpenDoc} />}
+          {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
+          {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
+          {view === "activity" && <ActivityPanel />}
+          {view === "status" && <HealthPanel />}
+        </>
+      )}
     </main>
   );
 }

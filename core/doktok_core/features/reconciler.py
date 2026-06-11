@@ -8,10 +8,13 @@ double-processing. Crashes are recovered via lease reclamation; failures retry w
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 from doktok_contracts.ports import FeatureProcessor, FeatureRepository
+from doktok_contracts.schemas import DocumentFeature
 
 logger = logging.getLogger("doktok.features")
 
@@ -30,6 +33,7 @@ class FeatureReconciler:
         backoff_base_seconds: float = 30.0,
         lease_seconds: float = 900.0,
         max_per_pass: int = 1000,
+        concurrency: int = 1,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._repo = feature_repo
@@ -39,6 +43,7 @@ class FeatureReconciler:
         self._backoff_base = backoff_base_seconds
         self._lease_seconds = lease_seconds
         self._max_per_pass = max_per_pass
+        self._concurrency = max(1, int(concurrency))
         self._clock = clock
 
     def reconcile(self) -> int:
@@ -49,35 +54,72 @@ class FeatureReconciler:
             processed += self._drain(tenant_id)
         return processed
 
+    def _claim(self, tenant_id: str) -> DocumentFeature | None:
+        now = self._clock()
+        reclaim_before = now - timedelta(seconds=self._lease_seconds)
+        return self._repo.claim_next(tenant_id, now=now, reclaim_before=reclaim_before)
+
+    def _process(self, tenant_id: str, row: DocumentFeature) -> None:
+        processor = self._processors.get(row.feature)
+        if processor is None:
+            # No code for this feature (e.g. retired); don't leave the row stuck.
+            self._repo.mark_done(row.id, feature_version=row.feature_version)
+            return
+        try:
+            processor.process(tenant_id, row.document_id)
+            self._repo.mark_done(row.id, feature_version=processor.version)
+        except Exception as exc:  # noqa: BLE001 - a feature failure retries, never crashes
+            backoff = self._backoff_base * (2 ** max(0, row.attempts - 1))
+            self._repo.mark_failed(
+                row.id,
+                error=str(exc),
+                next_attempt_at=self._clock() + timedelta(seconds=backoff),
+            )
+            logger.warning(
+                "feature %s failed for document %s (attempt %d): %s",
+                row.feature,
+                row.document_id,
+                row.attempts,
+                exc,
+            )
+
     def _drain(self, tenant_id: str) -> int:
-        processed = 0
-        for _ in range(self._max_per_pass):
-            now = self._clock()
-            reclaim_before = now - timedelta(seconds=self._lease_seconds)
-            row = self._repo.claim_next(tenant_id, now=now, reclaim_before=reclaim_before)
-            if row is None:
-                break
-            processor = self._processors.get(row.feature)
-            if processor is None:
-                # No code for this feature (e.g. retired); don't leave the row stuck.
-                self._repo.mark_done(row.id, feature_version=row.feature_version)
-                continue
-            try:
-                processor.process(tenant_id, row.document_id)
-                self._repo.mark_done(row.id, feature_version=processor.version)
+        if self._concurrency == 1:
+            processed = 0
+            for _ in range(self._max_per_pass):
+                row = self._claim(tenant_id)
+                if row is None:
+                    break
+                self._process(tenant_id, row)
                 processed += 1
-            except Exception as exc:  # noqa: BLE001 - a feature failure retries, never crashes
-                backoff = self._backoff_base * (2 ** max(0, row.attempts - 1))
-                self._repo.mark_failed(
-                    row.id,
-                    error=str(exc),
-                    next_attempt_at=self._clock() + timedelta(seconds=backoff),
-                )
-                logger.warning(
-                    "feature %s failed for document %s (attempt %d): %s",
-                    row.feature,
-                    row.document_id,
-                    row.attempts,
-                    exc,
-                )
+            return processed
+        return self._drain_concurrent(tenant_id)
+
+    def _drain_concurrent(self, tenant_id: str) -> int:
+        # Several workers each claim a distinct row (FOR UPDATE SKIP LOCKED) and process it; the
+        # processors operate on different documents and use thread-safe repos, so this is safe.
+        lock = threading.Lock()
+        budget = self._max_per_pass
+        processed = 0
+        drained = False
+
+        def worker() -> None:
+            nonlocal budget, processed, drained
+            while True:
+                with lock:
+                    if drained or budget <= 0:
+                        return
+                    budget -= 1
+                row = self._claim(tenant_id)
+                if row is None:
+                    with lock:
+                        drained = True
+                    return
+                self._process(tenant_id, row)
+                with lock:
+                    processed += 1
+
+        with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
+            for _ in range(self._concurrency):
+                pool.submit(worker)
         return processed

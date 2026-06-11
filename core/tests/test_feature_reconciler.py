@@ -98,3 +98,51 @@ def test_reclaims_a_stuck_running_row() -> None:
     assert processed == 1
     assert proc.calls == ["d1"]
     assert repo.list_for_document("t1", "d1")[0].status is FeatureStatus.DONE
+
+
+def test_concurrent_drain_processes_every_row_exactly_once() -> None:
+    """With concurrency>1, distinct rows are claimed per worker and all are processed once."""
+    import threading
+
+    rows = [
+        DocumentFeature(
+            id=f"f{i}",
+            tenant_id="t1",
+            document_id=f"d{i}",
+            feature="demo",
+            created_at=BASE,
+            updated_at=BASE,
+        )
+        for i in range(12)
+    ]
+    lock = threading.Lock()
+    cursor = iter(rows)
+    done: list[str] = []
+
+    class ThreadSafeRepo:
+        def ensure_for_active(self, tenant_id, registered):  # type: ignore[no-untyped-def]
+            return 0
+
+        def claim_next(self, tenant_id, *, now, reclaim_before):  # type: ignore[no-untyped-def]
+            with lock:
+                return next(cursor, None)
+
+        def mark_done(self, feature_id, *, feature_version):  # type: ignore[no-untyped-def]
+            with lock:
+                done.append(feature_id)
+
+        def mark_failed(self, feature_id, *, error, next_attempt_at):  # type: ignore[no-untyped-def]
+            ...
+
+    proc = FakeProcessor()
+    processed = FeatureReconciler(
+        ThreadSafeRepo(),  # type: ignore[arg-type]
+        [proc],
+        ["t1"],
+        concurrency=4,
+        clock=lambda: BASE,
+    ).reconcile()
+
+    assert processed == 12
+    assert len(done) == 12 and set(done) == {f"f{i}" for i in range(12)}  # each row once
+    assert len(proc.calls) == 12 and set(proc.calls) == {f"d{i}" for i in range(12)}

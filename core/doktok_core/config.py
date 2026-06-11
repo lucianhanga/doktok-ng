@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     # depend on Ollama parallelism (OLLAMA_NUM_PARALLEL); 2 keeps OCR+embedding+enrichment from
     # thrashing Ollama's memory on a single ~48 GB box (raise once it's proven stable).
     ingest_concurrency: int = 2
+    # How many feature-reconciler runs proceed in parallel (backfills drain faster). The reconciler
+    # claims distinct rows with SKIP LOCKED, so this is safe; bound it by Ollama/DB capacity.
+    reconcile_concurrency: int = 2
 
 
 @lru_cache

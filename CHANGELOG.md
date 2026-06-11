@@ -15,7 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reclaimed via a lease; processing resumes after restart. Designed for **multiple worker instances**:
   work is claimed atomically with `SELECT ... FOR UPDATE SKIP LOCKED`, so workers can be spawned under
   load without double-processing. `chunk_embed` and `entities` are registered as idempotent processors
-  (re-derived from stored artifacts); a manual `reset` re-queues a feature. (API + UI are phase 2.)
+  (re-derived from stored artifacts); a manual `reset` re-queues a feature. Each document's per-feature
+  status is exposed at `GET /api/v1/documents/{id}/features` and shown in a **Processing** panel on the
+  document detail view, with a **Retry** button (`POST /api/v1/documents/{id}/features/{feature}/retry`)
+  for any non-done feature.
 - The chat/RAG model (qwen) now runs with a configurable context window (`DOKTOK_CHAT_NUM_CTX`,
   default 32768) via `options.num_ctx`, giving RAG room for many retrieved chunks. OCR and embedding
   models are unaffected (they keep their defaults). Measured ~23 GB total for qwen at 32k thanks to

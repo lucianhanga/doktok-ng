@@ -5,8 +5,11 @@ import {
   fetchDocumentActivity,
   fetchDocumentContent,
   fetchDocumentEntities,
+  fetchDocumentFeatures,
+  retryDocumentFeature,
   type AuditEvent,
   type DocEntity,
+  type DocumentFeature,
   type DokDocument,
 } from "./api";
 
@@ -15,7 +18,14 @@ export function DocumentDetail({ id, onClose }: { id: string; onClose: () => voi
   const [content, setContent] = useState("");
   const [entities, setEntities] = useState<DocEntity[]>([]);
   const [activity, setActivity] = useState<AuditEvent[]>([]);
+  const [features, setFeatures] = useState<DocumentFeature[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  function loadFeatures() {
+    fetchDocumentFeatures(id)
+      .then(setFeatures)
+      .catch(() => setFeatures([]));
+  }
 
   useEffect(() => {
     const c = new AbortController();
@@ -24,12 +34,14 @@ export function DocumentDetail({ id, onClose }: { id: string; onClose: () => voi
       fetchDocumentContent(id, c.signal),
       fetchDocumentEntities(id, c.signal),
       fetchDocumentActivity(id, c.signal),
+      fetchDocumentFeatures(id, c.signal),
     ])
-      .then(([d, co, e, a]) => {
+      .then(([d, co, e, a, f]) => {
         setDoc(d);
         setContent(co);
         setEntities(e);
         setActivity(a);
+        setFeatures(f);
       })
       .catch((err: unknown) => {
         if (c.signal.aborted) return;
@@ -37,6 +49,12 @@ export function DocumentDetail({ id, onClose }: { id: string; onClose: () => voi
       });
     return () => c.abort();
   }, [id]);
+
+  function retry(feature: string) {
+    retryDocumentFeature(id, feature)
+      .then(loadFeatures)
+      .catch(() => undefined);
+  }
 
   return (
     <section aria-label="Document detail" className="panel doc-view">
@@ -72,6 +90,43 @@ export function DocumentDetail({ id, onClose }: { id: string; onClose: () => voi
             <dd>{String(doc.metadata?.page_count ?? "-")}</dd>
           </div>
         </dl>
+      )}
+
+      {features.length > 0 && (
+        <div className="doc-section">
+          <h3>Processing</h3>
+          <table className="jobs">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th>Status</th>
+                <th>Attempts</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {features.map((f) => (
+                <tr key={f.feature}>
+                  <td>{f.feature}</td>
+                  <td>
+                    <span className={`badge status-${f.status}`}>{f.status}</span>
+                    {f.last_error && <div className="muted">{f.last_error}</div>}
+                  </td>
+                  <td>
+                    {f.attempts}/{f.max_attempts}
+                  </td>
+                  <td>
+                    {f.status !== "done" && (
+                      <button type="button" onClick={() => retry(f.feature)}>
+                        Retry
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {entities.length > 0 && (

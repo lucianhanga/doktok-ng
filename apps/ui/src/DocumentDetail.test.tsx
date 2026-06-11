@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { DocumentDetail } from "./DocumentDetail";
@@ -7,11 +8,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockRoutes() {
+function mockRoutes(features: unknown[] = []) {
+  const calls: { url: string; method: string }[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url.endsWith("/features")) {
+        return new Response(JSON.stringify(features), { status: 200 });
+      }
+      if (url.endsWith("/retry")) {
+        return new Response(JSON.stringify({ status: "queued" }), { status: 200 });
+      }
       if (url.endsWith("/content")) {
         return new Response(JSON.stringify({ document_id: "d1", content: "the full text body" }), {
           status: 200,
@@ -54,6 +63,7 @@ function mockRoutes() {
       );
     }),
   );
+  return calls;
 }
 
 test("shows metadata, content, entities and activity", async () => {
@@ -63,4 +73,28 @@ test("shows metadata, content, entities and activity", async () => {
   expect(screen.getByText("note.txt")).toBeInTheDocument();
   expect(screen.getByText("a@b.com")).toBeInTheDocument();
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
+});
+
+test("shows the processing panel and retries a failed feature", async () => {
+  const calls = mockRoutes([
+    { feature: "chunk_embed", status: "done", feature_version: 1, attempts: 1, max_attempts: 3 },
+    {
+      feature: "entities",
+      status: "failed",
+      feature_version: 1,
+      attempts: 3,
+      max_attempts: 3,
+      last_error: "boom",
+    },
+  ]);
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+
+  await waitFor(() => expect(screen.getByText("Processing")).toBeInTheDocument());
+  expect(screen.getByText("chunk_embed")).toBeInTheDocument();
+  expect(screen.getByText("boom")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() =>
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/entities/retry"))).toBe(true),
+  );
 });

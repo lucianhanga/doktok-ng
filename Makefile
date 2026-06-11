@@ -1,5 +1,5 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend run-worker run-ui db db-down \
+        run-backend run-worker run-ui clean-tenant db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks
 
@@ -41,6 +41,9 @@ run-worker: ## Run the ingestion worker (watches each tenant's ingest folder)
 
 run-ui: ## Run the UI dev server (injects DOKTOK_DEV_TOKEN into proxied API calls)
 	pnpm --filter @doktok/ui dev
+
+clean-tenant: ## Wipe all DB rows + files for one tenant: make clean-tenant TENANT=developer
+	@scripts/clean-tenant.sh $(TENANT)
 
 db: ## Start local Postgres + pgvector (docker compose)
 	docker compose up -d

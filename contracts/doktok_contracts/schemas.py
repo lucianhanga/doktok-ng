@@ -318,8 +318,10 @@ class CategorySummary(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    question: str
-    limit: int = 8
+    # Bound the free-text question: a non-empty, sanely-sized prompt (a multi-MB body would be a
+    # cheap resource-exhaustion vector and can overflow the model context).
+    question: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=8, ge=1, le=20)
 
 
 class RagAnswer(BaseModel):

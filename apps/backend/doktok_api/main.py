@@ -6,14 +6,16 @@ registry. Document, search, and chat routes arrive in later milestones.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from doktok_contracts.schemas import HealthStatus
 from doktok_core.config import Settings, get_settings
 from doktok_core.registry import Registry, build_registry
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from doktok_api import __version__
 from doktok_api.routers import (
@@ -68,6 +70,8 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.state.registry = registry
 
     # CORS restricted to loopback dev origins; the bearer token is the real control (ADR-0008).
+    # allow_credentials stays False (default): auth is header-based, so CORS is only a secondary
+    # control and cookie-based CSRF does not apply.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -78,6 +82,18 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         allow_headers=["Authorization", "Content-Type"],
     )
 
+    @app.middleware("http")
+    async def _request_id(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Correlation id: echo the caller's X-Request-ID or mint one, so logs/responses can be tied
+        # together. (Logging hookup can consume request.state.request_id later.)
+        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     @app.get("/health", response_model=HealthStatus, tags=["system"])
     def health() -> HealthStatus:
         return HealthStatus(
@@ -86,6 +102,21 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             version=__version__,
             environment=settings.env,
         )
+
+    @app.get("/ready", tags=["system"])
+    def ready(request: Request) -> JSONResponse:
+        # Liveness (/health) never touches dependencies; readiness checks the DB is reachable so an
+        # orchestrator doesn't route traffic to an instance whose Postgres pool is down.
+        from doktok_api.dependencies import _get_database
+
+        try:
+            with _get_database(request).connection() as conn:
+                conn.execute("SELECT 1")
+        except Exception as exc:  # noqa: BLE001 - readiness reports, it does not raise
+            return JSONResponse(
+                status_code=503, content={"status": "unavailable", "detail": str(exc)[:200]}
+            )
+        return JSONResponse(status_code=200, content={"status": "ready"})
 
     app.include_router(ingestion.router)
     app.include_router(documents.router)

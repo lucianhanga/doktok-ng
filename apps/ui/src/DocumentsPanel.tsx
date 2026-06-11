@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   deleteDocument,
@@ -81,22 +81,40 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
   const [busy, setBusy] = useState(false);
   const [catalog, setCatalog] = useState<FeatureCatalogEntry[]>([]);
   const [reprocessFeature, setReprocessFeature] = useState("");
+  const [notice, setNotice] = useState("");
+  const loadAbort = useRef<AbortController | null>(null);
 
   const load = useCallback(() => {
     const opts: { category?: string; status?: string } = {};
     if (category) opts.category = category;
     if (status) opts.status = status;
-    Promise.all([fetchDocuments(opts), fetchFeatures()])
+    // Abort any in-flight poll so a slow response can't land after a newer one (last-write-wins).
+    loadAbort.current?.abort();
+    const ctrl = new AbortController();
+    loadAbort.current = ctrl;
+    Promise.all([fetchDocuments(opts, ctrl.signal), fetchFeatures(ctrl.signal)])
       .then(([docs, features]) =>
         setState({ kind: "ok", docs, features: groupByDocument(features) }),
       )
-      .catch((err: unknown) =>
-        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
-      );
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
+      });
   }, [category, status]);
 
   useEffect(load, [load]);
   useInterval(load, 4000);
+
+  // Keep the bulk selection in sync with what's actually shown (filter/poll can drop documents),
+  // so an action never targets a hidden/gone document and select-all stays correct.
+  useEffect(() => {
+    if (state.kind !== "ok") return;
+    const ids = new Set(state.docs.map((d) => d.id));
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [state]);
   useEffect(() => {
     fetchCategories()
       .then(setCategories)
@@ -121,15 +139,21 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
     setSelected((prev) => (prev.size === docs.length ? new Set() : new Set(docs.map((d) => d.id))));
   }
 
-  async function runBulk(action: (id: string) => Promise<void>) {
+  async function runBulk(action: (id: string) => Promise<void>, label: string) {
     setBusy(true);
-    try {
-      await Promise.all([...selected].map((id) => action(id).catch(() => undefined)));
-    } finally {
-      setSelected(new Set());
-      setBusy(false);
-      load();
-    }
+    setNotice("");
+    const ids = [...selected];
+    // Report per-item outcomes instead of silently swallowing failures.
+    const results = await Promise.allSettled(ids.map((id) => action(id)));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    setSelected(new Set());
+    setBusy(false);
+    setNotice(
+      failed === 0
+        ? `${label}: ${ids.length} document(s) succeeded.`
+        : `${label}: ${ids.length - failed} succeeded, ${failed} failed.`,
+    );
+    load();
   }
 
   function reprocessSelected() {
@@ -138,7 +162,7 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
     if (!spec) return;
     if (!window.confirm(`Reprocess "${spec.label}" for ${selected.size} document(s)?`)) return;
     // Resetting the feature re-queues it; the worker's reconciler re-derives it from stored content.
-    void runBulk((id) => retryDocumentFeature(id, feature));
+    void runBulk((id) => retryDocumentFeature(id, feature), `Reprocess ${spec.label}`);
     setReprocessFeature("");
   }
 
@@ -186,7 +210,7 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                     `reprocesses the originals.`,
                 )
               ) {
-                void runBulk(reingestDocument);
+                void runBulk(reingestDocument, "Reingest");
               }
             }}
           >
@@ -198,7 +222,7 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
             disabled={busy}
             onClick={() => {
               if (window.confirm(`Delete ${selected.size} document(s)? This cannot be undone.`)) {
-                void runBulk(deleteDocument);
+                void runBulk(deleteDocument, "Delete");
               }
             }}
           >
@@ -234,6 +258,31 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
         </div>
       )}
 
+      {notice && (
+        <p role="status" className="bulk-notice">
+          {notice}
+        </p>
+      )}
+
+      {state.kind === "ok" && docs.length > 0 && (
+        <p className="chip-legend muted">
+          Processing: <span className="chip">text</span> extraction
+          {" · "}
+          <span className="chip">rag</span> semantic index
+          {" · "}
+          <span className="chip">meta</span> title/date/summary
+          {" · "}
+          <span className="chip">tags</span> categories
+          {" · "}
+          <span className="chip">ents</span> entities/keywords
+          {" · "}
+          <span className="chip">recs</span> structured records
+          {" — "}
+          <span aria-hidden="true">✓</span> done, <span aria-hidden="true">…</span> running,{" "}
+          <span aria-hidden="true">✗</span> failed
+        </p>
+      )}
+
       {state.kind === "loading" && <p role="status">Loading documents...</p>}
       {state.kind === "error" && (
         <p role="alert" className="status-error">
@@ -259,7 +308,7 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                 <input
                   type="checkbox"
                   aria-label="Select all"
-                  checked={selected.size === docs.length}
+                  checked={docs.length > 0 && selected.size === docs.length}
                   onChange={toggleAll}
                 />
               </th>
@@ -281,13 +330,14 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                     onChange={() => toggle(doc.id)}
                   />
                 </td>
-                <td
-                  className="cell-title"
-                  title={doc.title ?? undefined}
-                  onClick={() => onOpenDocument?.(doc.id)}
-                  style={{ cursor: "pointer" }}
-                >
-                  {doc.title ?? "-"}
+                <td className="cell-title" title={doc.title ?? undefined}>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => onOpenDocument?.(doc.id)}
+                  >
+                    {doc.title ?? "-"}
+                  </button>
                 </td>
                 <td
                   className="cell-file"

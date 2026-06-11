@@ -75,7 +75,7 @@ export async function fetchDocuments(
   const qs = params.toString();
   const response = await fetch(`/api/v1/documents${qs ? `?${qs}` : ""}`, { signal });
   if (!response.ok) {
-    throw new Error(`Documents request failed: ${response.status}`);
+    throw friendlyHttpError(response.status);
   }
   return (await response.json()) as DokDocument[];
 }
@@ -155,10 +155,21 @@ export async function fetchEntityDocuments(
   return (await response.json()) as DokDocument[];
 }
 
+/** Map an HTTP status to a user-facing message (auth expiry / server / generic). */
+export function friendlyHttpError(status: number): Error {
+  if (status === 401 || status === 403) {
+    return new Error("Your session expired or is invalid - reload the page to sign in again.");
+  }
+  if (status >= 500) {
+    return new Error("The server had a problem - please try again in a moment.");
+  }
+  return new Error(`Request failed (${status}).`);
+}
+
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    throw friendlyHttpError(response.status);
   }
   return (await response.json()) as T;
 }
@@ -320,7 +331,7 @@ export async function chat(question: string, signal?: AbortSignal): Promise<RagA
     signal,
   });
   if (!response.ok) {
-    throw new Error(`Chat request failed: ${response.status}`);
+    throw friendlyHttpError(response.status);
   }
   return (await response.json()) as RagAnswer;
 }

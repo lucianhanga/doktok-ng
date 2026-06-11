@@ -83,9 +83,9 @@ def test_catalog_requires_token() -> None:
 
 
 def test_catalog_lists_reprocessable_features() -> None:
-    body = _client().get(
-        "/api/v1/features/catalog", headers={"Authorization": "Bearer tok-a"}
-    ).json()
+    body = (
+        _client().get("/api/v1/features/catalog", headers={"Authorization": "Bearer tok-a"}).json()
+    )
     names = {entry["name"] for entry in body}
     # The reprocessable features (each backed by a reconciler processor); never inline "extract".
     assert names == {

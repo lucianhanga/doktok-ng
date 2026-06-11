@@ -118,6 +118,7 @@ def build_services(
         settings.ollama_base_url,
         timeout=timeout,
         num_ctx=settings.judge_num_ctx,
+        keep_alive=settings.enrich_keep_alive,
     )
     metadata_extractor = OllamaMetadataExtractor(
         settings.enrich_model,
@@ -126,6 +127,7 @@ def build_services(
         timeout=timeout,
         num_ctx=settings.enrich_num_ctx,
         think=settings.enrich_think,
+        keep_alive=settings.enrich_keep_alive,
     )
     category_classifier = OllamaCategoryClassifier(
         settings.enrich_model,
@@ -134,6 +136,7 @@ def build_services(
         timeout=timeout,
         num_ctx=settings.enrich_num_ctx,
         think=settings.enrich_think,
+        keep_alive=settings.enrich_keep_alive,
     )
     category_repo = PostgresCategoryRepository(db)
     record_extractor = OllamaRecordExtractor(
@@ -143,6 +146,7 @@ def build_services(
         timeout=timeout,
         num_ctx=settings.enrich_num_ctx,
         think=settings.enrich_think,
+        keep_alive=settings.enrich_keep_alive,
     )
     record_repo = PostgresRecordRepository(db)
 

@@ -17,7 +17,6 @@ from doktok_contracts.media import ExtractedTransaction
 logger = logging.getLogger("doktok.records")
 
 _MAX_CHARS = 16000
-_KEEP_ALIVE = "30m"
 
 _SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -67,12 +66,14 @@ class OllamaRecordExtractor:
         timeout: float = 600.0,
         num_ctx: int = 8192,
         think: bool = False,
+        keep_alive: str = "30m",
     ) -> None:
         self._model = model
         self._repair_model = repair_model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._num_ctx = num_ctx
+        self._keep_alive = keep_alive
         self._think: bool | None = None if think else False
 
     def extract(self, text: str) -> list[ExtractedTransaction]:
@@ -101,7 +102,7 @@ class OllamaRecordExtractor:
             ],
             "format": _SCHEMA,
             "stream": False,
-            "keep_alive": _KEEP_ALIVE,
+            "keep_alive": self._keep_alive,
             "options": {"temperature": 0, "num_ctx": self._num_ctx},
         }
         if think is not None:

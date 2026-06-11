@@ -18,8 +18,7 @@ from doktok_contracts.media import ExtractedMetadata
 
 logger = logging.getLogger("doktok.enrich")
 
-_MAX_CHARS = 12000  # head of the document fed to the model (fits a 4k-token context with room)
-_KEEP_ALIVE = "30m"  # keep the enrichment model warm across a batch ingest (avoid reload-per-doc)
+_MAX_CHARS = 12000  # head of the document fed to the model (~4-5k tokens; needs num_ctx >= 8192)
 
 _SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -60,14 +59,16 @@ class OllamaMetadataExtractor:
         base_url: str,
         *,
         timeout: float = 600.0,
-        num_ctx: int = 16384,
+        num_ctx: int = 8192,
         think: bool = True,
+        keep_alive: str = "30m",
     ) -> None:
         self._model = model
         self._repair_model = repair_model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._num_ctx = num_ctx
+        self._keep_alive = keep_alive
         # None => omit `think` (thinking on, safe for MoE + format); False => hard-disable (dense).
         self._think: bool | None = None if think else False
 
@@ -104,7 +105,7 @@ class OllamaMetadataExtractor:
             ],
             "format": _SCHEMA,
             "stream": False,
-            "keep_alive": _KEEP_ALIVE,
+            "keep_alive": self._keep_alive,
             "options": {"temperature": 0, "num_ctx": self._num_ctx},
         }
         if think is not None:

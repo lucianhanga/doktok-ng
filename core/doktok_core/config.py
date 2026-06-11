@@ -47,8 +47,15 @@ class Settings(BaseSettings):
     # qwen3's grouped-query attention keeps the KV cache for this cheap (~1-2 GB). OCR/embeddings
     # are unaffected (they use the model defaults).
     chat_num_ctx: int = 32768
+    # Keep the 23 GB RAG model resident so interactive chat doesn't pay a ~14s cold reload after an
+    # idle gap. "-1" never evicts; "30m" balances residency against freeing the slot for ingestion.
+    chat_keep_alive: str = "30m"
     # RAG: retrieve this many candidates wide; the LLM reranker keeps the best (the chat `limit`).
     rag_retrieve_k: int = 40
+    # Reranker: model for the listwise rerank call (defaults to the chat model; swap to a smaller
+    # model to free the chat slot) and a tight output cap (it only emits a short JSON array).
+    rerank_model: str = ""  # empty => use default_model
+    rerank_num_predict: int = 64
     # Enrichment (M6.2): primary extraction model (structured JSON; thinking on, never think=false
     # with format) and a small dense fallback used only to repair invalid JSON into the schema.
     # Dense default: think=false + structured `format` works reliably on qwen3:14b and is far faster
@@ -61,10 +68,14 @@ class Settings(BaseSettings):
     judge_num_ctx: int = 8192
     enrich_model: str = "qwen3:14b"
     enrich_repair_model: str = "qwen3:14b"
-    # 4096 keeps the dense 14b small enough to load fast and stay resident (16k made load ~50s/call
-    # by reallocating a ~19 GB KV cache); enrichment only reads the document head anyway.
-    enrich_num_ctx: int = 4096
+    # The enrichment providers feed the document head (up to ~12-16k chars) to the model. 4096
+    # tokens was too small for German text (~3 chars/token => ~4-5k tokens), so llama.cpp silently
+    # left-truncated the head - exactly the title/date region being extracted. 8192 fits the head
+    # with room; the dense 14b KV cache at 8192 is ~1.25 GB and still loads fast.
+    enrich_num_ctx: int = 8192
     enrich_think: bool = False
+    # Keep the dense enrichment model warm across a batch ingest (avoid a reload per document).
+    enrich_keep_alive: str = "30m"
     # A PDF page whose largest image covers >= this fraction of the page is treated as scanned.
     ocr_image_coverage: float = 0.8
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the

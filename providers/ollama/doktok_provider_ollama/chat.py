@@ -19,28 +19,35 @@ class OllamaChatModelProvider:
         *,
         timeout: float = 600.0,
         num_ctx: int | None = None,
+        num_predict: int | None = None,
+        keep_alive: str | None = None,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._num_ctx = num_ctx
+        # Cap output for short-response callers (e.g. the listwise reranker emits a tiny array).
+        self._num_predict = num_predict
+        # Residency hint: keep the (large) RAG model warm so idle gaps don't trigger a cold reload.
+        self._keep_alive = keep_alive
 
     def complete(self, prompt: str) -> str:
         options: dict[str, object] = {"temperature": 0}
         if self._num_ctx is not None:
             options["num_ctx"] = self._num_ctx
-        response = httpx.post(
-            f"{self._base_url}/api/generate",
-            json={
-                "model": self._model,
-                "prompt": prompt,
-                "stream": False,
-                # No structured `format` here, so disabling thinking is safe and faster (the judge,
-                # RAG answerer, and reranker don't need chain-of-thought).
-                "think": False,
-                "options": options,
-            },
-            timeout=self._timeout,
-        )
+        if self._num_predict is not None:
+            options["num_predict"] = self._num_predict
+        payload: dict[str, object] = {
+            "model": self._model,
+            "prompt": prompt,
+            "stream": False,
+            # No structured `format` here, so disabling thinking is safe and faster (the judge,
+            # RAG answerer, and reranker don't need chain-of-thought).
+            "think": False,
+            "options": options,
+        }
+        if self._keep_alive is not None:
+            payload["keep_alive"] = self._keep_alive
+        response = httpx.post(f"{self._base_url}/api/generate", json=payload, timeout=self._timeout)
         response.raise_for_status()
         return str(response.json().get("response", "")).strip()

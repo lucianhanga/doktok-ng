@@ -155,11 +155,22 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
         settings.ollama_base_url,
         timeout=settings.ollama_timeout_seconds,
         num_ctx=settings.chat_num_ctx,
+        keep_alive=settings.chat_keep_alive,
+    )
+    # The listwise reranker emits only a short JSON array - cap its output (and allow a smaller,
+    # swappable model) so it doesn't consume the answer call's full generation budget.
+    rerank_model = OllamaChatModelProvider(
+        settings.rerank_model or settings.default_model,
+        settings.ollama_base_url,
+        timeout=settings.ollama_timeout_seconds,
+        num_ctx=settings.chat_num_ctx,
+        num_predict=settings.rerank_num_predict,
+        keep_alive=settings.chat_keep_alive,
     )
     answerer = DefaultRagAnswerer(
         get_retriever(request),
         chat_model,
-        reranker=LlmReranker(chat_model),
+        reranker=LlmReranker(rerank_model),
         retrieve_k=settings.rag_retrieve_k,
     )
     registry.register(RagAnswerer, answerer)

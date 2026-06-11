@@ -56,6 +56,9 @@ class OllamaVisionOcr:
             "prompt": OCR_PROMPT,
             "images": [base64.b64encode(image_png).decode("ascii")],
             "stream": False,
+            # Defensive: if OCR is ever pointed at a Qwen3-family vision model, keep its
+            # chain-of-thought off (a big latency/length hit). Non-Qwen3 models ignore the field.
+            "think": False,
             "keep_alive": self._keep_alive,
             "options": {
                 "temperature": 0,

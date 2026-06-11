@@ -23,9 +23,12 @@ from doktok_contracts.ports import (
     FileStorage,
     LexicalTermExtractor,
     MetadataExtractor,
+    RecordExtractor,
+    RecordRepository,
 )
-from doktok_contracts.schemas import DocumentChunk, DocumentEntity, EntityType
+from doktok_contracts.schemas import DocumentChunk, DocumentEntity, EntityType, ExtractedRecord
 
+from doktok_core.aggregation import normalize_transaction
 from doktok_core.enrichment import (
     MAX_CATEGORIES_PER_DOCUMENT,
     MAX_CATEGORIES_PER_TENANT,
@@ -268,3 +271,40 @@ class DocClassifyFeature:
                 return created
         # At the cap (or lost the create race): force-pick the nearest existing category.
         return self._categories.find_nearest(tenant_id, normalized)
+
+
+class StructuredRecordsFeature:
+    """Extract typed line items (transactions) into the queryable record store (M6.3).
+
+    Runs on every active document; the extractor returns nothing for non-financial documents.
+    Idempotent: it replaces the document's records each run.
+    """
+
+    name = "structured_records"
+    version = 1
+
+    def __init__(
+        self,
+        document_repo: DocumentRepository,
+        file_storage: FileStorage,
+        record_extractor: RecordExtractor,
+        record_repo: RecordRepository,
+    ) -> None:
+        self._documents = document_repo
+        self._files = file_storage
+        self._extractor = record_extractor
+        self._records = record_repo
+
+    def process(self, tenant_id: str, document_id: str) -> None:
+        document = self._documents.get(tenant_id, document_id)
+        if document is None or not document.storage_path:
+            return
+        content = _read_text(self._files, document.storage_path, "content.md")
+        if not content.strip():
+            return
+        records: list[ExtractedRecord] = []
+        for raw in self._extractor.extract(content):
+            record = normalize_transaction(raw, tenant_id=tenant_id, document_id=document_id)
+            if record is not None:
+                records.append(record)
+        self._records.replace_for_document(tenant_id, document_id, records)

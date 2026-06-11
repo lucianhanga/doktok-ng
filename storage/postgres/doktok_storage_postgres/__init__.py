@@ -10,6 +10,7 @@ from doktok_storage_postgres.repositories import (
     PostgresFeatureRepository,
     PostgresIngestionJobRepository,
     PostgresLexicalTermExtractor,
+    PostgresRecordRepository,
     PostgresStatsRepository,
 )
 
@@ -25,6 +26,7 @@ __all__ = [
     "PostgresFeatureRepository",
     "PostgresIngestionJobRepository",
     "PostgresLexicalTermExtractor",
+    "PostgresRecordRepository",
     "PostgresStatsRepository",
     "migrate",
 ]

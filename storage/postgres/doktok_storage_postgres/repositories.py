@@ -18,6 +18,7 @@ from doktok_contracts.schemas import (
     DocumentStatus,
     EntitySummary,
     EntityType,
+    ExtractedRecord,
     FeatureStatus,
     IngestionJob,
     JobStatus,
@@ -892,3 +893,77 @@ class PostgresCategoryRepository:
                 (tenant_id, name, limit, offset),
             ).fetchall()
         return [_row_to_document(row) for row in rows]
+
+
+_REC_COLUMNS = (
+    "id, tenant_id, document_id, record_type, source_page, raw_text, occurred_on, amount_minor, "
+    "currency, direction, merchant_raw, merchant_normalized, description, account_label, confidence"
+)
+
+
+def _row_to_record(row: dict[str, Any]) -> ExtractedRecord:
+    return ExtractedRecord(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        document_id=row["document_id"],
+        record_type=row["record_type"],
+        source_page=row["source_page"],
+        raw_text=row["raw_text"],
+        occurred_on=row["occurred_on"],
+        amount_minor=row["amount_minor"],
+        currency=row["currency"].strip() if row["currency"] else None,
+        direction=row["direction"],
+        merchant_raw=row["merchant_raw"],
+        merchant_normalized=row["merchant_normalized"],
+        description=row["description"],
+        account_label=row["account_label"],
+        confidence=row["confidence"],
+    )
+
+
+class PostgresRecordRepository:
+    """``RecordRepository`` backed by PostgreSQL. Tenant-scoped; idempotent per-document replace."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def replace_for_document(
+        self, tenant_id: str, document_id: str, records: list[ExtractedRecord]
+    ) -> None:
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute(
+                "DELETE FROM extracted_records WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            )
+            for r in records:
+                conn.execute(
+                    f"INSERT INTO extracted_records ({_REC_COLUMNS}) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        r.id,
+                        r.tenant_id,
+                        r.document_id,
+                        r.record_type,
+                        r.source_page,
+                        r.raw_text,
+                        r.occurred_on,
+                        r.amount_minor,
+                        r.currency,
+                        r.direction,
+                        r.merchant_raw,
+                        r.merchant_normalized,
+                        r.description,
+                        r.account_label,
+                        r.confidence,
+                    ),
+                )
+
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[ExtractedRecord]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_REC_COLUMNS} FROM extracted_records "
+                "WHERE tenant_id=%s AND document_id=%s ORDER BY occurred_on NULLS LAST, id",
+                (tenant_id, document_id),
+            ).fetchall()
+        return [_row_to_record(r) for r in rows]

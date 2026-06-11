@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Structured aggregation, phase 1 (M6.3 `structured_records`): a versioned, idempotent
+  `StructuredRecordsFeature` extracts **typed line items** (transactions: date, merchant, amount,
+  currency, debit/credit) from financial documents into a queryable `extracted_records` table
+  (migration 0012) — the foundation for answering questions top-k RAG can't, like "how much did I
+  spend at Block House across all statements". Money is stored as **integer minor units** (never
+  float) so SUM is exact; merchant names are normalized (`pg_trgm` index) for fuzzy matching; the
+  extractor returns nothing for non-financial documents. The query router + aggregation intents +
+  answer come in phase 2.
 - Enrichment **title + summary now match the document's language** (e.g. a German contract gets a
   German title and summary), via an explicit instruction in the extraction prompt.
 - Faster LLM calls by reducing "thinking": the RAG answerer, reranker, and OCR-quality judge now run

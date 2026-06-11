@@ -60,3 +60,16 @@ class ExtractedMetadata:
     document_date: str | None  # ISO 'YYYY-MM-DD' as produced by the model, or None for n/a
     location: str | None
     summary: str
+
+
+@dataclass
+class ExtractedTransaction:
+    """A raw line item from a financial document (validated/normalized in core). M6.3."""
+
+    raw_text: str
+    date: str | None  # ISO 'YYYY-MM-DD' as produced by the model
+    merchant: str | None  # merchant/payee name
+    description: str | None
+    amount: str | None  # e.g. "45.00"
+    currency: str | None  # ISO 4217
+    direction: str | None  # 'debit' | 'credit'

@@ -279,6 +279,26 @@ class TokenSuggestion(BaseModel):
     document_count: int
 
 
+class ExtractedRecord(BaseModel):
+    """A structured line item extracted from a document for deterministic aggregation (M6.3)."""
+
+    id: str
+    tenant_id: str
+    document_id: str
+    record_type: str = "card_transaction"
+    source_page: int | None = None
+    raw_text: str
+    occurred_on: date | None = None
+    amount_minor: int | None = None  # integer minor units (cents)
+    currency: str | None = None
+    direction: str | None = None  # 'debit' | 'credit'
+    merchant_raw: str | None = None
+    merchant_normalized: str | None = None
+    description: str | None = None
+    account_label: str | None = None
+    confidence: float = 1.0
+
+
 class Category(BaseModel):
     """A controlled-vocabulary category for a tenant (M6.2, bounded to 20 active per tenant)."""
 

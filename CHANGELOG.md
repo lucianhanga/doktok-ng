@@ -129,6 +129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Changed
+- **Enrichment now defaults to the dense `qwen3:14b` with `think=false`** (was the qwen3.6 MoE).
+  Generation is fast (~27 tok/s); the key tuning is a small **4096 context** + `keep_alive` so the
+  model loads quickly (~14 s once) and stays warm across a batch (a 16k context made each load ~50 s by
+  reallocating a ~19 GB KV cache). The language instruction was strengthened so non-English documents
+  still get a native-language title/summary. Set `DOKTOK_ENRICH_MODEL=qwen3.6:35b-a3b` +
+  `DOKTOK_ENRICH_THINK=true` to trade speed for the MoE's higher quality/language fidelity. (Note:
+  enrichment stays fast only while `qwen3:14b` is resident; running the qwen3.6 OCR-judge or RAG chat
+  concurrently can evict it and reintroduce reloads on a ~48 GB box.)
 - Default ingest concurrency lowered from 4 to **2** (`DOKTOK_INGEST_CONCURRENCY`). With OCR +
   embedding + the new enrichment models all going through one local Ollama, 4 parallel documents could
   thrash GPU memory and time out; 2 is comfortable on ~48 GB. (Several scanned-PDF ingests had failed

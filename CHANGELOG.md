@@ -151,6 +151,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top-level request field cut enrichment to **~8–11 s/document** (~8–10× faster) with the model warm.
 
 ### Changed
+- The feature reconciler now drains in **parallel** (`DOKTOK_RECONCILE_CONCURRENCY`, default 2): several
+  workers each claim a distinct row (`FOR UPDATE SKIP LOCKED`) and process it concurrently, so a
+  corpus-wide backfill (e.g. extracting transactions across every document) finishes proportionally
+  faster. Bound it by Ollama/DB capacity; the worker DB pool is sized for both ingest + reconcile
+  streams.
 - The worker now runs **ingestion and feature reconciliation as independent parallel streams**
   (separate threads) instead of one sequential loop. A large reconciler backfill (e.g. extracting
   transactions across the whole corpus) no longer **starves new ingestion** — folder watching and the

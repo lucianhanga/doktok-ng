@@ -68,9 +68,12 @@ def build_services(
 
     Ensures each tenant's lifecycle folders exist and runs migrations once.
     """
-    # Size the pool for the parallel streams: up to `ingest_concurrency` ingestion workers + the
-    # reconciliation stream, each holding a connection only briefly.
-    db = Database(settings.database_url, max_size=max(6, settings.ingest_concurrency + 4))
+    # Size the pool for the parallel streams: up to `ingest_concurrency` ingestion workers +
+    # `reconcile_concurrency` reconciler workers, each holding a connection only briefly.
+    db = Database(
+        settings.database_url,
+        max_size=max(6, settings.ingest_concurrency + settings.reconcile_concurrency + 2),
+    )
     migrate(db)
 
     job_repo = PostgresIngestionJobRepository(db)
@@ -153,7 +156,12 @@ def build_services(
         DocClassifyFeature(document_repo, file_storage, category_classifier, category_repo),
         StructuredRecordsFeature(document_repo, file_storage, record_extractor, record_repo),
     ]
-    reconciler = FeatureReconciler(feature_repo, processors, tenant_ids(settings))
+    reconciler = FeatureReconciler(
+        feature_repo,
+        processors,
+        tenant_ids(settings),
+        concurrency=settings.reconcile_concurrency,
+    )
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):

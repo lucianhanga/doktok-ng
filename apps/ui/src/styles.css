@@ -249,3 +249,88 @@ table.jobs td {
   font-size: 0.85rem;
   margin-top: 0.2rem;
 }
+
+.token-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 8px;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.token-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(80, 130, 255, 0.18);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.token-chip button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.token-chip button:hover {
+  opacity: 1;
+}
+
+.token-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 160px;
+}
+
+.token-input-wrap input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.95rem;
+  padding: 0.2rem;
+  color: inherit;
+}
+
+.token-suggestions {
+  position: absolute;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  background: Canvas;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 8px;
+  max-height: 280px;
+  overflow: auto;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.token-suggestions li button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  color: inherit;
+  font-size: 0.9rem;
+}
+
+.token-suggestions li button:hover {
+  background: rgba(80, 130, 255, 0.15);
+}

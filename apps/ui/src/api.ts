@@ -187,6 +187,29 @@ export interface RagAnswer {
   grounded: boolean;
 }
 
+export interface TokenSuggestion {
+  value: string;
+  document_count: number;
+}
+
+export function suggestTokens(
+  prefix: string,
+  selected: string[],
+  signal?: AbortSignal,
+): Promise<TokenSuggestion[]> {
+  const params = new URLSearchParams();
+  params.set("prefix", prefix);
+  selected.forEach((t) => params.append("token", t));
+  return getJson<TokenSuggestion[]>(`/api/v1/tokens/suggest?${params.toString()}`, signal);
+}
+
+export function searchByTokens(tokens: string[], signal?: AbortSignal): Promise<DokDocument[]> {
+  if (tokens.length === 0) return Promise.resolve([]);
+  const params = new URLSearchParams();
+  tokens.forEach((t) => params.append("token", t));
+  return getJson<DokDocument[]>(`/api/v1/tokens/search?${params.toString()}`, signal);
+}
+
 export async function chat(question: string, signal?: AbortSignal): Promise<RagAnswer> {
   const response = await fetch("/api/v1/chat", {
     method: "POST",

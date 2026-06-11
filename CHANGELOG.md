@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Faceted **token search**: a chip-based search bar with autocomplete over the indexed tokens. Typing
+  a prefix suggests matching tokens (case-insensitive), each selected token becomes a removable chip,
+  and the next suggestion list is narrowed to tokens that co-occur in documents already matching the
+  selection. Documents must contain ALL selected tokens (AND). New `GET /api/v1/tokens/suggest` and
+  `GET /api/v1/tokens/search`, backed by `EntityRepository.suggest_tokens` / `documents_for_tokens`,
+  and a **Token Search** UI tab.
 - The ingestion worker can process multiple stable files **in parallel** (`DOKTOK_INGEST_CONCURRENCY`,
   default 4) for higher throughput. Stability tracking stays single-threaded; only the independent
   per-file pipelines run in a thread pool (the Postgres pool is thread-safe and each job has its own

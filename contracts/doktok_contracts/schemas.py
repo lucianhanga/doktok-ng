@@ -234,6 +234,13 @@ class Citation(BaseModel):
     snippet: str
 
 
+class TokenSuggestion(BaseModel):
+    """An autocomplete suggestion for the faceted token search."""
+
+    value: str
+    document_count: int
+
+
 class ChatRequest(BaseModel):
     question: str
     limit: int = 8

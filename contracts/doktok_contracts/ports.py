@@ -32,6 +32,7 @@ from doktok_contracts.schemas import (
     SearchHit,
     SecurityDecision,
     StatsSummary,
+    TokenSuggestion,
 )
 
 # --- Repositories ---------------------------------------------------------------------------
@@ -204,6 +205,22 @@ class EntityRepository(Protocol):
         tenant_id: str,
         entity_type: EntityType,
         normalized_value: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Document]: ...
+    def suggest_tokens(
+        self,
+        tenant_id: str,
+        prefix: str,
+        *,
+        selected: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[TokenSuggestion]: ...
+    def documents_for_tokens(
+        self,
+        tenant_id: str,
+        tokens: list[str],
         *,
         limit: int = 50,
         offset: int = 0,

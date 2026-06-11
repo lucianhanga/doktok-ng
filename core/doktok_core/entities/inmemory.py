@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from doktok_contracts.schemas import Document, DocumentEntity, EntitySummary, EntityType
+from doktok_contracts.schemas import (
+    Document,
+    DocumentEntity,
+    EntitySummary,
+    EntityType,
+    TokenSuggestion,
+)
 
 
 class InMemoryEntityRepository:
@@ -67,3 +73,53 @@ class InMemoryEntityRepository:
             for e in self.entities
             if e.tenant_id == tenant_id and e.document_id == document_id
         ]
+
+    def _docs_with_all(self, tenant_id: str, tokens_lower: list[str]) -> set[str]:
+        by_doc: dict[str, set[str]] = {}
+        for e in self.entities:
+            if e.tenant_id != tenant_id or not e.normalized_value:
+                continue
+            by_doc.setdefault(e.document_id, set()).add(e.normalized_value.lower())
+        wanted = set(tokens_lower)
+        return {doc for doc, values in by_doc.items() if wanted <= values}
+
+    def suggest_tokens(
+        self,
+        tenant_id: str,
+        prefix: str,
+        *,
+        selected: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[TokenSuggestion]:
+        prefix_lower = prefix.lower()
+        selected_lower = [s.lower() for s in (selected or [])]
+        scope: set[str] | None = None
+        if selected_lower:
+            scope = self._docs_with_all(tenant_id, selected_lower)
+        docs: dict[str, set[str]] = {}
+        for e in self.entities:
+            if e.tenant_id != tenant_id or not e.normalized_value:
+                continue
+            if scope is not None and e.document_id not in scope:
+                continue
+            value = e.normalized_value
+            if not value.lower().startswith(prefix_lower) or value.lower() in selected_lower:
+                continue
+            docs.setdefault(value, set()).add(e.document_id)
+        suggestions = [
+            TokenSuggestion(value=value, document_count=len(doc_ids))
+            for value, doc_ids in docs.items()
+        ]
+        suggestions.sort(key=lambda s: (-s.document_count, s.value))
+        return suggestions[:limit]
+
+    def documents_for_tokens(
+        self,
+        tenant_id: str,
+        tokens: list[str],
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Document]:
+        # Document resolution requires the document repository; not available in-memory.
+        return []

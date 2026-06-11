@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Document enrichment, phase 1 (M6.2 `doc_metadata`): every document now gets an LLM-generated
+  **title**, a **document date** (the date it's *about*; `n/a` when undeterminable), a **location**,
+  a **summary**, and an explicit **ingestion timestamp**. Implemented as a versioned, idempotent
+  `doc_metadata` `FeatureProcessor`, so the reconciler backfills the whole corpus and a version bump
+  re-runs it. Extraction uses `qwen3.6:35b-a3b` with strict structured `format` output (thinking left
+  on — never `think=false` with `format`) and a `qwen3:14b` JSON-repair fallback; all fields are
+  **hard-validated in code** (ISO date or NULL, title word-cap, `n/a`→NULL). New columns on
+  `documents` (migration 0010); the document detail view shows the title, a Summary block, and
+  Document date / Location / Ingested (with "n/a" where unknown). Configurable via
+  `DOKTOK_ENRICH_MODEL` / `DOKTOK_ENRICH_REPAIR_MODEL` / `DOKTOK_ENRICH_NUM_CTX`.
 - RAG **LLM reranker** (M6.1): the answerer now retrieves wide (`DOKTOK_RAG_RETRIEVE_K`, default 40),
   has the chat model listwise-rerank the candidates in a single call, keeps the best `limit`, and packs
   them "edges-best" (most relevant at the start and end) to fight lost-in-the-middle. A new `Reranker`

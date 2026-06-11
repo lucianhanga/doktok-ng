@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from doktok_contracts.media import ExtractedTerm
@@ -35,7 +35,8 @@ def to_vector_literal(values: list[float]) -> str:
 
 _DOC_COLUMNS = (
     "id, tenant_id, current_version_id, sha256, original_filename, detected_mime, "
-    "title, status, storage_path, created_at, activated_at, duplicate_of, metadata"
+    "title, status, storage_path, created_at, activated_at, duplicate_of, metadata, "
+    "ingested_at, document_date, location, summary"
 )
 _DOC_COLUMNS_D = ", ".join(f"d.{c}" for c in _DOC_COLUMNS.split(", "))
 
@@ -55,6 +56,10 @@ def _row_to_document(row: dict[str, Any]) -> Document:
         activated_at=row["activated_at"],
         duplicate_of=row["duplicate_of"],
         metadata=row["metadata"] or {},
+        ingested_at=row["ingested_at"],
+        document_date=row["document_date"],
+        location=row["location"],
+        summary=row["summary"],
     )
 
 
@@ -171,7 +176,7 @@ class PostgresDocumentRepository:
         with self._db.connection() as conn:
             conn.execute(
                 f"INSERT INTO documents ({_DOC_COLUMNS}) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     document.id,
                     document.tenant_id,
@@ -186,7 +191,28 @@ class PostgresDocumentRepository:
                     document.activated_at,
                     document.duplicate_of,
                     Json(document.metadata),
+                    document.ingested_at,
+                    document.document_date,
+                    document.location,
+                    document.summary,
                 ),
+            )
+
+    def set_metadata(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        title: str | None,
+        document_date: date | None,
+        location: str | None,
+        summary: str | None,
+    ) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE documents SET title=COALESCE(%s, title), document_date=%s, location=%s, "
+                "summary=%s WHERE id=%s AND tenant_id=%s",
+                (title, document_date, location, summary, document_id, tenant_id),
             )
 
     def get(self, tenant_id: str, document_id: str) -> Document | None:

@@ -387,6 +387,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         storage_path=artifacts.storage_path,
         created_at=now,
         activated_at=now,
+        ingested_at=now,
         metadata={
             "extraction_method": result.extraction_method,
             "page_count": result.page_count,

@@ -482,3 +482,8 @@ table.jobs td {
   background: rgba(255, 196, 0, 0.18);
   border-color: rgba(255, 196, 0, 0.5);
 }
+
+.doc-summary p {
+  margin: 0.25rem 0 0;
+  line-height: 1.5;
+}

@@ -10,7 +10,7 @@ authenticated token, never from request input (ADR-0008).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -95,6 +95,11 @@ class Document(BaseModel):
     storage_path: str | None = None
     created_at: datetime
     activated_at: datetime | None = None
+    ingested_at: datetime | None = None
+    # Enrichment (M6.2): document_date/location are None when undeterminable (UI shows "n/a").
+    document_date: date | None = None
+    location: str | None = None
+    summary: str | None = None
     # For DocumentStatus.DUPLICATE: the id of the already-ingested document this duplicates.
     duplicate_of: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

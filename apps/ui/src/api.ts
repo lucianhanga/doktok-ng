@@ -45,6 +45,10 @@ export interface DokDocument {
   title: string | null;
   status: string;
   created_at: string;
+  ingested_at?: string | null;
+  document_date?: string | null;
+  location?: string | null;
+  summary?: string | null;
   duplicate_of?: string | null;
   metadata: Record<string, unknown>;
 }

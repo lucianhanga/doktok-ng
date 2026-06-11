@@ -17,7 +17,7 @@ Defaults (both configurable via environment variables):
 
 ```env
 DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b
-DOKTOK_EMBEDDING_MODEL=mxbai-embed-large:latest
+DOKTOK_EMBEDDING_MODEL=qwen3-embedding:0.6b
 DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
@@ -26,10 +26,13 @@ Notes on model selection:
 - `qwen3.6:35b-a3b` is the default chat/RAG model. It is a mixture-of-experts model that activates a
   small number of parameters per token, giving strong reasoning quality at practical local speed, and
   it follows structured-output/JSON-extraction instructions well for grounded RAG with citations.
-- `mxbai-embed-large:latest` (1024-dim) is the default embedding model. A documented alternative is
-  `bge-m3:latest` (1024-dim, ~8K token context, multilingual), which is preferable when document
-  chunks are large or multilingual. The embedding model is configurable and can be switched without
-  changing core code.
+- `qwen3-embedding:0.6b` (1024-dim) is the default embedding model: unlike `mxbai-embed-large` (which
+  truncates inputs at 512 tokens) it handles DokTok's larger chunks, and it is strong + multilingual.
+  Documented alternatives (all 1024-dim, so no schema change): `mxbai-embed-large:latest`,
+  `bge-m3:latest` (~8K context, dense+sparse+ColBERT). The embedding model is configurable. **Changing
+  the embedding model requires re-embedding the corpus** - bump `ChunkEmbedFeature`'s version and the
+  feature reconciler (ADR-0009) re-indexes every active document; the pgvector column stays
+  `vector(1024)` only if the new model is also 1024-dim.
 - A lighter chat fallback for ~16GB machines is `qwen3:14b`.
 - OCR (M3) uses a local **vision** model rather than bundling Tesseract, configurable via
   `DOKTOK_OCR_MODEL` (default `glm-ocr:latest` - a small dedicated OCR model that emits

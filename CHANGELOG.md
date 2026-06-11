@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Changed
+- Default embedding model switched from `mxbai-embed-large` to **`qwen3-embedding:0.6b`** (still
+  1024-dim, so no schema change) because mxbai truncates inputs at 512 tokens while DokTok's chunks can
+  be larger. `ChunkEmbedFeature`'s version is bumped to 2, so the **feature reconciler automatically
+  re-embeds the whole corpus** for each tenant (run the worker after upgrading; `ollama pull
+  qwen3-embedding:0.6b`). Changing the embedding model always requires a re-index, which this version
+  bump performs.
 - Ollama HTTP timeouts are now generous (`DOKTOK_OLLAMA_TIMEOUT_SECONDS`, default 600) and applied to
   OCR, embedding, and chat calls. Under parallel ingestion (`DOKTOK_INGEST_CONCURRENCY` > 1) requests
   queue at Ollama, and the previous short timeouts (120-180s) caused jobs to fail with

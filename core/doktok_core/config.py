@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     files_root: str = "./storage/files"
 
     default_model: str = "qwen3.6:35b-a3b"
-    embedding_model: str = "mxbai-embed-large:latest"
+    # qwen3-embedding (1024-dim) handles >512-token chunks; mxbai-embed-large truncates at 512.
+    embedding_model: str = "qwen3-embedding:0.6b"
     # OCR vision model (used by the M3 OCR adapter; configurable, ADR-0003).
     ocr_model: str = "glm-ocr:latest"
     ollama_base_url: str = "http://localhost:11434"

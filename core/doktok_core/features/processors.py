@@ -45,7 +45,7 @@ class ChunkEmbedFeature:
     """Re-chunk + re-embed a document into the chunk store (vector + FTS search)."""
 
     name = "chunk_embed"
-    version = 1
+    version = 2  # bumped for the qwen3-embedding switch -> reconciler re-embeds the corpus
 
     def __init__(
         self,

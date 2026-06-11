@@ -33,6 +33,7 @@ from doktok_contracts.ports import (
     EmbeddingProvider,
     EntityExtractor,
     EntityRepository,
+    FeatureRepository,
     FileStorage,
     HashService,
     IngestionJobRepository,
@@ -63,6 +64,7 @@ from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import write_document_artifacts
 from doktok_core.entities.language import detect_language, pg_config_for
 from doktok_core.extraction.service import ExtractionResult, NeedsOcrError, extract_document
+from doktok_core.features.processors import ChunkEmbedFeature, EntitiesFeature
 from doktok_core.ingestion.layout import FilesystemLayout
 
 DETECTOR_NAME = "libmagic"
@@ -119,6 +121,9 @@ class IngestionServices:
     # Lexical term indexing (M5.7). Lexemes stored as CUSTOM_TOKEN entities (language-aware).
     lexical_term_extractor: LexicalTermExtractor | None = None
     lexical_terms_limit: int = 200
+    # Feature ledger (M5.10/ADR-0009). When present, features run inline are recorded as done so the
+    # reconciler can backfill anything missing (e.g. a feature added after this doc was ingested).
+    feature_repo: FeatureRepository | None = None
 
 
 def _structured_entities(
@@ -238,6 +243,22 @@ def _audit(
 
 def _new_id() -> str:
     return uuid.uuid4().hex
+
+
+def _record_features_done(services: IngestionServices, document_id: str) -> None:
+    """Record the features that ran inline at activation so the reconciler can backfill the rest."""
+    repo = services.feature_repo
+    if repo is None:
+        return
+    repo.record_done(services.tenant_id, document_id, "extract", 1)
+    if services.chunk_repo is not None:
+        repo.record_done(
+            services.tenant_id, document_id, ChunkEmbedFeature.name, ChunkEmbedFeature.version
+        )
+    if services.entity_repo is not None:
+        repo.record_done(
+            services.tenant_id, document_id, EntitiesFeature.name, EntitiesFeature.version
+        )
 
 
 def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
@@ -378,6 +399,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         },
     )
     services.document_repo.add(document)
+    _record_features_done(services, document_id)
 
     job.document_id = document_id
     job.status = JobStatus.ACTIVE

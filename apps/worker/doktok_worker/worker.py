@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from doktok_contracts.schemas import IngestionJob
+from doktok_core.features.reconciler import FeatureReconciler
 from doktok_core.ingestion.pipeline import IngestionServices, process_file
 from doktok_core.ingestion.stability import FileObservation, StabilityTracker
 
@@ -35,6 +36,7 @@ class IngestionWorker:
         stability_seconds: float = 3.0,
         poll_interval: float = 1.0,
         concurrency: int = 1,
+        reconciler: FeatureReconciler | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         # One IngestionServices per tenant (each carries that tenant's layout + tenant_id).
@@ -42,7 +44,14 @@ class IngestionWorker:
         self._tracker = StabilityTracker(stability_seconds)
         self._poll_interval = poll_interval
         self._concurrency = max(1, int(concurrency))
+        self._reconciler = reconciler
         self._clock = clock
+
+    def reconcile(self) -> int:
+        """Drive active documents toward having every registered feature processed (ADR-0009)."""
+        if self._reconciler is None:
+            return 0
+        return self._reconciler.reconcile()
 
     def run_once(self) -> list[IngestionJob]:
         """Scan every tenant's ingest folder once; ingest files that have become stable."""
@@ -97,6 +106,7 @@ class IngestionWorker:
         while True:
             try:
                 self.run_once()
+                self.reconcile()
             except Exception:  # noqa: BLE001 - keep the worker alive across unexpected errors
                 logger.exception("ingestion scan failed")
             time.sleep(self._poll_interval)

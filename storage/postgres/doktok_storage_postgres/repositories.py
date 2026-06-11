@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
 from typing import Any
 
 from doktok_contracts.media import ExtractedTerm
@@ -10,9 +12,11 @@ from doktok_contracts.schemas import (
     Document,
     DocumentChunk,
     DocumentEntity,
+    DocumentFeature,
     DocumentStatus,
     EntitySummary,
     EntityType,
+    FeatureStatus,
     IngestionJob,
     JobStatus,
     StatsSummary,
@@ -558,3 +562,130 @@ class PostgresLexicalTermExtractor:
                 (config, text, limit),
             ).fetchall()
         return [ExtractedTerm(term=row["lexeme"], frequency=int(row["freq"])) for row in rows]
+
+
+_FEATURE_COLUMNS = (
+    "id, tenant_id, document_id, feature, feature_version, status, attempts, max_attempts, "
+    "last_error, last_attempt_at, completed_at, next_attempt_at, created_at, updated_at"
+)
+_FEATURE_COLUMNS_F = ", ".join(f"f.{c}" for c in _FEATURE_COLUMNS.split(", "))
+
+
+def _row_to_feature(row: dict[str, Any]) -> DocumentFeature:
+    return DocumentFeature(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        document_id=row["document_id"],
+        feature=row["feature"],
+        feature_version=row["feature_version"],
+        status=FeatureStatus(row["status"]),
+        attempts=row["attempts"],
+        max_attempts=row["max_attempts"],
+        last_error=row["last_error"],
+        last_attempt_at=row["last_attempt_at"],
+        completed_at=row["completed_at"],
+        next_attempt_at=row["next_attempt_at"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+class PostgresFeatureRepository:
+    """The document_features ledger (ADR-0009). Claiming is multi-worker safe via SKIP LOCKED."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def record_done(
+        self, tenant_id: str, document_id: str, feature: str, feature_version: int
+    ) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO document_features "
+                "(id, tenant_id, document_id, feature, feature_version, status, completed_at) "
+                "VALUES (%s, %s, %s, %s, %s, 'done', now()) "
+                "ON CONFLICT (tenant_id, document_id, feature) DO UPDATE SET "
+                "status='done', feature_version=EXCLUDED.feature_version, completed_at=now(), "
+                "last_error=NULL, attempts=0, next_attempt_at=NULL, updated_at=now()",
+                (uuid.uuid4().hex, tenant_id, document_id, feature, feature_version),
+            )
+
+    def ensure_for_active(self, tenant_id: str, features: list[tuple[str, int]]) -> int:
+        affected = 0
+        with self._db.connection() as conn:
+            for name, version in features:
+                cur = conn.execute(
+                    "INSERT INTO document_features "
+                    "(id, tenant_id, document_id, feature, feature_version, status) "
+                    "SELECT gen_random_uuid()::text, d.tenant_id, d.id, %s, %s, 'pending' "
+                    "FROM documents d WHERE d.tenant_id=%s AND d.status='active' "
+                    "AND NOT EXISTS (SELECT 1 FROM document_features f "
+                    "WHERE f.tenant_id=d.tenant_id AND f.document_id=d.id AND f.feature=%s)",
+                    (name, version, tenant_id, name),
+                )
+                affected += cur.rowcount
+                # Version bump: reprocess documents whose completed feature is now stale.
+                cur = conn.execute(
+                    "UPDATE document_features SET status='pending', feature_version=%s, "
+                    "attempts=0, last_error=NULL, next_attempt_at=NULL, updated_at=now() "
+                    "WHERE tenant_id=%s AND feature=%s AND status='done' AND feature_version < %s",
+                    (version, tenant_id, name, version),
+                )
+                affected += cur.rowcount
+        return affected
+
+    def claim_next(
+        self, tenant_id: str, *, now: datetime, reclaim_before: datetime
+    ) -> DocumentFeature | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "WITH due AS ("
+                "  SELECT id FROM document_features WHERE tenant_id=%s AND ("
+                "    status='pending'"
+                "    OR (status='failed' AND attempts < max_attempts "
+                "        AND (next_attempt_at IS NULL OR next_attempt_at <= %s))"
+                "    OR (status='running' AND last_attempt_at < %s))"
+                "  ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
+                "UPDATE document_features f SET status='running', attempts=f.attempts+1, "
+                "last_attempt_at=%s, updated_at=now() FROM due WHERE f.id=due.id "
+                f"RETURNING {_FEATURE_COLUMNS_F}",
+                (tenant_id, now, reclaim_before, now),
+            ).fetchone()
+        return _row_to_feature(row) if row else None
+
+    def mark_done(self, feature_id: str, *, feature_version: int) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE document_features SET status='done', feature_version=%s, "
+                "completed_at=now(), last_error=NULL, updated_at=now() WHERE id=%s",
+                (feature_version, feature_id),
+            )
+
+    def mark_failed(self, feature_id: str, *, error: str, next_attempt_at: datetime) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE document_features SET status='failed', last_error=%s, "
+                "next_attempt_at=%s, updated_at=now() WHERE id=%s",
+                (error[:2000], next_attempt_at, feature_id),
+            )
+
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentFeature]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_FEATURE_COLUMNS} FROM document_features "
+                "WHERE tenant_id=%s AND document_id=%s ORDER BY feature",
+                (tenant_id, document_id),
+            ).fetchall()
+        return [_row_to_feature(row) for row in rows]
+
+    def reset(self, tenant_id: str, document_id: str, feature: str) -> bool:
+        with self._db.connection() as conn:
+            cur = conn.execute(
+                "UPDATE document_features SET status='pending', attempts=0, last_error=NULL, "
+                "next_attempt_at=NULL, updated_at=now() "
+                "WHERE tenant_id=%s AND document_id=%s AND feature=%s",
+                (tenant_id, document_id, feature),
+            )
+            return cur.rowcount > 0

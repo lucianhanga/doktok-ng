@@ -16,7 +16,7 @@ def main() -> None:
     )
     settings = get_settings()
     log = logging.getLogger("doktok.worker")
-    services, db = build_services(settings)
+    services, reconciler, db = build_services(settings)
     if not services:
         log.warning(
             "no tenants configured (DOKTOK_TENANT_TOKENS is empty); the worker has nothing to watch"
@@ -25,6 +25,7 @@ def main() -> None:
         services,
         stability_seconds=settings.file_stability_seconds,
         concurrency=settings.ingest_concurrency,
+        reconciler=reconciler,
     )
     if settings.ingest_concurrency > 1:
         log.info("processing up to %d documents in parallel", settings.ingest_concurrency)

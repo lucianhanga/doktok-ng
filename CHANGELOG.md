@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Document feature reconciliation (ADR-0009), phase 1: a per-document, per-feature ledger
+  (`document_features`, migration 0009) and a `FeatureReconciler` running in the worker drive every
+  active document toward having every registered feature processed. New features backfill existing
+  documents automatically; failures retry with backoff then record the error; a crashed run is
+  reclaimed via a lease; processing resumes after restart. Designed for **multiple worker instances**:
+  work is claimed atomically with `SELECT ... FOR UPDATE SKIP LOCKED`, so workers can be spawned under
+  load without double-processing. `chunk_embed` and `entities` are registered as idempotent processors
+  (re-derived from stored artifacts); a manual `reset` re-queues a feature. (API + UI are phase 2.)
 - The chat/RAG model (qwen) now runs with a configurable context window (`DOKTOK_CHAT_NUM_CTX`,
   default 32768) via `options.num_ctx`, giving RAG room for many retrieved chunks. OCR and embedding
   models are unaffected (they keep their defaults). Measured ~23 GB total for qwen at 32k thanks to

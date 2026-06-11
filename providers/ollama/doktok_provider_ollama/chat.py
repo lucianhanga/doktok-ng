@@ -35,6 +35,9 @@ class OllamaChatModelProvider:
                 "model": self._model,
                 "prompt": prompt,
                 "stream": False,
+                # No structured `format` here, so disabling thinking is safe and faster (the judge,
+                # RAG answerer, and reranker don't need chain-of-thought).
+                "think": False,
                 "options": options,
             },
             timeout=self._timeout,

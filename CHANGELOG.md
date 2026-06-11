@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Enrichment **title + summary now match the document's language** (e.g. a German contract gets a
+  German title and summary), via an explicit instruction in the extraction prompt.
+- Faster LLM calls by reducing "thinking": the RAG answerer, reranker, and OCR-quality judge now run
+  with `think=false` (no structured `format` there, so it applies fully); the enrichment prompts use
+  `/no_think` to soft-trim thinking on the qwen3.6 MoE (which can't hard-disable it alongside
+  structured output). For a large enrichment speedup, a new `DOKTOK_ENRICH_THINK=false` paired with a
+  dense `DOKTOK_ENRICH_MODEL=qwen3:14b` hard-disables thinking (that combo handles `think=false` +
+  `format` correctly).
 - **Retry ingestion** for failed documents: a failed document's detail card now shows a "Retry
   ingestion" button. `POST /api/v1/documents/{id}/reingest` moves the preserved original back into the
   tenant's ingest folder and clears the failed document + job records, so the worker reprocesses it

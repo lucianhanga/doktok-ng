@@ -43,6 +43,12 @@ def test_parses_structured_output_without_repair(monkeypatch: Any) -> None:
     assert "think" not in calls[0]["options"]  # primary leaves thinking on
 
 
+def test_think_false_hard_disables_thinking(monkeypatch: Any) -> None:
+    calls = _patch(monkeypatch, [_GOOD])
+    OllamaMetadataExtractor("dense", "repair", "http://x", think=False).extract("text")
+    assert calls[0]["options"]["think"] is False  # dense fast-path disables thinking
+
+
 def test_falls_back_to_repair_model_on_invalid_json(monkeypatch: Any) -> None:
     calls = _patch(monkeypatch, ["here is your answer: not json", _GOOD])
     ex = OllamaMetadataExtractor("primary", "repair", "http://x")

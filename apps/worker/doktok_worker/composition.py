@@ -111,6 +111,7 @@ def build_services(
         settings.ollama_base_url,
         timeout=timeout,
         num_ctx=settings.enrich_num_ctx,
+        think=settings.enrich_think,
     )
     category_classifier = OllamaCategoryClassifier(
         settings.enrich_model,
@@ -118,6 +119,7 @@ def build_services(
         settings.ollama_base_url,
         timeout=timeout,
         num_ctx=settings.enrich_num_ctx,
+        think=settings.enrich_think,
     )
     category_repo = PostgresCategoryRepository(db)
 

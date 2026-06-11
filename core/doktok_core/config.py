@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # Dense default: think=false + structured `format` works reliably on qwen3:14b and is far faster
     # than the qwen3.6 MoE for extraction (when kept warm). Switch to qwen3.6:35b-a3b +
     # DOKTOK_ENRICH_THINK=true for higher quality/language fidelity at the cost of latency.
+    # OCR-quality judge (embedded-text vs OCR). Defaults to the dense enrichment model so ingestion
+    # never needs the 23 GB qwen3.6 (which would evict qwen3:14b on a ~48 GB box). Small context: it
+    # only compares a page of text. RAG chat still uses DOKTOK_DEFAULT_MODEL.
+    judge_model: str = "qwen3:14b"
+    judge_num_ctx: int = 8192
     enrich_model: str = "qwen3:14b"
     enrich_repair_model: str = "qwen3:14b"
     # 4096 keeps the dense 14b small enough to load fast and stay resident (16k made load ~50s/call

@@ -12,7 +12,7 @@ import httpx
 class OllamaEmbeddingProvider:
     """``EmbeddingProvider`` backed by Ollama's ``/api/embed`` batch endpoint."""
 
-    def __init__(self, model: str, base_url: str, *, timeout: float = 120.0) -> None:
+    def __init__(self, model: str, base_url: str, *, timeout: float = 300.0) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout

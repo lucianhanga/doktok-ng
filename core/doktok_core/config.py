@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # OCR vision model (used by the M3 OCR adapter; configurable, ADR-0003).
     ocr_model: str = "glm-ocr:latest"
     ollama_base_url: str = "http://localhost:11434"
+    # HTTP timeout (seconds) for each Ollama call. Generous because requests queue at Ollama under
+    # parallel ingestion (raise OLLAMA_NUM_PARALLEL to run them concurrently instead of queuing).
+    ollama_timeout_seconds: float = 600.0
     # A PDF page whose largest image covers >= this fraction of the page is treated as scanned.
     ocr_image_coverage: float = 0.8
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the

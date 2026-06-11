@@ -64,17 +64,22 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     security_policy = DefaultSecurityPolicy(max_file_mb=settings.max_file_mb)
     text_extractor = DirectTextExtractor()
     pdf_extractor = PyMuPdfTextExtractor()
-    ocr_extractor = OllamaVisionOcr(settings.ocr_model, settings.ollama_base_url)
+    timeout = settings.ollama_timeout_seconds
+    ocr_extractor = OllamaVisionOcr(settings.ocr_model, settings.ollama_base_url, timeout=timeout)
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
     pdf_classifier = PyMuPdfClassifier()
     chunker = FixedWindowChunker()
-    embedding_provider = OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url)
+    embedding_provider = OllamaEmbeddingProvider(
+        settings.embedding_model, settings.ollama_base_url, timeout=timeout
+    )
     chunk_repo = PostgresChunkRepository(db)
     entity_extractor = RegexEntityExtractor()
     entity_repo = PostgresEntityRepository(db)
     lexical_term_extractor = PostgresLexicalTermExtractor(db)
-    chat_model = OllamaChatModelProvider(settings.default_model, settings.ollama_base_url)
+    chat_model = OllamaChatModelProvider(
+        settings.default_model, settings.ollama_base_url, timeout=timeout
+    )
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- RAG **LLM reranker** (M6.1): the answerer now retrieves wide (`DOKTOK_RAG_RETRIEVE_K`, default 40),
+  has the chat model listwise-rerank the candidates in a single call, keeps the best `limit`, and packs
+  them "edges-best" (most relevant at the start and end) to fight lost-in-the-middle. A new `Reranker`
+  port + `LlmReranker` (falls back to retrieval order on any parse/model failure, so it can only
+  improve retrieval). Plus a **citation guardrail**: answers now cite only the excerpts they actually
+  referenced with a valid `[n]` index. (Adds one extra LLM call per chat query.)
 - Per-feature processing badges are now surfaced in the document lists, not just the detail view: the
   **Documents** tab shows a chip per feature with its status (e.g. `chunk_embed ✓`, `entities …`,
   `entities ✗`) on each row, and the **Overview** dashboard shows a "Pending features" rollup

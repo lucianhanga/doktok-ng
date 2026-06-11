@@ -145,17 +145,21 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
         return cast(RagAnswerer, registry.resolve(RagAnswerer))
 
     from doktok_core.rag.answerer import DefaultRagAnswerer
+    from doktok_core.rag.reranker import LlmReranker
     from doktok_provider_ollama import OllamaChatModelProvider
 
     settings = request.app.state.settings
+    chat_model = OllamaChatModelProvider(
+        settings.default_model,
+        settings.ollama_base_url,
+        timeout=settings.ollama_timeout_seconds,
+        num_ctx=settings.chat_num_ctx,
+    )
     answerer = DefaultRagAnswerer(
         get_retriever(request),
-        OllamaChatModelProvider(
-            settings.default_model,
-            settings.ollama_base_url,
-            timeout=settings.ollama_timeout_seconds,
-            num_ctx=settings.chat_num_ctx,
-        ),
+        chat_model,
+        reranker=LlmReranker(chat_model),
+        retrieve_k=settings.rag_retrieve_k,
     )
     registry.register(RagAnswerer, answerer)
     return answerer

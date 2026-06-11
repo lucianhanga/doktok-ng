@@ -509,7 +509,8 @@ tr.row-selected {
   background: rgba(46, 120, 200, 0.12);
 }
 
-/* Documents list: compact, single-line rows with truncation (full text on hover). */
+/* Documents list: column widths via <colgroup>; Title gets the remaining space, scalar cells
+   truncate with ellipsis (full text on hover), and the processing chips wrap within their column. */
 .docs-table {
   font-size: 0.82rem;
   table-layout: fixed;
@@ -518,28 +519,31 @@ tr.row-selected {
 
 .docs-table th,
 .docs-table td {
-  padding: 0.25rem 0.5rem;
+  padding: 0.3rem 0.6rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
 }
 
-.docs-table .cell-title {
-  max-width: 22rem;
-}
-
-.docs-table .cell-file {
-  max-width: 16rem;
+.docs-table .cell-check {
+  text-align: center;
+  padding: 0.3rem 0;
 }
 
 .docs-table .cell-type {
-  max-width: 9rem;
   color: #888;
 }
 
+/* Processing column: let the per-feature chips wrap instead of overflowing off-screen. */
+.docs-table .cell-processing {
+  white-space: normal;
+  overflow: visible;
+}
+
 .docs-table .feature-chips {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  gap: 0.2rem;
 }
 
 .docs-table .feature-chips .chip {

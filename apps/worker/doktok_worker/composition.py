@@ -78,7 +78,10 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     entity_repo = PostgresEntityRepository(db)
     lexical_term_extractor = PostgresLexicalTermExtractor(db)
     chat_model = OllamaChatModelProvider(
-        settings.default_model, settings.ollama_base_url, timeout=timeout
+        settings.default_model,
+        settings.ollama_base_url,
+        timeout=timeout,
+        num_ctx=settings.chat_num_ctx,
     )
 
     services: list[IngestionServices] = []

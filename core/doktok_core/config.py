@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # HTTP timeout (seconds) for each Ollama call. Generous because requests queue at Ollama under
     # parallel ingestion (raise OLLAMA_NUM_PARALLEL to run them concurrently instead of queuing).
     ollama_timeout_seconds: float = 600.0
+    # Context window (tokens) requested for the chat/RAG model. 32k suits multi-chunk RAG prompts;
+    # qwen3's grouped-query attention keeps the KV cache for this cheap (~1-2 GB). OCR/embeddings
+    # are unaffected (they use the model defaults).
+    chat_num_ctx: int = 32768
     # A PDF page whose largest image covers >= this fraction of the page is treated as scanned.
     ocr_image_coverage: float = 0.8
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the

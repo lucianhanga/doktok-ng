@@ -12,19 +12,30 @@ import httpx
 class OllamaChatModelProvider:
     """``ChatModelProvider`` backed by Ollama's ``/api/generate`` endpoint."""
 
-    def __init__(self, model: str, base_url: str, *, timeout: float = 600.0) -> None:
+    def __init__(
+        self,
+        model: str,
+        base_url: str,
+        *,
+        timeout: float = 600.0,
+        num_ctx: int | None = None,
+    ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._num_ctx = num_ctx
 
     def complete(self, prompt: str) -> str:
+        options: dict[str, object] = {"temperature": 0}
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
         response = httpx.post(
             f"{self._base_url}/api/generate",
             json={
                 "model": self._model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0},
+                "options": options,
             },
             timeout=self._timeout,
         )

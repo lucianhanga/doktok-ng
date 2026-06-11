@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The chat/RAG model (qwen) now runs with a configurable context window (`DOKTOK_CHAT_NUM_CTX`,
+  default 32768) via `options.num_ctx`, giving RAG room for many retrieved chunks. OCR and embedding
+  models are unaffected (they keep their defaults). Measured ~23 GB total for qwen at 32k thanks to
+  grouped-query attention - comfortable on 48 GB.
 - Failed and duplicate documents now get a `documents` record and keep their **original filename** on
   disk. Failed files are stored as `docs.failed/{job_id}/<original-name>` with a `status=failed`
   document row (error code/message in metadata). Duplicate files (re-ingest of already-active content)

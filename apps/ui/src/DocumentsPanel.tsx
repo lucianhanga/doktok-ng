@@ -1,19 +1,51 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { fetchDocuments, type DokDocument } from "./api";
+import { fetchDocuments, fetchFeatures, type DocumentFeature, type DokDocument } from "./api";
 import { useInterval } from "./hooks";
 
 type DocsState =
   | { kind: "loading" }
-  | { kind: "ok"; docs: DokDocument[] }
+  | { kind: "ok"; docs: DokDocument[]; features: Map<string, DocumentFeature[]> }
   | { kind: "error"; message: string };
+
+function groupByDocument(features: DocumentFeature[]): Map<string, DocumentFeature[]> {
+  const map = new Map<string, DocumentFeature[]>();
+  for (const f of features) {
+    const list = map.get(f.document_id) ?? [];
+    list.push(f);
+    map.set(f.document_id, list);
+  }
+  return map;
+}
+
+function FeatureChips({ features }: { features: DocumentFeature[] }) {
+  if (features.length === 0) return <span className="muted">-</span>;
+  return (
+    <span className="feature-chips">
+      {features
+        .slice()
+        .sort((a, b) => a.feature.localeCompare(b.feature))
+        .map((f) => (
+          <span
+            key={f.feature}
+            className={`chip feat-${f.status}`}
+            title={f.last_error ? `${f.feature}: ${f.last_error}` : `${f.feature}: ${f.status}`}
+          >
+            {f.feature} {f.status === "done" ? "✓" : f.status === "failed" ? "✗" : "…"}
+          </span>
+        ))}
+    </span>
+  );
+}
 
 export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [state, setState] = useState<DocsState>({ kind: "loading" });
 
   const load = useCallback(() => {
-    fetchDocuments()
-      .then((docs) => setState({ kind: "ok", docs }))
+    Promise.all([fetchDocuments(), fetchFeatures()])
+      .then(([docs, features]) =>
+        setState({ kind: "ok", docs, features: groupByDocument(features) }),
+      )
       .catch((err: unknown) =>
         setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
       );
@@ -47,6 +79,7 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
               <th>File</th>
               <th>Type</th>
               <th>Status</th>
+              <th>Processing</th>
             </tr>
           </thead>
           <tbody>
@@ -57,6 +90,9 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                 <td>{doc.detected_mime ?? "-"}</td>
                 <td>
                   <span className={`badge status-${doc.status}`}>{doc.status}</span>
+                </td>
+                <td>
+                  <FeatureChips features={state.features.get(doc.id) ?? []} />
                 </td>
               </tr>
             ))}

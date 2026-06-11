@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-feature processing badges are now surfaced in the document lists, not just the detail view: the
+  **Documents** tab shows a chip per feature with its status (e.g. `chunk_embed ✓`, `entities …`,
+  `entities ✗`) on each row, and the **Overview** dashboard shows a "Pending features" rollup
+  (documents with any feature not done). `GET /api/v1/features` returns the tenant's ledger;
+  `StatsSummary.documents_pending_features` drives the rollup. (`status` stays the lifecycle flag;
+  features = enrichment coverage.)
 - RAG evaluation harness (eval-first, M6.1): deterministic metric logic (`evaluate`: retrieval recall,
   answer correctness, citation correctness, refusal correctness; CI-tested with fakes), a golden corpus
   + Q/A set (`eval/`) tagged by kind (factoid / aggregation / refusal), and a local runner

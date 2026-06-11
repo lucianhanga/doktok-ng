@@ -8,10 +8,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockDocs(docs: DokDocument[]) {
+function mockDocs(docs: DokDocument[], features: unknown[] = []) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify(docs), { status: 200 })),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/features")) {
+        return new Response(JSON.stringify(features), { status: 200 });
+      }
+      return new Response(JSON.stringify(docs), { status: 200 });
+    }),
   );
 }
 
@@ -39,6 +45,20 @@ test("renders documents", async () => {
   render(<DocumentsPanel />);
   await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
   expect(screen.getByText("application/pdf")).toBeInTheDocument();
+});
+
+test("shows per-feature processing chips per document", async () => {
+  mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf" })],
+    [
+      { document_id: "a", feature: "chunk_embed", status: "done", feature_version: 1, attempts: 1, max_attempts: 3 },
+      { document_id: "a", feature: "entities", status: "failed", feature_version: 1, attempts: 3, max_attempts: 3, last_error: "boom" },
+    ],
+  );
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+  expect(screen.getByText(/chunk_embed/)).toBeInTheDocument();
+  expect(screen.getByText(/entities/)).toBeInTheDocument();
 });
 
 test("shows an error when the request fails", async () => {

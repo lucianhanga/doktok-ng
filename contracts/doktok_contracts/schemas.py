@@ -301,6 +301,9 @@ class StatsSummary(BaseModel):
     jobs: dict[str, int] = Field(default_factory=dict)
     entities: int
     pending_ingest: int = 0  # files waiting in the ingest folder (no job yet)
+    documents_pending_features: int = (
+        0  # documents with >=1 feature not done (pending/running/failed)
+    )
 
 
 class HealthStatus(BaseModel):

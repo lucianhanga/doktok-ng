@@ -49,6 +49,9 @@ class FakeFeatureRepository:
             )
         ]
 
+    def list_for_tenant(self, tenant_id: str, *, limit: int = 2000) -> list[DocumentFeature]:
+        return self.list_for_document(tenant_id, "d1")
+
     def reset(self, tenant_id: str, document_id: str, feature: str) -> bool:
         self.reset_calls.append((tenant_id, document_id, feature))
         return feature == "entities"

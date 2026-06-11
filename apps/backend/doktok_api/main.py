@@ -21,6 +21,7 @@ from doktok_api.routers import (
     chat,
     documents,
     entities,
+    features,
     ingestion,
     search,
     stats,
@@ -93,6 +94,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(stats.router)
     app.include_router(chat.router)
     app.include_router(tokens.router)
+    app.include_router(features.router)
 
     return app
 

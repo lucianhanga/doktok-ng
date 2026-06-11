@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { fetchHealth, type HealthStatus } from "./api";
 import { ActivityPanel } from "./ActivityPanel";
+import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { EntitiesPanel } from "./EntitiesPanel";
@@ -61,12 +62,21 @@ export function HealthPanel() {
   );
 }
 
-type View = "overview" | "status" | "ingestion" | "documents" | "search" | "entities" | "activity";
+type View =
+  | "overview"
+  | "status"
+  | "ingestion"
+  | "documents"
+  | "search"
+  | "chat"
+  | "entities"
+  | "activity";
 
 const TABS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "documents", label: "Documents" },
   { id: "search", label: "Search" },
+  { id: "chat", label: "Chat" },
   { id: "entities", label: "Entities" },
   { id: "ingestion", label: "Ingestion" },
   { id: "activity", label: "Activity" },
@@ -109,6 +119,7 @@ export default function App() {
           {view === "overview" && <OverviewPanel />}
           {view === "documents" && <DocumentsPanel onOpenDocument={setOpenDoc} />}
           {view === "search" && <SearchPanel onOpenDocument={setOpenDoc} />}
+          {view === "chat" && <ChatPanel onOpenDocument={setOpenDoc} />}
           {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
           {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
           {view === "activity" && <ActivityPanel />}

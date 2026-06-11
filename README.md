@@ -20,6 +20,11 @@ the *style*, narrowed to documents.
 
 ## Status
 
+**M6 (RAG chat with citations).** Ask questions about your documents at `POST /api/v1/chat` and a
+**Chat** tab: the M4 hybrid retriever finds relevant chunks, the default chat model
+(`DOKTOK_DEFAULT_MODEL`) answers **only from those excerpts** with `[n]` citations, and **refuses**
+when the evidence is insufficient. Tenant-scoped and token-protected.
+
 **M5 (Entity indexing).** On top of M4, ingested documents have their **entities extracted** (rule-based:
 emails, URLs, money, dates, invoice/contract IDs) into a tenant-scoped `document_entities` table, browsable
 and filterable via `GET /api/v1/entities` (+ `/documents`) and an **Entities** tab. (PERSON/ORG NER via

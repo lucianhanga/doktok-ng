@@ -90,6 +90,7 @@ def _fuse(
                 page_start=row["page_start"],
                 page_end=row["page_end"],
                 snippet=_snippet(row["text"]),
+                text=row["text"],
                 score=round(entry["score"], 6),
                 vector_score=entry.get("vector_score"),
                 text_score=entry.get("text_score"),

@@ -239,6 +239,34 @@ class Citation(BaseModel):
     snippet: str
 
 
+class FeatureStatus(StrEnum):
+    """State of a single processing feature for one document (ADR-0009)."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class DocumentFeature(BaseModel):
+    """Ledger row: how one processing feature has been applied to one document (ADR-0009)."""
+
+    id: str
+    tenant_id: str
+    document_id: str
+    feature: str
+    feature_version: int = 1
+    status: FeatureStatus = FeatureStatus.PENDING
+    attempts: int = 0
+    max_attempts: int = 3
+    last_error: str | None = None
+    last_attempt_at: datetime | None = None
+    completed_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class TokenSuggestion(BaseModel):
     """An autocomplete suggestion for the faceted token search."""
 

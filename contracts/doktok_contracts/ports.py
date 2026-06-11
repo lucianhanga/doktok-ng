@@ -9,6 +9,7 @@ See brief section 9 for the full list.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from doktok_contracts.media import (
@@ -24,6 +25,7 @@ from doktok_contracts.schemas import (
     DocumentArtifact,
     DocumentChunk,
     DocumentEntity,
+    DocumentFeature,
     DocumentVersion,
     EntitySummary,
     EntityType,
@@ -240,6 +242,33 @@ class RagAnswerer(Protocol):
 @runtime_checkable
 class StatsRepository(Protocol):
     def summary(self, tenant_id: str) -> StatsSummary: ...
+
+
+@runtime_checkable
+class FeatureProcessor(Protocol):
+    """A named, versioned, idempotent document-processing capability (ADR-0009)."""
+
+    name: str
+    version: int
+
+    def process(self, tenant_id: str, document_id: str) -> None: ...
+
+
+@runtime_checkable
+class FeatureRepository(Protocol):
+    """The per-document feature ledger; the unit of work for the reconciler (ADR-0009)."""
+
+    def record_done(
+        self, tenant_id: str, document_id: str, feature: str, feature_version: int
+    ) -> None: ...
+    def ensure_for_active(self, tenant_id: str, features: list[tuple[str, int]]) -> int: ...
+    def claim_next(
+        self, tenant_id: str, *, now: datetime, reclaim_before: datetime
+    ) -> DocumentFeature | None: ...
+    def mark_done(self, feature_id: str, *, feature_version: int) -> None: ...
+    def mark_failed(self, feature_id: str, *, error: str, next_attempt_at: datetime) -> None: ...
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentFeature]: ...
+    def reset(self, tenant_id: str, document_id: str, feature: str) -> bool: ...
 
 
 # --- Security -------------------------------------------------------------------------------

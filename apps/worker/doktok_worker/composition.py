@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from doktok_contracts.ports import FeatureProcessor
 from doktok_core.config import Settings
 from doktok_core.entities.extractor import RegexEntityExtractor
+from doktok_core.features.processors import ChunkEmbedFeature, EntitiesFeature
+from doktok_core.features.reconciler import FeatureReconciler
 from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
@@ -32,6 +35,7 @@ from doktok_storage_postgres import (
     PostgresChunkRepository,
     PostgresDocumentRepository,
     PostgresEntityRepository,
+    PostgresFeatureRepository,
     PostgresIngestionJobRepository,
     PostgresLexicalTermExtractor,
     migrate,
@@ -46,8 +50,10 @@ def tenant_ids(settings: Settings) -> list[str]:
     return list(seen)
 
 
-def build_services(settings: Settings) -> tuple[list[IngestionServices], Database]:
-    """Build per-tenant ingestion services and a shared database handle.
+def build_services(
+    settings: Settings,
+) -> tuple[list[IngestionServices], FeatureReconciler, Database]:
+    """Build per-tenant ingestion services, the feature reconciler, and a shared database handle.
 
     Ensures each tenant's lifecycle folders exist and runs migrations once.
     """
@@ -77,12 +83,27 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     entity_extractor = RegexEntityExtractor()
     entity_repo = PostgresEntityRepository(db)
     lexical_term_extractor = PostgresLexicalTermExtractor(db)
+    feature_repo = PostgresFeatureRepository(db)
     chat_model = OllamaChatModelProvider(
         settings.default_model,
         settings.ollama_base_url,
         timeout=timeout,
         num_ctx=settings.chat_num_ctx,
     )
+
+    # Reconciler processors re-derive from stored artifacts, so they share the same adapters.
+    processors: list[FeatureProcessor] = [
+        ChunkEmbedFeature(document_repo, file_storage, chunker, embedding_provider, chunk_repo),
+        EntitiesFeature(
+            document_repo,
+            file_storage,
+            entity_extractor,
+            lexical_term_extractor,
+            entity_repo,
+            lexical_terms_limit=settings.lexical_terms_limit,
+        ),
+    ]
+    reconciler = FeatureReconciler(feature_repo, processors, tenant_ids(settings))
 
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
@@ -116,6 +137,7 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 entity_repo=entity_repo,
                 lexical_term_extractor=lexical_term_extractor,
                 lexical_terms_limit=settings.lexical_terms_limit,
+                feature_repo=feature_repo,
             )
         )
-    return services, db
+    return services, reconciler, db

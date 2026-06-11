@@ -9,10 +9,12 @@ Layout:
       content.json            structured extraction (pages, method)
       pages/page-NNNN.json    per-page structured text
       normalized/
-        searchable.pdf        derived OCR'd PDF (images + text layer); created by OCR in M3
+        searchable.pdf        derived OCR'd PDF (images + text layer), for scanned input; OR
+        original.<ext>        a copy of the unmodified original, when no normalization was needed
 
-The "system document" is the canonical openable representation: the OCR'd
-``normalized/searchable.pdf`` when present (scanned input), otherwise the ``original.<ext>``.
+The ``normalized/`` directory is always present for a consistent structure: it holds the canonical
+"system document" - the OCR'd ``normalized/searchable.pdf`` for scanned input, otherwise a verbatim
+copy of the original. The root ``original.<ext>`` is always kept as the openable source of record.
 """
 
 from __future__ import annotations
@@ -73,6 +75,7 @@ def write_document_artifacts(
     detector: str,
     result: ExtractionResult,
     normalized_pdf: bytes | None = None,
+    language: str = "unknown",
 ) -> ArtifactResult:
     """Materialize the canonical artifacts. Returns the storage dir and key relative paths."""
     active_dir = layout.active_dir(document_id)
@@ -109,12 +112,19 @@ def write_document_artifacts(
             json.dumps(page_json, ensure_ascii=False, indent=2),
         )
 
-    normalized_rel: str | None = None
+    # Always materialize a system document under normalized/ for a consistent structure.
     if normalized_pdf is not None:
-        normalized_rel = NORMALIZED_PDF_REL
+        normalized_rel = NORMALIZED_PDF_REL  # OCR-derived searchable PDF
         file_storage.write_bytes(str(active_dir / normalized_rel), normalized_pdf)
+    else:
+        # No normalization needed: copy the unmodified original into normalized/ for consistency.
+        normalized_rel = f"normalized/original{ext}"
+        file_storage.write_bytes(
+            str(active_dir / normalized_rel),
+            file_storage.read_bytes(str(active_dir / original_rel)),
+        )
 
-    system_document = normalized_rel or original_rel
+    system_document = normalized_rel
 
     manifest = {
         "document_id": document_id,
@@ -127,14 +137,14 @@ def write_document_artifacts(
         "created_at": datetime.now(UTC).isoformat(),
         "extraction_method": result.extraction_method,
         "page_count": result.page_count,
-        "language": "unknown",
+        "language": language,
         "system_document": system_document,
         "artifacts": {
             "original": original_rel,
             "content_md": "content.md",
             "content_json": "content.json",
             "pages": pages_rel,
-            "normalized_pdf": normalized_rel,
+            "normalized": normalized_rel,
         },
     }
     file_storage.write_text(

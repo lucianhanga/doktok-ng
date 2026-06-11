@@ -83,14 +83,15 @@ def test_text_file_becomes_active_document(tmp_path: Path) -> None:
     assert document.status.value == "active"
 
     active = layout.active_dir(job.document_id)
-    # original keeps its extension and is the canonical "system document"
+    # original keeps its extension; the system document lives under normalized/ (a verbatim copy)
     assert (active / "original.txt").read_bytes() == b"hello world"
+    assert (active / "normalized" / "original.txt").read_bytes() == b"hello world"
     assert (active / "content.md").read_text() == "hello world"
     manifest = json.loads((active / "manifest.json").read_text())
     assert manifest["extraction_method"] == "text"
-    assert manifest["system_document"] == "original.txt"
+    assert manifest["system_document"] == "normalized/original.txt"
     assert manifest["artifacts"]["original"] == "original.txt"
-    assert manifest["artifacts"]["normalized_pdf"] is None
+    assert manifest["artifacts"]["normalized"] == "normalized/original.txt"
     assert not layout.job_workdir(job.id).exists()  # working dir cleaned up
 
 

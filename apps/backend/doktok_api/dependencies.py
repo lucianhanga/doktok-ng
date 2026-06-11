@@ -153,6 +153,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
             settings.default_model,
             settings.ollama_base_url,
             timeout=settings.ollama_timeout_seconds,
+            num_ctx=settings.chat_num_ctx,
         ),
     )
     registry.register(RagAnswerer, answerer)

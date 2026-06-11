@@ -36,6 +36,7 @@ from doktok_core.enrichment import (
     normalize_metadata,
 )
 from doktok_core.entities.language import detect_language, pg_config_for
+from doktok_core.entities.lexical import meaningful_terms
 
 
 def _read_text(file_storage: FileStorage, storage_path: str, name: str) -> str:
@@ -110,7 +111,7 @@ class EntitiesFeature:
     """Re-extract structured entities + multilingual lexical terms for a document."""
 
     name = "entities"
-    version = 2  # bumped for the noise-filtered lexical extraction -> reconciler re-extracts corpus
+    version = 3  # bumped for plausibility-filtered lexical terms -> reconciler re-extracts corpus
 
     def __init__(
         self,
@@ -163,7 +164,10 @@ class EntitiesFeature:
     def _terms(self, tenant_id: str, document_id: str, text: str) -> list[DocumentEntity]:
         language = detect_language(text)
         config = pg_config_for(language)
-        terms = self._lexical.extract_terms(text, config=config, limit=self._lexical_terms_limit)
+        limit = self._lexical_terms_limit
+        # Over-fetch candidates, then keep only plausible words (drops OCR/markup/script noise).
+        candidates = self._lexical.extract_terms(text, config=config, limit=limit * 4)
+        terms = meaningful_terms(candidates, language=language, limit=limit)
         return [
             DocumentEntity(
                 id=uuid.uuid4().hex,

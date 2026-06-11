@@ -63,6 +63,7 @@ from doktok_contracts.schemas import (
 from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import write_document_artifacts
 from doktok_core.entities.language import detect_language, pg_config_for
+from doktok_core.entities.lexical import meaningful_terms
 from doktok_core.extraction.service import ExtractionResult, NeedsOcrError, extract_document
 from doktok_core.features.processors import ChunkEmbedFeature, EntitiesFeature
 from doktok_core.ingestion.layout import FilesystemLayout
@@ -159,7 +160,10 @@ def _lexical_terms(
     if extractor is None:
         return []
     config = pg_config_for(language)
-    terms = extractor.extract_terms(text, config=config, limit=services.lexical_terms_limit)
+    limit = services.lexical_terms_limit
+    # Over-fetch candidates, then keep only plausible words (drops OCR/markup/script noise).
+    candidates = extractor.extract_terms(text, config=config, limit=limit * 4)
+    terms = meaningful_terms(candidates, language=language, limit=limit)
     return [
         DocumentEntity(
             id=_new_id(),

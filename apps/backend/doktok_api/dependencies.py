@@ -14,6 +14,7 @@ from doktok_contracts.ports import (
     AuditLogRepository,
     DocumentRepository,
     EntityRepository,
+    FeatureRepository,
     IngestionJobRepository,
     RagAnswerer,
     Retriever,
@@ -158,6 +159,18 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     )
     registry.register(RagAnswerer, answerer)
     return answerer
+
+
+def get_feature_repository(request: Request) -> FeatureRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(FeatureRepository):
+        return cast(FeatureRepository, registry.resolve(FeatureRepository))
+
+    from doktok_storage_postgres import PostgresFeatureRepository
+
+    repository = PostgresFeatureRepository(_get_database(request))
+    registry.register(FeatureRepository, repository)
+    return repository
 
 
 def get_stats_repository(request: Request) -> StatsRepository:

@@ -166,6 +166,29 @@ export function fetchDocumentActivity(id: string, signal?: AbortSignal): Promise
   );
 }
 
+export interface DocumentFeature {
+  feature: string;
+  status: string;
+  feature_version: number;
+  attempts: number;
+  max_attempts: number;
+  last_error?: string | null;
+}
+
+export function fetchDocumentFeatures(id: string, signal?: AbortSignal): Promise<DocumentFeature[]> {
+  return getJson<DocumentFeature[]>(`/api/v1/documents/${encodeURIComponent(id)}/features`, signal);
+}
+
+export async function retryDocumentFeature(id: string, feature: string): Promise<void> {
+  const response = await fetch(
+    `/api/v1/documents/${encodeURIComponent(id)}/features/${encodeURIComponent(feature)}/retry`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    throw new Error(`Retry request failed: ${response.status}`);
+  }
+}
+
 export function fetchStats(signal?: AbortSignal): Promise<Stats> {
   return getJson<Stats>("/api/v1/stats", signal);
 }

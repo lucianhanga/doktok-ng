@@ -40,13 +40,13 @@ def test_parses_structured_output_without_repair(monkeypatch: Any) -> None:
     meta = ex.extract("some document text")
     assert meta.title == "T" and meta.document_date == "2026-01-01" and meta.location == "Berlin"
     assert len(calls) == 1  # no repair needed
-    assert "think" not in calls[0]["options"]  # primary leaves thinking on
+    assert "think" not in calls[0]  # primary (think=True) omits the top-level think field
 
 
 def test_think_false_hard_disables_thinking(monkeypatch: Any) -> None:
     calls = _patch(monkeypatch, [_GOOD])
     OllamaMetadataExtractor("dense", "repair", "http://x", think=False).extract("text")
-    assert calls[0]["options"]["think"] is False  # dense fast-path disables thinking
+    assert calls[0]["think"] is False  # dense fast-path disables thinking (top-level)
 
 
 def test_falls_back_to_repair_model_on_invalid_json(monkeypatch: Any) -> None:
@@ -56,4 +56,4 @@ def test_falls_back_to_repair_model_on_invalid_json(monkeypatch: Any) -> None:
     assert meta.title == "T"
     assert len(calls) == 2
     assert calls[0]["model"] == "primary" and calls[1]["model"] == "repair"
-    assert calls[1]["options"]["think"] is False  # repair model disables thinking
+    assert calls[1]["think"] is False  # repair model disables thinking (top-level)

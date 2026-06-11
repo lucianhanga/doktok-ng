@@ -96,10 +96,7 @@ class OllamaMetadataExtractor:
         return self._chat(self._repair_model, "Output only valid JSON.", prompt, think=False)
 
     def _chat(self, model: str, system: str, user: str, *, think: bool | None) -> str:
-        options: dict[str, Any] = {"temperature": 0, "num_ctx": self._num_ctx}
-        if think is not None:
-            options["think"] = think
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system},
@@ -108,8 +105,10 @@ class OllamaMetadataExtractor:
             "format": _SCHEMA,
             "stream": False,
             "keep_alive": _KEEP_ALIVE,
-            "options": options,
+            "options": {"temperature": 0, "num_ctx": self._num_ctx},
         }
+        if think is not None:
+            payload["think"] = think  # top-level field; Ollama ignores `think` inside options
         response = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
         response.raise_for_status()
         message = response.json().get("message", {})

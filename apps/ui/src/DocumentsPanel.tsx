@@ -172,7 +172,7 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
         <p className="empty">No documents match this filter.</p>
       )}
       {state.kind === "ok" && docs.length > 0 && (
-        <table className="jobs">
+        <table className="jobs docs-table">
           <thead>
             <tr>
               <th>
@@ -201,13 +201,23 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                     onChange={() => toggle(doc.id)}
                   />
                 </td>
-                <td onClick={() => onOpenDocument?.(doc.id)} style={{ cursor: "pointer" }}>
+                <td
+                  className="cell-title"
+                  title={doc.title ?? undefined}
+                  onClick={() => onOpenDocument?.(doc.id)}
+                  style={{ cursor: "pointer" }}
+                >
                   {doc.title ?? "-"}
                 </td>
-                <td onClick={() => onOpenDocument?.(doc.id)} style={{ cursor: "pointer" }}>
+                <td
+                  className="cell-file"
+                  title={doc.original_filename}
+                  onClick={() => onOpenDocument?.(doc.id)}
+                  style={{ cursor: "pointer" }}
+                >
                   {doc.original_filename}
                 </td>
-                <td>{doc.detected_mime ?? "-"}</td>
+                <td className="cell-type">{doc.detected_mime ?? "-"}</td>
                 <td>
                   <span className={`badge status-${doc.status}`}>{doc.status}</span>
                 </td>

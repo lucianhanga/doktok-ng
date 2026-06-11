@@ -134,6 +134,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top-level request field cut enrichment to **~8–11 s/document** (~8–10× faster) with the model warm.
 
 ### Changed
+- The **OCR-quality judge** now uses a dedicated `DOKTOK_JUDGE_MODEL` (default `qwen3:14b`) instead of
+  `DOKTOK_DEFAULT_MODEL`. This keeps the whole ingestion path on the dense model, so it never loads the
+  23 GB qwen3.6 mid-ingest and evicts the resident enrichment model on a ~48 GB box (RAG chat still uses
+  `DOKTOK_DEFAULT_MODEL`). Smaller `judge_num_ctx=8192` since it only compares a page of text.
 - **Enrichment now defaults to the dense `qwen3:14b` with `think=false`** (was the qwen3.6 MoE).
   Generation is fast (~27 tok/s); the key tuning is a small **4096 context** + `keep_alive` so the
   model loads quickly (~14 s once) and stays warm across a batch (a 16k context made each load ~50 s by

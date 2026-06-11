@@ -99,11 +99,13 @@ def build_services(
     entity_repo = PostgresEntityRepository(db)
     lexical_term_extractor = PostgresLexicalTermExtractor(db)
     feature_repo = PostgresFeatureRepository(db)
+    # The worker's chat model serves only the OCR-quality judge; point it at the judge model (dense,
+    # shared with enrichment) so ingestion never loads the 23 GB qwen3.6 and evicts qwen3:14b.
     chat_model = OllamaChatModelProvider(
-        settings.default_model,
+        settings.judge_model,
         settings.ollama_base_url,
         timeout=timeout,
-        num_ctx=settings.chat_num_ctx,
+        num_ctx=settings.judge_num_ctx,
     )
     metadata_extractor = OllamaMetadataExtractor(
         settings.enrich_model,

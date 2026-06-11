@@ -8,9 +8,12 @@ the local Ollama endpoint (no external egress). The model does not report a conf
 from __future__ import annotations
 
 import base64
+import logging
 
 import httpx
 from doktok_contracts.media import OcrPageResult
+
+logger = logging.getLogger("doktok.ocr")
 
 OCR_PROMPT = (
     "Extract all text from this document image exactly as it appears. "
@@ -25,7 +28,9 @@ class OllamaVisionOcr:
 
     A single page needs only a modest context (image tiles + prompt + output ~= 4.4k tokens); the
     default ``num_ctx`` of 8192 avoids the ~1 GB KV cache a 32k context reserves. ``num_predict``
-    caps per-page output so a garbled/dense page can't loop unbounded.
+    caps per-page output so a garbled/dense page can't loop unbounded. If a page hits that cap
+    (``done: false``), we keep the partial transcription and warn - a truncated page is far better
+    than failing the whole document's ingestion.
     """
 
     def __init__(
@@ -35,7 +40,7 @@ class OllamaVisionOcr:
         *,
         timeout: float = 600.0,
         num_ctx: int = 8192,
-        num_predict: int = 4096,
+        num_predict: int = 8192,
         keep_alive: str = "5m",
     ) -> None:
         self._model = model
@@ -61,7 +66,13 @@ class OllamaVisionOcr:
         response = httpx.post(f"{self._base_url}/api/generate", json=payload, timeout=self._timeout)
         response.raise_for_status()
         body = response.json()
-        if body.get("done") is False:
-            raise RuntimeError("OCR did not complete (num_predict cap hit on a dense/garbled page)")
         text = str(body.get("response", "")).strip()
+        if body.get("done") is False:
+            # Hit the num_predict cap (dense page or a repeat loop). Keep what we transcribed rather
+            # than failing the document; the page text is just truncated.
+            logger.warning(
+                "OCR truncated a page at the %d-token output cap (%d chars kept)",
+                self._num_predict,
+                len(text),
+            )
         return OcrPageResult(text=text, confidence=None)

@@ -129,6 +129,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Fixed
+- OCR no longer **fails a whole document** when a single page hits the output cap. The earlier
+  `done: false` guard raised an error, which failed ingestion for documents with a dense/garbled
+  page; it now keeps the partial transcription and logs a warning (a truncated page beats a failed
+  document). Also raised the per-page `num_predict` cap from 4096 to 8192 so fewer pages truncate.
 - Enrichment was ignoring `think=false` because the extractors passed `think` inside `options`, where
   Ollama silently drops it — so the model kept thinking (~87 s/document). Moving `think` to the
   top-level request field cut enrichment to **~8–11 s/document** (~8–10× faster) with the model warm.

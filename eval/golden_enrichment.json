@@ -1,0 +1,28 @@
+[
+  {
+    "file": "handbook.md",
+    "title_contains": ["handbook", "employee", "leave", "remote", "policy"],
+    "expect_date": "n/a",
+    "location_contains": "n/a",
+    "categories_any": ["hr", "human", "employ", "policy", "handbook", "work", "intern"],
+    "summary_required": true
+  },
+  {
+    "file": "invoice.txt",
+    "title_contains": ["invoice", "premium", "plan", "doktok"],
+    "categories_any": ["invoice", "financ", "billing", "subscription", "payment"],
+    "summary_required": true
+  },
+  {
+    "file": "amex-2026-01.txt",
+    "title_contains": ["statement", "amex", "american express", "january"],
+    "categories_any": ["statement", "financ", "bank", "transaction", "expense", "card", "credit"],
+    "summary_required": true
+  },
+  {
+    "file": "amex-2026-02.txt",
+    "title_contains": ["statement", "amex", "american express", "february"],
+    "categories_any": ["statement", "financ", "bank", "transaction", "expense", "card", "credit"],
+    "summary_required": true
+  }
+]

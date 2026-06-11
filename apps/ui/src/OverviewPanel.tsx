@@ -107,6 +107,9 @@ export function OverviewPanel() {
           <ul className="timeline">
             {recent.map((ev) => (
               <li key={ev.id}>
+                <time className="muted" dateTime={ev.timestamp} title={ev.timestamp}>
+                  {new Date(ev.timestamp).toLocaleString()}
+                </time>{" "}
                 <span className="badge">{ev.event_type}</span>{" "}
                 {String(ev.metadata?.summary ?? ev.metadata?.filename ?? "")}
               </li>

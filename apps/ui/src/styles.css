@@ -545,3 +545,8 @@ tr.row-selected {
 .docs-table .feature-chips .chip {
   font-size: 0.68rem;
 }
+
+.timeline time {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}

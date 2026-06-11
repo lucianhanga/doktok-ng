@@ -18,6 +18,9 @@ function mockRoutes(features: unknown[] = [], docOverride: Record<string, unknow
       if (url.endsWith("/features")) {
         return new Response(JSON.stringify(features), { status: 200 });
       }
+      if (url.endsWith("/categories")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.endsWith("/retry")) {
         return new Response(JSON.stringify({ status: "queued" }), { status: 200 });
       }

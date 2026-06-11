@@ -22,6 +22,8 @@ from doktok_contracts.media import (
 )
 from doktok_contracts.schemas import (
     AuditEvent,
+    Category,
+    CategorySummary,
     Document,
     DocumentArtifact,
     DocumentChunk,
@@ -196,6 +198,35 @@ class MetadataExtractor(Protocol):
     """
 
     def extract(self, text: str) -> ExtractedMetadata: ...
+
+
+@runtime_checkable
+class CategoryClassifier(Protocol):
+    """Assign up to 5 category labels, preferring the supplied existing vocabulary (M6.2)."""
+
+    def classify(self, text: str, existing: list[str]) -> list[str]: ...
+
+
+@runtime_checkable
+class CategoryRepository(Protocol):
+    """Controlled-vocabulary categories + the document<->category links (M6.2)."""
+
+    def list_active(self, tenant_id: str) -> list[Category]: ...
+    def find_by_normalized(self, tenant_id: str, normalized: str) -> Category | None: ...
+    def find_similar(
+        self, tenant_id: str, normalized: str, *, threshold: float = 0.55
+    ) -> Category | None: ...
+    def find_nearest(self, tenant_id: str, normalized: str) -> Category | None: ...
+    def active_count(self, tenant_id: str) -> int: ...
+    def create(self, tenant_id: str, name: str, normalized: str) -> Category | None:
+        """Create a category, or return None if the tenant is at the 20-category cap (race-safe)."""
+        ...
+
+    def set_document_categories(
+        self, tenant_id: str, document_id: str, category_ids: list[str]
+    ) -> None: ...
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[Category]: ...
+    def list_summary(self, tenant_id: str) -> list[CategorySummary]: ...
 
 
 @runtime_checkable

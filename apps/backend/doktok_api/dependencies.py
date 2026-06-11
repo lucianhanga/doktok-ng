@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 
 from doktok_contracts.ports import (
     AuditLogRepository,
+    CategoryRepository,
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
@@ -174,6 +175,18 @@ def get_feature_repository(request: Request) -> FeatureRepository:
 
     repository = PostgresFeatureRepository(_get_database(request))
     registry.register(FeatureRepository, repository)
+    return repository
+
+
+def get_category_repository(request: Request) -> CategoryRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(CategoryRepository):
+        return cast(CategoryRepository, registry.resolve(CategoryRepository))
+
+    from doktok_storage_postgres import PostgresCategoryRepository
+
+    repository = PostgresCategoryRepository(_get_database(request))
+    registry.register(CategoryRepository, repository)
     return repository
 
 

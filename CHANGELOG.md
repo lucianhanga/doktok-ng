@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Document enrichment, phase 2 (M6.2 `doc_classify`): documents are now **multi-label categorized**
+  from a **bounded controlled vocabulary** — at most 5 categories per document and 20 active per
+  tenant, both enforced in the database via `BEFORE INSERT` triggers with per-group advisory locks
+  (race-safe under concurrent workers), not trusted to the prompt. The LLM proposes labels; the worker
+  resolves each against the live taxonomy (exact → trigram-fuzzy via `pg_trgm` → create if under the
+  cap → else force-pick the nearest existing), so ingestion never blocks. New tables `categories` +
+  `document_category_links` (migration 0011); a versioned, idempotent `doc_classify` `FeatureProcessor`
+  backfills the corpus; `GET /api/v1/categories` lists the vocabulary with per-category counts and
+  `GET /api/v1/documents/{id}/categories` returns a document's categories, shown as chips on the detail
+  card. (Documents-list category filter, an Overview breakdown, and the serialized taxonomy
+  maintenance/merge pass are the next phase.)
 - Document enrichment, phase 1 (M6.2 `doc_metadata`): every document now gets an LLM-generated
   **title**, a **document date** (the date it's *about*; `n/a` when undeterminable), a **location**,
   a **summary**, and an explicit **ingestion timestamp**. Implemented as a versioned, idempotent

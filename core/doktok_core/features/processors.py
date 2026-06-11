@@ -12,6 +12,8 @@ import uuid
 from pathlib import Path
 
 from doktok_contracts.ports import (
+    CategoryClassifier,
+    CategoryRepository,
     Chunker,
     ChunkRepository,
     DocumentRepository,
@@ -24,7 +26,12 @@ from doktok_contracts.ports import (
 )
 from doktok_contracts.schemas import DocumentChunk, DocumentEntity, EntityType
 
-from doktok_core.enrichment import normalize_metadata
+from doktok_core.enrichment import (
+    MAX_CATEGORIES_PER_DOCUMENT,
+    MAX_CATEGORIES_PER_TENANT,
+    normalize_category,
+    normalize_metadata,
+)
 from doktok_core.entities.language import detect_language, pg_config_for
 
 
@@ -202,3 +209,62 @@ class DocMetadataFeature:
             location=meta.location,
             summary=meta.summary,
         )
+
+
+class DocClassifyFeature:
+    """Assign multi-label categories from a bounded controlled vocabulary (M6.2).
+
+    The LLM proposes labels; this resolves each against the live taxonomy (exact -> fuzzy -> create
+    if under the cap -> else nearest existing), so the prompt is best-effort and the caps are the
+    guarantee. Idempotent: it replaces the document's category links each run.
+    """
+
+    name = "doc_classify"
+    version = 1
+
+    def __init__(
+        self,
+        document_repo: DocumentRepository,
+        file_storage: FileStorage,
+        classifier: CategoryClassifier,
+        category_repo: CategoryRepository,
+    ) -> None:
+        self._documents = document_repo
+        self._files = file_storage
+        self._classifier = classifier
+        self._categories = category_repo
+
+    def process(self, tenant_id: str, document_id: str) -> None:
+        document = self._documents.get(tenant_id, document_id)
+        if document is None or not document.storage_path:
+            return
+        content = _read_text(self._files, document.storage_path, "content.md")
+        if not content.strip():
+            return
+        existing = [c.name for c in self._categories.list_active(tenant_id)]
+        labels = self._classifier.classify(content, existing)
+        category_ids: list[str] = []
+        for label in labels:
+            if len(category_ids) >= MAX_CATEGORIES_PER_DOCUMENT:
+                break
+            category = self._resolve(tenant_id, label)
+            if category is not None and category.id not in category_ids:
+                category_ids.append(category.id)
+        self._categories.set_document_categories(tenant_id, document_id, category_ids)
+
+    def _resolve(self, tenant_id: str, label: str):  # type: ignore[no-untyped-def]
+        normalized = normalize_category(label)
+        if not normalized:
+            return None
+        existing = self._categories.find_by_normalized(tenant_id, normalized)
+        if existing is not None:
+            return existing
+        similar = self._categories.find_similar(tenant_id, normalized)
+        if similar is not None:
+            return similar
+        if self._categories.active_count(tenant_id) < MAX_CATEGORIES_PER_TENANT:
+            created = self._categories.create(tenant_id, label.strip(), normalized)
+            if created is not None:
+                return created
+        # At the cap (or lost the create race): force-pick the nearest existing category.
+        return self._categories.find_nearest(tenant_id, normalized)

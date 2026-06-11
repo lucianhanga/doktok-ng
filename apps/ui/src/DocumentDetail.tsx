@@ -4,6 +4,7 @@ import {
   documentFileUrl,
   fetchDocument,
   fetchDocumentActivity,
+  fetchDocumentCategories,
   fetchDocumentContent,
   fetchDocumentEntities,
   fetchDocumentFeatures,
@@ -11,6 +12,7 @@ import {
   type AuditEvent,
   type DocEntity,
   type DocumentFeature,
+  type DokCategory,
   type DokDocument,
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
@@ -30,6 +32,7 @@ export function DocumentDetail({
   const [entities, setEntities] = useState<DocEntity[]>([]);
   const [activity, setActivity] = useState<AuditEvent[]>([]);
   const [features, setFeatures] = useState<DocumentFeature[]>([]);
+  const [categories, setCategories] = useState<DokCategory[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   function loadFeatures() {
@@ -46,13 +49,15 @@ export function DocumentDetail({
       fetchDocumentEntities(id, c.signal),
       fetchDocumentActivity(id, c.signal),
       fetchDocumentFeatures(id, c.signal),
+      fetchDocumentCategories(id, c.signal),
     ])
-      .then(([d, co, e, a, f]) => {
+      .then(([d, co, e, a, f, cats]) => {
         setDoc(d);
         setContent(co);
         setEntities(e);
         setActivity(a);
         setFeatures(f);
+        setCategories(cats);
       })
       .catch((err: unknown) => {
         if (c.signal.aborted) return;
@@ -141,6 +146,19 @@ export function DocumentDetail({
         <div className="doc-section doc-summary">
           <h3>Summary</h3>
           <p>{doc.summary}</p>
+        </div>
+      )}
+
+      {categories.length > 0 && (
+        <div className="doc-section">
+          <h3>Categories</h3>
+          <span className="feature-chips">
+            {categories.map((c) => (
+              <span key={c.id} className="chip">
+                {c.name}
+              </span>
+            ))}
+          </span>
         </div>
       )}
 

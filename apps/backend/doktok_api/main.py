@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from doktok_api import __version__
 from doktok_api.routers import (
     audit,
+    categories,
     chat,
     documents,
     entities,
@@ -95,6 +96,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(chat.router)
     app.include_router(tokens.router)
     app.include_router(features.router)
+    app.include_router(categories.router)
 
     return app
 

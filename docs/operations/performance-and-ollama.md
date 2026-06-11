@@ -89,9 +89,9 @@ Weights (resident, independent of parallelism):
 
 | Model | Params | Quant | Weights |
 |---|---|---|---|
-| `qwen3.6:35b-a3b` (chat/RAG/judge) | 36B MoE (3B active) | Q4_K_M | ~23 GB |
+| `qwen3.6:35b-a3b` (chat/RAG) | 36B MoE (3B active) | Q4_K_M | ~23 GB |
 | `glm-ocr:latest` (OCR, vision) | 1.1B | F16 | ~2.2 GB |
-| `mxbai-embed-large:latest` (embeddings) | 334M | F16 | ~0.7 GB |
+| `qwen3-embedding:0.6b` (embeddings) | 0.6B | F16 | ~0.7 GB |
 | **All three loaded** | | | **~26 GB** |
 
 KV cache added by parallelism, at the default ~4096-token context:
@@ -121,8 +121,57 @@ Takeaways:
   `OLLAMA_NUM_PARALLEL` of 2-4. If memory is tight, drop to a lighter chat model
   (`DOKTOK_DEFAULT_MODEL=qwen3:14b`) or lower `OLLAMA_MAX_LOADED_MODELS` (accepting reload thrash).
 
+## Apple Silicon GPU memory budget (the ~75% "wired limit")
+
+On Apple Silicon the CPU and GPU share **one unified memory pool** - there is no separate VRAM. To
+keep the GPU from starving macOS and your other apps, the OS caps how much memory the GPU may "wire
+down" for itself. That cap (Metal's `recommendedMaxWorkingSetSize`) defaults to roughly **70-75% of
+total RAM**:
+
+```
+48 GB machine  x ~0.75  =>  ~36 GB usable by Ollama for weights + KV caches
+```
+
+The remaining ~12 GB is reserved for the OS, CPU, and apps. **This is why models evict each other:**
+if the resident models plus the one being loaded would exceed ~36 GB, Ollama unloads the
+least-recently-used model to make room (also bounded by `OLLAMA_MAX_LOADED_MODELS`). `keep_alive` does
+**not** override this - it only prevents *idle* unloading, not eviction under memory pressure.
+
+Concrete example on 48 GB: the chat/RAG model `qwen3.6:35b-a3b` (~23 GB) and the enrichment/judge model
+`qwen3:14b` (~12 GB resident) total ~35 GB - right at the ceiling. They cannot both stay resident
+alongside OCR + embeddings, so loading one evicts the other and the next call pays a ~14-50 s reload.
+
+### How DokTok avoids this
+
+The whole **ingestion path runs on one dense model** so it stays well under the budget:
+
+| Ingestion role | Model | ~Resident |
+|---|---|---|
+| OCR | `glm-ocr` (`DOKTOK_OCR_NUM_CTX=8192`) | ~3 GB |
+| OCR-quality judge | `qwen3:14b` (`DOKTOK_JUDGE_MODEL`) | shared with enrichment |
+| Enrichment (metadata + classify) | `qwen3:14b` (`DOKTOK_ENRICH_MODEL`, 4k ctx) | ~12 GB |
+| Embeddings | `qwen3-embedding:0.6b` | ~0.7 GB |
+| **Ingestion total** | | **~16 GB** |
+
+The 23 GB `qwen3.6` is only loaded by **RAG chat** (`DOKTOK_DEFAULT_MODEL`, backend-only). So normal
+ingestion never evicts the enrichment model. Chatting *during* a large ingest can still load qwen3.6
+and compete - avoid that, or raise the limit (below).
+
+### Raising the limit (optional)
+
+The cap is a soft sysctl you can raise to fit both big models (e.g. 40 GB, leaving ~8 GB for the OS):
+
+```bash
+sudo sysctl iogpu.wired_limit_mb=40960   # gives the GPU ~40 GB on a 48 GB machine
+```
+
+With ~40 GB, `qwen3.6` (23) + `qwen3:14b` (12) = 35 GB both fit, so chat and ingest coexist without
+reloads. Caveats: **do not set it near total RAM** (the OS will swap hard or hang), and it **resets on
+reboot** (re-run it or add a `launchd` startup job to persist).
+
 ## If you are memory constrained
 
 - Lower `DOKTOK_INGEST_CONCURRENCY` and `OLLAMA_NUM_PARALLEL` to 1-2.
-- Use a smaller chat model.
+- Keep ingestion on the dense models (`DOKTOK_ENRICH_MODEL` / `DOKTOK_JUDGE_MODEL` = `qwen3:14b`) so it
+  fits in ~16 GB and never needs the 23 GB qwen3.6.
 - Keep `DOKTOK_OLLAMA_TIMEOUT_SECONDS` generous so queued requests finish rather than fail.

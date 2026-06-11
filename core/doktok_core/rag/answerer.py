@@ -55,11 +55,15 @@ class DefaultRagAnswerer:
         *,
         reranker: Reranker | None = None,
         retrieve_k: int = 40,
+        min_score: float = 0.0,
     ) -> None:
         self._retriever = retriever
         self._chat = chat_model
         self._reranker = reranker
         self._retrieve_k = retrieve_k
+        # Deterministic evidence floor: refuse before calling the generator when the best retrieval
+        # score is below this (0 = disabled), removing a confident-answer-over-thin-evidence class.
+        self._min_score = min_score
 
     def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer:
         question = question.strip()
@@ -70,6 +74,10 @@ class DefaultRagAnswerer:
         wide = self._retrieve_k if self._reranker is not None else limit
         hits = self._retriever.search(tenant_id, question, wide)
         if not hits:
+            return RagAnswer(answer=REFUSAL, grounded=False)
+        # Evidence floor: if even the strongest hit is weak, refuse rather than ask the model to
+        # answer over thin context (deterministic; only active when min_score > 0).
+        if self._min_score > 0 and max(hit.score for hit in hits) < self._min_score:
             return RagAnswer(answer=REFUSAL, grounded=False)
         if self._reranker is not None:
             hits = self._reranker.rerank(question, hits, top_k=limit)
@@ -105,6 +113,9 @@ class DefaultRagAnswerer:
             source = hit.original_filename or hit.title or hit.document_id[:8]
             page = f", p.{hit.page_start}" if hit.page_start else ""
             body = (hit.text or hit.snippet)[:_MAX_CONTEXT_CHARS]
+            # Neutralize any [n]-style markers the document text itself contains, so untrusted
+            # content can't forge citation indices that _citations would then trust.
+            body = _CITATION_RE.sub(r"(\1)", body)
             parts.append(f"[{i}] ({source}{page}): {body}")
         return "\n\n".join(parts)
 

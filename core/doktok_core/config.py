@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     chat_keep_alive: str = "30m"
     # RAG: retrieve this many candidates wide; the LLM reranker keeps the best (the chat `limit`).
     rag_retrieve_k: int = 40
+    # Deterministic evidence floor: refuse before generating if the best retrieval score is below
+    # this (0 = disabled). RRF scores are small (~0.01-0.05); tune against the eval set before use.
+    rag_min_score: float = 0.0
     # Reranker: model for the listwise rerank call (defaults to the chat model; swap to a smaller
     # model to free the chat slot) and a tight output cap (it only emits a short JSON array).
     rerank_model: str = ""  # empty => use default_model

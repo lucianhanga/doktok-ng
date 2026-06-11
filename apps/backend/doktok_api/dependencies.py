@@ -184,6 +184,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
         chat_model,
         reranker=LlmReranker(rerank_model),
         retrieve_k=settings.rag_retrieve_k,
+        min_score=settings.rag_min_score,
     )
     registry.register(RagAnswerer, answerer)
     return answerer

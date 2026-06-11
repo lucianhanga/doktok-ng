@@ -61,6 +61,10 @@ class OllamaVisionOcr:
                 "temperature": 0,
                 "num_ctx": self._num_ctx,
                 "num_predict": self._num_predict,
+                # Penalize repetition so the model can't loop a line forever on a sparse/stamp page
+                # (a known glm-ocr failure that otherwise fills the page with garbage).
+                "repeat_penalty": 1.3,
+                "repeat_last_n": 64,
             },
         }
         response = httpx.post(f"{self._base_url}/api/generate", json=payload, timeout=self._timeout)
@@ -68,11 +72,41 @@ class OllamaVisionOcr:
         body = response.json()
         text = str(body.get("response", "")).strip()
         if body.get("done") is False:
-            # Hit the num_predict cap (dense page or a repeat loop). Keep what we transcribed rather
-            # than failing the document; the page text is just truncated.
             logger.warning(
                 "OCR truncated a page at the %d-token output cap (%d chars kept)",
                 self._num_predict,
                 len(text),
             )
-        return OcrPageResult(text=text, confidence=None)
+        # Safety net: collapse any runaway repetition the penalty didn't prevent, so garbage never
+        # reaches content.md (and the enrichment title/summary).
+        return OcrPageResult(text=trim_runaway_repetition(text), confidence=None)
+
+
+def trim_runaway_repetition(text: str, *, max_repeats: int = 3) -> str:
+    """Collapse a short cycle of identical lines that repeats more than ``max_repeats`` times.
+
+    OCR repeat-loops emit the same 1-4 lines hundreds of times; keep a few and drop the rest. Real
+    tables have distinct rows, so they are never collapsed.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        collapsed = False
+        for period in range(1, 5):
+            cycle = lines[i : i + period]
+            if not any(line.strip() for line in cycle):
+                continue
+            reps, j = 1, i + period
+            while lines[j : j + period] == cycle and j + period <= n:
+                reps += 1
+                j += period
+            if reps > max_repeats:
+                out.extend(cycle * max_repeats)
+                i = j
+                collapsed = True
+                break
+        if not collapsed:
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out)

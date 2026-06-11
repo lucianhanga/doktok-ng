@@ -142,6 +142,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Fixed
+- OCR **repeat-loops** no longer poison enrichment. On sparse/stamp pages glm-ocr could loop a line
+  hundreds of times (e.g. `1.0 JAN. 2025 / SSOS MAL …`) until the output cap, filling `content.md`
+  with garbage — which the enrichment LLM then "described" as titles like *"Unusual Repeating Text in
+  Document"* or *"Error"*. Added a `repeat_penalty` to the OCR call to break loops, plus a safety net
+  that **collapses runaway repetition** (a short cycle of identical lines repeated many times) before
+  the text is stored. Real tables (distinct rows) are unaffected. Re-ingest affected documents to get
+  clean titles.
 - OCR no longer **fails a whole document** when a single page hits the output cap. The earlier
   `done: false` guard raised an error, which failed ingestion for documents with a dense/garbled
   page; it now keeps the partial transcription and logs a warning (a truncated page beats a failed

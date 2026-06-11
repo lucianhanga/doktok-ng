@@ -71,7 +71,14 @@ def build_services(
     text_extractor = DirectTextExtractor()
     pdf_extractor = PyMuPdfTextExtractor()
     timeout = settings.ollama_timeout_seconds
-    ocr_extractor = OllamaVisionOcr(settings.ocr_model, settings.ollama_base_url, timeout=timeout)
+    ocr_extractor = OllamaVisionOcr(
+        settings.ocr_model,
+        settings.ollama_base_url,
+        timeout=timeout,
+        num_ctx=settings.ocr_num_ctx,
+        num_predict=settings.ocr_num_predict,
+        keep_alive=settings.ocr_keep_alive,
+    )
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
     pdf_classifier = PyMuPdfClassifier()

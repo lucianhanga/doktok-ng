@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     embedding_model: str = "qwen3-embedding:0.6b"
     # OCR vision model (used by the M3 OCR adapter; configurable, ADR-0003).
     ocr_model: str = "glm-ocr:latest"
+    # OCR context per single-page call (~4.4k tokens worst case). 32k would waste ~768 MB of KV
+    # cache; raise to 16384 only for very dense/multi-column pages. num_predict caps page output.
+    ocr_num_ctx: int = 8192
+    ocr_num_predict: int = 4096
+    ocr_keep_alive: str = "5m"  # OCR runs in bursts; do not pin it resident like the chat model
     ollama_base_url: str = "http://localhost:11434"
     # HTTP timeout (seconds) for each Ollama call. Generous because requests queue at Ollama under
     # parallel ingestion (raise OLLAMA_NUM_PARALLEL to run them concurrently instead of queuing).

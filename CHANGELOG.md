@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Changed
+- Ollama HTTP timeouts are now generous (`DOKTOK_OLLAMA_TIMEOUT_SECONDS`, default 600) and applied to
+  OCR, embedding, and chat calls. Under parallel ingestion (`DOKTOK_INGEST_CONCURRENCY` > 1) requests
+  queue at Ollama, and the previous short timeouts (120-180s) caused jobs to fail with
+  `internal_error` ("timed out"). To make Ollama run requests concurrently instead of queuing, start
+  the server with `OLLAMA_NUM_PARALLEL` set.
 - Consistent `docs.active/{id}/` structure: every active document now has a `normalized/` directory
   holding the canonical "system document" - `normalized/searchable.pdf` for scanned/OCR'd input, or a
   verbatim copy of the original (`normalized/original.<ext>`) when no normalization was needed (the

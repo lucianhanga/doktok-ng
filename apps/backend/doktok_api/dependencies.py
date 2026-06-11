@@ -128,7 +128,11 @@ def get_retriever(request: Request) -> Retriever:
     settings = request.app.state.settings
     retriever = HybridPostgresRetriever(
         _get_database(request),
-        OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url),
+        OllamaEmbeddingProvider(
+            settings.embedding_model,
+            settings.ollama_base_url,
+            timeout=settings.ollama_timeout_seconds,
+        ),
     )
     registry.register(Retriever, retriever)
     return retriever
@@ -145,7 +149,11 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     settings = request.app.state.settings
     answerer = DefaultRagAnswerer(
         get_retriever(request),
-        OllamaChatModelProvider(settings.default_model, settings.ollama_base_url),
+        OllamaChatModelProvider(
+            settings.default_model,
+            settings.ollama_base_url,
+            timeout=settings.ollama_timeout_seconds,
+        ),
     )
     registry.register(RagAnswerer, answerer)
     return answerer

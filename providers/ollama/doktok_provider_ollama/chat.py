@@ -12,7 +12,7 @@ import httpx
 class OllamaChatModelProvider:
     """``ChatModelProvider`` backed by Ollama's ``/api/generate`` endpoint."""
 
-    def __init__(self, model: str, base_url: str, *, timeout: float = 180.0) -> None:
+    def __init__(self, model: str, base_url: str, *, timeout: float = 600.0) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout

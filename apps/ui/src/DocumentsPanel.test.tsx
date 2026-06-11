@@ -8,20 +8,22 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockDocs(docs: DokDocument[], features: unknown[] = []) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/v1/features")) {
-        return new Response(JSON.stringify(features), { status: 200 });
-      }
-      if (url.includes("/api/v1/categories")) {
-        return new Response(JSON.stringify([]), { status: 200 });
-      }
-      return new Response(JSON.stringify(docs), { status: 200 });
-    }),
-  );
+function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknown[] = []) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/v1/features/catalog")) {
+      return new Response(JSON.stringify(catalog), { status: 200 });
+    }
+    if (url.includes("/api/v1/features")) {
+      return new Response(JSON.stringify(features), { status: 200 });
+    }
+    if (url.includes("/api/v1/categories")) {
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify(docs), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 function doc(overrides: Partial<DokDocument>): DokDocument {
@@ -82,6 +84,31 @@ test("selecting an active document offers both reingest and delete", async () =>
   fireEvent.click(screen.getByLabelText("Select ok.pdf"));
   expect(screen.getByText("Reingest selected")).toBeInTheDocument(); // any status, not just failed
   expect(screen.getByText("Delete selected")).toBeInTheDocument();
+});
+
+test("reprocess dropdown re-queues the chosen feature for selected documents", async () => {
+  const fetchMock = mockDocs(
+    [doc({ id: "a1", status: "active", original_filename: "ok.pdf" })],
+    [],
+    [{ name: "entities", version: 3, label: "Entities & keywords", description: "..." }],
+  );
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("ok.pdf")).toBeInTheDocument());
+  fireEvent.click(screen.getByLabelText("Select ok.pdf"));
+
+  // The dropdown is populated from the catalog; choosing a feature + Reprocess posts the retry.
+  fireEvent.change(screen.getByLabelText("Feature to reprocess"), {
+    target: { value: "entities" },
+  });
+  fireEvent.click(screen.getByText("Reprocess"));
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/documents/a1/features/entities/retry",
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
 });
 
 test("shows an error when the request fails", async () => {

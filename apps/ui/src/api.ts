@@ -219,6 +219,18 @@ export function fetchFeatures(signal?: AbortSignal): Promise<DocumentFeature[]> 
   return getJson<DocumentFeature[]>("/api/v1/features", signal);
 }
 
+export interface FeatureCatalogEntry {
+  name: string;
+  version: number;
+  label: string;
+  description: string;
+}
+
+/** The features that can be reprocessed on demand (drives the reprocess dropdown). */
+export function fetchFeatureCatalog(signal?: AbortSignal): Promise<FeatureCatalogEntry[]> {
+  return getJson<FeatureCatalogEntry[]>("/api/v1/features/catalog", signal);
+}
+
 export interface DokCategory {
   id: string;
   name: string;

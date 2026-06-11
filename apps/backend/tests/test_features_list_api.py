@@ -76,3 +76,24 @@ def test_lists_tenant_feature_rows() -> None:
         ("d1", "chunk_embed", "done"),
         ("d1", "entities", "pending"),
     }
+
+
+def test_catalog_requires_token() -> None:
+    assert _client().get("/api/v1/features/catalog").status_code == 401
+
+
+def test_catalog_lists_reprocessable_features() -> None:
+    body = _client().get(
+        "/api/v1/features/catalog", headers={"Authorization": "Bearer tok-a"}
+    ).json()
+    names = {entry["name"] for entry in body}
+    # The reprocessable features (each backed by a reconciler processor); never inline "extract".
+    assert names == {
+        "chunk_embed",
+        "entities",
+        "doc_metadata",
+        "doc_classify",
+        "structured_records",
+    }
+    assert "extract" not in names
+    assert all(entry["label"] and entry["description"] for entry in body)

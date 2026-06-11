@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The ingestion worker can process multiple stable files **in parallel** (`DOKTOK_INGEST_CONCURRENCY`,
+  default 4) for higher throughput. Stability tracking stays single-threaded; only the independent
+  per-file pipelines run in a thread pool (the Postgres pool is thread-safe and each job has its own
+  working directory). The worker's DB pool is sized to the concurrency.
 - Overview dashboard now shows **"Waiting in ingest"** - the number of files sitting in the tenant's
   ingest folder that have not yet been picked up as jobs. `GET /api/v1/stats` gained `pending_ingest`
   (counts non-hidden files in `ingest/`, the same filter the worker uses to claim them).

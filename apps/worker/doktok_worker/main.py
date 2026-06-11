@@ -24,7 +24,10 @@ def main() -> None:
     worker = IngestionWorker(
         services,
         stability_seconds=settings.file_stability_seconds,
+        concurrency=settings.ingest_concurrency,
     )
+    if settings.ingest_concurrency > 1:
+        log.info("processing up to %d documents in parallel", settings.ingest_concurrency)
     try:
         worker.run_forever()
     except KeyboardInterrupt:  # pragma: no cover

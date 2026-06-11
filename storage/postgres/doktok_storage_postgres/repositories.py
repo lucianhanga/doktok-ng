@@ -606,11 +606,25 @@ class PostgresStatsRepository:
         )
 
 
+# Encoding/markup leftovers that survive tokenization as bare words even after HTML tags are
+# stripped (e.g. raw "http://..." URLs, the "aHR" base64 prefix of "http", HTML entities). None are
+# meaningful keywords, so they are dropped outright. HTML *tag* names (td/tr/table/...) are removed
+# upstream by stripping whole "<...>" spans, which also keeps real prose words like "table".
+_MARKUP_NOISE_TERMS: frozenset[str] = frozenset(
+    {"http", "https", "www", "ahr", "href", "nbsp", "amp", "quot", "apos", "rsquo", "lsquo"}
+)
+
+
 class PostgresLexicalTermExtractor:
     """``LexicalTermExtractor`` using PostgreSQL full-text lexemes (stopwords removed, stemmed).
 
     ``to_tsvector(config, text)`` normalizes the document into significant lexemes for the given
     language config; ``unnest`` exposes each lexeme with its positions so we can rank by frequency.
+
+    Noise is filtered out: HTML markup (``<td>``/``<tr>``/``<img src=data:...>`` emitted by some OCR
+    engines) is stripped before tokenizing so tag names and embedded blobs never become terms;
+    lexemes shorter than 3 chars, those containing digits (codes, postal codes, base64 fragments),
+    and a small set of encoding leftovers are dropped.
     """
 
     def __init__(self, db: Database) -> None:
@@ -625,10 +639,10 @@ class PostgresLexicalTermExtractor:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
                 "SELECT lexeme, COALESCE(array_length(positions, 1), 1) AS freq "
-                "FROM unnest(to_tsvector(%s::regconfig, %s)) "
-                "WHERE length(lexeme) >= 2 AND lexeme ~ '[[:alnum:]]' "
+                "FROM unnest(to_tsvector(%s::regconfig, regexp_replace(%s, '<[^>]+>', ' ', 'g'))) "
+                "WHERE length(lexeme) >= 3 AND lexeme !~ '[0-9]' AND lexeme <> ALL(%s) "
                 "ORDER BY freq DESC, lexeme ASC LIMIT %s",
-                (config, text, limit),
+                (config, text, list(_MARKUP_NOISE_TERMS), limit),
             ).fetchall()
         return [ExtractedTerm(term=row["lexeme"], frequency=int(row["freq"])) for row in rows]
 

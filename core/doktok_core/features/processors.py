@@ -110,7 +110,7 @@ class EntitiesFeature:
     """Re-extract structured entities + multilingual lexical terms for a document."""
 
     name = "entities"
-    version = 1
+    version = 2  # bumped for the noise-filtered lexical extraction -> reconciler re-extracts corpus
 
     def __init__(
         self,

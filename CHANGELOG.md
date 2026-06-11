@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Retry ingestion** for failed documents: a failed document's detail card now shows a "Retry
+  ingestion" button. `POST /api/v1/documents/{id}/reingest` moves the preserved original back into the
+  tenant's ingest folder and clears the failed document + job records, so the worker reprocesses it
+  cleanly on its next run. (Tenant-scoped, with a path-traversal guard; only `failed` documents are
+  eligible.)
 - Document-enrichment evaluation (M6.2): `make enrich-eval` ingests the golden corpus, runs the
   `doc_metadata` + `doc_classify` features against the real models, and scores title / document-date /
   location / category / summary against `eval/golden_enrichment.json`. Deterministic scoring lives in
@@ -116,6 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Changed
+- Default ingest concurrency lowered from 4 to **2** (`DOKTOK_INGEST_CONCURRENCY`). With OCR +
+  embedding + the new enrichment models all going through one local Ollama, 4 parallel documents could
+  thrash GPU memory and time out; 2 is comfortable on ~48 GB. (Several scanned-PDF ingests had failed
+  with 600 s Ollama timeouts under the old 4-wide setting + the pre-fix 32k OCR context.)
 - OCR (`glm-ocr`) now runs at a **bounded context** instead of the model default: `num_ctx=8192`
   (configurable via `DOKTOK_OCR_NUM_CTX`; raise to 16384 for very dense/multi-column pages), a
   `num_predict=4096` per-page output cap, and `keep_alive=5m` (OCR is bursty — not pinned like the chat

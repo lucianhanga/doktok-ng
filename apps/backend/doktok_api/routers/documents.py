@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -10,6 +11,7 @@ from doktok_contracts.ports import (
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
+    IngestionJobRepository,
 )
 from doktok_contracts.schemas import (
     Category,
@@ -17,8 +19,9 @@ from doktok_contracts.schemas import (
     DocumentContent,
     DocumentEntity,
     DocumentFeature,
+    DocumentStatus,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from doktok_api.dependencies import (
@@ -27,6 +30,7 @@ from doktok_api.dependencies import (
     get_document_repository,
     get_entity_repository,
     get_feature_repository,
+    get_job_repository,
 )
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -35,6 +39,7 @@ Repo = Annotated[DocumentRepository, Depends(get_document_repository)]
 Entities = Annotated[EntityRepository, Depends(get_entity_repository)]
 Features = Annotated[FeatureRepository, Depends(get_feature_repository)]
 Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
+Jobs = Annotated[IngestionJobRepository, Depends(get_job_repository)]
 
 
 @router.get("", response_model=list[Document])
@@ -102,6 +107,36 @@ def retry_document_feature(
     if not features.reset(tenant.tenant_id, document_id, feature):
         raise HTTPException(status_code=404, detail="feature not found for this document")
     return {"status": "queued"}
+
+
+@router.post("/{document_id}/reingest")
+def reingest_document(
+    document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs
+) -> dict[str, str]:
+    """Re-queue a FAILED document: move its original back to the ingest folder and remove the failed
+    records, so the worker reprocesses it cleanly on its next run."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None or not document.storage_path:
+        raise HTTPException(status_code=404, detail="document not found")
+    if document.status != DocumentStatus.FAILED:
+        raise HTTPException(status_code=400, detail="only failed documents can be re-ingested")
+
+    base = Path(document.storage_path)
+    rel = document.metadata.get("original") or document.original_filename
+    source = (base / str(rel)).resolve()
+    base_resolved = base.resolve()
+    if (source != base_resolved and base_resolved not in source.parents) or not source.is_file():
+        raise HTTPException(status_code=404, detail="original file not found")
+
+    ingest_dir = Path(request.app.state.settings.files_root) / tenant.tenant_id / "ingest"
+    ingest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(ingest_dir / document.original_filename))
+
+    if document.sha256:
+        jobs.delete_failed_for_sha(tenant.tenant_id, document.sha256)
+    repo.delete(tenant.tenant_id, document_id)
+    shutil.rmtree(base, ignore_errors=True)
+    return {"status": "queued", "filename": document.original_filename}
 
 
 def _resolve_file(document: Document, variant: str) -> tuple[Path, str]:

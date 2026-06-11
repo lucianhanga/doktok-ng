@@ -40,3 +40,6 @@ Thumbs.db
 # Build / supply-chain artifacts
 sbom/*.json
 *.log
+
+# Agent scratch memory (not part of the project)
+.claude/

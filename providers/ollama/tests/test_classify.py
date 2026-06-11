@@ -35,7 +35,7 @@ def test_parses_labels_and_dedupes(monkeypatch: Any) -> None:
     out = OllamaCategoryClassifier("primary", "repair", "http://x").classify("text", ["Finance"])
     assert out == ["Invoice", "Finance"]  # case-insensitive dedupe
     assert "Finance" in calls[0]["messages"][0]["content"]  # existing vocab passed in
-    assert "think" not in calls[0]["options"]  # primary leaves thinking on
+    assert "think" not in calls[0]  # primary (think=True) omits the top-level think field
 
 
 def test_repairs_invalid_json(monkeypatch: Any) -> None:
@@ -44,4 +44,4 @@ def test_repairs_invalid_json(monkeypatch: Any) -> None:
     out = OllamaCategoryClassifier("primary", "repair", "http://x").classify("text", [])
     assert out == ["Legal"]
     assert len(calls) == 2 and calls[1]["model"] == "repair"
-    assert calls[1]["options"]["think"] is False
+    assert calls[1]["think"] is False

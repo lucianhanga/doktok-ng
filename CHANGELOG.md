@@ -128,6 +128,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DOKTOK_LEXICAL_TERMS_LIMIT`. Builds on the existing M4 PostgreSQL full-text search layer
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
+### Fixed
+- Enrichment was ignoring `think=false` because the extractors passed `think` inside `options`, where
+  Ollama silently drops it — so the model kept thinking (~87 s/document). Moving `think` to the
+  top-level request field cut enrichment to **~8–11 s/document** (~8–10× faster) with the model warm.
+
 ### Changed
 - **Enrichment now defaults to the dense `qwen3:14b` with `think=false`** (was the qwen3.6 MoE).
   Generation is fast (~27 tok/s); the key tuning is a small **4096 context** + `keep_alive` so the

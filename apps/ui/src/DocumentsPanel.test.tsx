@@ -60,8 +60,9 @@ test("shows per-feature processing chips per document", async () => {
   );
   render(<DocumentsPanel />);
   await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
-  expect(screen.getByText(/chunk_embed/)).toBeInTheDocument();
-  expect(screen.getByText(/entities/)).toBeInTheDocument();
+  // chips use short labels + a status glyph (chunk_embed done -> "rag ✓", entities failed -> "ents ✗")
+  expect(screen.getByText("rag ✓")).toBeInTheDocument();
+  expect(screen.getByText("ents ✗")).toBeInTheDocument();
 });
 
 test("selecting a failed document shows reingest + delete bulk actions", async () => {

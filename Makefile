@@ -1,5 +1,5 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend run-worker run-ui clean-tenant db db-down \
+        run-backend run-worker run-ui clean-tenant rag-eval db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks
 
@@ -44,6 +44,9 @@ run-ui: ## Run the UI dev server (injects DOKTOK_DEV_TOKEN into proxied API call
 
 clean-tenant: ## Wipe all DB rows + files for one tenant: make clean-tenant TENANT=developer
 	@scripts/clean-tenant.sh $(TENANT)
+
+rag-eval: ## Run the RAG evaluation harness against real Ollama (needs `make db` + Ollama)
+	@scripts/rag-eval.sh
 
 db: ## Start local Postgres + pgvector (docker compose)
 	docker compose up -d

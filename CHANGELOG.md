@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- RAG evaluation harness (eval-first, M6.1): deterministic metric logic (`evaluate`: retrieval recall,
+  answer correctness, citation correctness, refusal correctness; CI-tested with fakes), a golden corpus
+  + Q/A set (`eval/`) tagged by kind (factoid / aggregation / refusal), and a local runner
+  (`make rag-eval`) that scores the set against real Ollama models. Establishes a measured baseline for
+  the embeddings/reranker work, and includes an aggregation ("beyond-RAG") case to track that gap.
+  See `docs/operations/rag-eval.md`.
 - Document card file actions (designed with the UI/UX agent): the document detail view now serves the
   raw file (`GET /api/v1/documents/{id}/file?variant=original|normalized&disposition=inline|attachment`
   with correct `Content-Type`, `Content-Disposition`, `X-Content-Type-Options: nosniff`, and byte-range

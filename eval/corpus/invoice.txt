@@ -1,0 +1,5 @@
+Invoice INV-2026-001
+Bill to: Acme Corp
+Item: DokTok Premium plan (annual)
+Total due: 199 EUR
+Due date: 2026-07-01

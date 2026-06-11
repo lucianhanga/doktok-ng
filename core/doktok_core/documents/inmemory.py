@@ -44,3 +44,8 @@ class InMemoryDocumentRepository:
     def list_documents(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[Document]:
         docs = [d for d in reversed(self._docs.values()) if d.tenant_id == tenant_id]
         return [d.model_copy(deep=True) for d in docs[offset : offset + limit]]
+
+    def delete(self, tenant_id: str, document_id: str) -> None:
+        doc = self._docs.get(document_id)
+        if doc is not None and doc.tenant_id == tenant_id:
+            del self._docs[document_id]

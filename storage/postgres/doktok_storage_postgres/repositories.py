@@ -168,6 +168,14 @@ class PostgresIngestionJobRepository:
             ).fetchall()
         return [_row_to_job(row) for row in rows]
 
+    def delete_failed_for_sha(self, tenant_id: str, sha256: str) -> int:
+        with self._db.connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM ingestion_jobs WHERE tenant_id=%s AND sha256=%s AND status='failed'",
+                (tenant_id, sha256),
+            )
+            return cur.rowcount
+
 
 class PostgresDocumentRepository:
     """``DocumentRepository`` backed by PostgreSQL. Tenant-scoped reads."""
@@ -236,6 +244,13 @@ class PostgresDocumentRepository:
                 (tenant_id, limit, offset),
             ).fetchall()
         return [_row_to_document(row) for row in rows]
+
+    def delete(self, tenant_id: str, document_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM documents WHERE id=%s AND tenant_id=%s",
+                (document_id, tenant_id),
+            )
 
 
 _AUDIT_COLUMNS = "id, tenant_id, event_type, actor, document_id, job_id, timestamp, metadata"

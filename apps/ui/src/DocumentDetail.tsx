@@ -8,6 +8,7 @@ import {
   fetchDocumentContent,
   fetchDocumentEntities,
   fetchDocumentFeatures,
+  reingestDocument,
   retryDocumentFeature,
   type AuditEvent,
   type DocEntity,
@@ -72,6 +73,14 @@ export function DocumentDetail({
       .catch(() => undefined);
   }
 
+  function reingest() {
+    reingestDocument(id)
+      .then(onClose) // the failed record is removed; it reprocesses on the next worker run
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : "could not re-ingest"),
+      );
+  }
+
   return (
     <section aria-label="Document detail" className="panel doc-view">
       <div className="result-head">
@@ -99,6 +108,15 @@ export function DocumentDetail({
           <span>This document is a duplicate of an already-ingested document.</span>
           <button type="button" onClick={() => onOpenDocument?.(doc.duplicate_of as string)}>
             Open original →
+          </button>
+        </div>
+      )}
+
+      {doc?.status === "failed" && (
+        <div className="banner-warning" role="status">
+          <span>Ingestion failed for this document.</span>
+          <button type="button" onClick={reingest}>
+            Retry ingestion →
           </button>
         </div>
       )}

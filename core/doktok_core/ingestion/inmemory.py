@@ -5,7 +5,7 @@ Reads are tenant-scoped to mirror the Postgres adapter (ADR-0007).
 
 from __future__ import annotations
 
-from doktok_contracts.schemas import IngestionJob
+from doktok_contracts.schemas import IngestionJob, JobStatus
 
 
 class InMemoryIngestionJobRepository:
@@ -44,3 +44,15 @@ class InMemoryIngestionJobRepository:
             for job in reversed(self._jobs.values())
             if job.tenant_id == tenant_id and job.sha256 == sha256
         ]
+
+    def delete_failed_for_sha(self, tenant_id: str, sha256: str) -> int:
+        victims = [
+            jid
+            for jid, job in self._jobs.items()
+            if job.tenant_id == tenant_id
+            and job.sha256 == sha256
+            and job.status is JobStatus.FAILED
+        ]
+        for jid in victims:
+            del self._jobs[jid]
+        return len(victims)

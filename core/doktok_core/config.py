@@ -69,8 +69,9 @@ class Settings(BaseSettings):
     max_pages: int = 500
     file_stability_seconds: int = 3
     # How many stable files the worker processes in parallel (1 = sequential). Throughput gains
-    # depend on Ollama parallelism (OLLAMA_NUM_PARALLEL) for OCR/embedding/chat-bound documents.
-    ingest_concurrency: int = 4
+    # depend on Ollama parallelism (OLLAMA_NUM_PARALLEL); 2 keeps OCR+embedding+enrichment from
+    # thrashing Ollama's memory on a single ~48 GB box (raise once it's proven stable).
+    ingest_concurrency: int = 2
 
 
 @lru_cache

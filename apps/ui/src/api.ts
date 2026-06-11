@@ -203,6 +203,15 @@ export function fetchFeatures(signal?: AbortSignal): Promise<DocumentFeature[]> 
   return getJson<DocumentFeature[]>("/api/v1/features", signal);
 }
 
+export interface DokCategory {
+  id: string;
+  name: string;
+}
+
+export function fetchDocumentCategories(id: string, signal?: AbortSignal): Promise<DokCategory[]> {
+  return getJson<DokCategory[]>(`/api/v1/documents/${encodeURIComponent(id)}/categories`, signal);
+}
+
 export async function retryDocumentFeature(id: string, feature: string): Promise<void> {
   const response = await fetch(
     `/api/v1/documents/${encodeURIComponent(id)}/features/${encodeURIComponent(feature)}/retry`,

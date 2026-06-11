@@ -279,6 +279,24 @@ class TokenSuggestion(BaseModel):
     document_count: int
 
 
+class Category(BaseModel):
+    """A controlled-vocabulary category for a tenant (M6.2, bounded to 20 active per tenant)."""
+
+    id: str
+    tenant_id: str
+    name: str
+    normalized: str
+    status: str = "active"
+    created_at: datetime | None = None
+
+
+class CategorySummary(BaseModel):
+    """A category with how many documents carry it (for the vocabulary list / filter)."""
+
+    name: str
+    document_count: int
+
+
 class ChatRequest(BaseModel):
     question: str
     limit: int = 8

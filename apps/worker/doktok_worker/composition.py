@@ -7,6 +7,7 @@ from doktok_core.config import Settings
 from doktok_core.entities.extractor import RegexEntityExtractor
 from doktok_core.features.processors import (
     ChunkEmbedFeature,
+    DocClassifyFeature,
     DocMetadataFeature,
     EntitiesFeature,
 )
@@ -24,6 +25,7 @@ from doktok_modalities_files import (
     SearchablePdfBuilder,
 )
 from doktok_provider_ollama import (
+    OllamaCategoryClassifier,
     OllamaChatModelProvider,
     OllamaEmbeddingProvider,
     OllamaMetadataExtractor,
@@ -37,6 +39,7 @@ from doktok_storage_filesystem import (
 from doktok_storage_postgres import (
     Database,
     PostgresAuditLogRepository,
+    PostgresCategoryRepository,
     PostgresChunkRepository,
     PostgresDocumentRepository,
     PostgresEntityRepository,
@@ -109,6 +112,14 @@ def build_services(
         timeout=timeout,
         num_ctx=settings.enrich_num_ctx,
     )
+    category_classifier = OllamaCategoryClassifier(
+        settings.enrich_model,
+        settings.enrich_repair_model,
+        settings.ollama_base_url,
+        timeout=timeout,
+        num_ctx=settings.enrich_num_ctx,
+    )
+    category_repo = PostgresCategoryRepository(db)
 
     # Reconciler processors re-derive from stored artifacts, so they share the same adapters.
     processors: list[FeatureProcessor] = [
@@ -122,6 +133,7 @@ def build_services(
             lexical_terms_limit=settings.lexical_terms_limit,
         ),
         DocMetadataFeature(document_repo, file_storage, metadata_extractor),
+        DocClassifyFeature(document_repo, file_storage, category_classifier, category_repo),
     ]
     reconciler = FeatureReconciler(feature_repo, processors, tenant_ids(settings))
 

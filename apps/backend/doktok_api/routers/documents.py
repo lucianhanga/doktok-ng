@@ -5,13 +5,25 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Literal
 
-from doktok_contracts.ports import DocumentRepository, EntityRepository, FeatureRepository
-from doktok_contracts.schemas import Document, DocumentContent, DocumentEntity, DocumentFeature
+from doktok_contracts.ports import (
+    CategoryRepository,
+    DocumentRepository,
+    EntityRepository,
+    FeatureRepository,
+)
+from doktok_contracts.schemas import (
+    Category,
+    Document,
+    DocumentContent,
+    DocumentEntity,
+    DocumentFeature,
+)
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from doktok_api.dependencies import (
     Tenant,
+    get_category_repository,
     get_document_repository,
     get_entity_repository,
     get_feature_repository,
@@ -22,6 +34,7 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 Repo = Annotated[DocumentRepository, Depends(get_document_repository)]
 Entities = Annotated[EntityRepository, Depends(get_entity_repository)]
 Features = Annotated[FeatureRepository, Depends(get_feature_repository)]
+Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
 
 
 @router.get("", response_model=list[Document])
@@ -67,6 +80,13 @@ def get_document_features(
     document_id: str, tenant: Tenant, features: Features
 ) -> list[DocumentFeature]:
     return features.list_for_document(tenant.tenant_id, document_id)
+
+
+@router.get("/{document_id}/categories", response_model=list[Category])
+def get_document_categories(
+    document_id: str, tenant: Tenant, categories: Categories
+) -> list[Category]:
+    return categories.list_for_document(tenant.tenant_id, document_id)
 
 
 @router.post("/{document_id}/features/{feature}/retry")

@@ -9,6 +9,8 @@ from typing import Any
 from doktok_contracts.media import ExtractedTerm
 from doktok_contracts.schemas import (
     AuditEvent,
+    Category,
+    CategorySummary,
     Document,
     DocumentChunk,
     DocumentEntity,
@@ -22,6 +24,7 @@ from doktok_contracts.schemas import (
     StatsSummary,
     TokenSuggestion,
 )
+from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
@@ -732,3 +735,129 @@ class PostgresFeatureRepository:
                 (tenant_id, document_id, feature),
             )
             return cur.rowcount > 0
+
+
+_CAT_COLUMNS = "id, tenant_id, name, normalized, status, created_at"
+
+
+def _row_to_category(row: dict[str, Any]) -> Category:
+    return Category(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        name=row["name"],
+        normalized=row["normalized"],
+        status=row["status"],
+        created_at=row["created_at"],
+    )
+
+
+class PostgresCategoryRepository:
+    """``CategoryRepository`` backed by PostgreSQL. Tenant-scoped; caps enforced by DB triggers."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def _one(self, sql: str, params: tuple[Any, ...]) -> Category | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(sql, params).fetchone()
+        return _row_to_category(row) if row else None
+
+    def list_active(self, tenant_id: str) -> list[Category]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_CAT_COLUMNS} FROM categories "
+                "WHERE tenant_id=%s AND status='active' ORDER BY name",
+                (tenant_id,),
+            ).fetchall()
+        return [_row_to_category(r) for r in rows]
+
+    def find_by_normalized(self, tenant_id: str, normalized: str) -> Category | None:
+        return self._one(
+            f"SELECT {_CAT_COLUMNS} FROM categories "
+            "WHERE tenant_id=%s AND normalized=%s AND status='active'",
+            (tenant_id, normalized),
+        )
+
+    def find_similar(
+        self, tenant_id: str, normalized: str, *, threshold: float = 0.55
+    ) -> Category | None:
+        return self._one(
+            f"SELECT {_CAT_COLUMNS} FROM categories "
+            "WHERE tenant_id=%s AND status='active' AND similarity(normalized, %s) >= %s "
+            "ORDER BY similarity(normalized, %s) DESC LIMIT 1",
+            (tenant_id, normalized, threshold, normalized),
+        )
+
+    def find_nearest(self, tenant_id: str, normalized: str) -> Category | None:
+        return self._one(
+            f"SELECT {_CAT_COLUMNS} FROM categories WHERE tenant_id=%s AND status='active' "
+            "ORDER BY similarity(normalized, %s) DESC LIMIT 1",
+            (tenant_id, normalized),
+        )
+
+    def active_count(self, tenant_id: str) -> int:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT count(*) AS n FROM categories WHERE tenant_id=%s AND status='active'",
+                (tenant_id,),
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def create(self, tenant_id: str, name: str, normalized: str) -> Category | None:
+        category_id = uuid.uuid4().hex
+        try:
+            with self._db.connection() as conn:
+                cur = conn.cursor(row_factory=dict_row)
+                row = cur.execute(
+                    f"INSERT INTO categories (id, tenant_id, name, normalized, status) "
+                    f"VALUES (%s, %s, %s, %s, 'active') "
+                    f"ON CONFLICT (tenant_id, normalized) DO NOTHING RETURNING {_CAT_COLUMNS}",
+                    (category_id, tenant_id, name, normalized),
+                ).fetchone()
+        except pg_errors.CheckViolation:
+            return None  # tenant hit the 20-category cap (rare race)
+        if row:
+            return _row_to_category(row)
+        return self.find_by_normalized(tenant_id, normalized)  # lost the create race -> existing
+
+    def set_document_categories(
+        self, tenant_id: str, document_id: str, category_ids: list[str]
+    ) -> None:
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute(
+                "DELETE FROM document_category_links WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            )
+            for category_id in category_ids:
+                conn.execute(
+                    "INSERT INTO document_category_links (tenant_id, document_id, category_id) "
+                    "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                    (tenant_id, document_id, category_id),
+                )
+
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[Category]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {', '.join('c.' + c for c in _CAT_COLUMNS.split(', '))} FROM categories c "
+                "JOIN document_category_links l ON l.category_id = c.id "
+                "WHERE l.tenant_id=%s AND l.document_id=%s ORDER BY c.name",
+                (tenant_id, document_id),
+            ).fetchall()
+        return [_row_to_category(r) for r in rows]
+
+    def list_summary(self, tenant_id: str) -> list[CategorySummary]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT c.name AS name, count(l.document_id) AS dc FROM categories c "
+                "LEFT JOIN document_category_links l "
+                "ON l.category_id = c.id AND l.tenant_id = c.tenant_id "
+                "WHERE c.tenant_id=%s AND c.status='active' "
+                "GROUP BY c.name ORDER BY dc DESC, c.name",
+                (tenant_id,),
+            ).fetchall()
+        return [CategorySummary(name=r["name"], document_count=int(r["dc"])) for r in rows]

@@ -18,6 +18,7 @@ from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices, process_file
 from doktok_core.rag.answerer import DefaultRagAnswerer
 from doktok_core.rag.evaluation import RagCase, evaluate
+from doktok_core.rag.reranker import LlmReranker
 from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_modalities_files import (
     DirectTextExtractor,
@@ -89,11 +90,11 @@ def main() -> int:
     retriever = HybridPostgresRetriever(
         db, OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url)
     )
+    chat = OllamaChatModelProvider(
+        settings.default_model, settings.ollama_base_url, num_ctx=settings.chat_num_ctx
+    )
     answerer = DefaultRagAnswerer(
-        retriever,
-        OllamaChatModelProvider(
-            settings.default_model, settings.ollama_base_url, num_ctx=settings.chat_num_ctx
-        ),
+        retriever, chat, reranker=LlmReranker(chat), retrieve_k=settings.rag_retrieve_k
     )
 
     print(f"{YELLOW}Running {len(cases)} golden cases...{NC}\n")

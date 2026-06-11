@@ -235,6 +235,13 @@ class Retriever(Protocol):
 
 
 @runtime_checkable
+class Reranker(Protocol):
+    """Reorder retrieved hits by relevance to the query and return the best ``top_k`` (M6.1)."""
+
+    def rerank(self, query: str, hits: list[SearchHit], *, top_k: int) -> list[SearchHit]: ...
+
+
+@runtime_checkable
 class RagAnswerer(Protocol):
     def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer: ...
 

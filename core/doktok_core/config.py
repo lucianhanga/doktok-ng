@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     # qwen3's grouped-query attention keeps the KV cache for this cheap (~1-2 GB). OCR/embeddings
     # are unaffected (they use the model defaults).
     chat_num_ctx: int = 32768
+    # RAG: retrieve this many candidates wide; the LLM reranker keeps the best (the chat `limit`).
+    rag_retrieve_k: int = 40
     # A PDF page whose largest image covers >= this fraction of the page is treated as scanned.
     ocr_image_coverage: float = 0.8
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the

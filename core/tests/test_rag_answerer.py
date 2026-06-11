@@ -41,7 +41,8 @@ def test_grounded_answer_with_citations() -> None:
 
     assert answer.grounded is True
     assert answer.answer == "The answer is X [1]."
-    assert [c.index for c in answer.citations] == [1, 2]
+    # Citation guardrail: only the excerpt the answer actually referenced ([1]) is cited.
+    assert [c.index for c in answer.citations] == [1]
     assert answer.citations[0].document_id == "d1"
     assert retriever.seen == ("t1", "what is X?", 5)
     assert chat.prompt is not None and "full chunk text body" in chat.prompt
@@ -75,3 +76,26 @@ def test_empty_question_refuses_without_calling_model() -> None:
     answer = DefaultRagAnswerer(FakeRetriever([_hit(1)]), chat).answer("t1", "   ")
     assert answer.grounded is False
     assert chat.prompt is None
+
+
+class FakeReranker:
+    def __init__(self) -> None:
+        self.seen: tuple[str, int, int] | None = None
+
+    def rerank(self, query: str, hits: list[SearchHit], *, top_k: int):  # type: ignore[no-untyped-def]
+        self.seen = (query, len(hits), top_k)
+        return list(reversed(hits))[:top_k]  # reverse to prove the reranker order is used
+
+
+def test_reranker_retrieves_wide_then_keeps_top_k() -> None:
+    retriever = FakeRetriever([_hit(i) for i in range(1, 7)])  # 6 candidates
+    reranker = FakeReranker()
+    chat = FakeChat("Answer using [1].")
+    answerer = DefaultRagAnswerer(retriever, chat, reranker=reranker, retrieve_k=40)
+    answer = answerer.answer("t1", "q", 3)
+
+    assert retriever.seen == ("t1", "q", 40)  # retrieved wide
+    assert reranker.seen == ("q", 6, 3)  # reranked the 6 candidates to top 3
+    assert answer.grounded is True
+    # only one excerpt cited (the answer referenced [1])
+    assert [c.index for c in answer.citations] == [1]

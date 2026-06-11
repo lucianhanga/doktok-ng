@@ -86,6 +86,15 @@ class Settings(BaseSettings):
 
     no_egress: bool = True
 
+    # API DB connection pool size. The default Database() pool is small (4); the API runs sync
+    # routes in a threadpool and each holds a connection during a (possibly slow) Ollama call, so
+    # size it to the expected concurrent request count to avoid pool starvation / blocking.
+    api_db_pool_size: int = 10
+    # Per-call HTTP timeout (seconds) for the interactive RAG path (chat/search embeddings + rerank
+    # + answer). Shorter than the ingestion timeout so a hung model call can't pin an API request
+    # and DB connection for the full ingestion budget.
+    rag_timeout_seconds: float = 120.0
+
     # API server bind host (loopback by default; ADR-0008).
     bind_host: str = "127.0.0.1"
     # Bearer token -> tenant_id map (JSON in env; static now, DB-backed later; ADR-0008).

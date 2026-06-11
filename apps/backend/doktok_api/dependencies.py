@@ -65,7 +65,9 @@ def _get_database(request: Request) -> Database:
         from doktok_storage_postgres import Database, migrate
 
         settings = request.app.state.settings
-        database = Database(settings.database_url)
+        # Size the pool to expected concurrency: sync routes each hold a connection during a slow
+        # Ollama call, so the default (4) starves quickly under a handful of concurrent requests.
+        database = Database(settings.database_url, max_size=settings.api_db_pool_size)
         migrate(database)
         request.app.state.database = database
     return database
@@ -133,7 +135,7 @@ def get_retriever(request: Request) -> Retriever:
         OllamaEmbeddingProvider(
             settings.embedding_model,
             settings.ollama_base_url,
-            timeout=settings.ollama_timeout_seconds,
+            timeout=settings.rag_timeout_seconds,
         ),
     )
     registry.register(Retriever, retriever)
@@ -153,7 +155,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     chat_model = OllamaChatModelProvider(
         settings.default_model,
         settings.ollama_base_url,
-        timeout=settings.ollama_timeout_seconds,
+        timeout=settings.rag_timeout_seconds,
         num_ctx=settings.chat_num_ctx,
         keep_alive=settings.chat_keep_alive,
     )
@@ -162,7 +164,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     rerank_model = OllamaChatModelProvider(
         settings.rerank_model or settings.default_model,
         settings.ollama_base_url,
-        timeout=settings.ollama_timeout_seconds,
+        timeout=settings.rag_timeout_seconds,
         num_ctx=settings.chat_num_ctx,
         num_predict=settings.rerank_num_predict,
         keep_alive=settings.chat_keep_alive,

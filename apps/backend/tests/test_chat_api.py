@@ -56,3 +56,28 @@ def test_returns_grounded_answer_for_caller_tenant() -> None:
     assert body["answer"] == "The total is 42 [1]."
     assert body["citations"][0]["document_id"] == "d1"
     assert answerer.seen == ("tenant-a", "what is the total?", 5)
+
+
+def test_rejects_empty_question() -> None:
+    resp = _client(FakeRagAnswerer()).post(
+        "/api/v1/chat", json={"question": ""}, headers={"Authorization": "Bearer tok-a"}
+    )
+    assert resp.status_code == 422  # min_length=1
+
+
+def test_rejects_oversized_question() -> None:
+    resp = _client(FakeRagAnswerer()).post(
+        "/api/v1/chat",
+        json={"question": "x" * 5000},
+        headers={"Authorization": "Bearer tok-a"},
+    )
+    assert resp.status_code == 422  # max_length=4000
+
+
+def test_response_carries_request_id_header() -> None:
+    resp = _client(FakeRagAnswerer()).post(
+        "/api/v1/chat",
+        json={"question": "hi"},
+        headers={"Authorization": "Bearer tok-a", "X-Request-ID": "abc123"},
+    )
+    assert resp.headers.get("X-Request-ID") == "abc123"

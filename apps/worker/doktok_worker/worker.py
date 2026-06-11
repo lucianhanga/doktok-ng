@@ -94,13 +94,26 @@ class IngestionWorker:
 
     def _process(self, services: IngestionServices, path: str) -> IngestionJob:
         job = process_file(services, path)
-        logger.info(
-            "ingested %s (tenant=%s) -> job %s status=%s",
-            Path(path).name,
-            services.tenant_id,
-            job.id,
-            job.status,
-        )
+        if job.error_code or job.error_message:
+            # Surface the failure reason (e.g. indexing_error / needs_ocr / quarantined) so the log
+            # is actionable instead of a bare "status=failed".
+            logger.warning(
+                "ingested %s (tenant=%s) -> job %s status=%s reason=%s: %s",
+                Path(path).name,
+                services.tenant_id,
+                job.id,
+                job.status,
+                job.error_code or "unknown",
+                job.error_message or "",
+            )
+        else:
+            logger.info(
+                "ingested %s (tenant=%s) -> job %s status=%s",
+                Path(path).name,
+                services.tenant_id,
+                job.id,
+                job.status,
+            )
         return job
 
     def run_forever(self) -> None:  # pragma: no cover - long-running loop

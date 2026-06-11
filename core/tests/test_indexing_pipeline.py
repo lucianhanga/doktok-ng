@@ -68,7 +68,8 @@ def test_active_document_is_chunked_and_embedded(tmp_path: Path) -> None:
     assert len(repo.embeddings) == len(repo.chunks)
     assert all(c.tenant_id == TENANT and c.document_id == job.document_id for c in repo.chunks)
     doc = services.document_repo.get(TENANT, job.document_id)  # type: ignore[arg-type]
-    assert doc is not None and doc.metadata["chunk_count"] == len(repo.chunks)
+    assert doc is not None
+    assert all(c.document_id == doc.id for c in repo.chunks)
 
 
 def test_indexing_failure_fails_the_job(tmp_path: Path) -> None:

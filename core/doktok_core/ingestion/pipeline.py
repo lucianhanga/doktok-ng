@@ -350,16 +350,11 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
     original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name
     language = detect_language(result.content_md)
 
-    # Index (chunk + embed + store) before activation: a document is not active until indexed.
-    job.status = JobStatus.INDEXING
-    services.job_repo.update(job)
-    try:
-        chunk_count = _index_document(services, document_id, result)
-        entity_count = _index_entities(services, document_id, result, language)
-    except Exception as exc:  # noqa: BLE001 - indexing failure fails the job, not the worker
-        return _fail(services, job, code="indexing_error", message=str(exc))
-
+    # Persist canonical artifacts and create the document row BEFORE indexing: document_chunks and
+    # document_entities carry an ON DELETE CASCADE FK to documents (migration 0013), so the parent
+    # row must exist first. The document is not exposed as active until indexing succeeds below.
     job.status = JobStatus.ACTIVATING
+    services.job_repo.update(job)
     artifacts = write_document_artifacts(
         services.file_storage,
         services.layout,
@@ -392,14 +387,24 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             "extraction_method": result.extraction_method,
             "page_count": result.page_count,
             "ocr_confidence": result.ocr_confidence,
-            "chunk_count": chunk_count,
-            "entity_count": entity_count,
             "language": language,
             "original": artifacts.original,
             "system_document": artifacts.system_document,
         },
     )
     services.document_repo.add(document)
+
+    # Index (chunk + embed + store) now that the parent row exists. On failure, delete the document
+    # again: the FK cascade clears any partial chunks/entities, then fail the job (not the worker).
+    job.status = JobStatus.INDEXING
+    services.job_repo.update(job)
+    try:
+        chunk_count = _index_document(services, document_id, result)
+        entity_count = _index_entities(services, document_id, result, language)
+    except Exception as exc:  # noqa: BLE001 - indexing failure fails the job, not the worker
+        services.document_repo.delete(services.tenant_id, document_id)
+        return _fail(services, job, code="indexing_error", message=str(exc))
+
     _record_features_done(services, document_id)
 
     job.document_id = document_id

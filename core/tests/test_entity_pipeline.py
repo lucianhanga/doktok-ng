@@ -75,7 +75,8 @@ def test_entities_are_extracted_and_aggregated(tmp_path: Path) -> None:
 
     assert job.document_id is not None
     doc = services.document_repo.get(TENANT, job.document_id)
-    assert doc is not None and doc.metadata["entity_count"] == len(entity_repo.entities)
+    assert doc is not None
+    assert all(e.document_id == doc.id for e in entity_repo.entities)
 
 
 def test_lexical_terms_stored_as_custom_tokens(tmp_path: Path) -> None:

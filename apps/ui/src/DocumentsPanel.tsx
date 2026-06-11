@@ -173,9 +173,17 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
       )}
       {state.kind === "ok" && docs.length > 0 && (
         <table className="jobs docs-table">
+          <colgroup>
+            <col style={{ width: "2.5rem" }} />
+            <col />
+            <col style={{ width: "8rem" }} />
+            <col style={{ width: "8.5rem" }} />
+            <col style={{ width: "6rem" }} />
+            <col style={{ width: "20rem" }} />
+          </colgroup>
           <thead>
             <tr>
-              <th>
+              <th className="cell-check">
                 <input
                   type="checkbox"
                   aria-label="Select all"
@@ -193,7 +201,7 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
           <tbody>
             {docs.map((doc) => (
               <tr key={doc.id} className={selected.has(doc.id) ? "row-selected" : undefined}>
-                <td onClick={(e) => e.stopPropagation()}>
+                <td className="cell-check" onClick={(e) => e.stopPropagation()}>
                   <input
                     type="checkbox"
                     aria-label={`Select ${doc.original_filename}`}
@@ -217,11 +225,13 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                 >
                   {doc.original_filename}
                 </td>
-                <td className="cell-type">{doc.detected_mime ?? "-"}</td>
+                <td className="cell-type" title={doc.detected_mime ?? undefined}>
+                  {doc.detected_mime ?? "-"}
+                </td>
                 <td>
                   <span className={`badge status-${doc.status}`}>{doc.status}</span>
                 </td>
-                <td>
+                <td className="cell-processing">
                   <FeatureChips features={state.features.get(doc.id) ?? []} />
                 </td>
               </tr>

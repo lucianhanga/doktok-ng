@@ -154,6 +154,7 @@ export interface Stats {
   jobs: Record<string, number>;
   entities: number;
   pending_ingest: number;
+  documents_pending_features: number;
 }
 
 export function fetchDocument(id: string, signal?: AbortSignal): Promise<DokDocument> {
@@ -180,6 +181,7 @@ export function fetchDocumentActivity(id: string, signal?: AbortSignal): Promise
 }
 
 export interface DocumentFeature {
+  document_id: string;
   feature: string;
   status: string;
   feature_version: number;
@@ -190,6 +192,11 @@ export interface DocumentFeature {
 
 export function fetchDocumentFeatures(id: string, signal?: AbortSignal): Promise<DocumentFeature[]> {
   return getJson<DocumentFeature[]>(`/api/v1/documents/${encodeURIComponent(id)}/features`, signal);
+}
+
+/** All feature rows for the tenant (UI groups by document_id for the list badges). */
+export function fetchFeatures(signal?: AbortSignal): Promise<DocumentFeature[]> {
+  return getJson<DocumentFeature[]>("/api/v1/features", signal);
 }
 
 export async function retryDocumentFeature(id: string, feature: string): Promise<void> {

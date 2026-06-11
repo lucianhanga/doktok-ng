@@ -19,6 +19,7 @@ test("renders counts and recent activity", async () => {
             jobs: { active: 3, failed: 1 },
             entities: 7,
             pending_ingest: 9,
+            documents_pending_features: 5,
           }),
           { status: 200 },
         );
@@ -45,5 +46,6 @@ test("renders counts and recent activity", async () => {
   expect(screen.getByText("Entities")).toBeInTheDocument();
   expect(screen.getByText("Waiting in ingest")).toBeInTheDocument();
   expect(screen.getByText("9")).toBeInTheDocument(); // pending in ingest
+  expect(screen.getByText("Pending features")).toBeInTheDocument();
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
 });

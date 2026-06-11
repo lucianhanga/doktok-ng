@@ -58,6 +58,10 @@ export function OverviewPanel() {
           <div className="card-value">{stats?.pending_ingest ?? "-"}</div>
           <div className="card-label">Waiting in ingest</div>
         </div>
+        <div className="card">
+          <div className="card-value">{stats?.documents_pending_features ?? "-"}</div>
+          <div className="card-label">Pending features</div>
+        </div>
       </div>
 
       {jobEntries.length > 0 && (

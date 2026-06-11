@@ -451,3 +451,33 @@ table.jobs td {
     opacity: 1;
   }
 }
+
+.feature-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.feature-chips .chip {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  white-space: nowrap;
+}
+
+.feature-chips .feat-done {
+  background: rgba(46, 160, 67, 0.18);
+  border-color: rgba(46, 160, 67, 0.5);
+}
+
+.feature-chips .feat-failed {
+  background: rgba(220, 60, 60, 0.18);
+  border-color: rgba(220, 60, 60, 0.5);
+}
+
+.feature-chips .feat-pending,
+.feature-chips .feat-running {
+  background: rgba(255, 196, 0, 0.18);
+  border-color: rgba(255, 196, 0, 0.5);
+}

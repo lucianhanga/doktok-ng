@@ -530,10 +530,17 @@ class PostgresStatsRepository:
                 "FROM document_entities WHERE tenant_id=%s",
                 tenant_id,
             )
+            pending_feature_docs = self._scalar(
+                cur,
+                "SELECT COUNT(DISTINCT document_id) AS n FROM document_features "
+                "WHERE tenant_id=%s AND status <> 'done'",
+                tenant_id,
+            )
         return StatsSummary(
             documents=documents,
             jobs={row["status"]: int(row["n"]) for row in job_rows},
             entities=entities,
+            documents_pending_features=pending_feature_docs,
         )
 
 
@@ -677,6 +684,16 @@ class PostgresFeatureRepository:
                 f"SELECT {_FEATURE_COLUMNS} FROM document_features "
                 "WHERE tenant_id=%s AND document_id=%s ORDER BY feature",
                 (tenant_id, document_id),
+            ).fetchall()
+        return [_row_to_feature(row) for row in rows]
+
+    def list_for_tenant(self, tenant_id: str, *, limit: int = 2000) -> list[DocumentFeature]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_FEATURE_COLUMNS} FROM document_features WHERE tenant_id=%s "
+                "ORDER BY document_id, feature LIMIT %s",
+                (tenant_id, limit),
             ).fetchall()
         return [_row_to_feature(row) for row in rows]
 

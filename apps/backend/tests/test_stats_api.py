@@ -42,6 +42,7 @@ def test_returns_summary() -> None:
         "jobs": {"active": 2, "failed": 1},
         "entities": 5,
         "pending_ingest": 0,  # no ingest dir for this tenant under the default files_root
+        "documents_pending_features": 0,
     }
 
 

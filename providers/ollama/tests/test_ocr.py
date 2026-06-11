@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from doktok_provider_ollama import OllamaVisionOcr
 
 
@@ -39,7 +38,8 @@ def test_sends_bounded_context_and_keep_alive(monkeypatch: Any) -> None:
     assert captured["json"]["keep_alive"] == "5m"
 
 
-def test_raises_on_incomplete_generation(monkeypatch: Any) -> None:
-    _capture(monkeypatch, {"response": "truncated...", "done": False})
-    with pytest.raises(RuntimeError, match="did not complete"):
-        OllamaVisionOcr("glm-ocr", "http://localhost:11434").ocr_image(b"img")
+def test_truncated_page_keeps_partial_text_does_not_fail(monkeypatch: Any) -> None:
+    # A page that hits the output cap (done=false) must not fail the document - keep what we got.
+    _capture(monkeypatch, {"response": "partial transcription...", "done": False})
+    result = OllamaVisionOcr("glm-ocr", "http://localhost:11434").ocr_image(b"img")
+    assert result.text == "partial transcription..."

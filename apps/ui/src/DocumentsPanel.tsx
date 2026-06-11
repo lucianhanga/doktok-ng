@@ -27,6 +27,31 @@ function groupByDocument(features: DocumentFeature[]): Map<string, DocumentFeatu
   return map;
 }
 
+// Short labels for the compact list chips; the full explanation + status go in the tooltip.
+const FEATURE_LABELS: Record<string, string> = {
+  extract: "text",
+  chunk_embed: "rag",
+  doc_metadata: "meta",
+  doc_classify: "tags",
+  entities: "ents",
+  structured_records: "recs",
+};
+
+const FEATURE_DESCRIPTIONS: Record<string, string> = {
+  extract: "Text extraction from the document",
+  chunk_embed: "RAG indexing — splits the text into chunks and embeds them for semantic search",
+  doc_metadata: "Metadata — generates the title, document date, location and summary",
+  doc_classify: "Categories — assigns multi-label categories",
+  entities: "Entities & keywords extracted from the text",
+  structured_records: "Structured records — extracts transactions/line items for aggregation",
+};
+
+function featureTooltip(f: DocumentFeature): string {
+  const desc = FEATURE_DESCRIPTIONS[f.feature] ?? f.feature;
+  if (f.last_error) return `${desc}\nfailed: ${f.last_error}`;
+  return `${desc}\nstatus: ${f.status}`;
+}
+
 function FeatureChips({ features }: { features: DocumentFeature[] }) {
   if (features.length === 0) return <span className="muted">-</span>;
   return (
@@ -35,12 +60,9 @@ function FeatureChips({ features }: { features: DocumentFeature[] }) {
         .slice()
         .sort((a, b) => a.feature.localeCompare(b.feature))
         .map((f) => (
-          <span
-            key={f.feature}
-            className={`chip feat-${f.status}`}
-            title={f.last_error ? `${f.feature}: ${f.last_error}` : `${f.feature}: ${f.status}`}
-          >
-            {f.feature} {f.status === "done" ? "✓" : f.status === "failed" ? "✗" : "…"}
+          <span key={f.feature} className={`chip feat-${f.status}`} title={featureTooltip(f)}>
+            {FEATURE_LABELS[f.feature] ?? f.feature}{" "}
+            {f.status === "done" ? "✓" : f.status === "failed" ? "✗" : "…"}
           </span>
         ))}
     </span>

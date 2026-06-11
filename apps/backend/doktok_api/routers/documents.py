@@ -50,12 +50,13 @@ def list_documents(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
     category: Annotated[str | None, Query()] = None,
+    status: Annotated[DocumentStatus | None, Query()] = None,
 ) -> list[Document]:
     if category:
         return categories.documents_for_category(
             tenant.tenant_id, category, limit=limit, offset=offset
         )
-    return repo.list_documents(tenant.tenant_id, limit=limit, offset=offset)
+    return repo.list_documents(tenant.tenant_id, limit=limit, offset=offset, status=status)
 
 
 @router.get("/{document_id}", response_model=Document)
@@ -137,6 +138,27 @@ def reingest_document(
     repo.delete(tenant.tenant_id, document_id)
     shutil.rmtree(base, ignore_errors=True)
     return {"status": "queued", "filename": document.original_filename}
+
+
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs
+) -> dict[str, str]:
+    """Delete a document and its files. Intended for failed/duplicate documents (an active document
+    is also removed, with its records via FK cascade)."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+
+    if document.storage_path:
+        base = Path(document.storage_path).resolve()
+        files_root = Path(request.app.state.settings.files_root).resolve()
+        if files_root == base or files_root in base.parents:  # traversal guard
+            shutil.rmtree(base, ignore_errors=True)
+    if document.sha256:
+        jobs.delete_failed_for_sha(tenant.tenant_id, document.sha256)
+    repo.delete(tenant.tenant_id, document_id)  # FK-cascades extracted_records
+    return {"status": "deleted"}
 
 
 def _resolve_file(document: Document, variant: str) -> tuple[Path, str]:

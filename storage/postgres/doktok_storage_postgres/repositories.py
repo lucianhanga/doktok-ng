@@ -236,13 +236,22 @@ class PostgresDocumentRepository:
             ).fetchone()
         return _row_to_document(row) if row else None
 
-    def list_documents(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[Document]:
+    def list_documents(
+        self,
+        tenant_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        status: DocumentStatus | None = None,
+    ) -> list[Document]:
+        status_value = status.value if status else None
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                f"SELECT {_DOC_COLUMNS} FROM documents WHERE tenant_id=%s "
+                f"SELECT {_DOC_COLUMNS} FROM documents "
+                "WHERE tenant_id=%s AND (%s::text IS NULL OR status=%s) "
                 "ORDER BY created_at DESC LIMIT %s OFFSET %s",
-                (tenant_id, limit, offset),
+                (tenant_id, status_value, status_value, limit, offset),
             ).fetchall()
         return [_row_to_document(row) for row in rows]
 

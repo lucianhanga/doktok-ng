@@ -66,11 +66,14 @@ export function documentFileUrl(
 }
 
 export async function fetchDocuments(
-  opts?: { category?: string },
+  opts?: { category?: string; status?: string },
   signal?: AbortSignal,
 ): Promise<DokDocument[]> {
-  const qs = opts?.category ? `?category=${encodeURIComponent(opts.category)}` : "";
-  const response = await fetch(`/api/v1/documents${qs}`, { signal });
+  const params = new URLSearchParams();
+  if (opts?.category) params.set("category", opts.category);
+  if (opts?.status) params.set("status", opts.status);
+  const qs = params.toString();
+  const response = await fetch(`/api/v1/documents${qs ? `?${qs}` : ""}`, { signal });
   if (!response.ok) {
     throw new Error(`Documents request failed: ${response.status}`);
   }
@@ -242,6 +245,14 @@ export async function reingestDocument(id: string): Promise<void> {
   });
   if (!response.ok) {
     throw new Error(`Re-ingest request failed: ${response.status}`);
+  }
+}
+
+/** Delete a document and its files. */
+export async function deleteDocument(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`Delete request failed: ${response.status}`);
   }
 }
 

@@ -56,6 +56,17 @@ def test_requires_token() -> None:
     assert client.get("/api/v1/documents").status_code == 401
 
 
+def test_status_filter() -> None:
+    active = _doc("a1", "tenant-a")
+    failed = _doc("f1", "tenant-a")
+    failed.status = DocumentStatus.FAILED
+    client = _client(active, failed)
+    all_ids = {d["id"] for d in client.get("/api/v1/documents", headers=_auth("tok-a")).json()}
+    assert all_ids == {"a1", "f1"}
+    failed_only = client.get("/api/v1/documents?status=failed", headers=_auth("tok-a")).json()
+    assert [d["id"] for d in failed_only] == ["f1"]
+
+
 def test_lists_only_callers_tenant() -> None:
     client = _client(_doc("a-doc", "tenant-a"), _doc("b-doc", "tenant-b"))
     response = client.get("/api/v1/documents", headers=_auth("tok-a"))

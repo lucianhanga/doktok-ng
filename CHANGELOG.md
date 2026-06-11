@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Documents list management: filter by **status** (active / failed / duplicate) via
+  `GET /api/v1/documents?status=…`, **select** documents individually or all (checkboxes +
+  select-all), and run **bulk actions** on the selection — for failed documents, **Reingest selected**
+  or **Delete selected**. New `DELETE /api/v1/documents/{id}` (removes the document, its files, and —
+  via FK cascade — its records). Delete asks for confirmation.
 - Structured aggregation, phase 1 (M6.3 `structured_records`): a versioned, idempotent
   `StructuredRecordsFeature` extracts **typed line items** (transactions: date, merchant, amount,
   currency, debit/credit) from financial documents into a queryable `extracted_records` table

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  deleteDocument,
   fetchCategories,
   fetchDocuments,
   fetchFeatures,
+  reingestDocument,
   type CategorySummary,
   type DocumentFeature,
   type DokDocument,
@@ -49,16 +51,22 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
   const [state, setState] = useState<DocsState>({ kind: "loading" });
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [category, setCategory] = useState("");
+  const [status, setStatus] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    Promise.all([fetchDocuments(category ? { category } : undefined), fetchFeatures()])
+    const opts: { category?: string; status?: string } = {};
+    if (category) opts.category = category;
+    if (status) opts.status = status;
+    Promise.all([fetchDocuments(opts), fetchFeatures()])
       .then(([docs, features]) =>
         setState({ kind: "ok", docs, features: groupByDocument(features) }),
       )
       .catch((err: unknown) =>
         setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
       );
-  }, [category]);
+  }, [category, status]);
 
   useEffect(load, [load]);
   useInterval(load, 4000);
@@ -68,10 +76,48 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
       .catch(() => setCategories([]));
   }, []);
 
+  const docs = state.kind === "ok" ? state.docs : [];
+  const selectedDocs = docs.filter((d) => selected.has(d.id));
+  const allSelectedFailed =
+    selectedDocs.length > 0 && selectedDocs.every((d) => d.status === "failed");
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) => (prev.size === docs.length ? new Set() : new Set(docs.map((d) => d.id))));
+  }
+
+  async function runBulk(action: (id: string) => Promise<void>) {
+    setBusy(true);
+    try {
+      await Promise.all([...selected].map((id) => action(id).catch(() => undefined)));
+    } finally {
+      setSelected(new Set());
+      setBusy(false);
+      load();
+    }
+  }
+
   return (
     <section aria-label="Documents" className="panel">
       <div className="result-head">
         <h2>Documents</h2>
+        <label>
+          Status{" "}
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">All</option>
+            <option value="active">Active</option>
+            <option value="failed">Failed</option>
+            <option value="duplicate">Duplicate</option>
+          </select>
+        </label>
         {categories.length > 0 && (
           <label>
             Category{" "}
@@ -89,19 +135,54 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
           Refresh
         </button>
       </div>
+
+      {selected.size > 0 && (
+        <div className="bulk-bar" role="region" aria-label="Bulk actions">
+          <span>{selected.size} selected</span>
+          {allSelectedFailed && (
+            <button type="button" disabled={busy} onClick={() => runBulk(reingestDocument)}>
+              Reingest selected
+            </button>
+          )}
+          <button
+            type="button"
+            className="danger"
+            disabled={busy}
+            onClick={() => {
+              if (window.confirm(`Delete ${selected.size} document(s)? This cannot be undone.`)) {
+                void runBulk(deleteDocument);
+              }
+            }}
+          >
+            Delete selected
+          </button>
+          <button type="button" disabled={busy} onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+        </div>
+      )}
+
       {state.kind === "loading" && <p role="status">Loading documents...</p>}
       {state.kind === "error" && (
         <p role="alert" className="status-error">
           Could not load documents: {state.message}
         </p>
       )}
-      {state.kind === "ok" && state.docs.length === 0 && (
-        <p className="empty">No active documents yet. Ingest a .txt, .md, PDF, or image.</p>
+      {state.kind === "ok" && docs.length === 0 && (
+        <p className="empty">No documents match this filter.</p>
       )}
-      {state.kind === "ok" && state.docs.length > 0 && (
+      {state.kind === "ok" && docs.length > 0 && (
         <table className="jobs">
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  checked={selected.size === docs.length}
+                  onChange={toggleAll}
+                />
+              </th>
               <th>Title</th>
               <th>File</th>
               <th>Type</th>
@@ -110,10 +191,22 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
             </tr>
           </thead>
           <tbody>
-            {state.docs.map((doc) => (
-              <tr key={doc.id} onClick={() => onOpenDocument?.(doc.id)} style={{ cursor: "pointer" }}>
-                <td>{doc.title ?? "-"}</td>
-                <td>{doc.original_filename}</td>
+            {docs.map((doc) => (
+              <tr key={doc.id} className={selected.has(doc.id) ? "row-selected" : undefined}>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${doc.original_filename}`}
+                    checked={selected.has(doc.id)}
+                    onChange={() => toggle(doc.id)}
+                  />
+                </td>
+                <td onClick={() => onOpenDocument?.(doc.id)} style={{ cursor: "pointer" }}>
+                  {doc.title ?? "-"}
+                </td>
+                <td onClick={() => onOpenDocument?.(doc.id)} style={{ cursor: "pointer" }}>
+                  {doc.original_filename}
+                </td>
                 <td>{doc.detected_mime ?? "-"}</td>
                 <td>
                   <span className={`badge status-${doc.status}`}>{doc.status}</span>

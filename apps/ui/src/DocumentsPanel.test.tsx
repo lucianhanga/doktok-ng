@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { DocumentsPanel } from "./DocumentsPanel";
@@ -40,7 +40,7 @@ function doc(overrides: Partial<DokDocument>): DokDocument {
 test("shows empty state when there are no documents", async () => {
   mockDocs([]);
   render(<DocumentsPanel />);
-  await waitFor(() => expect(screen.getByText(/No active documents yet/i)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/No documents match this filter/i)).toBeInTheDocument());
 });
 
 test("renders documents", async () => {
@@ -62,6 +62,25 @@ test("shows per-feature processing chips per document", async () => {
   await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
   expect(screen.getByText(/chunk_embed/)).toBeInTheDocument();
   expect(screen.getByText(/entities/)).toBeInTheDocument();
+});
+
+test("selecting a failed document shows reingest + delete bulk actions", async () => {
+  mockDocs([doc({ id: "f1", status: "failed", original_filename: "broken.pdf" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("broken.pdf")).toBeInTheDocument());
+  fireEvent.click(screen.getByLabelText("Select broken.pdf"));
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+  expect(screen.getByText("Reingest selected")).toBeInTheDocument();
+  expect(screen.getByText("Delete selected")).toBeInTheDocument();
+});
+
+test("selecting an active document offers delete but not reingest", async () => {
+  mockDocs([doc({ id: "a1", status: "active", original_filename: "ok.pdf" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("ok.pdf")).toBeInTheDocument());
+  fireEvent.click(screen.getByLabelText("Select ok.pdf"));
+  expect(screen.getByText("Delete selected")).toBeInTheDocument();
+  expect(screen.queryByText("Reingest selected")).not.toBeInTheDocument();
 });
 
 test("shows an error when the request fails", async () => {

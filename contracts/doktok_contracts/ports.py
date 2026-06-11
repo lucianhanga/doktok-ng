@@ -30,6 +30,7 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentFeature,
+    DocumentStatus,
     DocumentVersion,
     EntitySummary,
     EntityType,
@@ -50,7 +51,12 @@ class DocumentRepository(Protocol):
     def get(self, tenant_id: str, document_id: str) -> Document | None: ...
     def add(self, document: Document) -> None: ...
     def list_documents(
-        self, tenant_id: str, limit: int = 50, offset: int = 0
+        self,
+        tenant_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        status: DocumentStatus | None = None,
     ) -> list[Document]: ...
     def delete(self, tenant_id: str, document_id: str) -> None: ...
     def set_metadata(

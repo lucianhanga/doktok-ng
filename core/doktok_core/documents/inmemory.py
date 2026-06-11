@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from doktok_contracts.schemas import Document
+from doktok_contracts.schemas import Document, DocumentStatus
 
 
 class InMemoryDocumentRepository:
@@ -41,8 +41,19 @@ class InMemoryDocumentRepository:
         doc.location = location
         doc.summary = summary
 
-    def list_documents(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[Document]:
-        docs = [d for d in reversed(self._docs.values()) if d.tenant_id == tenant_id]
+    def list_documents(
+        self,
+        tenant_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        status: DocumentStatus | None = None,
+    ) -> list[Document]:
+        docs = [
+            d
+            for d in reversed(self._docs.values())
+            if d.tenant_id == tenant_id and (status is None or d.status == status)
+        ]
         return [d.model_copy(deep=True) for d in docs[offset : offset + limit]]
 
     def delete(self, tenant_id: str, document_id: str) -> None:

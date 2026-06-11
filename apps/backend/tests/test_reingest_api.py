@@ -94,3 +94,25 @@ def test_reingest_requires_token(tmp_path: Path) -> None:
         "/api/v1/documents/d1/reingest"
     )
     assert resp.status_code == 401
+
+
+def test_delete_removes_file_and_record(tmp_path: Path) -> None:
+    failed_dir = tmp_path / TENANT / "docs.failed" / "guid1"
+    failed_dir.mkdir(parents=True)
+    (failed_dir / "report.pdf").write_bytes(b"%PDF-1.4 fake")
+    docs = InMemoryDocumentRepository()
+    docs.add(_failed_doc(str(failed_dir)))
+
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).delete(
+        "/api/v1/documents/d1", headers=AUTH
+    )
+    assert resp.status_code == 200 and resp.json()["status"] == "deleted"
+    assert not failed_dir.exists()  # files removed
+    assert docs.get(TENANT, "d1") is None  # record removed
+
+
+def test_delete_requires_token(tmp_path: Path) -> None:
+    docs = InMemoryDocumentRepository()
+    docs.add(_failed_doc(str(tmp_path)))
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).delete("/api/v1/documents/d1")
+    assert resp.status_code == 401

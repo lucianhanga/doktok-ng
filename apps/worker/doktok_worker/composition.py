@@ -10,6 +10,7 @@ from doktok_core.features.processors import (
     DocClassifyFeature,
     DocMetadataFeature,
     EntitiesFeature,
+    StructuredRecordsFeature,
 )
 from doktok_core.features.reconciler import FeatureReconciler
 from doktok_core.indexing.chunker import FixedWindowChunker
@@ -29,6 +30,7 @@ from doktok_provider_ollama import (
     OllamaChatModelProvider,
     OllamaEmbeddingProvider,
     OllamaMetadataExtractor,
+    OllamaRecordExtractor,
     OllamaVisionOcr,
 )
 from doktok_storage_filesystem import (
@@ -46,6 +48,7 @@ from doktok_storage_postgres import (
     PostgresFeatureRepository,
     PostgresIngestionJobRepository,
     PostgresLexicalTermExtractor,
+    PostgresRecordRepository,
     migrate,
 )
 
@@ -124,6 +127,15 @@ def build_services(
         think=settings.enrich_think,
     )
     category_repo = PostgresCategoryRepository(db)
+    record_extractor = OllamaRecordExtractor(
+        settings.enrich_model,
+        settings.enrich_repair_model,
+        settings.ollama_base_url,
+        timeout=timeout,
+        num_ctx=settings.enrich_num_ctx,
+        think=settings.enrich_think,
+    )
+    record_repo = PostgresRecordRepository(db)
 
     # Reconciler processors re-derive from stored artifacts, so they share the same adapters.
     processors: list[FeatureProcessor] = [
@@ -138,6 +150,7 @@ def build_services(
         ),
         DocMetadataFeature(document_repo, file_storage, metadata_extractor),
         DocClassifyFeature(document_repo, file_storage, category_classifier, category_repo),
+        StructuredRecordsFeature(document_repo, file_storage, record_extractor, record_repo),
     ]
     reconciler = FeatureReconciler(feature_repo, processors, tenant_ids(settings))
 

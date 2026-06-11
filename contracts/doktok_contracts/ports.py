@@ -16,6 +16,7 @@ from doktok_contracts.media import (
     ExtractedEntity,
     ExtractedMetadata,
     ExtractedTerm,
+    ExtractedTransaction,
     OcrPageResult,
     RenderedPage,
     TextChunk,
@@ -32,6 +33,7 @@ from doktok_contracts.schemas import (
     DocumentVersion,
     EntitySummary,
     EntityType,
+    ExtractedRecord,
     IngestionJob,
     RagAnswer,
     SearchHit,
@@ -207,6 +209,30 @@ class CategoryClassifier(Protocol):
     """Assign up to 5 category labels, preferring the supplied existing vocabulary (M6.2)."""
 
     def classify(self, text: str, existing: list[str]) -> list[str]: ...
+
+
+@runtime_checkable
+class RecordExtractor(Protocol):
+    """Extract structured line items (transactions) from a financial document (M6.3).
+
+    Returns raw rows; core validates/normalizes (money -> minor units, dates, merchant). Returns an
+    empty list for non-financial documents.
+    """
+
+    def extract(self, text: str) -> list[ExtractedTransaction]: ...
+
+
+@runtime_checkable
+class RecordRepository(Protocol):
+    """Structured extracted records + deterministic aggregation (M6.3)."""
+
+    def replace_for_document(
+        self, tenant_id: str, document_id: str, records: list[ExtractedRecord]
+    ) -> None:
+        """Idempotently replace a document's records (delete then insert)."""
+        ...
+
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[ExtractedRecord]: ...
 
 
 @runtime_checkable

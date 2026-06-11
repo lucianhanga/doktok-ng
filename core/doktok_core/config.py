@@ -46,13 +46,15 @@ class Settings(BaseSettings):
     rag_retrieve_k: int = 40
     # Enrichment (M6.2): primary extraction model (structured JSON; thinking on, never think=false
     # with format) and a small dense fallback used only to repair invalid JSON into the schema.
-    enrich_model: str = "qwen3.6:35b-a3b"
+    # Dense default: think=false + structured `format` works reliably on qwen3:14b and is far faster
+    # than the qwen3.6 MoE for extraction (when kept warm). Switch to qwen3.6:35b-a3b +
+    # DOKTOK_ENRICH_THINK=true for higher quality/language fidelity at the cost of latency.
+    enrich_model: str = "qwen3:14b"
     enrich_repair_model: str = "qwen3:14b"
-    enrich_num_ctx: int = 16384
-    # Keep True for the qwen3.6 MoE (think=false breaks structured `format` there, so thinking stays
-    # on and only /no_think soft-trims it). Set False with a DENSE enrich model (e.g. qwen3:14b) to
-    # hard-disable thinking for a large speedup - that combo handles think=false + format correctly.
-    enrich_think: bool = True
+    # 4096 keeps the dense 14b small enough to load fast and stay resident (16k made load ~50s/call
+    # by reallocating a ~19 GB KV cache); enrichment only reads the document head anyway.
+    enrich_num_ctx: int = 4096
+    enrich_think: bool = False
     # A PDF page whose largest image covers >= this fraction of the page is treated as scanned.
     ocr_image_coverage: float = 0.8
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the

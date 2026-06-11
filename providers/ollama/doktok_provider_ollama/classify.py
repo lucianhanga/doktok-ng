@@ -15,8 +15,9 @@ import httpx
 
 logger = logging.getLogger("doktok.enrich")
 
-_MAX_CHARS = 24000
+_MAX_CHARS = 12000
 _MAX_LABELS = 5
+_KEEP_ALIVE = "30m"  # keep the enrichment model warm across a batch ingest
 
 _SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -87,6 +88,7 @@ class OllamaCategoryClassifier:
             ],
             "format": _SCHEMA,
             "stream": False,
+            "keep_alive": _KEEP_ALIVE,
             "options": options,
         }
         response = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)

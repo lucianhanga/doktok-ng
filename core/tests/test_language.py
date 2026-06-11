@@ -17,8 +17,11 @@ def test_short_text_is_unknown() -> None:
 
 
 def test_pg_config_mapping() -> None:
-    assert pg_config_for("en") == "english"
-    assert pg_config_for("de") == "german"
-    assert pg_config_for("fr") == "french"
+    # Supported languages map to a non-stemming keyword config (readable words, stopwords removed).
+    assert pg_config_for("en") == "doktok_kw_english"
+    assert pg_config_for("de") == "doktok_kw_german"
+    assert pg_config_for("fr") == "doktok_kw_french"
+    # Unsupported / unknown fall back to the plain 'simple' config.
+    assert pg_config_for("ar") == SIMPLE_CONFIG
     assert pg_config_for("xx") == SIMPLE_CONFIG
     assert pg_config_for("unknown") == SIMPLE_CONFIG

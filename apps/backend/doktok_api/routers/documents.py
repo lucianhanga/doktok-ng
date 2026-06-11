@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from doktok_contracts.ports import DocumentRepository, EntityRepository, FeatureRepository
 from doktok_contracts.schemas import Document, DocumentContent, DocumentEntity, DocumentFeature
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 
 from doktok_api.dependencies import (
     Tenant,
@@ -75,3 +76,47 @@ def retry_document_feature(
     if not features.reset(tenant.tenant_id, document_id, feature):
         raise HTTPException(status_code=404, detail="feature not found for this document")
     return {"status": "queued"}
+
+
+def _resolve_file(document: Document, variant: str) -> tuple[Path, str]:
+    """Resolve a document's on-disk file + media type for the variant (with a traversal guard)."""
+    base = Path(document.storage_path or "")
+    if variant == "normalized":
+        rel = document.metadata.get("system_document")
+        if not rel:
+            raise HTTPException(status_code=404, detail="normalized file not available")
+        path = base / str(rel)
+        media_type = "application/pdf" if path.suffix == ".pdf" else (document.detected_mime or "")
+    else:
+        # active docs store the canonical name in metadata; failed/duplicate keep the original name.
+        rel = document.metadata.get("original") or document.original_filename
+        path = base / str(rel)
+        media_type = document.detected_mime or ""
+    resolved, base_resolved = path.resolve(), base.resolve()
+    if resolved != base_resolved and base_resolved not in resolved.parents:
+        raise HTTPException(status_code=404, detail="file not found")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return path, media_type or "application/octet-stream"
+
+
+@router.get("/{document_id}/file")
+def get_document_file(
+    document_id: str,
+    tenant: Tenant,
+    repo: Repo,
+    variant: Annotated[Literal["original", "normalized"], Query()] = "original",
+    disposition: Annotated[Literal["inline", "attachment"], Query()] = "inline",
+) -> FileResponse:
+    """Serve the raw document bytes (for in-browser preview / open-in-new-tab / download)."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None or not document.storage_path:
+        raise HTTPException(status_code=404, detail="document not found")
+    path, media_type = _resolve_file(document, variant)
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=document.original_filename,
+        content_disposition_type=disposition,
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=300"},
+    )

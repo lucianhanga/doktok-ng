@@ -116,7 +116,7 @@ export default function App() {
       </header>
 
       {openDoc ? (
-        <DocumentDetail id={openDoc} onClose={() => setOpenDoc(null)} />
+        <DocumentDetail id={openDoc} onClose={() => setOpenDoc(null)} onOpenDocument={setOpenDoc} />
       ) : (
         <>
           {view === "overview" && <OverviewPanel />}

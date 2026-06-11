@@ -8,7 +8,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockRoutes(features: unknown[] = []) {
+function mockRoutes(features: unknown[] = [], docOverride: Record<string, unknown> = {}) {
   const calls: { url: string; method: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -58,6 +58,7 @@ function mockRoutes(features: unknown[] = []) {
           status: "active",
           created_at: "2026-06-10T00:00:00Z",
           metadata: { page_count: 1 },
+          ...docOverride,
         }),
         { status: 200 },
       );
@@ -73,6 +74,26 @@ test("shows metadata, content, entities and activity", async () => {
   expect(screen.getByText("note.txt")).toBeInTheDocument();
   expect(screen.getByText("a@b.com")).toBeInTheDocument();
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
+});
+
+test("a duplicate document shows a banner that opens the original", async () => {
+  mockRoutes([], { status: "duplicate", duplicate_of: "orig-1" });
+  const onOpen = vi.fn();
+  render(<DocumentDetail id="d1" onClose={() => {}} onOpenDocument={onOpen} />);
+
+  await waitFor(() => expect(screen.getByText(/duplicate of/i)).toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /Open original/ }));
+  expect(onOpen).toHaveBeenCalledWith("orig-1");
+});
+
+test("offers open-in-new-tab and download links on the document card", async () => {
+  mockRoutes();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the full text body")).toBeInTheDocument());
+
+  const newTab = screen.getAllByRole("link", { name: /Open in new tab/ })[0];
+  expect(newTab).toHaveAttribute("href", "/api/v1/documents/d1/file");
+  expect(newTab).toHaveAttribute("rel", "noopener noreferrer");
 });
 
 test("shows the processing panel and retries a failed feature", async () => {

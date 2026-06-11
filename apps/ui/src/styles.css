@@ -505,6 +505,12 @@ table.jobs td {
   border-color: rgba(176, 0, 32, 0.5);
 }
 
+.bulk-reprocess {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 tr.row-selected {
   background: rgba(46, 120, 200, 0.12);
 }

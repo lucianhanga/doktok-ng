@@ -4,10 +4,13 @@ import {
   deleteDocument,
   fetchCategories,
   fetchDocuments,
+  fetchFeatureCatalog,
   fetchFeatures,
   reingestDocument,
+  retryDocumentFeature,
   type CategorySummary,
   type DocumentFeature,
+  type FeatureCatalogEntry,
   type DokDocument,
 } from "./api";
 import { useInterval } from "./hooks";
@@ -76,6 +79,8 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [catalog, setCatalog] = useState<FeatureCatalogEntry[]>([]);
+  const [reprocessFeature, setReprocessFeature] = useState("");
 
   const load = useCallback(() => {
     const opts: { category?: string; status?: string } = {};
@@ -96,6 +101,9 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
     fetchCategories()
       .then(setCategories)
       .catch(() => setCategories([]));
+    fetchFeatureCatalog()
+      .then(setCatalog)
+      .catch(() => setCatalog([]));
   }, []);
 
   const docs = state.kind === "ok" ? state.docs : [];
@@ -122,6 +130,16 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
       setBusy(false);
       load();
     }
+  }
+
+  function reprocessSelected() {
+    const feature = reprocessFeature;
+    const spec = catalog.find((c) => c.name === feature);
+    if (!spec) return;
+    if (!window.confirm(`Reprocess "${spec.label}" for ${selected.size} document(s)?`)) return;
+    // Resetting the feature re-queues it; the worker's reconciler re-derives it from stored content.
+    void runBulk((id) => retryDocumentFeature(id, feature));
+    setReprocessFeature("");
   }
 
   return (
@@ -186,6 +204,30 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
           >
             Delete selected
           </button>
+          {catalog.length > 0 && (
+            <span className="bulk-reprocess">
+              <select
+                aria-label="Feature to reprocess"
+                value={reprocessFeature}
+                disabled={busy}
+                onChange={(e) => setReprocessFeature(e.target.value)}
+              >
+                <option value="">Reprocess feature...</option>
+                {catalog.map((c) => (
+                  <option key={c.name} value={c.name} title={c.description}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={busy || reprocessFeature === ""}
+                onClick={reprocessSelected}
+              >
+                Reprocess
+              </button>
+            </span>
+          )}
           <button type="button" disabled={busy} onClick={() => setSelected(new Set())}>
             Clear
           </button>

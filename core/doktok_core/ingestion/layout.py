@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 class FilesystemLayout:
-    """Resolves a tenant's ingest/in.process/docs.active/docs.failed/quarantine folders."""
+    """Resolves a tenant's lifecycle folders (ingest, in.process, docs.active/failed, etc.)."""
 
     def __init__(self, root: str | Path, tenant_id: str) -> None:
         self.root = Path(root)
@@ -38,6 +38,10 @@ class FilesystemLayout:
     def quarantine(self) -> Path:
         return self.base / "quarantine"
 
+    @property
+    def duplicates(self) -> Path:
+        return self.base / "duplicates"
+
     def ensure(self) -> None:
         for path in (
             self.ingest,
@@ -45,6 +49,7 @@ class FilesystemLayout:
             self.docs_active,
             self.docs_failed,
             self.quarantine,
+            self.duplicates,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -60,6 +65,9 @@ class FilesystemLayout:
 
     def quarantine_dir(self, job_id: str) -> Path:
         return self.quarantine / job_id
+
+    def duplicates_dir(self, job_id: str) -> Path:
+        return self.duplicates / job_id
 
     def active_dir(self, document_id: str) -> Path:
         return self.docs_active / document_id

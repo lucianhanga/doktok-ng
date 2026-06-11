@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from doktok_contracts.schemas import JobStatus
+from doktok_contracts.schemas import DocumentStatus, JobStatus
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.ingestion.inmemory import InMemoryIngestionJobRepository
 from doktok_core.ingestion.layout import FilesystemLayout
@@ -137,6 +137,15 @@ def test_unsupported_file_goes_to_failed(tmp_path: Path) -> None:
 
     assert job.status is JobStatus.FAILED
     assert job.error_code == "unsupported_type"
+    # the source is preserved under its ORIGINAL name in docs.failed/
+    assert (layout.failed_dir(job.id) / "blob.bin").read_bytes() == b"\x00\x01\x02"
+    # and a documents row records the failure
+    assert job.document_id is not None
+    doc = services.document_repo.get(TENANT, job.document_id)
+    assert doc is not None
+    assert doc.status is DocumentStatus.FAILED
+    assert doc.original_filename == "blob.bin"
+    assert doc.metadata["error_code"] == "unsupported_type"
 
 
 def test_dangerous_file_is_quarantined(tmp_path: Path) -> None:
@@ -147,14 +156,23 @@ def test_dangerous_file_is_quarantined(tmp_path: Path) -> None:
     assert (layout.quarantine / job.id).exists()
 
 
-def test_duplicate_hash_is_handled(tmp_path: Path) -> None:
+def test_duplicate_is_recorded_in_duplicates_folder_linking_original(tmp_path: Path) -> None:
     services, layout = build_services(tmp_path, mime="text/plain")
     first = process_file(services, drop(layout, "a.txt", b"same content"))
     second = process_file(services, drop(layout, "b.txt", b"same content"))
 
     assert first.status is JobStatus.ACTIVE
-    assert second.status is JobStatus.FAILED
+    assert second.status is JobStatus.DUPLICATE
     assert second.error_code == "duplicate_hash"
+    # the duplicate is parked under duplicates/ with its original name
+    assert (layout.duplicates_dir(second.id) / "b.txt").read_bytes() == b"same content"
+    # and recorded as a duplicate document that points to the original
+    assert second.document_id is not None
+    dup = services.document_repo.get(TENANT, second.document_id)
+    assert dup is not None
+    assert dup.status is DocumentStatus.DUPLICATE
+    assert dup.original_filename == "b.txt"
+    assert dup.duplicate_of == first.document_id
 
 
 def test_dedup_is_per_tenant(tmp_path: Path) -> None:

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Failed and duplicate documents now get a `documents` record and keep their **original filename** on
+  disk. Failed files are stored as `docs.failed/{job_id}/<original-name>` with a `status=failed`
+  document row (error code/message in metadata). Duplicate files (re-ingest of already-active content)
+  go to a new `duplicates/{job_id}/<original-name>` folder with a `status=duplicate` document row whose
+  `duplicate_of` points to the original document; the job ends in a distinct `duplicate` status (was
+  `failed`). Adds migration 0008 (`documents.duplicate_of`) and the `document.duplicate` audit event.
 - Faceted **token search**: a chip-based search bar with autocomplete over the indexed tokens. Typing
   a prefix suggests matching tokens (case-insensitive), each selected token becomes a removable chip,
   and the next suggestion list is narrowed to tokens that co-occur in documents already matching the

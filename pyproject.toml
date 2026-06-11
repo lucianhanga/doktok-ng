@@ -12,6 +12,7 @@ dependencies = [
     "doktok-worker",
     "doktok-mcp",
     "doktok-provider-ollama",
+    "doktok-provider-paddleocr",
     "doktok-storage-postgres",
     "doktok-storage-filesystem",
     "doktok-modalities-files",
@@ -28,6 +29,7 @@ members = [
     "apps/worker",
     "apps/mcp",
     "providers/ollama",
+    "providers/paddleocr",
     "storage/postgres",
     "storage/filesystem",
     "modalities/files",
@@ -43,6 +45,7 @@ doktok-api = { workspace = true }
 doktok-worker = { workspace = true }
 doktok-mcp = { workspace = true }
 doktok-provider-ollama = { workspace = true }
+doktok-provider-paddleocr = { workspace = true }
 doktok-storage-postgres = { workspace = true }
 doktok-storage-filesystem = { workspace = true }
 doktok-modalities-files = { workspace = true }

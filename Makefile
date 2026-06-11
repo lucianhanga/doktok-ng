@@ -1,5 +1,5 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend run-worker run-ui clean-tenant rag-eval enrich-eval db db-down \
+        run-backend run-worker run-ui clean-tenant rag-eval enrich-eval ocr-paddle db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks
 
@@ -50,6 +50,9 @@ rag-eval: ## Run the RAG evaluation harness against real Ollama (needs `make db`
 
 enrich-eval: ## Run the document-enrichment eval against real Ollama (needs `make db` + Ollama)
 	@scripts/enrich-eval.sh
+
+ocr-paddle: ## Install the PaddleOCR runtime (the DOKTOK_OCR_ENGINE=paddleocr extra)
+	uv pip install paddleocr paddlepaddle pillow numpy
 
 db: ## Start local Postgres + pgvector (docker compose)
 	docker compose up -d

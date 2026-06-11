@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     default_model: str = "qwen3.6:35b-a3b"
     # qwen3-embedding (1024-dim) handles >512-token chunks; mxbai-embed-large truncates at 512.
     embedding_model: str = "qwen3-embedding:0.6b"
-    # OCR vision model (used by the M3 OCR adapter; configurable, ADR-0003).
+    # OCR engine: "paddleocr" (detect+recognize, no repeat-loops, native confidence) or "glm-ocr"
+    # (Ollama vision model). PaddleOCR needs its extra: uv pip install paddleocr paddlepaddle.
+    ocr_engine: str = "paddleocr"
+    # PaddleOCR recognizer language; 'german' selects the Latin model (German/English/European).
+    ocr_lang: str = "german"
+    # glm-ocr vision model (used when ocr_engine="glm-ocr"; configurable, ADR-0003).
     ocr_model: str = "glm-ocr:latest"
     # OCR context per single-page call (~4.4k tokens worst case). 32k would waste ~768 MB of KV
     # cache; raise to 16384 only for very dense/multi-column pages. num_predict caps page output.

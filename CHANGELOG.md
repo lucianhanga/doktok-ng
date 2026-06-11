@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **PaddleOCR (PP-OCRv5) is now the default OCR engine** (`DOKTOK_OCR_ENGINE=paddleocr`), replacing the
+  glm-ocr vision model. PaddleOCR is a detection+recognition pipeline, so it **structurally cannot
+  repeat-loop** into garbage on sparse/stamp pages (it returns no text instead) and provides **native
+  per-line confidence**. Verified on real German scans: clean pages → ~0.98 confidence at ~13 s/page
+  (mobile models); the sparse page that made glm-ocr emit hundreds of garbage lines → empty/low-conf.
+  Output is kept shape-compatible (`OcrPageResult`: page text in reading order + mean confidence) so
+  nothing else in the pipeline changes. The runtime is an **optional extra** (kept out of CI):
+  `make ocr-paddle`. Set `DOKTOK_OCR_ENGINE=glm-ocr` to use the previous Ollama engine.
 - **Bulk re-ingest** now works for documents of any status (not just failed). Selecting documents and
   choosing "Reingest selected" reads each original file, **fully purges** the document — its files and
   all derived rows (chunks, entities, features, category links, extracted records, jobs, now via DB

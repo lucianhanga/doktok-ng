@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doktok-provider-paddleocr"
+version = "0.0.0"
+description = "PaddleOCR (PP-OCRv5/v6) adapter for the OcrExtractor port"
+requires-python = ">=3.12"
+dependencies = ["doktok-contracts"]
+
+# Heavy runtime deps kept optional so CI / default installs stay light; imported lazily.
+# Enable on the worker host with: uv pip install paddleocr paddlepaddle pillow numpy
+[project.optional-dependencies]
+engine = ["paddleocr>=3.0", "paddlepaddle>=3.3", "pillow>=10", "numpy>=1.26"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["doktok_provider_paddleocr"]

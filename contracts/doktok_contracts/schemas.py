@@ -32,6 +32,7 @@ class JobStatus(StrEnum):
     ACTIVE = "active"
     FAILED = "failed"
     QUARANTINED = "quarantined"
+    DUPLICATE = "duplicate"
 
 
 class DocumentStatus(StrEnum):
@@ -39,6 +40,7 @@ class DocumentStatus(StrEnum):
     ACTIVE = "active"
     FAILED = "failed"
     QUARANTINED = "quarantined"
+    DUPLICATE = "duplicate"
 
 
 class SecurityDecision(StrEnum):
@@ -57,6 +59,7 @@ class AuditEventType(StrEnum):
     DOCUMENT_ACTIVATED = "document.activated"
     DOCUMENT_QUARANTINED = "document.quarantined"
     DOCUMENT_FAILED = "document.failed"
+    DOCUMENT_DUPLICATE = "document.duplicate"
 
 
 class EntityType(StrEnum):
@@ -92,6 +95,8 @@ class Document(BaseModel):
     storage_path: str | None = None
     created_at: datetime
     activated_at: datetime | None = None
+    # For DocumentStatus.DUPLICATE: the id of the already-ingested document this duplicates.
+    duplicate_of: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

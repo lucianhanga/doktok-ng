@@ -39,5 +39,6 @@ def test_job_status_state_machine_values() -> None:
         "active",
         "failed",
         "quarantined",
+        "duplicate",
     }
     assert {s.value for s in JobStatus} == expected

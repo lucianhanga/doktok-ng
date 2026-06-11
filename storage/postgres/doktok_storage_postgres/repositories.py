@@ -31,7 +31,7 @@ def to_vector_literal(values: list[float]) -> str:
 
 _DOC_COLUMNS = (
     "id, tenant_id, current_version_id, sha256, original_filename, detected_mime, "
-    "title, status, storage_path, created_at, activated_at, metadata"
+    "title, status, storage_path, created_at, activated_at, duplicate_of, metadata"
 )
 _DOC_COLUMNS_D = ", ".join(f"d.{c}" for c in _DOC_COLUMNS.split(", "))
 
@@ -49,6 +49,7 @@ def _row_to_document(row: dict[str, Any]) -> Document:
         storage_path=row["storage_path"],
         created_at=row["created_at"],
         activated_at=row["activated_at"],
+        duplicate_of=row["duplicate_of"],
         metadata=row["metadata"] or {},
     )
 
@@ -166,7 +167,7 @@ class PostgresDocumentRepository:
         with self._db.connection() as conn:
             conn.execute(
                 f"INSERT INTO documents ({_DOC_COLUMNS}) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     document.id,
                     document.tenant_id,
@@ -179,6 +180,7 @@ class PostgresDocumentRepository:
                     document.storage_path,
                     document.created_at,
                     document.activated_at,
+                    document.duplicate_of,
                     Json(document.metadata),
                 ),
             )

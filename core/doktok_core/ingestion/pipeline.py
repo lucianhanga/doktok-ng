@@ -281,14 +281,9 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
             sha256=job.sha256,
         )
 
-        if _is_duplicate(services, job):
-            return _fail(
-                services,
-                job,
-                workdir,
-                code="duplicate_hash",
-                message=f"content with sha256 {job.sha256} has already been ingested",
-            )
+        original_document_id = _find_original_document_id(services, job)
+        if original_document_id is not None:
+            return _handle_duplicate(services, job, original_document_id)
 
         size_bytes = os.path.getsize(dest)
         decision = services.security_policy.decide(job.detected_mime, size_bytes)
@@ -300,14 +295,13 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
             return _fail(
                 services,
                 job,
-                workdir,
                 code="too_large" if too_large else "unsupported_type",
                 message=f"rejected mime={job.detected_mime} size={size_bytes}",
             )
 
         return _activate(services, job, workdir)
     except Exception as exc:  # noqa: BLE001 - record any failure on the job, do not crash the worker
-        return _fail(services, job, workdir, code="internal_error", message=str(exc))
+        return _fail(services, job, code="internal_error", message=str(exc))
 
 
 def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> IngestionJob:
@@ -329,7 +323,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             chat_model=services.chat_model,
         )
     except NeedsOcrError as exc:
-        return _fail(services, job, workdir, code="needs_ocr", message=str(exc))
+        return _fail(services, job, code="needs_ocr", message=str(exc))
 
     document_id = _new_id()
     original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name
@@ -342,7 +336,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         chunk_count = _index_document(services, document_id, result)
         entity_count = _index_entities(services, document_id, result, language)
     except Exception as exc:  # noqa: BLE001 - indexing failure fails the job, not the worker
-        return _fail(services, job, workdir, code="indexing_error", message=str(exc))
+        return _fail(services, job, code="indexing_error", message=str(exc))
 
     job.status = JobStatus.ACTIVATING
     artifacts = write_document_artifacts(
@@ -410,21 +404,102 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
     return job
 
 
-def _is_duplicate(services: IngestionServices, job: IngestionJob) -> bool:
+def _find_original_document_id(services: IngestionServices, job: IngestionJob) -> str | None:
+    """Return the id of an already-active document with the same content, if any (per tenant)."""
     if not job.sha256:
-        return False
+        return None
     for other in services.job_repo.find_by_sha256(services.tenant_id, job.sha256):
         if other.id == job.id:
             continue
-        if other.status not in (JobStatus.FAILED, JobStatus.QUARANTINED):
-            return True
-    return False
+        if other.status is JobStatus.ACTIVE and other.document_id:
+            return other.document_id
+    return None
+
+
+def _original_filename(job: IngestionJob) -> str:
+    return Path(job.metadata.get("original_ingest_path", job.source_path)).name
+
+
+def _relocate_source(services: IngestionServices, job: IngestionJob, dest_dir: Path) -> str:
+    """Move the source into ``dest_dir`` under its original name; drop the work dir."""
+    target = dest_dir / _original_filename(job)
+    if Path(job.source_path).exists():
+        services.file_storage.move(job.source_path, str(target))
+    workdir = services.layout.job_workdir(job.id)
+    if workdir.exists():
+        shutil.rmtree(workdir, ignore_errors=True)
+    return str(dest_dir)
+
+
+def _record_terminal_document(
+    services: IngestionServices,
+    job: IngestionJob,
+    *,
+    status: DocumentStatus,
+    storage_path: str,
+    duplicate_of: str | None = None,
+    extra_metadata: dict[str, object] | None = None,
+) -> str:
+    """Create a documents row for a non-active outcome (failed/duplicate). Returns its id."""
+    document_id = _new_id()
+    original_filename = _original_filename(job)
+    metadata: dict[str, object] = {
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    services.document_repo.add(
+        Document(
+            id=document_id,
+            tenant_id=services.tenant_id,
+            sha256=job.sha256 or "",
+            original_filename=original_filename,
+            detected_mime=job.detected_mime,
+            title=Path(original_filename).stem or original_filename,
+            status=status,
+            storage_path=storage_path,
+            created_at=datetime.now(UTC),
+            duplicate_of=duplicate_of,
+            metadata=metadata,
+        )
+    )
+    return document_id
+
+
+def _handle_duplicate(
+    services: IngestionServices, job: IngestionJob, original_document_id: str
+) -> IngestionJob:
+    """Park a re-ingested copy in duplicates/ and record it as a duplicate of the original."""
+    job.status = JobStatus.DUPLICATE
+    job.error_code = "duplicate_hash"
+    job.error_message = f"already ingested as document {original_document_id}"
+    job.finished_at = datetime.now(UTC)
+    storage = _relocate_source(services, job, services.layout.duplicates_dir(job.id))
+    job.document_id = _record_terminal_document(
+        services,
+        job,
+        status=DocumentStatus.DUPLICATE,
+        storage_path=storage,
+        duplicate_of=original_document_id,
+        extra_metadata={"duplicate_of": original_document_id},
+    )
+    services.job_repo.update(job)
+    _audit(
+        services,
+        AuditEventType.DOCUMENT_DUPLICATE,
+        job,
+        document_id=job.document_id,
+        duplicate_of=original_document_id,
+        sha256=job.sha256,
+        filename=_original_filename(job),
+    )
+    return job
 
 
 def _fail(
     services: IngestionServices,
     job: IngestionJob,
-    workdir: Path,
     *,
     code: str,
     message: str,
@@ -433,8 +508,10 @@ def _fail(
     job.error_code = code
     job.error_message = message
     job.finished_at = datetime.now(UTC)
-    if workdir.exists():
-        services.file_storage.move(str(workdir), str(services.layout.failed_dir(job.id)))
+    storage = _relocate_source(services, job, services.layout.failed_dir(job.id))
+    job.document_id = _record_terminal_document(
+        services, job, status=DocumentStatus.FAILED, storage_path=storage
+    )
     services.job_repo.update(job)
     _audit(
         services,

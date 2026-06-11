@@ -25,6 +25,11 @@ emails, URLs, money, dates, invoice/contract IDs) into a tenant-scoped `document
 and filterable via `GET /api/v1/entities` (+ `/documents`) and an **Entities** tab. (PERSON/ORG NER via
 spaCy is a documented follow-up.)
 
+On top of the structured entities, each document's **significant terms** are extracted with
+PostgreSQL `to_tsvector` in the document's **detected language** (stopwords removed, stemmed) and
+stored as `CUSTOM_TOKEN` keyword entities — a multilingual lexical/keyword layer browsable and
+filterable in the Entities tab (`DOKTOK_LEXICAL_TERMS_LIMIT`).
+
 The **UI** has an Overview dashboard, a document viewer (extracted text + entities + activity per
 document), live auto-refresh, and cross-linking (search hit / entity / job → open the document).
 

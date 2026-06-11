@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the
     # page is re-OCR'd. Higher = trust OCR more; set to 0 to always keep any embedded text.
     ocr_min_text_quality: float = 0.5
+    # Max significant lexemes indexed per document as CUSTOM_TOKEN entities (M5.7, multilingual).
+    lexical_terms_limit: int = 200
 
     no_egress: bool = True
 

@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from doktok_contracts.media import ExtractedEntity, OcrPageResult, RenderedPage, TextChunk
+from doktok_contracts.media import (
+    ExtractedEntity,
+    ExtractedTerm,
+    OcrPageResult,
+    RenderedPage,
+    TextChunk,
+)
 from doktok_contracts.schemas import (
     AuditEvent,
     Document,
@@ -168,6 +174,15 @@ class ChatModelProvider(Protocol):
 @runtime_checkable
 class EntityExtractor(Protocol):
     def extract(self, text: str) -> list[ExtractedEntity]: ...
+
+
+@runtime_checkable
+class LexicalTermExtractor(Protocol):
+    """Extract significant lexemes (stopwords removed) from text, language-aware (M5.7)."""
+
+    def extract_terms(
+        self, text: str, *, config: str = "simple", limit: int = 200
+    ) -> list[ExtractedTerm]: ...
 
 
 @runtime_checkable

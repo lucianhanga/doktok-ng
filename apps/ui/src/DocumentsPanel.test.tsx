@@ -16,6 +16,9 @@ function mockDocs(docs: DokDocument[], features: unknown[] = []) {
       if (url.includes("/api/v1/features")) {
         return new Response(JSON.stringify(features), { status: 200 });
       }
+      if (url.includes("/api/v1/categories")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       return new Response(JSON.stringify(docs), { status: 200 });
     }),
   );

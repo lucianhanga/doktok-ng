@@ -3,8 +3,9 @@ from datetime import UTC, datetime
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import DocumentRepository
+from doktok_contracts.ports import CategoryRepository, DocumentRepository
 from doktok_contracts.schemas import Document, DocumentStatus
+from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.registry import build_registry
@@ -41,6 +42,7 @@ def _client(*docs: Document) -> TestClient:
         repo.add(doc)
     registry = build_registry()
     registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 

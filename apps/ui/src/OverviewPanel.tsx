@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { fetchActivity, fetchStats, type AuditEvent, type Stats } from "./api";
+import {
+  fetchActivity,
+  fetchCategories,
+  fetchStats,
+  type AuditEvent,
+  type CategorySummary,
+  type Stats,
+} from "./api";
 import { useInterval } from "./hooks";
 
 export function OverviewPanel() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<AuditEvent[]>([]);
+  const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    Promise.all([fetchStats(), fetchActivity()])
-      .then(([s, a]) => {
+    Promise.all([fetchStats(), fetchActivity(), fetchCategories()])
+      .then(([s, a, c]) => {
         setStats(s);
         setRecent(a.slice(0, 8));
+        setCategories(c);
         setError(null);
       })
       .catch((err: unknown) =>
@@ -71,6 +80,19 @@ export function OverviewPanel() {
             {jobEntries.map(([status, n]) => (
               <li key={status}>
                 <span className={`badge status-${status}`}>{status}</span> {n}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {categories.length > 0 && (
+        <div className="doc-section">
+          <h3>Documents by category</h3>
+          <ul className="entity-chips">
+            {categories.map((c) => (
+              <li key={c.name}>
+                <span className="chip">{c.name}</span> {c.document_count}
               </li>
             ))}
           </ul>

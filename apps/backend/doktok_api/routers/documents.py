@@ -41,9 +41,15 @@ Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
 def list_documents(
     tenant: Tenant,
     repo: Repo,
+    categories: Categories,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    category: Annotated[str | None, Query()] = None,
 ) -> list[Document]:
+    if category:
+        return categories.documents_for_category(
+            tenant.tenant_id, category, limit=limit, offset=offset
+        )
     return repo.list_documents(tenant.tenant_id, limit=limit, offset=offset)
 
 

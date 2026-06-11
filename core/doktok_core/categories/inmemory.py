@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from doktok_contracts.schemas import Category, CategorySummary
+from doktok_contracts.schemas import Category, CategorySummary, Document
 
 from doktok_core.enrichment import MAX_CATEGORIES_PER_DOCUMENT, MAX_CATEGORIES_PER_TENANT
 
@@ -100,3 +100,10 @@ class InMemoryCategoryRepository:
             for c in self.list_active(tenant_id)
         ]
         return sorted(summaries, key=lambda s: (-s.document_count, s.name))
+
+    def documents_for_category(
+        self, tenant_id: str, name: str, *, limit: int = 50, offset: int = 0
+    ) -> list[Document]:
+        # The in-memory repo holds no documents; the document<->category join is covered by the
+        # Postgres integration test.
+        return []

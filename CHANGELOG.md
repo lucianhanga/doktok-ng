@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Document enrichment, phase 3 (M6.2 categories UI): the **Documents** tab now has a **category
+  filter** (a dropdown of the tenant's categories with counts; selecting one filters the list via
+  `GET /api/v1/documents?category=…`), and the **Overview** dashboard shows a **"Documents by
+  category"** breakdown. New `CategoryRepository.documents_for_category` + the document-list `category`
+  query param. The clean-tenant script and test-tenant cleanup now also clear `categories` /
+  `document_category_links` (no document FK to cascade). (A serialized taxonomy maintenance/merge pass
+  remains an optional future enhancement; the inline trigram dedup + caps already keep the vocabulary
+  bounded.)
 - Document enrichment, phase 2 (M6.2 `doc_classify`): documents are now **multi-label categorized**
   from a **bounded controlled vocabulary** — at most 5 categories per document and 20 active per
   tenant, both enforced in the database via `BEFORE INSERT` triggers with per-group advisory locks

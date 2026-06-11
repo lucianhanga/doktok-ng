@@ -508,3 +508,40 @@ table.jobs td {
 tr.row-selected {
   background: rgba(46, 120, 200, 0.12);
 }
+
+/* Documents list: compact, single-line rows with truncation (full text on hover). */
+.docs-table {
+  font-size: 0.82rem;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.docs-table th,
+.docs-table td {
+  padding: 0.25rem 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.docs-table .cell-title {
+  max-width: 22rem;
+}
+
+.docs-table .cell-file {
+  max-width: 16rem;
+}
+
+.docs-table .cell-type {
+  max-width: 9rem;
+  color: #888;
+}
+
+.docs-table .feature-chips {
+  flex-wrap: nowrap;
+}
+
+.docs-table .feature-chips .chip {
+  font-size: 0.68rem;
+}

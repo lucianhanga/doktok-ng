@@ -10,6 +10,7 @@ from doktok_contracts.schemas import (
     DocumentStatus,
     EntitySummary,
     EntityType,
+    TokenSuggestion,
 )
 from doktok_core.config import Settings
 from doktok_core.registry import build_registry
@@ -31,6 +32,26 @@ class FakeEntityRepository:
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
 
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
+        return []
+
+    def suggest_tokens(
+        self,
+        tenant_id: str,
+        prefix: str,
+        *,
+        selected: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[TokenSuggestion]:
+        return []
+
+    def documents_for_tokens(
+        self,
+        tenant_id: str,
+        tokens: list[str],
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Document]:
         return []
 
     def list_distinct(

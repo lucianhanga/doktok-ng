@@ -16,6 +16,7 @@ from doktok_contracts.schemas import (
     IngestionJob,
     JobStatus,
     StatsSummary,
+    TokenSuggestion,
 )
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -421,6 +422,79 @@ class PostgresEntityRepository:
             )
             for row in rows
         ]
+
+    def suggest_tokens(
+        self,
+        tenant_id: str,
+        prefix: str,
+        *,
+        selected: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[TokenSuggestion]:
+        like = _like_prefix(prefix)
+        selected_lower = [s.lower() for s in (selected or [])]
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            if selected_lower:
+                rows = cur.execute(
+                    "WITH matching AS ("
+                    "  SELECT document_id FROM document_entities"
+                    "  WHERE tenant_id=%s AND lower(normalized_value) = ANY(%s)"
+                    "  GROUP BY document_id"
+                    "  HAVING COUNT(DISTINCT lower(normalized_value)) = %s) "
+                    "SELECT normalized_value AS value, COUNT(DISTINCT document_id) AS dc "
+                    "FROM document_entities "
+                    "WHERE tenant_id=%s AND document_id IN (SELECT document_id FROM matching) "
+                    "AND normalized_value ILIKE %s AND lower(normalized_value) <> ALL(%s) "
+                    "GROUP BY normalized_value ORDER BY dc DESC, value ASC LIMIT %s",
+                    (
+                        tenant_id,
+                        selected_lower,
+                        len(selected_lower),
+                        tenant_id,
+                        like,
+                        selected_lower,
+                        limit,
+                    ),
+                ).fetchall()
+            else:
+                rows = cur.execute(
+                    "SELECT normalized_value AS value, COUNT(DISTINCT document_id) AS dc "
+                    "FROM document_entities WHERE tenant_id=%s AND normalized_value ILIKE %s "
+                    "GROUP BY normalized_value ORDER BY dc DESC, value ASC LIMIT %s",
+                    (tenant_id, like, limit),
+                ).fetchall()
+        return [TokenSuggestion(value=r["value"], document_count=int(r["dc"])) for r in rows]
+
+    def documents_for_tokens(
+        self,
+        tenant_id: str,
+        tokens: list[str],
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Document]:
+        tokens_lower = [t.lower() for t in tokens]
+        if not tokens_lower:
+            return []
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_DOC_COLUMNS} FROM documents WHERE tenant_id=%s AND id IN ("
+                "  SELECT document_id FROM document_entities"
+                "  WHERE tenant_id=%s AND lower(normalized_value) = ANY(%s)"
+                "  GROUP BY document_id"
+                "  HAVING COUNT(DISTINCT lower(normalized_value)) = %s) "
+                "ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (tenant_id, tenant_id, tokens_lower, len(tokens_lower), limit, offset),
+            ).fetchall()
+        return [_row_to_document(row) for row in rows]
+
+
+def _like_prefix(prefix: str) -> str:
+    """Escape LIKE wildcards in ``prefix`` and append ``%`` for a case-insensitive prefix match."""
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"{escaped}%"
 
 
 class PostgresStatsRepository:

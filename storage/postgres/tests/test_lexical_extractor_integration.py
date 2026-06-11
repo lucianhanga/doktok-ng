@@ -5,16 +5,19 @@ from __future__ import annotations
 from doktok_storage_postgres import Database, PostgresLexicalTermExtractor
 
 
-def test_english_config_removes_stopwords_and_stems(db: Database) -> None:
+def test_keyword_config_removes_stopwords_without_stemming(db: Database) -> None:
+    # The non-stemming keyword config (migration 0007) keeps real words but drops stopwords.
     extractor = PostgresLexicalTermExtractor(db)
-    terms = extractor.extract_terms(
-        "The quick brown fox jumps over the lazy dog and the cat", config="english", limit=50
-    )
-    words = {t.term for t in terms}
-    assert "the" not in words  # stopword removed
-    assert "and" not in words  # stopword removed
-    assert "fox" in words
-    assert any(t.term == "jump" for t in terms)  # stemmed from "jumps"
+    terms = {
+        t.term
+        for t in extractor.extract_terms(
+            "The governance and finance services are important and the work continues",
+            config="doktok_kw_english",
+            limit=50,
+        )
+    }
+    assert "the" not in terms and "and" not in terms and "are" not in terms  # stopwords removed
+    assert "governance" in terms and "finance" in terms and "services" in terms  # NOT stemmed
 
 
 def test_simple_config_keeps_stopwords_with_frequency(db: Database) -> None:

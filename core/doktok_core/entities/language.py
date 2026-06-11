@@ -11,35 +11,27 @@ from langdetect import DetectorFactory, LangDetectException, detect
 
 DetectorFactory.seed = 0  # deterministic detection
 
-# ISO 639-1 -> a PostgreSQL text-search config that ships with standard installs.
-_LANG_TO_PG_CONFIG: dict[str, str] = {
-    "ar": "arabic",
-    "ca": "catalan",
+# ISO 639-1 -> language name for which migration 0007 ships a non-stemming keyword text-search
+# config (`doktok_kw_<name>` = simple template + that language's stopword list). These languages
+# have stopword files in a standard PostgreSQL install. Others fall back to `simple` (no removal).
+_KEYWORD_LANGS: dict[str, str] = {
     "da": "danish",
     "nl": "dutch",
     "en": "english",
     "fi": "finnish",
     "fr": "french",
     "de": "german",
-    "el": "greek",
-    "hi": "hindi",
     "hu": "hungarian",
-    "id": "indonesian",
-    "ga": "irish",
     "it": "italian",
-    "lt": "lithuanian",
-    "ne": "nepali",
     "no": "norwegian",
     "pt": "portuguese",
-    "ro": "romanian",
     "ru": "russian",
-    "sr": "serbian",
     "es": "spanish",
     "sv": "swedish",
-    "ta": "tamil",
     "tr": "turkish",
 }
 
+KEYWORD_CONFIG_PREFIX = "doktok_kw_"
 SIMPLE_CONFIG = "simple"
 
 
@@ -55,5 +47,6 @@ def detect_language(text: str) -> str:
 
 
 def pg_config_for(language: str) -> str:
-    """Map an ISO language code to a PostgreSQL text-search config (``simple`` fallback)."""
-    return _LANG_TO_PG_CONFIG.get(language, SIMPLE_CONFIG)
+    """Map an ISO code to a non-stemming keyword text-search config (``simple`` fallback)."""
+    name = _KEYWORD_LANGS.get(language)
+    return f"{KEYWORD_CONFIG_PREFIX}{name}" if name else SIMPLE_CONFIG

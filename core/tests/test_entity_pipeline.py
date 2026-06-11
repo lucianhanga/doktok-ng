@@ -110,8 +110,8 @@ def test_lexical_terms_stored_as_custom_tokens(tmp_path: Path) -> None:
     assert tokens == {"invoic", "payment"}
     invoic = next(e for e in entity_repo.entities if e.normalized_value == "invoic")
     assert invoic.frequency == 3 and invoic.metadata["language"] == "en"
-    # English content -> the English text-search config was requested.
-    assert lexical.seen_config == "english"
+    # English content -> the English non-stemming keyword config was requested.
+    assert lexical.seen_config == "doktok_kw_english"
 
     assert job.document_id is not None
     doc = services.document_repo.get(TENANT, job.document_id)

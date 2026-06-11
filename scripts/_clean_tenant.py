@@ -17,6 +17,8 @@ from doktok_storage_postgres import Database
 # Every tenant-scoped table, child rows first.
 _TENANT_TABLES = [
     "document_features",
+    "document_category_links",
+    "categories",  # no document FK, so must be deleted explicitly (not cascaded)
     "document_entities",
     "document_chunks",
     "audit_events",

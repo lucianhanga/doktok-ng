@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { fetchDocuments, fetchFeatures, type DocumentFeature, type DokDocument } from "./api";
+import {
+  fetchCategories,
+  fetchDocuments,
+  fetchFeatures,
+  type CategorySummary,
+  type DocumentFeature,
+  type DokDocument,
+} from "./api";
 import { useInterval } from "./hooks";
 
 type DocsState =
@@ -40,24 +47,44 @@ function FeatureChips({ features }: { features: DocumentFeature[] }) {
 
 export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [state, setState] = useState<DocsState>({ kind: "loading" });
+  const [categories, setCategories] = useState<CategorySummary[]>([]);
+  const [category, setCategory] = useState("");
 
   const load = useCallback(() => {
-    Promise.all([fetchDocuments(), fetchFeatures()])
+    Promise.all([fetchDocuments(category ? { category } : undefined), fetchFeatures()])
       .then(([docs, features]) =>
         setState({ kind: "ok", docs, features: groupByDocument(features) }),
       )
       .catch((err: unknown) =>
         setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
       );
-  }, []);
+  }, [category]);
 
   useEffect(load, [load]);
   useInterval(load, 4000);
+  useEffect(() => {
+    fetchCategories()
+      .then(setCategories)
+      .catch(() => setCategories([]));
+  }, []);
 
   return (
     <section aria-label="Documents" className="panel">
       <div className="result-head">
         <h2>Documents</h2>
+        {categories.length > 0 && (
+          <label>
+            Category{" "}
+            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="">All</option>
+              {categories.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.name} ({c.document_count})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button type="button" onClick={load}>
           Refresh
         </button>

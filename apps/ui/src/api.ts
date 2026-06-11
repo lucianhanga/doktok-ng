@@ -65,12 +65,25 @@ export function documentFileUrl(
   return `/api/v1/documents/${encodeURIComponent(id)}/file${qs ? `?${qs}` : ""}`;
 }
 
-export async function fetchDocuments(signal?: AbortSignal): Promise<DokDocument[]> {
-  const response = await fetch("/api/v1/documents", { signal });
+export async function fetchDocuments(
+  opts?: { category?: string },
+  signal?: AbortSignal,
+): Promise<DokDocument[]> {
+  const qs = opts?.category ? `?category=${encodeURIComponent(opts.category)}` : "";
+  const response = await fetch(`/api/v1/documents${qs}`, { signal });
   if (!response.ok) {
     throw new Error(`Documents request failed: ${response.status}`);
   }
   return (await response.json()) as DokDocument[];
+}
+
+export interface CategorySummary {
+  name: string;
+  document_count: number;
+}
+
+export function fetchCategories(signal?: AbortSignal): Promise<CategorySummary[]> {
+  return getJson<CategorySummary[]>("/api/v1/categories", signal);
 }
 
 export interface AuditEvent {

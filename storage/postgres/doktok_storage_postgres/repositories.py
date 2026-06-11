@@ -861,3 +861,19 @@ class PostgresCategoryRepository:
                 (tenant_id,),
             ).fetchall()
         return [CategorySummary(name=r["name"], document_count=int(r["dc"])) for r in rows]
+
+    def documents_for_category(
+        self, tenant_id: str, name: str, *, limit: int = 50, offset: int = 0
+    ) -> list[Document]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_DOC_COLUMNS_D} FROM documents d "
+                "JOIN document_category_links l "
+                "ON l.document_id = d.id AND l.tenant_id = d.tenant_id "
+                "JOIN categories c ON c.id = l.category_id "
+                "WHERE d.tenant_id=%s AND c.name=%s AND c.status='active' "
+                "ORDER BY d.created_at DESC LIMIT %s OFFSET %s",
+                (tenant_id, name, limit, offset),
+            ).fetchall()
+        return [_row_to_document(row) for row in rows]

@@ -42,3 +42,11 @@ class ExtractedEntity:
     normalized_value: str
     start_offset: int
     end_offset: int
+
+
+@dataclass
+class ExtractedTerm:
+    """A significant lexical term (lexeme) and how often it occurs in a document."""
+
+    term: str
+    frequency: int

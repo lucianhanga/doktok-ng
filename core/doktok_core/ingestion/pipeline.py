@@ -36,6 +36,7 @@ from doktok_contracts.ports import (
     FileStorage,
     HashService,
     IngestionJobRepository,
+    LexicalTermExtractor,
     MimeDetector,
     OcrExtractor,
     PdfClassifier,
@@ -52,6 +53,7 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentStatus,
+    EntityType,
     IngestionJob,
     JobStatus,
     SecurityDecision,
@@ -59,6 +61,7 @@ from doktok_contracts.schemas import (
 
 from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import write_document_artifacts
+from doktok_core.entities.language import detect_language, pg_config_for
 from doktok_core.extraction.service import ExtractionResult, NeedsOcrError, extract_document
 from doktok_core.ingestion.layout import FilesystemLayout
 
@@ -110,20 +113,22 @@ class IngestionServices:
     chunker: Chunker | None = None
     embedding_provider: EmbeddingProvider | None = None
     chunk_repo: ChunkRepository | None = None
-    # Entity indexing (M5). When both present, entities are extracted + stored before activation.
+    # Entity indexing (M5). When the repo is present, entities are stored before activation.
     entity_extractor: EntityExtractor | None = None
     entity_repo: EntityRepository | None = None
+    # Lexical term indexing (M5.7). Lexemes stored as CUSTOM_TOKEN entities (language-aware).
+    lexical_term_extractor: LexicalTermExtractor | None = None
+    lexical_terms_limit: int = 200
 
 
-def _index_entities(services: IngestionServices, document_id: str, result: ExtractionResult) -> int:
-    """Extract entities, aggregate by value, and store them. Returns the distinct entity count."""
+def _structured_entities(
+    services: IngestionServices, document_id: str, text: str
+) -> list[DocumentEntity]:
     extractor = services.entity_extractor
-    repo = services.entity_repo
-    if extractor is None or repo is None:
-        return 0
-
+    if extractor is None:
+        return []
     aggregated: dict[tuple[str, str], DocumentEntity] = {}
-    for occurrence in extractor.extract(result.content_md):
+    for occurrence in extractor.extract(text):
         key = (occurrence.entity_type.value, occurrence.normalized_value)
         existing = aggregated.get(key)
         if existing is None:
@@ -139,7 +144,42 @@ def _index_entities(services: IngestionServices, document_id: str, result: Extra
             )
         else:
             existing.frequency += 1
-    entities = list(aggregated.values())
+    return list(aggregated.values())
+
+
+def _lexical_terms(
+    services: IngestionServices, document_id: str, text: str, language: str
+) -> list[DocumentEntity]:
+    extractor = services.lexical_term_extractor
+    if extractor is None:
+        return []
+    config = pg_config_for(language)
+    terms = extractor.extract_terms(text, config=config, limit=services.lexical_terms_limit)
+    return [
+        DocumentEntity(
+            id=_new_id(),
+            tenant_id=services.tenant_id,
+            document_id=document_id,
+            version_id="",
+            entity_text=term.term,
+            entity_type=EntityType.CUSTOM_TOKEN,
+            normalized_value=term.term,
+            frequency=term.frequency,
+            metadata={"language": language},
+        )
+        for term in terms
+    ]
+
+
+def _index_entities(
+    services: IngestionServices, document_id: str, result: ExtractionResult, language: str
+) -> int:
+    """Store structured entities + multilingual lexical terms. Returns the count stored."""
+    repo = services.entity_repo
+    if repo is None:
+        return 0
+    entities = _structured_entities(services, document_id, result.content_md)
+    entities.extend(_lexical_terms(services, document_id, result.content_md, language))
     if entities:
         repo.add_entities(entities)
     return len(entities)
@@ -293,13 +333,14 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
 
     document_id = _new_id()
     original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name
+    language = detect_language(result.content_md)
 
     # Index (chunk + embed + store) before activation: a document is not active until indexed.
     job.status = JobStatus.INDEXING
     services.job_repo.update(job)
     try:
         chunk_count = _index_document(services, document_id, result)
-        entity_count = _index_entities(services, document_id, result)
+        entity_count = _index_entities(services, document_id, result, language)
     except Exception as exc:  # noqa: BLE001 - indexing failure fails the job, not the worker
         return _fail(services, job, workdir, code="indexing_error", message=str(exc))
 
@@ -336,6 +377,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             "ocr_confidence": result.ocr_confidence,
             "chunk_count": chunk_count,
             "entity_count": entity_count,
+            "language": language,
             "original": artifacts.original,
             "system_document": artifacts.system_document,
         },
@@ -360,6 +402,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         ocr_confidence=result.ocr_confidence,
         chunk_count=chunk_count,
         entity_count=entity_count,
+        language=language,
         system_document=artifacts.system_document,
         summary=_activation_summary(result.extraction_method, result.page_count),
     )

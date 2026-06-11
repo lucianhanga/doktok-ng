@@ -33,6 +33,7 @@ from doktok_storage_postgres import (
     PostgresDocumentRepository,
     PostgresEntityRepository,
     PostgresIngestionJobRepository,
+    PostgresLexicalTermExtractor,
     migrate,
 )
 
@@ -71,6 +72,7 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
     chunk_repo = PostgresChunkRepository(db)
     entity_extractor = RegexEntityExtractor()
     entity_repo = PostgresEntityRepository(db)
+    lexical_term_extractor = PostgresLexicalTermExtractor(db)
     chat_model = OllamaChatModelProvider(settings.default_model, settings.ollama_base_url)
 
     services: list[IngestionServices] = []
@@ -103,6 +105,8 @@ def build_services(settings: Settings) -> tuple[list[IngestionServices], Databas
                 chunk_repo=chunk_repo,
                 entity_extractor=entity_extractor,
                 entity_repo=entity_repo,
+                lexical_term_extractor=lexical_term_extractor,
+                lexical_terms_limit=settings.lexical_terms_limit,
             )
         )
     return services, db

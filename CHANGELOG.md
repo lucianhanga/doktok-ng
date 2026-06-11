@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Multilingual lexical term extraction: each document's language is detected (langdetect) and its
+  significant terms are extracted with PostgreSQL `to_tsvector(<language>, text)` (stopwords removed,
+  stemmed), stored as `CUSTOM_TOKEN` keyword entities (with frequency + language). The Entities tab
+  gains a type filter; the detected language is recorded in document metadata. Config:
+  `DOKTOK_LEXICAL_TERMS_LIMIT`. Builds on the existing M4 PostgreSQL full-text search layer
+  (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
+
 ### Changed
 - Scanned PDF pages that already have an embedded text layer are no longer blindly re-OCR'd: a clean
   layer is kept (text-quality fast-path), and for ambiguous pages the default LLM

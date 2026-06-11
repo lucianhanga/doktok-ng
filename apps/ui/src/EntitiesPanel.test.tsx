@@ -18,14 +18,15 @@ function mockEntities(entities: EntitySummary[]) {
 test("shows empty state when there are no entities", async () => {
   mockEntities([]);
   render(<EntitiesPanel />);
-  await waitFor(() => expect(screen.getByText(/No entities yet/i)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/No entities for this filter/i)).toBeInTheDocument());
 });
 
-test("renders extracted entities", async () => {
+test("renders extracted entities and offers a type filter", async () => {
   mockEntities([
     { entity_type: "EMAIL", normalized_value: "a@b.com", document_count: 2, occurrences: 3 },
   ]);
   render(<EntitiesPanel />);
   await waitFor(() => expect(screen.getByText("a@b.com")).toBeInTheDocument());
-  expect(screen.getByText("EMAIL")).toBeInTheDocument();
+  expect(screen.getByText("EMAIL", { selector: "span.badge" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Entity type")).toBeInTheDocument();
 });

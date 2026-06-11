@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from doktok_contracts.media import ExtractedTerm
 from doktok_contracts.schemas import (
     AuditEvent,
     Document,
@@ -454,3 +455,30 @@ class PostgresStatsRepository:
             jobs={row["status"]: int(row["n"]) for row in job_rows},
             entities=entities,
         )
+
+
+class PostgresLexicalTermExtractor:
+    """``LexicalTermExtractor`` using PostgreSQL full-text lexemes (stopwords removed, stemmed).
+
+    ``to_tsvector(config, text)`` normalizes the document into significant lexemes for the given
+    language config; ``unnest`` exposes each lexeme with its positions so we can rank by frequency.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def extract_terms(
+        self, text: str, *, config: str = "simple", limit: int = 200
+    ) -> list[ExtractedTerm]:
+        if not text.strip():
+            return []
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT lexeme, COALESCE(array_length(positions, 1), 1) AS freq "
+                "FROM unnest(to_tsvector(%s::regconfig, %s)) "
+                "WHERE length(lexeme) >= 2 AND lexeme ~ '[[:alnum:]]' "
+                "ORDER BY freq DESC, lexeme ASC LIMIT %s",
+                (config, text, limit),
+            ).fetchall()
+        return [ExtractedTerm(term=row["lexeme"], frequency=int(row["freq"])) for row in rows]

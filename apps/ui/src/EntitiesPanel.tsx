@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { fetchEntities, fetchEntityDocuments, type DokDocument, type EntitySummary } from "./api";
 
@@ -7,21 +7,37 @@ type State =
   | { kind: "ok"; entities: EntitySummary[] }
   | { kind: "error"; message: string };
 
+const TYPES = [
+  "PERSON",
+  "ORG",
+  "GPE",
+  "LOCATION",
+  "DATE",
+  "EMAIL",
+  "URL",
+  "MONEY",
+  "DOCUMENT_ID",
+  "INVOICE_ID",
+  "CONTRACT_ID",
+  "CUSTOM_TOKEN",
+];
+
 export function EntitiesPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [type, setType] = useState<string>("");
   const [selected, setSelected] = useState<EntitySummary | null>(null);
   const [docs, setDocs] = useState<DokDocument[]>([]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchEntities(undefined, controller.signal)
+  const load = useCallback(() => {
+    setState({ kind: "loading" });
+    fetchEntities(type || undefined)
       .then((entities) => setState({ kind: "ok", entities }))
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
-      });
-    return () => controller.abort();
-  }, []);
+      .catch((err: unknown) =>
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
+      );
+  }, [type]);
+
+  useEffect(load, [load]);
 
   function open(entity: EntitySummary) {
     setSelected(entity);
@@ -33,7 +49,20 @@ export function EntitiesPanel({ onOpenDocument }: { onOpenDocument?: (id: string
 
   return (
     <section aria-label="Entities" className="panel">
-      <h2>Entities</h2>
+      <div className="result-head">
+        <h2>Entities</h2>
+        <label>
+          Type{" "}
+          <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Entity type">
+            <option value="">All</option>
+            {TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t === "CUSTOM_TOKEN" ? "Keyword (CUSTOM_TOKEN)" : t}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       {state.kind === "loading" && <p role="status">Loading entities...</p>}
       {state.kind === "error" && (
         <p role="alert" className="status-error">
@@ -41,7 +70,7 @@ export function EntitiesPanel({ onOpenDocument }: { onOpenDocument?: (id: string
         </p>
       )}
       {state.kind === "ok" && state.entities.length === 0 && (
-        <p className="empty">No entities yet. Ingest documents with emails, dates, amounts or IDs.</p>
+        <p className="empty">No entities for this filter. Keywords appear once documents are ingested.</p>
       )}
       {state.kind === "ok" && state.entities.length > 0 && (
         <table className="jobs">

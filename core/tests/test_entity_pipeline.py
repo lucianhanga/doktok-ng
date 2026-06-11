@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from doktok_contracts.media import ExtractedTerm
 from doktok_contracts.schemas import EntityType, JobStatus
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.entities.extractor import RegexEntityExtractor
@@ -21,6 +22,20 @@ TENANT = "t1"
 class FakeMime:
     def detect(self, path: str) -> str:  # noqa: ARG002
         return "text/plain"
+
+
+class FakeLexicalTermExtractor:
+    """Stub that returns fixed lexemes (the real one uses PostgreSQL to_tsvector)."""
+
+    def __init__(self, terms: list[ExtractedTerm]) -> None:
+        self._terms = terms
+        self.seen_config: str | None = None
+
+    def extract_terms(
+        self, text: str, *, config: str = "simple", limit: int = 200
+    ) -> list[ExtractedTerm]:  # noqa: ARG002
+        self.seen_config = config
+        return self._terms
 
 
 def test_entities_are_extracted_and_aggregated(tmp_path: Path) -> None:
@@ -61,3 +76,43 @@ def test_entities_are_extracted_and_aggregated(tmp_path: Path) -> None:
     assert job.document_id is not None
     doc = services.document_repo.get(TENANT, job.document_id)
     assert doc is not None and doc.metadata["entity_count"] == len(entity_repo.entities)
+
+
+def test_lexical_terms_stored_as_custom_tokens(tmp_path: Path) -> None:
+    layout = FilesystemLayout(tmp_path, TENANT)
+    layout.ensure()
+    entity_repo = InMemoryEntityRepository()
+    lexical = FakeLexicalTermExtractor([ExtractedTerm("invoic", 3), ExtractedTerm("payment", 1)])
+    services = IngestionServices(
+        tenant_id=TENANT,
+        job_repo=InMemoryIngestionJobRepository(),
+        document_repo=InMemoryDocumentRepository(),
+        file_storage=LocalFileStorage(),
+        hash_service=Sha256HashService(),
+        mime_detector=FakeMime(),
+        security_policy=DefaultSecurityPolicy(max_file_mb=10),
+        quarantine_service=QuarantineService(layout),
+        text_extractor=DirectTextExtractor(),
+        pdf_extractor=PyMuPdfTextExtractor(),
+        layout=layout,
+        entity_repo=entity_repo,
+        lexical_term_extractor=lexical,
+    )
+    body = b"This is clearly an English invoice document about a payment that is now due soon."
+    (layout.ingest / "invoice.txt").write_bytes(body)
+
+    job = process_file(services, str(layout.ingest / "invoice.txt"))
+    assert job.status is JobStatus.ACTIVE
+
+    tokens = {
+        e.normalized_value for e in entity_repo.entities if e.entity_type is EntityType.CUSTOM_TOKEN
+    }
+    assert tokens == {"invoic", "payment"}
+    invoic = next(e for e in entity_repo.entities if e.normalized_value == "invoic")
+    assert invoic.frequency == 3 and invoic.metadata["language"] == "en"
+    # English content -> the English text-search config was requested.
+    assert lexical.seen_config == "english"
+
+    assert job.document_id is not None
+    doc = services.document_repo.get(TENANT, job.document_id)
+    assert doc is not None and doc.metadata["language"] == "en"

@@ -90,7 +90,10 @@ def main() -> int:
         document_repo,
         file_storage,
         OllamaMetadataExtractor(
-            settings.enrich_model, settings.enrich_repair_model, settings.ollama_base_url
+            settings.enrich_model,
+            settings.enrich_repair_model,
+            settings.ollama_base_url,
+            think=settings.enrich_think,
         ),
     )
     category_repo = PostgresCategoryRepository(db)
@@ -98,7 +101,10 @@ def main() -> int:
         document_repo,
         file_storage,
         OllamaCategoryClassifier(
-            settings.enrich_model, settings.enrich_repair_model, settings.ollama_base_url
+            settings.enrich_model,
+            settings.enrich_repair_model,
+            settings.ollama_base_url,
+            think=settings.enrich_think,
         ),
         category_repo,
     )

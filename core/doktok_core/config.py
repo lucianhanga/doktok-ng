@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     enrich_model: str = "qwen3.6:35b-a3b"
     enrich_repair_model: str = "qwen3:14b"
     enrich_num_ctx: int = 16384
+    # Keep True for the qwen3.6 MoE (think=false breaks structured `format` there, so thinking stays
+    # on and only /no_think soft-trims it). Set False with a DENSE enrich model (e.g. qwen3:14b) to
+    # hard-disable thinking for a large speedup - that combo handles think=false + format correctly.
+    enrich_think: bool = True
     # A PDF page whose largest image covers >= this fraction of the page is treated as scanned.
     ocr_image_coverage: float = 0.8
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the

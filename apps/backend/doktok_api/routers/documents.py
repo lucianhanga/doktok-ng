@@ -158,14 +158,17 @@ def delete_document(
     records via FK cascade)."""
     document = repo.get(tenant.tenant_id, document_id)
     if document is None:
-        raise HTTPException(status_code=404, detail="document not found")
+        # Idempotent: a retried DELETE of an already-removed document is a success, not a 404.
+        return {"status": "deleted"}
 
     base = _document_dir(document, Path(request.app.state.settings.files_root))
-    if base is not None:
-        shutil.rmtree(base, ignore_errors=True)
     if document.sha256:
         jobs.delete_for_sha(tenant.tenant_id, document.sha256)
     repo.delete(tenant.tenant_id, document_id)  # FK-cascades derived rows
+    # Remove files last: with DB rows already gone, a failed rmtree leaves only orphan files (which
+    # a retry clears), never a dangling DB row pointing at missing files.
+    if base is not None:
+        shutil.rmtree(base, ignore_errors=True)
     return {"status": "deleted"}
 
 

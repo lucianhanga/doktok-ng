@@ -8,6 +8,7 @@ so the health endpoint and tests that inject in-memory repositories never touch 
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Annotated, cast
 
 from doktok_contracts.ports import (
@@ -59,17 +60,26 @@ def require_tenant(
     return TenantContext(tenant_id=tenant_id)
 
 
-def _get_database(request: Request) -> Database:
-    database = getattr(request.app.state, "database", None)
-    if database is None:
-        from doktok_storage_postgres import Database, migrate
+_DB_LOCK = threading.Lock()
 
-        settings = request.app.state.settings
-        # Size the pool to expected concurrency: sync routes each hold a connection during a slow
-        # Ollama call, so the default (4) starves quickly under a handful of concurrent requests.
-        database = Database(settings.database_url, max_size=settings.api_db_pool_size)
-        migrate(database)
-        request.app.state.database = database
+
+def _get_database(request: Request) -> Database:
+    database: Database | None = getattr(request.app.state, "database", None)
+    if database is not None:
+        return database
+    # Guard creation so concurrent first-requests don't each build a pool + run migrate twice
+    # (double-checked: re-read state inside the lock).
+    with _DB_LOCK:
+        database = getattr(request.app.state, "database", None)
+        if database is None:
+            from doktok_storage_postgres import Database, migrate
+
+            settings = request.app.state.settings
+            # Size the pool to expected concurrency: sync routes each hold a connection during a
+            # slow Ollama call, so the default (4) starves under a handful of concurrent requests.
+            database = Database(settings.database_url, max_size=settings.api_db_pool_size)
+            migrate(database)
+            request.app.state.database = database
     return database
 
 

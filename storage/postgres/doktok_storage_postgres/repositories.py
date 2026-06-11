@@ -185,6 +185,24 @@ class PostgresIngestionJobRepository:
             )
             return cur.rowcount
 
+    def list_in_flight(self, tenant_id: str, *, before: datetime) -> list[IngestionJob]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_COLUMNS} FROM ingestion_jobs WHERE tenant_id=%s "
+                "AND status NOT IN ('active', 'failed', 'quarantined', 'duplicate') "
+                "AND created_at < %s ORDER BY created_at",
+                (tenant_id, before),
+            ).fetchall()
+        return [_row_to_job(row) for row in rows]
+
+    def delete(self, tenant_id: str, job_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM ingestion_jobs WHERE tenant_id=%s AND id=%s",
+                (tenant_id, job_id),
+            )
+
 
 class PostgresDocumentRepository:
     """``DocumentRepository`` backed by PostgreSQL. Tenant-scoped reads."""

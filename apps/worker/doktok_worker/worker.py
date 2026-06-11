@@ -17,11 +17,12 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from doktok_contracts.schemas import IngestionJob
 from doktok_core.features.reconciler import FeatureReconciler
-from doktok_core.ingestion.pipeline import IngestionServices, process_file
+from doktok_core.ingestion.pipeline import IngestionServices, process_file, recover_stale_jobs
 from doktok_core.ingestion.stability import FileObservation, StabilityTracker
 
 logger = logging.getLogger("doktok.worker")
@@ -39,6 +40,8 @@ class IngestionWorker:
         concurrency: int = 1,
         reconciler: FeatureReconciler | None = None,
         reconcile_interval: float = 2.0,
+        stale_job_minutes: float = 10.0,
+        recover_interval: float = 60.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         # One IngestionServices per tenant (each carries that tenant's layout + tenant_id).
@@ -48,6 +51,8 @@ class IngestionWorker:
         self._concurrency = max(1, int(concurrency))
         self._reconciler = reconciler
         self._reconcile_interval = reconcile_interval
+        self._stale_job_minutes = stale_job_minutes
+        self._recover_interval = recover_interval
         self._clock = clock
 
     def reconcile(self) -> int:
@@ -55,6 +60,22 @@ class IngestionWorker:
         if self._reconciler is None:
             return 0
         return self._reconciler.reconcile()
+
+    def recover_stale(self) -> int:
+        """Re-queue ingestion jobs abandoned mid-pipeline by a previously killed worker.
+
+        Such jobs are stuck in a non-terminal state with their file stranded in in.process and never
+        appear as documents; re-queuing puts the file back in ingest so it is reprocessed.
+        """
+        if self._stale_job_minutes <= 0:
+            return 0
+        cutoff = datetime.now(UTC) - timedelta(minutes=self._stale_job_minutes)
+        total = 0
+        for services in self._services:
+            total += len(recover_stale_jobs(services, older_than=cutoff))
+        if total:
+            logger.warning("re-queued %d stale ingestion job(s) abandoned by a prior worker", total)
+        return total
 
     def run_once(self) -> list[IngestionJob]:
         """Scan every tenant's ingest folder once; ingest files that have become stable."""
@@ -146,12 +167,24 @@ class IngestionWorker:
             stop.set()
 
     def _ingest_loop(self, stop: threading.Event) -> None:  # pragma: no cover - long-running loop
+        # Recover anything a prior worker abandoned mid-pipeline before processing the live queue.
+        self._safe_recover()
+        last_recover = self._clock()
         while not stop.is_set():
             try:
                 self.run_once()
             except Exception:  # noqa: BLE001 - keep the stream alive across unexpected errors
                 logger.exception("ingestion scan failed")
+            if self._clock() - last_recover >= self._recover_interval:
+                self._safe_recover()
+                last_recover = self._clock()
             stop.wait(self._poll_interval)
+
+    def _safe_recover(self) -> None:  # pragma: no cover - long-running loop helper
+        try:
+            self.recover_stale()
+        except Exception:  # noqa: BLE001 - recovery must never take down the ingestion stream
+            logger.exception("stale-job recovery failed")
 
     def _reconcile_loop(
         self, stop: threading.Event

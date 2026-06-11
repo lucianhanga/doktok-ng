@@ -5,6 +5,8 @@ Reads are tenant-scoped to mirror the Postgres adapter (ADR-0007).
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from doktok_contracts.schemas import IngestionJob, JobStatus
 
 
@@ -66,3 +68,24 @@ class InMemoryIngestionJobRepository:
         for jid in victims:
             del self._jobs[jid]
         return len(victims)
+
+    def list_in_flight(self, tenant_id: str, *, before: datetime) -> list[IngestionJob]:
+        terminal = {
+            JobStatus.ACTIVE,
+            JobStatus.FAILED,
+            JobStatus.QUARANTINED,
+            JobStatus.DUPLICATE,
+        }
+        return [
+            job.model_copy(deep=True)
+            for job in self._jobs.values()
+            if job.tenant_id == tenant_id
+            and job.status not in terminal
+            and job.started_at is not None
+            and job.started_at < before
+        ]
+
+    def delete(self, tenant_id: str, job_id: str) -> None:
+        job = self._jobs.get(job_id)
+        if job is not None and job.tenant_id == tenant_id:
+            del self._jobs[job_id]

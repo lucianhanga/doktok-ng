@@ -91,6 +91,15 @@ class IngestionJobRepository(Protocol):
         """Delete all jobs (any status) with this content hash, for a full document purge."""
         ...
 
+    def list_in_flight(self, tenant_id: str, *, before: datetime) -> list[IngestionJob]:
+        """Jobs stuck in a non-terminal state (created before ``before``) - abandoned mid-pipeline
+        when a worker died. Used to re-queue them so they don't linger invisibly forever."""
+        ...
+
+    def delete(self, tenant_id: str, job_id: str) -> None:
+        """Delete a single job by id (tenant-scoped)."""
+        ...
+
 
 @runtime_checkable
 class DocumentArtifactRepository(Protocol):

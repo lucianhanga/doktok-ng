@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Overview dashboard now shows **"Waiting in ingest"** - the number of files sitting in the tenant's
+  ingest folder that have not yet been picked up as jobs. `GET /api/v1/stats` gained `pending_ingest`
+  (counts non-hidden files in `ingest/`, the same filter the worker uses to claim them).
 - M6 RAG chat with citations: `POST /api/v1/chat {question, limit?}` -> grounded answer + citations,
   built by `DefaultRagAnswerer` over the M4 hybrid retriever + the default chat model
   (`DOKTOK_DEFAULT_MODEL`). Answers only from retrieved excerpts, cites them as `[n]`, and refuses

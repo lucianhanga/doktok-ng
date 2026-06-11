@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 from doktok_api.main import create_app
@@ -36,4 +37,27 @@ def test_requires_token() -> None:
 
 def test_returns_summary() -> None:
     body = _client().get("/api/v1/stats", headers={"Authorization": "Bearer tok-a"}).json()
-    assert body == {"documents": 3, "jobs": {"active": 2, "failed": 1}, "entities": 5}
+    assert body == {
+        "documents": 3,
+        "jobs": {"active": 2, "failed": 1},
+        "entities": 5,
+        "pending_ingest": 0,  # no ingest dir for this tenant under the default files_root
+    }
+
+
+def test_pending_ingest_counts_files_in_the_ingest_folder(tmp_path: Path) -> None:
+    ingest = tmp_path / "tenant-a" / "ingest"
+    ingest.mkdir(parents=True)
+    (ingest / "a.pdf").write_text("x")
+    (ingest / "b.txt").write_text("y")
+    (ingest / ".hidden").write_text("z")  # ignored, like the worker
+    (ingest / "sub").mkdir()  # ignored
+
+    registry = build_registry()
+    registry.register(StatsRepository, FakeStatsRepository())  # type: ignore[type-abstract]
+    settings = Settings(  # type: ignore[call-arg]
+        env="test", tenant_tokens=TOKENS, files_root=str(tmp_path), _env_file=None
+    )
+    client = TestClient(create_app(settings=settings, registry=registry))
+    body = client.get("/api/v1/stats", headers={"Authorization": "Bearer tok-a"}).json()
+    assert body["pending_ingest"] == 2

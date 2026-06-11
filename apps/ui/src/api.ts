@@ -140,6 +140,7 @@ export interface Stats {
   documents: number;
   jobs: Record<string, number>;
   entities: number;
+  pending_ingest: number;
 }
 
 export function fetchDocument(id: string, signal?: AbortSignal): Promise<DokDocument> {

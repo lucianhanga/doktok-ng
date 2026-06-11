@@ -54,6 +54,10 @@ export function OverviewPanel() {
           </div>
           <div className="card-label">Jobs</div>
         </div>
+        <div className="card">
+          <div className="card-value">{stats?.pending_ingest ?? "-"}</div>
+          <div className="card-label">Waiting in ingest</div>
+        </div>
       </div>
 
       {jobEntries.length > 0 && (

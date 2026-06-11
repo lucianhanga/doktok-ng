@@ -63,3 +63,9 @@ class FilesystemLayout:
 
     def active_dir(self, document_id: str) -> Path:
         return self.docs_active / document_id
+
+    def pending_ingest_count(self) -> int:
+        """How many files sit in ingest/ awaiting a job (same filter the worker uses to claim)."""
+        if not self.ingest.exists():
+            return 0
+        return sum(1 for p in self.ingest.iterdir() if p.is_file() and not p.name.startswith("."))

@@ -48,21 +48,28 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
 
       {state.kind === "ok" && (
         <div className="chat-answer">
+          {!state.answer.grounded && (
+            <p role="status" className="banner-warning">
+              This answer isn't grounded in your documents - no supporting sources were found, so
+              treat it with caution.
+            </p>
+          )}
           <p className={state.answer.grounded ? "answer" : "answer empty"}>{state.answer.answer}</p>
           {state.answer.citations.length > 0 && (
             <div className="doc-section">
               <h3>Sources</h3>
               <ol className="citations">
                 {state.answer.citations.map((c) => (
-                  <li
-                    key={c.chunk_id}
-                    onClick={() => onOpenDocument?.(c.document_id)}
-                    style={{ cursor: onOpenDocument ? "pointer" : "default" }}
-                  >
-                    <strong>
+                  <li key={c.chunk_id}>
+                    <button
+                      type="button"
+                      className="link-button citation-open"
+                      onClick={() => onOpenDocument?.(c.document_id)}
+                      disabled={!onOpenDocument}
+                    >
                       [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
-                    </strong>
-                    {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
+                      {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
+                    </button>
                     <div className="snippet">{c.snippet}</div>
                   </li>
                 ))}

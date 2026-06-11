@@ -49,4 +49,6 @@ test("shows the refusal answer when not grounded", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   await waitFor(() => expect(screen.getByText(refusal)).toBeInTheDocument());
+  // Ungrounded answers carry an explicit caution notice, not just faint italics.
+  expect(screen.getByText(/isn't grounded in your documents/i)).toBeInTheDocument();
 });

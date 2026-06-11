@@ -361,7 +361,8 @@ class PostgresChunkRepository:
     def add_chunks(self, chunks: list[DocumentChunk], embeddings: list[list[float]]) -> None:
         if not chunks:
             return
-        with self._db.connection() as conn:
+        # One transaction: a crash mid-loop must not leave a document with a partial chunk set.
+        with self._db.connection() as conn, conn.transaction():
             for chunk, embedding in zip(chunks, embeddings, strict=True):
                 conn.execute(
                     "INSERT INTO document_chunks "
@@ -400,7 +401,8 @@ class PostgresEntityRepository:
     def add_entities(self, entities: list[DocumentEntity]) -> None:
         if not entities:
             return
-        with self._db.connection() as conn:
+        # One transaction: a crash mid-loop must not leave a document with a partial entity set.
+        with self._db.connection() as conn, conn.transaction():
             for entity in entities:
                 conn.execute(
                     "INSERT INTO document_entities "
@@ -713,7 +715,9 @@ class PostgresFeatureRepository:
 
     def ensure_for_active(self, tenant_id: str, features: list[tuple[str, int]]) -> int:
         affected = 0
-        with self._db.connection() as conn:
+        # One transaction so the backfill INSERT + version-bump UPDATE for all features apply
+        # together (a crash can't leave the ledger half-reconciled).
+        with self._db.connection() as conn, conn.transaction():
             for name, version in features:
                 cur = conn.execute(
                     "INSERT INTO document_features "

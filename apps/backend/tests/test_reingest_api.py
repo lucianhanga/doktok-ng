@@ -128,3 +128,12 @@ def test_delete_requires_token(tmp_path: Path) -> None:
     docs.add(_failed_doc(str(tmp_path)))
     resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).delete("/api/v1/documents/d1")
     assert resp.status_code == 401
+
+
+def test_delete_is_idempotent_for_missing_document(tmp_path: Path) -> None:
+    # A retried DELETE of an already-removed document succeeds (idempotent), not 404.
+    docs = InMemoryDocumentRepository()
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).delete(
+        "/api/v1/documents/gone", headers=AUTH
+    )
+    assert resp.status_code == 200 and resp.json()["status"] == "deleted"

@@ -18,7 +18,7 @@ def _doc(repo: PostgresDocumentRepository, doc_id: str) -> None:
         Document(
             id=doc_id,
             tenant_id=TENANT,
-            sha256="a" * 64,
+            sha256=(doc_id + "a" * 64)[:64],
             original_filename=f"{doc_id}.pdf",
             status=DocumentStatus.ACTIVE,
             created_at=datetime.now(UTC),

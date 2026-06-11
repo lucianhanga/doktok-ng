@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Document card file actions (designed with the UI/UX agent): the document detail view now serves the
+  raw file (`GET /api/v1/documents/{id}/file?variant=original|normalized&disposition=inline|attachment`
+  with correct `Content-Type`, `Content-Disposition`, `X-Content-Type-Options: nosniff`, and byte-range
+  support) and offers **Open in new tab** / **Download** (real anchors with `rel="noopener noreferrer"`)
+  plus an accessible **Preview** overlay (native `<dialog>`: focus trap, ESC/backdrop close) that
+  renders PDFs in an iframe, images, and text, with a fallback for unpreviewable types. Duplicate
+  documents show a banner with an **Open original** button.
 - Document feature reconciliation (ADR-0009), phase 1: a per-document, per-feature ledger
   (`document_features`, migration 0009) and a `FeatureReconciler` running in the worker drive every
   active document toward having every registered feature processed. New features backfill existing

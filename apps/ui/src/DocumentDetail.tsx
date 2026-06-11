@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import {
+  documentFileUrl,
   fetchDocument,
   fetchDocumentActivity,
   fetchDocumentContent,
@@ -12,8 +13,18 @@ import {
   type DocumentFeature,
   type DokDocument,
 } from "./api";
+import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
-export function DocumentDetail({ id, onClose }: { id: string; onClose: () => void }) {
+export function DocumentDetail({
+  id,
+  onClose,
+  onOpenDocument,
+}: {
+  id: string;
+  onClose: () => void;
+  onOpenDocument?: (id: string) => void;
+}) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [doc, setDoc] = useState<DokDocument | null>(null);
   const [content, setContent] = useState("");
   const [entities, setEntities] = useState<DocEntity[]>([]);
@@ -63,7 +74,29 @@ export function DocumentDetail({ id, onClose }: { id: string; onClose: () => voi
           &larr; Back
         </button>
         <h2>{doc?.title ?? doc?.original_filename ?? id.slice(0, 8)}</h2>
+        {doc && (
+          <div className="doc-actions">
+            <button type="button" className="active" onClick={() => setPreviewOpen(true)}>
+              Preview
+            </button>
+            <a href={documentFileUrl(id)} target="_blank" rel="noopener noreferrer">
+              Open in new tab ↗
+            </a>
+            <a href={documentFileUrl(id, { disposition: "attachment" })} download={doc.original_filename}>
+              Download
+            </a>
+          </div>
+        )}
       </div>
+
+      {doc?.status === "duplicate" && doc.duplicate_of && (
+        <div className="banner-warning" role="status">
+          <span>This document is a duplicate of an already-ingested document.</span>
+          <button type="button" onClick={() => onOpenDocument?.(doc.duplicate_of as string)}>
+            Open original →
+          </button>
+        </div>
+      )}
 
       {error && (
         <p role="alert" className="status-error">
@@ -161,6 +194,10 @@ export function DocumentDetail({ id, onClose }: { id: string; onClose: () => voi
             ))}
           </ul>
         </div>
+      )}
+
+      {previewOpen && doc && (
+        <DocumentPreviewModal doc={doc} onClose={() => setPreviewOpen(false)} />
       )}
     </section>
   );

@@ -45,7 +45,20 @@ export interface DokDocument {
   title: string | null;
   status: string;
   created_at: string;
+  duplicate_of?: string | null;
   metadata: Record<string, unknown>;
+}
+
+/** Same-origin URL for the raw document file; the dev proxy injects the auth token. */
+export function documentFileUrl(
+  id: string,
+  opts?: { variant?: "original" | "normalized"; disposition?: "inline" | "attachment" },
+): string {
+  const params = new URLSearchParams();
+  if (opts?.variant) params.set("variant", opts.variant);
+  if (opts?.disposition) params.set("disposition", opts.disposition);
+  const qs = params.toString();
+  return `/api/v1/documents/${encodeURIComponent(id)}/file${qs ? `?${qs}` : ""}`;
 }
 
 export async function fetchDocuments(signal?: AbortSignal): Promise<DokDocument[]> {

@@ -146,8 +146,10 @@ def reingest_document(
 
     ingest_dir = files_root / tenant.tenant_id / "ingest"
     ingest_dir.mkdir(parents=True, exist_ok=True)
-    (ingest_dir / document.original_filename).write_bytes(data)
-    return {"status": "queued", "filename": document.original_filename}
+    # Defense-in-depth: re-basename the stored filename so a crafted value can't escape ingest/.
+    safe_name = Path(document.original_filename).name or "document"
+    (ingest_dir / safe_name).write_bytes(data)
+    return {"status": "queued", "filename": safe_name}
 
 
 @router.delete("/{document_id}")

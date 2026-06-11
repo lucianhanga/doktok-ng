@@ -78,6 +78,9 @@ DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 Both model names are configurable via environment variables. See ADR-0003 for the rationale and a
 documented embedding alternative (`bge-m3:latest`).
 
+For throughput tuning (parallel ingestion, `OLLAMA_NUM_PARALLEL`, and the memory cost of
+parallelism), see [docs/operations/performance-and-ollama.md](docs/operations/performance-and-ollama.md).
+
 ## Quickstart
 
 Prerequisites: [`uv`](https://docs.astral.sh/uv/), [`pnpm`](https://pnpm.io/), Docker, `libmagic`

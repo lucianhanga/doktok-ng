@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Document-enrichment evaluation (M6.2): `make enrich-eval` ingests the golden corpus, runs the
+  `doc_metadata` + `doc_classify` features against the real models, and scores title / document-date /
+  location / category / summary against `eval/golden_enrichment.json`. Deterministic scoring lives in
+  `core/doktok_core/enrichment/evaluation.py` (unit-tested in CI; the runner is local-only). Baseline:
+  **4/4** documents pass all checks (titles are real, dates correct or NULL, categories deduplicate and
+  reuse across documents). See `docs/operations/rag-eval.md`.
 - Document enrichment, phase 3 (M6.2 categories UI): the **Documents** tab now has a **category
   filter** (a dropdown of the tenant's categories with counts; selecting one filters the list via
   `GET /api/v1/documents?category=…`), and the **Overview** dashboard shows a **"Documents by

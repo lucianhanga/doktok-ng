@@ -31,7 +31,18 @@ expected text, and cited an expected source.
 ```bash
 make db            # if not already up
 make rag-eval      # ingests the corpus, runs the golden set, prints the report
+make enrich-eval   # ingests + enriches the corpus, scores title/date/location/category/summary
 ```
+
+## Enrichment eval (M6.2)
+
+`make enrich-eval` (`scripts/_enrich_eval.py`) ingests the same corpus into a throwaway `eval` tenant,
+runs the `doc_metadata` + `doc_classify` features against the real models, and scores the produced
+fields against `eval/golden_enrichment.json`: **title** (non-empty, not the filename stem, expected
+keyword), **document_date** (matches expected ISO date, or NULL when `n/a` — no hallucinated dates),
+**location**, **categories** (at least one matches), and **summary** present. The pure scoring
+(`core/doktok_core/enrichment/evaluation.py`) is unit-tested in CI; the runner needs Ollama and is
+local-only. Baseline: 4/4 documents pass all checks.
 
 ## Note on aggregation cases (the "beyond-RAG" gap)
 

@@ -13,6 +13,7 @@ thread-safe and each job uses its own per-job working dir, so concurrent files d
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,7 @@ class IngestionWorker:
         poll_interval: float = 1.0,
         concurrency: int = 1,
         reconciler: FeatureReconciler | None = None,
+        reconcile_interval: float = 2.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         # One IngestionServices per tenant (each carries that tenant's layout + tenant_id).
@@ -45,6 +47,7 @@ class IngestionWorker:
         self._poll_interval = poll_interval
         self._concurrency = max(1, int(concurrency))
         self._reconciler = reconciler
+        self._reconcile_interval = reconcile_interval
         self._clock = clock
 
     def reconcile(self) -> int:
@@ -101,12 +104,50 @@ class IngestionWorker:
         return job
 
     def run_forever(self) -> None:  # pragma: no cover - long-running loop
+        """Run ingestion and feature reconciliation as independent, parallel streams.
+
+        Ingestion (folder watching + the pipeline) and the feature reconciler are separate concerns
+        that share only the thread-safe DB pool and the local Ollama server, so they run on their
+        own threads - a large reconciler backfill no longer starves new ingestion (and vice versa).
+        RAG runs in the backend process, a third independent stream.
+        """
         tenants = ", ".join(s.tenant_id for s in self._services)
-        logger.info("ingestion worker started; tenants: %s", tenants)
-        while True:
+        logger.info("worker started; ingestion + reconciliation streams; tenants: %s", tenants)
+        stop = threading.Event()
+        threads = [
+            threading.Thread(target=self._ingest_loop, args=(stop,), name="ingest", daemon=True)
+        ]
+        if self._reconciler is not None:
+            threads.append(
+                threading.Thread(
+                    target=self._reconcile_loop, args=(stop,), name="reconcile", daemon=True
+                )
+            )
+        for thread in threads:
+            thread.start()
+        try:
+            while not stop.is_set():
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            logger.info("worker stopping")
+            stop.set()
+
+    def _ingest_loop(self, stop: threading.Event) -> None:  # pragma: no cover - long-running loop
+        while not stop.is_set():
             try:
                 self.run_once()
-                self.reconcile()
-            except Exception:  # noqa: BLE001 - keep the worker alive across unexpected errors
+            except Exception:  # noqa: BLE001 - keep the stream alive across unexpected errors
                 logger.exception("ingestion scan failed")
-            time.sleep(self._poll_interval)
+            stop.wait(self._poll_interval)
+
+    def _reconcile_loop(
+        self, stop: threading.Event
+    ) -> None:  # pragma: no cover - long-running loop
+        while not stop.is_set():
+            processed = 0
+            try:
+                processed = self.reconcile()
+            except Exception:  # noqa: BLE001 - keep the stream alive across unexpected errors
+                logger.exception("reconcile pass failed")
+            # Keep draining while there is work; back off to a poll cadence when idle.
+            stop.wait(0.1 if processed else self._reconcile_interval)

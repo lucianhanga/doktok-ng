@@ -151,6 +151,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top-level request field cut enrichment to **~8–11 s/document** (~8–10× faster) with the model warm.
 
 ### Changed
+- The worker now runs **ingestion and feature reconciliation as independent parallel streams**
+  (separate threads) instead of one sequential loop. A large reconciler backfill (e.g. extracting
+  transactions across the whole corpus) no longer **starves new ingestion** — folder watching and the
+  reconciler proceed concurrently, sharing only the thread-safe DB pool and the local Ollama server.
+  (RAG is already a separate stream in the backend process.) The reconcile stream drains while work
+  exists and backs off to a poll cadence when idle; the DB pool was widened to cover both streams.
 - The **OCR-quality judge** now uses a dedicated `DOKTOK_JUDGE_MODEL` (default `qwen3:14b`) instead of
   `DOKTOK_DEFAULT_MODEL`. This keeps the whole ingestion path on the dense model, so it never loads the
   23 GB qwen3.6 mid-ingest and evicts the resident enrichment model on a ~48 GB box (RAG chat still uses

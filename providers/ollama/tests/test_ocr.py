@@ -1,0 +1,45 @@
+"""Unit tests for the Ollama OCR provider (httpx mocked; no server)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from doktok_provider_ollama import OllamaVisionOcr
+
+
+class _FakeResponse:
+    def __init__(self, body: dict[str, Any]) -> None:
+        self._body = body
+
+    def raise_for_status(self) -> None: ...
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+def _capture(monkeypatch: Any, body: dict[str, Any]) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def fake_post(url: str, *, json: dict[str, Any], timeout: float) -> _FakeResponse:
+        captured["json"] = json
+        return _FakeResponse(body)
+
+    monkeypatch.setattr("doktok_provider_ollama.ocr.httpx.post", fake_post)
+    return captured
+
+
+def test_sends_bounded_context_and_keep_alive(monkeypatch: Any) -> None:
+    captured = _capture(monkeypatch, {"response": "page text", "done": True})
+    ocr = OllamaVisionOcr("glm-ocr", "http://localhost:11434", num_ctx=8192, num_predict=4096)
+    result = ocr.ocr_image(b"\x89PNG fake")
+    assert result.text == "page text"
+    assert captured["json"]["options"]["num_ctx"] == 8192
+    assert captured["json"]["options"]["num_predict"] == 4096
+    assert captured["json"]["keep_alive"] == "5m"
+
+
+def test_raises_on_incomplete_generation(monkeypatch: Any) -> None:
+    _capture(monkeypatch, {"response": "truncated...", "done": False})
+    with pytest.raises(RuntimeError, match="did not complete"):
+        OllamaVisionOcr("glm-ocr", "http://localhost:11434").ocr_image(b"img")

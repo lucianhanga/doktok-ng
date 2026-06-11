@@ -81,6 +81,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Changed
+- OCR (`glm-ocr`) now runs at a **bounded context** instead of the model default: `num_ctx=8192`
+  (configurable via `DOKTOK_OCR_NUM_CTX`; raise to 16384 for very dense/multi-column pages), a
+  `num_predict=4096` per-page output cap, and `keep_alive=5m` (OCR is bursty — not pinned like the chat
+  model). A single page only needs ~4.4k tokens (image tiles + prompt + output), so the previous 32k
+  context reserved ~1 GB of KV cache for nothing. The OCR call now also fails loudly on an incomplete
+  (`done: false`) generation instead of silently returning truncated text.
 - Default embedding model switched from `mxbai-embed-large` to **`qwen3-embedding:0.6b`** (still
   1024-dim, so no schema change) because mxbai truncates inputs at 512 tokens while DokTok's chunks can
   be larger. `ChunkEmbedFeature`'s version is bumped to 2, so the **feature reconciler automatically

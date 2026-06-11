@@ -50,11 +50,13 @@ class HybridPostgresRetriever:
                 "ORDER BY c.embedding <=> %s::vector LIMIT %s",
                 (query_vec, tenant_id, query_vec, candidates),
             ).fetchall()
+            # 'simple' matches the chunk tsv config (migration 0014): language-agnostic, so German
+            # query terms recall German chunks (English stemming did not). Keep both sides aligned.
             text_rows = cur.execute(
-                f"{_SELECT}, ts_rank(c.tsv, plainto_tsquery('english', %s)) AS rank "
+                f"{_SELECT}, ts_rank(c.tsv, plainto_tsquery('simple', %s)) AS rank "
                 "FROM document_chunks c "
                 "JOIN documents d ON d.id = c.document_id AND d.tenant_id = c.tenant_id "
-                "WHERE c.tenant_id = %s AND c.tsv @@ plainto_tsquery('english', %s) "
+                "WHERE c.tenant_id = %s AND c.tsv @@ plainto_tsquery('simple', %s) "
                 "ORDER BY rank DESC LIMIT %s",
                 (query, tenant_id, query, candidates),
             ).fetchall()

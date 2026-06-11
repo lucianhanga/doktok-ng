@@ -76,6 +76,23 @@ def test_worker_scans_each_tenant(tmp_path: Path) -> None:
     assert tenants == {"t1", "t2"}
 
 
+def test_processes_multiple_files_in_parallel(tmp_path: Path) -> None:
+    repo = InMemoryIngestionJobRepository()
+    services, layout = _services(tmp_path, "t1", repo)
+    for i in range(6):
+        (layout.ingest / f"doc{i}.txt").write_bytes(f"content number {i}".encode())
+
+    worker = IngestionWorker(
+        [services], stability_seconds=0, concurrency=4, clock=_clock([0.0, 1.0])
+    )
+    assert worker.run_once() == []  # first pass: observe only
+    jobs = worker.run_once()  # second pass: all stable -> processed concurrently
+
+    assert len(jobs) == 6
+    assert len({j.id for j in jobs}) == 6  # distinct jobs, none lost to races
+    assert all(j.status is JobStatus.ACTIVE for j in jobs)
+
+
 def test_dotfiles_are_ignored(tmp_path: Path) -> None:
     repo = InMemoryIngestionJobRepository()
     services, layout = _services(tmp_path, "t1", repo)

@@ -175,11 +175,11 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
         <table className="jobs docs-table">
           <colgroup>
             <col style={{ width: "2.5rem" }} />
-            <col />
+            <col style={{ width: "16rem" }} />
             <col style={{ width: "8rem" }} />
             <col style={{ width: "8.5rem" }} />
             <col style={{ width: "6rem" }} />
-            <col style={{ width: "20rem" }} />
+            <col />
           </colgroup>
           <thead>
             <tr>

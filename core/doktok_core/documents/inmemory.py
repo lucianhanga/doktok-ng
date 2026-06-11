@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from doktok_contracts.schemas import Document
 
 
@@ -19,6 +21,25 @@ class InMemoryDocumentRepository:
         if doc is None or doc.tenant_id != tenant_id:
             return None
         return doc.model_copy(deep=True)
+
+    def set_metadata(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        title: str | None,
+        document_date: date | None,
+        location: str | None,
+        summary: str | None,
+    ) -> None:
+        doc = self._docs.get(document_id)
+        if doc is None or doc.tenant_id != tenant_id:
+            return
+        if title is not None:
+            doc.title = title
+        doc.document_date = document_date
+        doc.location = location
+        doc.summary = summary
 
     def list_documents(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[Document]:
         docs = [d for d in reversed(self._docs.values()) if d.tenant_id == tenant_id]

@@ -5,7 +5,11 @@ from __future__ import annotations
 from doktok_contracts.ports import FeatureProcessor
 from doktok_core.config import Settings
 from doktok_core.entities.extractor import RegexEntityExtractor
-from doktok_core.features.processors import ChunkEmbedFeature, EntitiesFeature
+from doktok_core.features.processors import (
+    ChunkEmbedFeature,
+    DocMetadataFeature,
+    EntitiesFeature,
+)
 from doktok_core.features.reconciler import FeatureReconciler
 from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.layout import FilesystemLayout
@@ -22,6 +26,7 @@ from doktok_modalities_files import (
 from doktok_provider_ollama import (
     OllamaChatModelProvider,
     OllamaEmbeddingProvider,
+    OllamaMetadataExtractor,
     OllamaVisionOcr,
 )
 from doktok_storage_filesystem import (
@@ -97,6 +102,13 @@ def build_services(
         timeout=timeout,
         num_ctx=settings.chat_num_ctx,
     )
+    metadata_extractor = OllamaMetadataExtractor(
+        settings.enrich_model,
+        settings.enrich_repair_model,
+        settings.ollama_base_url,
+        timeout=timeout,
+        num_ctx=settings.enrich_num_ctx,
+    )
 
     # Reconciler processors re-derive from stored artifacts, so they share the same adapters.
     processors: list[FeatureProcessor] = [
@@ -109,6 +121,7 @@ def build_services(
             entity_repo,
             lexical_terms_limit=settings.lexical_terms_limit,
         ),
+        DocMetadataFeature(document_repo, file_storage, metadata_extractor),
     ]
     reconciler = FeatureReconciler(feature_repo, processors, tenant_ids(settings))
 

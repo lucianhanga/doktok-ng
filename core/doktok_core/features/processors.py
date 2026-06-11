@@ -20,9 +20,11 @@ from doktok_contracts.ports import (
     EntityRepository,
     FileStorage,
     LexicalTermExtractor,
+    MetadataExtractor,
 )
 from doktok_contracts.schemas import DocumentChunk, DocumentEntity, EntityType
 
+from doktok_core.enrichment import normalize_metadata
 from doktok_core.entities.language import detect_language, pg_config_for
 
 
@@ -166,3 +168,37 @@ class EntitiesFeature:
             )
             for term in terms
         ]
+
+
+class DocMetadataFeature:
+    """Generate title/date/location/summary via the LLM and store them on the document (M6.2)."""
+
+    name = "doc_metadata"
+    version = 1
+
+    def __init__(
+        self,
+        document_repo: DocumentRepository,
+        file_storage: FileStorage,
+        metadata_extractor: MetadataExtractor,
+    ) -> None:
+        self._documents = document_repo
+        self._files = file_storage
+        self._extractor = metadata_extractor
+
+    def process(self, tenant_id: str, document_id: str) -> None:
+        document = self._documents.get(tenant_id, document_id)
+        if document is None or not document.storage_path:
+            return
+        content = _read_text(self._files, document.storage_path, "content.md")
+        if not content.strip():
+            return
+        meta = normalize_metadata(self._extractor.extract(content))
+        self._documents.set_metadata(
+            tenant_id,
+            document_id,
+            title=meta.title,
+            document_date=meta.document_date,
+            location=meta.location,
+            summary=meta.summary,
+        )

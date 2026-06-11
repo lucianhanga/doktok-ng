@@ -50,3 +50,13 @@ class ExtractedTerm:
 
     term: str
     frequency: int
+
+
+@dataclass
+class ExtractedMetadata:
+    """Raw enrichment fields from the LLM (validated/normalized in core). M6.2."""
+
+    title: str
+    document_date: str | None  # ISO 'YYYY-MM-DD' as produced by the model, or None for n/a
+    location: str | None
+    summary: str

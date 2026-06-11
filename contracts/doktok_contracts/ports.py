@@ -9,11 +9,12 @@ See brief section 9 for the full list.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from doktok_contracts.media import (
     ExtractedEntity,
+    ExtractedMetadata,
     ExtractedTerm,
     OcrPageResult,
     RenderedPage,
@@ -47,6 +48,18 @@ class DocumentRepository(Protocol):
     def list_documents(
         self, tenant_id: str, limit: int = 50, offset: int = 0
     ) -> list[Document]: ...
+    def set_metadata(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        title: str | None,
+        document_date: date | None,
+        location: str | None,
+        summary: str | None,
+    ) -> None:
+        """Persist enrichment fields (M6.2). Idempotent overwrite."""
+        ...
 
 
 @runtime_checkable
@@ -173,6 +186,16 @@ class ChunkRepository(Protocol):
 @runtime_checkable
 class ChatModelProvider(Protocol):
     def complete(self, prompt: str) -> str: ...
+
+
+@runtime_checkable
+class MetadataExtractor(Protocol):
+    """Extract enrichment fields (title/date/location/summary) from document text (M6.2).
+
+    Returns raw model output; callers validate/normalize in core (e.g. ISO date or n/a).
+    """
+
+    def extract(self, text: str) -> ExtractedMetadata: ...
 
 
 @runtime_checkable

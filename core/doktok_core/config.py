@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     chat_num_ctx: int = 32768
     # RAG: retrieve this many candidates wide; the LLM reranker keeps the best (the chat `limit`).
     rag_retrieve_k: int = 40
+    # Enrichment (M6.2): primary extraction model (structured JSON; thinking on, never think=false
+    # with format) and a small dense fallback used only to repair invalid JSON into the schema.
+    enrich_model: str = "qwen3.6:35b-a3b"
+    enrich_repair_model: str = "qwen3:14b"
+    enrich_num_ctx: int = 16384
     # A PDF page whose largest image covers >= this fraction of the page is treated as scanned.
     ocr_image_coverage: float = 0.8
     # On such a page, the embedded text layer is kept if its quality score is >= this; otherwise the

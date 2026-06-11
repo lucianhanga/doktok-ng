@@ -122,7 +122,26 @@ export function DocumentDetail({
             <dt>Pages</dt>
             <dd>{String(doc.metadata?.page_count ?? "-")}</dd>
           </div>
+          <div>
+            <dt>Document date</dt>
+            <dd className={doc.document_date ? undefined : "muted"}>{doc.document_date ?? "n/a"}</dd>
+          </div>
+          <div>
+            <dt>Location</dt>
+            <dd className={doc.location ? undefined : "muted"}>{doc.location ?? "n/a"}</dd>
+          </div>
+          <div>
+            <dt>Ingested</dt>
+            <dd>{doc.ingested_at ? doc.ingested_at.slice(0, 10) : "-"}</dd>
+          </div>
         </dl>
+      )}
+
+      {doc?.summary && (
+        <div className="doc-section doc-summary">
+          <h3>Summary</h3>
+          <p>{doc.summary}</p>
+        </div>
       )}
 
       {features.length > 0 && (

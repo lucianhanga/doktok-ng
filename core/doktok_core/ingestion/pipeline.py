@@ -65,7 +65,12 @@ from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import write_document_artifacts
 from doktok_core.entities.language import detect_language, pg_config_for
 from doktok_core.entities.lexical import meaningful_terms
-from doktok_core.extraction.service import ExtractionResult, NeedsOcrError, extract_document
+from doktok_core.extraction.service import (
+    ExtractionResult,
+    NeedsOcrError,
+    TooManyPagesError,
+    extract_document,
+)
 from doktok_core.features.processors import ChunkEmbedFeature, EntitiesFeature
 from doktok_core.ingestion.layout import FilesystemLayout
 
@@ -111,6 +116,8 @@ class IngestionServices:
     ocr_image_coverage: float = 1.0
     # On a scan-candidate page, keep embedded text if its quality >= this (0 = always judge).
     ocr_min_text_quality: float = 0.0
+    # Reject PDFs with more pages than this before the expensive render/OCR loop (0 = no limit).
+    max_pages: int = 0
     # LLM judge that decides embedded-vs-OCR text for ambiguous pages (M5.x).
     chat_model: ChatModelProvider | None = None
     # Activity/audit trail (M3.6). When absent, no audit events are recorded.
@@ -393,9 +400,12 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             ocr_image_coverage=services.ocr_image_coverage,
             ocr_min_text_quality=services.ocr_min_text_quality,
             chat_model=services.chat_model,
+            max_pages=services.max_pages,
         )
     except NeedsOcrError as exc:
         return _fail(services, job, code="needs_ocr", message=str(exc))
+    except TooManyPagesError as exc:
+        return _fail(services, job, code="too_many_pages", message=str(exc))
 
     document_id = _new_id()
     original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name

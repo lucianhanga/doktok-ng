@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from doktok_core.security.egress import is_loopback_url
 
 
 class Settings(BaseSettings):
@@ -115,6 +117,17 @@ class Settings(BaseSettings):
     # a killed worker; the worker re-queues it (file back to ingest) so it never lingers invisibly.
     # Keep it above the slowest legitimate single-document extraction. Set to 0 to disable recovery.
     stale_job_minutes: int = 10
+
+    @model_validator(mode="after")
+    def _enforce_no_egress(self) -> Settings:
+        # Make DOKTOK_NO_EGRESS real: with egress off, the only outbound call (Ollama) must target a
+        # loopback host. Refuse a remote endpoint at startup instead of silently egressing.
+        if self.no_egress and not is_loopback_url(self.ollama_base_url):
+            raise ValueError(
+                f"DOKTOK_NO_EGRESS is set but DOKTOK_OLLAMA_BASE_URL ({self.ollama_base_url!r}) "
+                "is not loopback; point it at localhost or set DOKTOK_NO_EGRESS=false"
+            )
+        return self
 
 
 @lru_cache

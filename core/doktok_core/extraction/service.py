@@ -43,6 +43,10 @@ class NeedsOcrError(Exception):
     """Raised when a file needs OCR but no OCR services are configured."""
 
 
+class TooManyPagesError(Exception):
+    """Raised when a document exceeds the configured page-count limit (resource guard)."""
+
+
 @dataclass
 class ExtractionResult:
     content_md: str
@@ -75,6 +79,7 @@ def extract_document(
     ocr_image_coverage: float = 1.0,
     ocr_min_text_quality: float = 0.0,
     chat_model: ChatModelProvider | None = None,
+    max_pages: int = 0,
 ) -> tuple[ExtractionResult, bytes | None]:
     if mime in (MIME_TEXT, MIME_MARKDOWN):
         text = text_extractor.extract(path)
@@ -92,6 +97,7 @@ def extract_document(
             ocr_image_coverage,
             ocr_min_text_quality,
             chat_model,
+            max_pages,
         )
 
     if mime.startswith("image/"):
@@ -116,8 +122,12 @@ def _extract_pdf(
     ocr_image_coverage: float,
     ocr_min_text_quality: float,
     chat_model: ChatModelProvider | None,
+    max_pages: int = 0,
 ) -> tuple[ExtractionResult, bytes | None]:
     pages = pdf_extractor.extract_pages(path)
+    # Resource guard: reject oversized PDFs before the expensive per-page render/OCR loop.
+    if max_pages and len(pages) > max_pages:
+        raise TooManyPagesError(f"PDF has {len(pages)} pages (limit {max_pages})")
     coverage = classifier.page_image_coverage(path) if classifier is not None else []
 
     def _cov(i: int) -> float:

@@ -195,6 +195,7 @@ def build_services(
                 pdf_classifier=pdf_classifier,
                 ocr_image_coverage=settings.ocr_image_coverage,
                 ocr_min_text_quality=settings.ocr_min_text_quality,
+                max_pages=settings.max_pages,
                 chat_model=chat_model,
                 audit_log=audit_log,
                 chunker=chunker,

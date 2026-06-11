@@ -75,3 +75,21 @@ jobs:
         run: pnpm -r lint
       - name: Test
         run: pnpm -r test
+      - name: Dependency audit (pnpm)
+        continue-on-error: true # informational for now; tighten to a gate once the tree is clean
+        run: pnpm audit --audit-level high
+
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Secret scan (detect-secrets)
+        run: git ls-files -z | xargs -0 uvx --from detect-secrets detect-secrets-hook --baseline .secrets.baseline
+      - name: Dependency audit (pip-audit)
+        continue-on-error: true # informational for now; tighten to a gate once advisories are triaged
+        run: |
+          uv export --format requirements-txt --all-packages --no-emit-project -o /tmp/req.txt
+          uvx pip-audit -r /tmp/req.txt

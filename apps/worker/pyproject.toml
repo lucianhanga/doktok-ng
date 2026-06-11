@@ -14,6 +14,7 @@ dependencies = [
     "doktok-storage-filesystem",
     "doktok-modalities-files",
     "doktok-provider-ollama",
+    "doktok-provider-paddleocr",
 ]
 
 [project.scripts]

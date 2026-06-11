@@ -1,0 +1,77 @@
+from doktok_contracts.schemas import SearchHit
+from doktok_core.rag.answerer import REFUSAL, DefaultRagAnswerer
+
+
+class FakeRetriever:
+    def __init__(self, hits: list[SearchHit]) -> None:
+        self._hits = hits
+        self.seen: tuple[str, str, int] | None = None
+
+    def search(self, tenant_id: str, query: str, limit: int = 10) -> list[SearchHit]:
+        self.seen = (tenant_id, query, limit)
+        return self._hits
+
+
+class FakeChat:
+    def __init__(self, reply: str) -> None:
+        self._reply = reply
+        self.prompt: str | None = None
+
+    def complete(self, prompt: str) -> str:
+        self.prompt = prompt
+        return self._reply
+
+
+def _hit(i: int) -> SearchHit:
+    return SearchHit(
+        document_id=f"d{i}",
+        chunk_id=f"c{i}",
+        original_filename=f"f{i}.txt",
+        page_start=1,
+        snippet="snippet text",
+        text="full chunk text body",
+        score=1.0,
+    )
+
+
+def test_grounded_answer_with_citations() -> None:
+    retriever = FakeRetriever([_hit(1), _hit(2)])
+    chat = FakeChat("The answer is X [1].")
+    answer = DefaultRagAnswerer(retriever, chat).answer("t1", "what is X?", 5)
+
+    assert answer.grounded is True
+    assert answer.answer == "The answer is X [1]."
+    assert [c.index for c in answer.citations] == [1, 2]
+    assert answer.citations[0].document_id == "d1"
+    assert retriever.seen == ("t1", "what is X?", 5)
+    assert chat.prompt is not None and "full chunk text body" in chat.prompt
+
+
+def test_refuses_when_no_hits() -> None:
+    answer = DefaultRagAnswerer(FakeRetriever([]), FakeChat("anything")).answer("t1", "q")
+    assert answer.grounded is False
+    assert answer.answer == REFUSAL
+    assert answer.citations == []
+
+
+def test_refuses_when_model_refuses() -> None:
+    answer = DefaultRagAnswerer(FakeRetriever([_hit(1)]), FakeChat(REFUSAL)).answer("t1", "q")
+    assert answer.grounded is False
+    assert answer.citations == []
+
+
+def test_refuses_on_model_error() -> None:
+    class Boom:
+        def complete(self, prompt: str) -> str:
+            raise RuntimeError("model down")
+
+    answer = DefaultRagAnswerer(FakeRetriever([_hit(1)]), Boom()).answer("t1", "q")
+    assert answer.grounded is False
+    assert answer.answer == REFUSAL
+
+
+def test_empty_question_refuses_without_calling_model() -> None:
+    chat = FakeChat("should not be called")
+    answer = DefaultRagAnswerer(FakeRetriever([_hit(1)]), chat).answer("t1", "   ")
+    assert answer.grounded is False
+    assert chat.prompt is None

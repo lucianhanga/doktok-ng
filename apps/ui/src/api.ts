@@ -168,3 +168,33 @@ export function fetchDocumentActivity(id: string, signal?: AbortSignal): Promise
 export function fetchStats(signal?: AbortSignal): Promise<Stats> {
   return getJson<Stats>("/api/v1/stats", signal);
 }
+
+export interface Citation {
+  index: number;
+  document_id: string;
+  chunk_id: string;
+  original_filename?: string | null;
+  title?: string | null;
+  page_start?: number | null;
+  page_end?: number | null;
+  snippet: string;
+}
+
+export interface RagAnswer {
+  answer: string;
+  citations: Citation[];
+  grounded: boolean;
+}
+
+export async function chat(question: string, signal?: AbortSignal): Promise<RagAnswer> {
+  const response = await fetch("/api/v1/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Chat request failed: ${response.status}`);
+  }
+  return (await response.json()) as RagAnswer;
+}

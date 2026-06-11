@@ -215,9 +215,36 @@ class SearchHit(BaseModel):
     page_start: int | None = None
     page_end: int | None = None
     snippet: str
+    text: str = ""  # full chunk text (used as RAG context; the UI shows the snippet)
     score: float
     vector_score: float | None = None
     text_score: float | None = None
+
+
+class Citation(BaseModel):
+    """A source citation for a RAG answer (brief section 18)."""
+
+    index: int
+    document_id: str
+    chunk_id: str
+    original_filename: str | None = None
+    title: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    snippet: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    limit: int = 8
+
+
+class RagAnswer(BaseModel):
+    """A grounded answer with citations (brief section 18)."""
+
+    answer: str
+    citations: list[Citation] = Field(default_factory=list)
+    grounded: bool
 
 
 class DocumentContent(BaseModel):

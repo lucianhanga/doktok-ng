@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- M6 RAG chat with citations: `POST /api/v1/chat {question, limit?}` -> grounded answer + citations,
+  built by `DefaultRagAnswerer` over the M4 hybrid retriever + the default chat model
+  (`DOKTOK_DEFAULT_MODEL`). Answers only from retrieved excerpts, cites them as `[n]`, and refuses
+  ("I could not find enough evidence...") when retrieval is insufficient or the model declines.
+  Document text is treated as untrusted data, not instructions. New **Chat** UI tab (answer + sources
+  that open the cited document). `SearchHit` now carries the full chunk text for RAG context.
 - Multilingual lexical term extraction: each document's language is detected (langdetect) and its
   significant terms are extracted with PostgreSQL `to_tsvector(<language>, text)` (stopwords removed,
   stemmed), stored as `CUSTOM_TOKEN` keyword entities (with frequency + language). The Entities tab

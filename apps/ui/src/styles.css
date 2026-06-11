@@ -222,3 +222,30 @@ table.jobs td {
   display: grid;
   gap: 0.35rem;
 }
+
+.chat-answer {
+  margin-top: 1rem;
+}
+
+.chat-answer .answer {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.chat-answer .answer.empty {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.citations {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.citations .snippet {
+  opacity: 0.75;
+  font-size: 0.85rem;
+  margin-top: 0.2rem;
+}

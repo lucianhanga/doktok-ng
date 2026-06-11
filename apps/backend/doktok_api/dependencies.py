@@ -15,6 +15,7 @@ from doktok_contracts.ports import (
     DocumentRepository,
     EntityRepository,
     IngestionJobRepository,
+    RagAnswerer,
     Retriever,
     StatsRepository,
 )
@@ -131,6 +132,23 @@ def get_retriever(request: Request) -> Retriever:
     )
     registry.register(Retriever, retriever)
     return retriever
+
+
+def get_rag_answerer(request: Request) -> RagAnswerer:
+    registry = request.app.state.registry
+    if registry.is_registered(RagAnswerer):
+        return cast(RagAnswerer, registry.resolve(RagAnswerer))
+
+    from doktok_core.rag.answerer import DefaultRagAnswerer
+    from doktok_provider_ollama import OllamaChatModelProvider
+
+    settings = request.app.state.settings
+    answerer = DefaultRagAnswerer(
+        get_retriever(request),
+        OllamaChatModelProvider(settings.default_model, settings.ollama_base_url),
+    )
+    registry.register(RagAnswerer, answerer)
+    return answerer
 
 
 def get_stats_repository(request: Request) -> StatsRepository:

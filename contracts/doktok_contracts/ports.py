@@ -28,6 +28,7 @@ from doktok_contracts.schemas import (
     EntitySummary,
     EntityType,
     IngestionJob,
+    RagAnswer,
     SearchHit,
     SecurityDecision,
     StatsSummary,
@@ -216,7 +217,7 @@ class Retriever(Protocol):
 
 @runtime_checkable
 class RagAnswerer(Protocol):
-    def answer(self, question: str) -> str: ...
+    def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer: ...
 
 
 @runtime_checkable

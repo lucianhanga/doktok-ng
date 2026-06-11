@@ -1,0 +1,128 @@
+# Performance & Ollama tuning
+
+DokTok ingestion is mostly IO-bound on the local Ollama model server (OCR, embeddings, chat/RAG, and
+the OCR-vs-embedded text judge). Throughput depends on two independent knobs: how many documents
+DokTok processes at once, and how many requests Ollama serves at once.
+
+## The two knobs
+
+| Setting | Where | Default | Effect |
+|---|---|---|---|
+| `DOKTOK_INGEST_CONCURRENCY` | DokTok (`.env`) | `4` | How many stable files the worker processes in parallel. |
+| `DOKTOK_OLLAMA_TIMEOUT_SECONDS` | DokTok (`.env`) | `600` | HTTP timeout per Ollama call. Generous so queued requests do not fail. |
+| `OLLAMA_NUM_PARALLEL` | **Ollama server** | 1* | How many requests Ollama runs concurrently **per model**. |
+| `OLLAMA_MAX_LOADED_MODELS` | **Ollama server** | 1-3* | How many distinct models stay resident at once. |
+
+\* Ollama's defaults vary by version and available memory.
+
+### Why both matter
+
+By default Ollama serves **one request at a time per model**. If `DOKTOK_INGEST_CONCURRENCY=4` but
+`OLLAMA_NUM_PARALLEL=1`, the four pipelines still send requests concurrently, but Ollama **queues**
+them and runs them one by one. Before the timeout was raised this caused jobs to fail with
+`internal_error` ("timed out"); now they wait instead, but you get little speedup on model-bound
+work (scanned/OCR documents). To make the model calls actually overlap, raise `OLLAMA_NUM_PARALLEL`.
+
+DokTok uses **three** models (chat `DOKTOK_DEFAULT_MODEL`, embeddings `DOKTOK_EMBEDDING_MODEL`, OCR
+`DOKTOK_OCR_MODEL`). Keep `OLLAMA_MAX_LOADED_MODELS >= 3` so the pipeline does not unload/reload a
+model every time it switches between OCR, embedding, and chat steps.
+
+Rule of thumb: set `OLLAMA_NUM_PARALLEL` to roughly `DOKTOK_INGEST_CONCURRENCY`, bounded by memory.
+
+## Configuring the Ollama server
+
+These are environment variables on the `ollama serve` process, not DokTok settings.
+
+**macOS (menu-bar app):**
+
+```bash
+launchctl setenv OLLAMA_NUM_PARALLEL 4
+launchctl setenv OLLAMA_MAX_LOADED_MODELS 3
+# then fully quit and reopen the Ollama app
+```
+
+or run the server yourself (quit the app first):
+
+```bash
+OLLAMA_NUM_PARALLEL=4 OLLAMA_MAX_LOADED_MODELS=3 ollama serve
+```
+
+**Linux (systemd):**
+
+```bash
+sudo systemctl edit ollama.service
+# add under [Service]:
+#   Environment="OLLAMA_NUM_PARALLEL=4"
+#   Environment="OLLAMA_MAX_LOADED_MODELS=3"
+sudo systemctl daemon-reload && sudo systemctl restart ollama
+```
+
+Verify with `ollama ps` (shows resident models) while ingesting; the server startup log prints the
+parallelism settings.
+
+## Memory cost of parallelism
+
+The key fact: **model weights are loaded once and shared across all parallel requests. Only the
+per-request KV cache (the attention context) scales with `OLLAMA_NUM_PARALLEL`.**
+
+Approximate total memory:
+
+```
+total = sum(weights of loaded models)
+      + sum(per-model KV-cache-per-slot * OLLAMA_NUM_PARALLEL)
+      + overhead (compute/vision buffers, ~1-2 GB)
+```
+
+KV cache per slot, per model:
+
+```
+kv_per_slot = 2 (K and V) * n_layers * n_kv_heads * head_dim * num_ctx * bytes_per_element
+```
+
+`num_ctx` is the context window Ollama allocates per slot (default ~4096 tokens), and
+`bytes_per_element` is 2 for an F16 KV cache. **KV scales linearly with both `num_ctx` and
+`OLLAMA_NUM_PARALLEL`** - a large context window is far more expensive than parallelism itself.
+
+### Worked example (this repo's default models)
+
+Weights (resident, independent of parallelism):
+
+| Model | Params | Quant | Weights |
+|---|---|---|---|
+| `qwen3.6:35b-a3b` (chat/RAG/judge) | 36B MoE (3B active) | Q4_K_M | ~23 GB |
+| `glm-ocr:latest` (OCR, vision) | 1.1B | F16 | ~2.2 GB |
+| `mxbai-embed-large:latest` (embeddings) | 334M | F16 | ~0.7 GB |
+| **All three loaded** | | | **~26 GB** |
+
+KV cache added by parallelism, at the default ~4096-token context:
+
+- Chat model: roughly ~0.3-0.5 GB per parallel slot (estimated from typical Qwen3-MoE attention
+  dimensions; grows proportionally if you raise the context window).
+- OCR model: smaller (~0.1 GB/slot) plus a vision buffer per concurrent image.
+- Embedding model: negligible (512-token context).
+
+So, with all three models resident:
+
+| `OLLAMA_NUM_PARALLEL` | Weights | + KV cache | + overhead | **Total (approx)** |
+|---|---|---|---|---|
+| 1 | ~26 GB | ~0.5 GB | ~1.5 GB | **~28 GB** |
+| 2 | ~26 GB | ~1 GB | ~1.5 GB | **~29 GB** |
+| 4 | ~26 GB | ~2 GB | ~2 GB | **~30 GB** |
+
+Takeaways:
+
+- The dominant cost is **loading the three models (~26 GB)**, not the parallelism.
+- Each extra parallel slot is cheap at the default context (~0.3-0.5 GB), so going from 1 to 4
+  parallel adds only ~1.5-2 GB - **provided you keep the context window modest**.
+- If you raise the per-request context window, multiply the KV figures accordingly (e.g. a 4x larger
+  context makes KV ~4x bigger per slot).
+- On Apple Silicon this is **unified memory**: it counts against system RAM. ~26 GB of weights needs
+  a 32 GB machine just for the models (tight with the OS); 64 GB+ is comfortable for
+  `OLLAMA_NUM_PARALLEL` of 2-4. If memory is tight, drop to a lighter chat model
+  (`DOKTOK_DEFAULT_MODEL=qwen3:14b`) or lower `OLLAMA_MAX_LOADED_MODELS` (accepting reload thrash).
+
+## If you are memory constrained
+
+- Lower `DOKTOK_INGEST_CONCURRENCY` and `OLLAMA_NUM_PARALLEL` to 1-2.
+- Use a smaller chat model.
+- Keep `DOKTOK_OLLAMA_TIMEOUT_SECONDS` generous so queued requests finish rather than fail.

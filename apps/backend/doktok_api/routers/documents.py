@@ -110,33 +110,43 @@ def retry_document_feature(
     return {"status": "queued"}
 
 
+def _document_dir(document: Document, files_root: Path) -> Path | None:
+    """The document's on-disk folder, guarded against escaping the tenant files root."""
+    if not document.storage_path:
+        return None
+    base = Path(document.storage_path).resolve()
+    root = files_root.resolve()
+    return base if (root == base or root in base.parents) else None
+
+
 @router.post("/{document_id}/reingest")
 def reingest_document(
     document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs
 ) -> dict[str, str]:
-    """Re-queue a FAILED document: move its original back to the ingest folder and remove the failed
-    records, so the worker reprocesses it cleanly on its next run."""
+    """Re-ingest a document of any status: read its original file, purge its DB rows and files, and
+    drop the original back in the ingest folder so the worker reprocesses it cleanly."""
     document = repo.get(tenant.tenant_id, document_id)
-    if document is None or not document.storage_path:
+    if document is None:
         raise HTTPException(status_code=404, detail="document not found")
-    if document.status != DocumentStatus.FAILED:
-        raise HTTPException(status_code=400, detail="only failed documents can be re-ingested")
+    files_root = Path(request.app.state.settings.files_root)
+    base = _document_dir(document, files_root)
+    if base is None:
+        raise HTTPException(status_code=404, detail="document files not found")
 
-    base = Path(document.storage_path)
     rel = document.metadata.get("original") or document.original_filename
     source = (base / str(rel)).resolve()
-    base_resolved = base.resolve()
-    if (source != base_resolved and base_resolved not in source.parents) or not source.is_file():
+    if (source != base and base not in source.parents) or not source.is_file():
         raise HTTPException(status_code=404, detail="original file not found")
-
-    ingest_dir = Path(request.app.state.settings.files_root) / tenant.tenant_id / "ingest"
-    ingest_dir.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source), str(ingest_dir / document.original_filename))
+    data = source.read_bytes()  # read before purging, so nothing is lost
 
     if document.sha256:
-        jobs.delete_failed_for_sha(tenant.tenant_id, document.sha256)
-    repo.delete(tenant.tenant_id, document_id)
+        jobs.delete_for_sha(tenant.tenant_id, document.sha256)
+    repo.delete(tenant.tenant_id, document_id)  # FK-cascades chunks/entities/features/links/records
     shutil.rmtree(base, ignore_errors=True)
+
+    ingest_dir = files_root / tenant.tenant_id / "ingest"
+    ingest_dir.mkdir(parents=True, exist_ok=True)
+    (ingest_dir / document.original_filename).write_bytes(data)
     return {"status": "queued", "filename": document.original_filename}
 
 
@@ -144,20 +154,18 @@ def reingest_document(
 def delete_document(
     document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs
 ) -> dict[str, str]:
-    """Delete a document and its files. Intended for failed/duplicate documents (an active document
-    is also removed, with its records via FK cascade)."""
+    """Delete a document, its files, and all its derived rows (chunks/entities/features/links/
+    records via FK cascade)."""
     document = repo.get(tenant.tenant_id, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
 
-    if document.storage_path:
-        base = Path(document.storage_path).resolve()
-        files_root = Path(request.app.state.settings.files_root).resolve()
-        if files_root == base or files_root in base.parents:  # traversal guard
-            shutil.rmtree(base, ignore_errors=True)
+    base = _document_dir(document, Path(request.app.state.settings.files_root))
+    if base is not None:
+        shutil.rmtree(base, ignore_errors=True)
     if document.sha256:
-        jobs.delete_failed_for_sha(tenant.tenant_id, document.sha256)
-    repo.delete(tenant.tenant_id, document_id)  # FK-cascades extracted_records
+        jobs.delete_for_sha(tenant.tenant_id, document.sha256)
+    repo.delete(tenant.tenant_id, document_id)  # FK-cascades derived rows
     return {"status": "deleted"}
 
 

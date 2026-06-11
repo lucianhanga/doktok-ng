@@ -75,13 +75,13 @@ test("selecting a failed document shows reingest + delete bulk actions", async (
   expect(screen.getByText("Delete selected")).toBeInTheDocument();
 });
 
-test("selecting an active document offers delete but not reingest", async () => {
+test("selecting an active document offers both reingest and delete", async () => {
   mockDocs([doc({ id: "a1", status: "active", original_filename: "ok.pdf" })]);
   render(<DocumentsPanel />);
   await waitFor(() => expect(screen.getByText("ok.pdf")).toBeInTheDocument());
   fireEvent.click(screen.getByLabelText("Select ok.pdf"));
+  expect(screen.getByText("Reingest selected")).toBeInTheDocument(); // any status, not just failed
   expect(screen.getByText("Delete selected")).toBeInTheDocument();
-  expect(screen.queryByText("Reingest selected")).not.toBeInTheDocument();
 });
 
 test("shows an error when the request fails", async () => {

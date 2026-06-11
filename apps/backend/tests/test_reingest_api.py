@@ -78,13 +78,25 @@ def test_reingest_moves_file_and_clears_records(tmp_path: Path) -> None:
     assert job_repo.find_by_sha256(TENANT, "a" * 64) == []  # failed job cleared
 
 
-def test_reingest_rejects_non_failed(tmp_path: Path) -> None:
+def test_reingest_active_document_purges_and_requeues(tmp_path: Path) -> None:
+    active_dir = tmp_path / TENANT / "docs.active" / "guid1"
+    active_dir.mkdir(parents=True)
+    (active_dir / "report.pdf").write_bytes(b"%PDF-1.4 fake")
     docs = InMemoryDocumentRepository()
-    docs.add(_failed_doc(str(tmp_path), status=DocumentStatus.ACTIVE))
-    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).post(
-        "/api/v1/documents/d1/reingest", headers=AUTH
+    docs.add(_failed_doc(str(active_dir), status=DocumentStatus.ACTIVE))
+    job_repo = InMemoryIngestionJobRepository()
+    job_repo.add(
+        IngestionJob(
+            id="j1", tenant_id=TENANT, source_path="/x", sha256="a" * 64, status=JobStatus.ACTIVE
+        )
     )
-    assert resp.status_code == 400
+
+    resp = _client(tmp_path, docs, job_repo).post("/api/v1/documents/d1/reingest", headers=AUTH)
+    assert resp.status_code == 200  # active docs can be re-ingested now
+    assert (tmp_path / TENANT / "ingest" / "report.pdf").is_file()
+    assert not active_dir.exists()
+    assert docs.get(TENANT, "d1") is None
+    assert job_repo.find_by_sha256(TENANT, "a" * 64) == []  # the active job is purged too
 
 
 def test_reingest_requires_token(tmp_path: Path) -> None:

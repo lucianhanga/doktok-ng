@@ -17,6 +17,7 @@ Jobs are tagged with the tenant from ``IngestionServices`` (ADR-0007).
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import uuid
@@ -67,6 +68,8 @@ from doktok_core.entities.lexical import meaningful_terms
 from doktok_core.extraction.service import ExtractionResult, NeedsOcrError, extract_document
 from doktok_core.features.processors import ChunkEmbedFeature, EntitiesFeature
 from doktok_core.ingestion.layout import FilesystemLayout
+
+logger = logging.getLogger("doktok.ingestion")
 
 DETECTOR_NAME = "libmagic"
 
@@ -263,6 +266,50 @@ def _record_features_done(services: IngestionServices, document_id: str) -> None
         repo.record_done(
             services.tenant_id, document_id, EntitiesFeature.name, EntitiesFeature.version
         )
+
+
+def recover_stale_jobs(services: IngestionServices, *, older_than: datetime) -> list[IngestionJob]:
+    """Re-queue ingestion jobs abandoned mid-pipeline (e.g. the worker was killed during OCR).
+
+    Such a job sits forever in a non-terminal state with its source file stranded in the in.process
+    workdir, and it never becomes a document - so it is invisible and unrecoverable from the UI. For
+    each one, move the stranded file back to the ingest folder and drop the stale job, so the normal
+    scan reprocesses it cleanly. Returns the jobs that were recovered.
+    """
+    recovered: list[IngestionJob] = []
+    for job in services.job_repo.list_in_flight(services.tenant_id, before=older_than):
+        if _requeue_stale_job(services, job):
+            recovered.append(job)
+    return recovered
+
+
+def _requeue_stale_job(services: IngestionServices, job: IngestionJob) -> bool:
+    """Move a stale job's stranded source file back to ingest and delete the job. Best-effort."""
+    original_name = Path(job.metadata.get("original_ingest_path", job.source_path)).name
+    src = Path(job.source_path)
+    try:
+        if src.is_file():
+            ingest = services.layout.ingest
+            ingest.mkdir(parents=True, exist_ok=True)
+            dest = ingest / original_name
+            if dest.exists():  # avoid clobbering an unrelated file already queued under that name
+                dest = ingest / f"{job.id[:8]}_{original_name}"
+            services.file_storage.move(str(src), str(dest))
+        services.job_repo.delete(services.tenant_id, job.id)
+        workdir = services.layout.job_workdir(job.id)
+        if workdir.exists():
+            shutil.rmtree(workdir, ignore_errors=True)
+        logger.warning(
+            "recovered stale job %s (was %s, tenant=%s) -> re-queued %s",
+            job.id,
+            job.status.value,
+            services.tenant_id,
+            original_name,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - one bad job must not block recovering the rest
+        logger.exception("could not recover stale job %s", job.id)
+        return False
 
 
 def process_file(services: IngestionServices, source_path: str) -> IngestionJob:

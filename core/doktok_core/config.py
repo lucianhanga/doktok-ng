@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     # How many feature-reconciler runs proceed in parallel (backfills drain faster). The reconciler
     # claims distinct rows with SKIP LOCKED, so this is safe; bound it by Ollama/DB capacity.
     reconcile_concurrency: int = 2
+    # A job left in a non-terminal state (extracting/indexing/...) longer than this was abandoned by
+    # a killed worker; the worker re-queues it (file back to ingest) so it never lingers invisibly.
+    # Keep it above the slowest legitimate single-document extraction. Set to 0 to disable recovery.
+    stale_job_minutes: int = 10
 
 
 @lru_cache

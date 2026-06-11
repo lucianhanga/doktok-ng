@@ -26,6 +26,7 @@ def main() -> None:
         stability_seconds=settings.file_stability_seconds,
         concurrency=settings.ingest_concurrency,
         reconciler=reconciler,
+        stale_job_minutes=settings.stale_job_minutes,
     )
     if settings.ingest_concurrency > 1:
         log.info("processing up to %d documents in parallel", settings.ingest_concurrency)

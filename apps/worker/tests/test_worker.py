@@ -101,3 +101,42 @@ def test_dotfiles_are_ignored(tmp_path: Path) -> None:
     worker = IngestionWorker([services], stability_seconds=0, clock=_clock([0.0, 1.0]))
     worker.run_once()
     assert worker.run_once() == []
+
+
+def test_reconcile_stream_drains_while_work_exists_then_stops() -> None:
+    """The reconcile loop keeps draining while work remains and exits on the stop signal."""
+    import threading
+
+    stop = threading.Event()
+    calls: list[int] = []
+
+    class FakeReconciler:
+        def reconcile(self) -> int:
+            calls.append(1)
+            if len(calls) >= 3:
+                stop.set()
+            return 1  # claimed work -> loop again immediately
+
+    worker = IngestionWorker([], reconciler=FakeReconciler(), reconcile_interval=0.01)  # type: ignore[arg-type]
+    worker._reconcile_loop(stop)
+    assert len(calls) >= 3
+
+
+def test_ingest_stream_scans_until_stopped() -> None:
+    """The ingest loop scans repeatedly, independently of reconciliation, until stopped."""
+    import threading
+
+    stop = threading.Event()
+    calls: list[int] = []
+
+    worker = IngestionWorker([], poll_interval=0.01)
+
+    def fake_run_once() -> list:  # type: ignore[type-arg]
+        calls.append(1)
+        if len(calls) >= 3:
+            stop.set()
+        return []
+
+    worker.run_once = fake_run_once  # type: ignore[method-assign]
+    worker._ingest_loop(stop)
+    assert len(calls) >= 3

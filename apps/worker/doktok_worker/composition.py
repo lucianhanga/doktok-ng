@@ -68,8 +68,9 @@ def build_services(
 
     Ensures each tenant's lifecycle folders exist and runs migrations once.
     """
-    # Size the pool for concurrent pipelines (each holds a connection only briefly).
-    db = Database(settings.database_url, max_size=max(4, settings.ingest_concurrency + 2))
+    # Size the pool for the parallel streams: up to `ingest_concurrency` ingestion workers + the
+    # reconciliation stream, each holding a connection only briefly.
+    db = Database(settings.database_url, max_size=max(6, settings.ingest_concurrency + 4))
     migrate(db)
 
     job_repo = PostgresIngestionJobRepository(db)

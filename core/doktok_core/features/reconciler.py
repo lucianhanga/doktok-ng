@@ -31,7 +31,10 @@ class FeatureReconciler:
         tenant_ids: Sequence[str],
         *,
         backoff_base_seconds: float = 30.0,
-        lease_seconds: float = 900.0,
+        # Above the worst-case feature runtime (an LLM extractor can do a primary + repair call,
+        # each up to the ~600s Ollama timeout), so a slow-but-alive processor is not reclaimed and
+        # double-run before it finishes.
+        lease_seconds: float = 1800.0,
         max_per_pass: int = 1000,
         concurrency: int = 1,
         clock: Callable[[], datetime] = _utcnow,

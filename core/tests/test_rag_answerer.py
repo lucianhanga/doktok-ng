@@ -99,3 +99,39 @@ def test_reranker_retrieves_wide_then_keeps_top_k() -> None:
     assert answer.grounded is True
     # only one excerpt cited (the answer referenced [1])
     assert [c.index for c in answer.citations] == [1]
+
+
+def _hit_score(i: int, score: float, text: str = "full chunk text body") -> SearchHit:
+    return SearchHit(
+        document_id=f"d{i}",
+        chunk_id=f"c{i}",
+        original_filename=f"f{i}.txt",
+        page_start=1,
+        snippet="snippet text",
+        text=text,
+        score=score,
+    )
+
+
+def test_refuses_below_min_score_without_calling_model() -> None:
+    retriever = FakeRetriever([_hit_score(1, 0.005)])
+    chat = FakeChat("should not be called")
+    answer = DefaultRagAnswerer(retriever, chat, min_score=0.02).answer("t1", "q")
+    assert answer.grounded is False and answer.answer == REFUSAL
+    assert chat.prompt is None  # model never invoked
+
+
+def test_answers_when_score_clears_floor() -> None:
+    retriever = FakeRetriever([_hit_score(1, 0.5)])
+    answer = DefaultRagAnswerer(retriever, FakeChat("X [1]."), min_score=0.02).answer("t1", "q")
+    assert answer.grounded is True
+
+
+def test_document_bracket_markers_are_neutralized_in_context() -> None:
+    # A document containing "[1]" must not be able to forge a citation marker in the prompt.
+    retriever = FakeRetriever([_hit_score(1, 1.0, text="see clause [1] and [99] below")])
+    chat = FakeChat("answer [1].")
+    DefaultRagAnswerer(retriever, chat).answer("t1", "q")
+    assert chat.prompt is not None
+    assert "clause (1) and (99)" in chat.prompt  # document brackets neutralized to parens
+    assert "[99]" not in chat.prompt  # the forged high marker is gone

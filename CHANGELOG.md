@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Changed
+- Consistent `docs.active/{id}/` structure: every active document now has a `normalized/` directory
+  holding the canonical "system document" - `normalized/searchable.pdf` for scanned/OCR'd input, or a
+  verbatim copy of the original (`normalized/original.<ext>`) when no normalization was needed (the
+  root `original.<ext>` is still kept). `manifest.system_document` therefore always points into
+  `normalized/`, and `manifest.json` now records the detected `language` (was hardcoded `unknown`).
 - Scanned PDF pages that already have an embedded text layer are no longer blindly re-OCR'd: a clean
   layer is kept (text-quality fast-path), and for ambiguous pages the default LLM
   (`DOKTOK_DEFAULT_MODEL`) judges whether the embedded text or the fresh OCR is better and keeps the

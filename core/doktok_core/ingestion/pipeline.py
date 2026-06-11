@@ -357,6 +357,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         detector=DETECTOR_NAME,
         result=result,
         normalized_pdf=normalized_pdf,
+        language=language,
     )
 
     now = datetime.now(UTC)

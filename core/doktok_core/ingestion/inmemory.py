@@ -56,3 +56,13 @@ class InMemoryIngestionJobRepository:
         for jid in victims:
             del self._jobs[jid]
         return len(victims)
+
+    def delete_for_sha(self, tenant_id: str, sha256: str) -> int:
+        victims = [
+            jid
+            for jid, job in self._jobs.items()
+            if job.tenant_id == tenant_id and job.sha256 == sha256
+        ]
+        for jid in victims:
+            del self._jobs[jid]
+        return len(victims)

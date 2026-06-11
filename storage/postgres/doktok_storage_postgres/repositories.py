@@ -177,6 +177,14 @@ class PostgresIngestionJobRepository:
             )
             return cur.rowcount
 
+    def delete_for_sha(self, tenant_id: str, sha256: str) -> int:
+        with self._db.connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM ingestion_jobs WHERE tenant_id=%s AND sha256=%s",
+                (tenant_id, sha256),
+            )
+            return cur.rowcount
+
 
 class PostgresDocumentRepository:
     """``DocumentRepository`` backed by PostgreSQL. Tenant-scoped reads."""

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Bulk re-ingest** now works for documents of any status (not just failed). Selecting documents and
+  choosing "Reingest selected" reads each original file, **fully purges** the document — its files and
+  all derived rows (chunks, entities, features, category links, extracted records, jobs, now via DB
+  `ON DELETE CASCADE`, migration 0013) — and drops the original back into the ingest folder so the
+  worker reprocesses it cleanly (e.g. to redo an OCR that produced garbage). Both Reingest and Delete
+  confirm first.
 - Documents list management: filter by **status** (active / failed / duplicate) via
   `GET /api/v1/documents?status=…`, **select** documents individually or all (checkboxes +
   select-all), and run **bulk actions** on the selection — for failed documents, **Reingest selected**

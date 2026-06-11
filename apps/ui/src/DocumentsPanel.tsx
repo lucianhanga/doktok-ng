@@ -99,9 +99,6 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
   }, []);
 
   const docs = state.kind === "ok" ? state.docs : [];
-  const selectedDocs = docs.filter((d) => selected.has(d.id));
-  const allSelectedFailed =
-    selectedDocs.length > 0 && selectedDocs.every((d) => d.status === "failed");
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -161,11 +158,22 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
       {selected.size > 0 && (
         <div className="bulk-bar" role="region" aria-label="Bulk actions">
           <span>{selected.size} selected</span>
-          {allSelectedFailed && (
-            <button type="button" disabled={busy} onClick={() => runBulk(reingestDocument)}>
-              Reingest selected
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Re-ingest ${selected.size} document(s)? This clears their current data and ` +
+                    `reprocesses the originals.`,
+                )
+              ) {
+                void runBulk(reingestDocument);
+              }
+            }}
+          >
+            Reingest selected
+          </button>
           <button
             type="button"
             className="danger"

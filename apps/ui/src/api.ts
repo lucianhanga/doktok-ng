@@ -65,6 +65,12 @@ export function documentFileUrl(
   return `/api/v1/documents/${encodeURIComponent(id)}/file${qs ? `?${qs}` : ""}`;
 }
 
+/** Same-origin URL for the document's first-page preview (WebP); the dev proxy injects the token.
+ * 404 until the thumbnail feature has produced it, so callers should handle image load errors. */
+export function documentThumbnailUrl(id: string): string {
+  return `/api/v1/documents/${encodeURIComponent(id)}/thumbnail`;
+}
+
 export interface DocumentPage {
   items: DokDocument[];
   total: number;

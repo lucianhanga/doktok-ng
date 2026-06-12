@@ -91,6 +91,13 @@ class Settings(BaseSettings):
 
     no_egress: bool = True
 
+    # Read-only MCP server (ADR-0008). The tenant it serves (must be one of DOKTOK_TENANT_TOKENS'
+    # tenants; if empty and exactly one tenant is configured, that one is used). For real read-only
+    # enforcement, point mcp_database_url at a Postgres role with only SELECT (defaults to the main
+    # DSN); the tool surface is read-only by construction regardless.
+    mcp_tenant: str = ""
+    mcp_database_url: str = ""
+
     # API DB connection pool size. The default Database() pool is small (4); the API runs sync
     # routes in a threadpool and each holds a connection during a (possibly slow) Ollama call, so
     # size it to the expected concurrent request count to avoid pool starvation / blocking.

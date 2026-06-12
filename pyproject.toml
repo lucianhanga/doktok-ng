@@ -83,6 +83,7 @@ addopts = "-q --import-mode=importlib"
 testpaths = [
     "apps/backend/tests",
     "apps/worker/tests",
+    "apps/mcp/tests",
     "core/tests",
     "contracts/tests",
     "storage/postgres/tests",

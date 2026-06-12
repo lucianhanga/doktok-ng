@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from doktok_contracts.errors import DuplicateActiveDocumentError
 from doktok_contracts.schemas import Document, DocumentStatus
 from doktok_storage_postgres import (
     Database,
@@ -49,6 +51,27 @@ def test_add_get_and_tenant_isolation(db: Database) -> None:
     items, total, next_anchor = repo.list_documents(TEST_TENANT_A)
     assert [d.id for d in items] == ["a-doc"] and total == 1 and next_anchor is None
     assert repo.get(TEST_TENANT_A, "b-doc") is None
+
+
+def test_find_active_by_sha_and_duplicate_translation(db: Database) -> None:
+    repo = PostgresDocumentRepository(db)
+    sha = "deadbeef" * 8
+    original = Document(
+        id="dedup-1",
+        tenant_id=TEST_TENANT_PAGE,
+        sha256=sha,
+        original_filename="a.pdf",
+        status=DocumentStatus.ACTIVE,
+        created_at=datetime.now(UTC),
+    )
+    repo.add(original)
+    assert repo.find_active_by_sha256(TEST_TENANT_PAGE, sha) == "dedup-1"
+    assert repo.find_active_by_sha256(TEST_TENANT_PAGE, "f" * 64) is None
+
+    # A second ACTIVE doc with the same content is a domain duplicate, not a raw DB error.
+    clash = original.model_copy(update={"id": "dedup-2", "original_filename": "b.pdf"})
+    with pytest.raises(DuplicateActiveDocumentError):
+        repo.add(clash)
 
 
 def _page_doc(doc_id: str, *, when: datetime) -> Document:

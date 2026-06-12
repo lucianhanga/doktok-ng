@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+from doktok_contracts.errors import DuplicateActiveDocumentError
 from doktok_contracts.schemas import Document, DocumentStatus
 
 
@@ -18,7 +19,23 @@ class InMemoryDocumentRepository:
     def add(self, document: Document) -> None:
         if document.id in self._docs:
             raise ValueError(f"document {document.id} already exists")
+        if document.status is DocumentStatus.ACTIVE and self.find_active_by_sha256(
+            document.tenant_id, document.sha256
+        ):
+            raise DuplicateActiveDocumentError(
+                f"active document with sha {document.sha256[:8]} already exists"
+            )
         self._docs[document.id] = document.model_copy(deep=True)
+
+    def find_active_by_sha256(self, tenant_id: str, sha256: str) -> str | None:
+        for d in self._docs.values():
+            if (
+                d.tenant_id == tenant_id
+                and d.sha256 == sha256
+                and d.status is DocumentStatus.ACTIVE
+            ):
+                return d.id
+        return None
 
     def get(self, tenant_id: str, document_id: str) -> Document | None:
         doc = self._docs.get(document_id)

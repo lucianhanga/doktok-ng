@@ -51,7 +51,16 @@ from doktok_contracts.schemas import (
 @runtime_checkable
 class DocumentRepository(Protocol):
     def get(self, tenant_id: str, document_id: str) -> Document | None: ...
-    def add(self, document: Document) -> None: ...
+    def add(self, document: Document) -> None:
+        """Insert a document. Raises ``DuplicateActiveDocumentError`` if an active document with the
+        same (tenant_id, sha256) already exists (the content-dedup invariant)."""
+        ...
+
+    def find_active_by_sha256(self, tenant_id: str, sha256: str) -> str | None:
+        """Id of an active document with this content hash, if any. Authoritative content-dedup
+        source - matches the uq_documents_active_sha invariant (not the job ledger)."""
+        ...
+
     def list_documents(
         self,
         tenant_id: str,

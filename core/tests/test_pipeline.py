@@ -175,6 +175,22 @@ def test_duplicate_is_recorded_in_duplicates_folder_linking_original(tmp_path: P
     assert dup.duplicate_of == first.document_id
 
 
+def test_duplicate_detected_when_original_job_is_gone(tmp_path: Path) -> None:
+    # Regression: dedup must use the documents table, not the job ledger. A job can be deleted
+    # (reingest/cleanup) while its document stays active; the same content must still be detected as
+    # a duplicate, not slip through to a hard active-sha unique-constraint failure.
+    services, layout = build_services(tmp_path, mime="text/plain")
+    first = process_file(services, drop(layout, "a.txt", b"same content"))
+    assert first.status is JobStatus.ACTIVE
+
+    services.job_repo.delete(services.tenant_id, first.id)  # the job-ledger gap
+    second = process_file(services, drop(layout, "b.txt", b"same content"))
+
+    assert second.status is JobStatus.DUPLICATE
+    assert second.error_code == "duplicate_hash"
+    assert second.document_id is not None
+
+
 def test_dedup_is_per_tenant(tmp_path: Path) -> None:
     job_repo = InMemoryIngestionJobRepository()
     doc_repo = InMemoryDocumentRepository()

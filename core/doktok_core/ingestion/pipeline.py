@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from doktok_contracts.errors import DuplicateActiveDocumentError
 from doktok_contracts.ports import (
     AuditLogRepository,
     ChatModelProvider,
@@ -453,7 +454,15 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             "system_document": artifacts.system_document,
         },
     )
-    services.document_repo.add(document)
+    try:
+        services.document_repo.add(document)
+    except DuplicateActiveDocumentError:
+        # Lost a concurrent race: another worker activated this content first. Drop the artifacts
+        # just written and record this copy as a duplicate of the winner (not a failure).
+        if artifacts.storage_path:
+            shutil.rmtree(artifacts.storage_path, ignore_errors=True)
+        original = services.document_repo.find_active_by_sha256(services.tenant_id, document.sha256)
+        return _handle_duplicate(services, job, original or "")
 
     # Index (chunk + embed + store) now that the parent row exists. On failure, delete the document
     # again: the FK cascade clears any partial chunks/entities, then fail the job (not the worker).
@@ -494,15 +503,15 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
 
 
 def _find_original_document_id(services: IngestionServices, job: IngestionJob) -> str | None:
-    """Return the id of an already-active document with the same content, if any (per tenant)."""
+    """Return the id of an already-active document with the same content, if any (per tenant).
+
+    Queries the documents table - the authoritative dedup source that matches the active-sha unique
+    constraint - rather than the job ledger (a job can be deleted while its document stays active,
+    which previously let a duplicate slip through to a hard unique-constraint failure).
+    """
     if not job.sha256:
         return None
-    for other in services.job_repo.find_by_sha256(services.tenant_id, job.sha256):
-        if other.id == job.id:
-            continue
-        if other.status is JobStatus.ACTIVE and other.document_id:
-            return other.document_id
-    return None
+    return services.document_repo.find_active_by_sha256(services.tenant_id, job.sha256)
 
 
 def _original_filename(job: IngestionJob) -> str:

@@ -60,7 +60,7 @@ def test_get_defaults_and_update_roundtrip() -> None:
                 "num_ctx": 32768,
                 "reasoning": "low",
             },
-            "openai_api_key": "sk-secret",
+            "openai_api_key": "dummy-test-value",  # pragma: allowlist secret
         },
         headers=AUTH,
     )

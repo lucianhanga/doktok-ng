@@ -94,6 +94,7 @@ def test_catalog_lists_reprocessable_features() -> None:
         "doc_metadata",
         "doc_classify",
         "structured_records",
+        "thumbnail",
     }
     assert "extract" not in names
     assert all(entry["label"] and entry["description"] for entry in body)

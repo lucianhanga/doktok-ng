@@ -215,6 +215,14 @@ class SearchablePdfBuilder(Protocol):
 
 
 @runtime_checkable
+class Thumbnailer(Protocol):
+    def thumbnail(self, source_path: str, *, max_edge: int = 400) -> bytes:
+        """Render a small preview image (WebP bytes) of the document's first page, with the long
+        edge scaled to ``max_edge`` pixels and the page aspect ratio preserved."""
+        ...
+
+
+@runtime_checkable
 class ImageExtractor(Protocol):
     def extract(self, path: str) -> str: ...
 

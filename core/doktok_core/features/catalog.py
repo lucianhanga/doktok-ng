@@ -19,6 +19,7 @@ from doktok_core.features.processors import (
     DocMetadataFeature,
     EntitiesFeature,
     StructuredRecordsFeature,
+    ThumbnailFeature,
 )
 
 
@@ -62,5 +63,11 @@ FEATURE_CATALOG: list[FeatureSpec] = [
         StructuredRecordsFeature.version,
         "Structured records",
         "Extracts transactions / line items for aggregation queries.",
+    ),
+    FeatureSpec(
+        ThumbnailFeature.name,
+        ThumbnailFeature.version,
+        "Thumbnail",
+        "Renders a first-page preview image for the document card and grid/list views.",
     ),
 ]

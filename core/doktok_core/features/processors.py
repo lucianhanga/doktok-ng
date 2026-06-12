@@ -25,10 +25,12 @@ from doktok_contracts.ports import (
     MetadataExtractor,
     RecordExtractor,
     RecordRepository,
+    Thumbnailer,
 )
 from doktok_contracts.schemas import DocumentChunk, DocumentEntity, EntityType, ExtractedRecord
 
 from doktok_core.aggregation import normalize_transaction
+from doktok_core.documents.artifacts import THUMBNAIL_REL
 from doktok_core.enrichment import (
     MAX_CATEGORIES_PER_DOCUMENT,
     MAX_CATEGORIES_PER_TENANT,
@@ -312,3 +314,36 @@ class StructuredRecordsFeature:
             if record is not None:
                 records.append(record)
         self._records.replace_for_document(tenant_id, document_id, records)
+
+
+class ThumbnailFeature:
+    """Render a small first-page preview (WebP) used by the document card and grid/list views.
+
+    Renders from the canonical normalized PDF so it is uniform across born-digital PDFs and OCR'd
+    scans. Idempotent: it overwrites the document's ``thumbnails/thumb.webp`` each run, so the
+    reconciler can backfill existing documents and re-run on a version bump.
+    """
+
+    name = "thumbnail"
+    version = 1
+
+    def __init__(
+        self,
+        document_repo: DocumentRepository,
+        file_storage: FileStorage,
+        thumbnailer: Thumbnailer,
+    ) -> None:
+        self._documents = document_repo
+        self._files = file_storage
+        self._thumbnailer = thumbnailer
+
+    def process(self, tenant_id: str, document_id: str) -> None:
+        document = self._documents.get(tenant_id, document_id)
+        if document is None or not document.storage_path:
+            return
+        base = Path(document.storage_path)
+        # Prefer the normalized system PDF (uniform for PDFs + scans); fall back to the original.
+        rel = document.metadata.get("system_document") or document.metadata.get("original")
+        source = base / str(rel) if rel else base / document.original_filename
+        data = self._thumbnailer.thumbnail(str(source))
+        self._files.write_bytes(str(base / THUMBNAIL_REL), data)

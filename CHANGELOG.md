@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Stage dependencies in the feature ledger (ADR-0009)**: processors now declare `dependencies`,
+  and `claim_next` only claims a stage once every prerequisite has a `done` row on the same
+  document (gated in the SQL via the dependency edge set, and mirrored in the in-memory oracle). The
+  groundwork for making intake/extraction first-class staged nodes; empty dependencies = no gating,
+  so existing behavior is unchanged.
 - **Parallel OCR**: PaddleOCR now runs a pool of independent predictors (one per ingestion slot)
   instead of serializing every `predict()` behind one lock, so pages OCR concurrently and use the
   available CPU. `DOKTOK_INGEST_CONCURRENCY` (default raised 2 → 4) sizes both the ingestion workers

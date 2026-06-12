@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from doktok_contracts.schemas import DocumentFeature, FeatureStatus
@@ -77,8 +78,30 @@ class InMemoryFeatureRepository:
         return affected
 
     def claim_next(
-        self, tenant_id: str, *, now: datetime, reclaim_before: datetime
+        self,
+        tenant_id: str,
+        *,
+        now: datetime,
+        reclaim_before: datetime,
+        dependencies: Sequence[tuple[str, str]] = (),
     ) -> DocumentFeature | None:
+        prereqs: dict[str, set[str]] = {}
+        for feature, prereq in dependencies:
+            prereqs.setdefault(feature, set()).add(prereq)
+
+        def ready(row: DocumentFeature) -> bool:
+            # Every prerequisite of this feature must have a 'done' row on the same document.
+            for prereq in prereqs.get(row.feature, set()):
+                if not any(
+                    r.tenant_id == tenant_id
+                    and r.document_id == row.document_id
+                    and r.feature == prereq
+                    and r.status is FeatureStatus.DONE
+                    for r in self.rows
+                ):
+                    return False
+            return True
+
         for row in self.rows:
             if row.tenant_id != tenant_id:
                 continue
@@ -95,7 +118,7 @@ class InMemoryFeatureRepository:
                     and row.last_attempt_at < reclaim_before
                 )
             )
-            if due:
+            if due and ready(row):
                 row.status = FeatureStatus.RUNNING
                 row.attempts += 1
                 row.last_attempt_at = now

@@ -42,6 +42,10 @@ class FeatureReconciler:
         self._repo = feature_repo
         self._processors = {p.name: p for p in processors}
         self._registered = [(p.name, p.version) for p in processors]
+        # (feature, prerequisite) edges: a stage is only claimed once each prerequisite is done.
+        self._dependencies: tuple[tuple[str, str], ...] = tuple(
+            (p.name, prereq) for p in processors for prereq in getattr(p, "dependencies", ())
+        )
         self._tenant_ids = list(tenant_ids)
         self._backoff_base = backoff_base_seconds
         self._lease_seconds = lease_seconds
@@ -68,7 +72,12 @@ class FeatureReconciler:
     def _claim(self, tenant_id: str) -> DocumentFeature | None:
         now = self._clock()
         reclaim_before = now - timedelta(seconds=self._lease_seconds)
-        return self._repo.claim_next(tenant_id, now=now, reclaim_before=reclaim_before)
+        return self._repo.claim_next(
+            tenant_id,
+            now=now,
+            reclaim_before=reclaim_before,
+            dependencies=self._dependencies,
+        )
 
     def _process(self, tenant_id: str, row: DocumentFeature) -> None:
         processor = self._processors.get(row.feature)

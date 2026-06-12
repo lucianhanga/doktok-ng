@@ -61,6 +61,7 @@ class ChunkEmbedFeature:
 
     name = "chunk_embed"
     version = 2  # bumped for the qwen3-embedding switch -> reconciler re-embeds the corpus
+    dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
         self,
@@ -114,6 +115,7 @@ class EntitiesFeature:
 
     name = "entities"
     version = 3  # bumped for plausibility-filtered lexical terms -> reconciler re-extracts corpus
+    dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
         self,
@@ -191,6 +193,7 @@ class DocMetadataFeature:
 
     name = "doc_metadata"
     version = 1
+    dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
         self,
@@ -230,6 +233,7 @@ class DocClassifyFeature:
 
     name = "doc_classify"
     version = 1
+    dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
         self,
@@ -288,6 +292,7 @@ class StructuredRecordsFeature:
 
     name = "structured_records"
     version = 1
+    dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
         self,
@@ -326,6 +331,7 @@ class ThumbnailFeature:
 
     name = "thumbnail"
     version = 1
+    dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
         self,

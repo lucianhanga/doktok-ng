@@ -29,6 +29,7 @@ from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
+from doktok_core.visualizations.service import ProjectionRunner, ProjectionService
 from doktok_modalities_files import (
     DirectTextExtractor,
     LibmagicMimeDetector,
@@ -52,6 +53,7 @@ from doktok_provider_openai import (
     OpenAiRecordExtractor,
 )
 from doktok_provider_paddleocr import PaddleOcr
+from doktok_provider_projection import SklearnUmapReducer
 from doktok_storage_filesystem import (
     LocalFileStorage,
     QuarantineService,
@@ -64,10 +66,12 @@ from doktok_storage_postgres import (
     PostgresCategoryRepository,
     PostgresChunkRepository,
     PostgresDocumentRepository,
+    PostgresEmbeddingProjectionRepository,
     PostgresEntityRepository,
     PostgresFeatureRepository,
     PostgresIngestionJobRepository,
     PostgresLexicalTermExtractor,
+    PostgresProjectionRequestRepository,
     PostgresRecordRepository,
     migrate,
 )
@@ -85,7 +89,7 @@ def tenant_ids(settings: Settings) -> list[str]:
 
 def build_services(
     settings: Settings,
-) -> tuple[list[IngestionServices], FeatureReconciler, Database]:
+) -> tuple[list[IngestionServices], FeatureReconciler, ProjectionRunner, Database]:
     """Build per-tenant ingestion services, the feature reconciler, and a shared database handle.
 
     Ensures each tenant's lifecycle folders exist and runs migrations once.
@@ -265,6 +269,20 @@ def build_services(
         concurrency=settings.reconcile_concurrency,
     )
 
+    # Insights embedding map (ADR-0016, M7.1): a tenant-aggregate projection job, drained from the
+    # recompute queue. The reducer reuses the chunk repo's embeddings; projections are cached.
+    projection_runner = ProjectionRunner(
+        PostgresProjectionRequestRepository(db),
+        ProjectionService(
+            chunk_repo,
+            SklearnUmapReducer(algorithm=settings.projection_algorithm),
+            PostgresEmbeddingProjectionRepository(db),
+            algorithm=settings.projection_algorithm,
+            version=settings.projection_version,
+            max_points=settings.projection_max_points,
+        ),
+    )
+
     services: list[IngestionServices] = []
     for tenant_id in tenant_ids(settings):
         layout = FilesystemLayout(settings.files_root, tenant_id)
@@ -303,4 +321,4 @@ def build_services(
                 stage_ledger=stage_ledger,
             )
         )
-    return services, reconciler, db
+    return services, reconciler, projection_runner, db

@@ -32,6 +32,7 @@ members = [
     "providers/ollama",
     "providers/openai",
     "providers/paddleocr",
+    "providers/projection",
     "storage/postgres",
     "storage/filesystem",
     "modalities/files",
@@ -49,6 +50,7 @@ doktok-mcp = { workspace = true }
 doktok-provider-ollama = { workspace = true }
 doktok-provider-openai = { workspace = true }
 doktok-provider-paddleocr = { workspace = true }
+doktok-provider-projection = { workspace = true }
 doktok-storage-postgres = { workspace = true }
 doktok-storage-filesystem = { workspace = true }
 doktok-modalities-files = { workspace = true }
@@ -92,6 +94,7 @@ testpaths = [
     "providers/ollama/tests",
     "providers/openai/tests",
     "providers/paddleocr/tests",
+    "providers/projection/tests",
     "storage/postgres/tests",
 ]
 
@@ -107,6 +110,7 @@ root_packages = [
     "doktok_mcp",
     "doktok_provider_ollama",
     "doktok_provider_openai",
+    "doktok_provider_projection",
     "doktok_storage_postgres",
     "doktok_storage_filesystem",
     "doktok_modalities_files",
@@ -128,6 +132,7 @@ forbidden_modules = [
     "doktok_mcp",
     "doktok_provider_ollama",
     "doktok_provider_openai",
+    "doktok_provider_projection",
     "doktok_storage_postgres",
     "doktok_storage_filesystem",
     "doktok_modalities_files",

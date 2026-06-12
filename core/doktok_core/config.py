@@ -136,6 +136,13 @@ class Settings(BaseSettings):
     # a killed worker; the worker re-queues it (file back to ingest) so it never lingers invisibly.
     # Keep it above the slowest legitimate single-document extraction. Set to 0 to disable recovery.
     stale_job_minutes: int = 10
+    # Insights embedding map (ADR-0016, M7.1): the worker drains projection recompute requests and
+    # fits a 2D + 3D projection of the tenant's chunk embeddings. `projection_algorithm` is umap
+    # (preferred) or pca; `projection_max_points` caps points per projection (larger tenants are
+    # truncated); bump `projection_version` to invalidate every cached projection.
+    projection_algorithm: str = "umap"
+    projection_max_points: int = 20000
+    projection_version: int = 1
 
     @model_validator(mode="after")
     def _enforce_no_egress(self) -> Settings:

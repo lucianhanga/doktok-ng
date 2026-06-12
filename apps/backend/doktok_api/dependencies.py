@@ -19,6 +19,7 @@ from doktok_contracts.ports import (
     FeatureRepository,
     IngestionJobRepository,
     RagAnswerer,
+    RecordRepository,
     Retriever,
     StatsRepository,
 )
@@ -211,6 +212,18 @@ def get_category_repository(request: Request) -> CategoryRepository:
 
     repository = PostgresCategoryRepository(_get_database(request))
     registry.register(CategoryRepository, repository)
+    return repository
+
+
+def get_record_repository(request: Request) -> RecordRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(RecordRepository):
+        return cast(RecordRepository, registry.resolve(RecordRepository))
+
+    from doktok_storage_postgres import PostgresRecordRepository
+
+    repository = PostgresRecordRepository(_get_database(request))
+    registry.register(RecordRepository, repository)
     return repository
 
 

@@ -8,6 +8,9 @@ from typing import Any
 
 from doktok_contracts.media import ExtractedTerm
 from doktok_contracts.schemas import (
+    AggregationBucket,
+    AggregationIntent,
+    AggregationResult,
     AuditEvent,
     Category,
     CategorySummary,
@@ -1020,3 +1023,59 @@ class PostgresRecordRepository:
                 (tenant_id, document_id),
             ).fetchall()
         return [_row_to_record(r) for r in rows]
+
+    def aggregate(self, tenant_id: str, intent: AggregationIntent) -> AggregationResult:
+        # Build a parameterized WHERE from the typed intent (never string-interpolated user input).
+        where = ["tenant_id = %s"]
+        params: list[Any] = [tenant_id]
+        if intent.record_type:
+            where.append("record_type = %s")
+            params.append(intent.record_type)
+        if intent.direction:
+            where.append("direction = %s")
+            params.append(intent.direction)
+        if intent.currency:
+            where.append("currency = %s")
+            params.append(intent.currency)
+        if intent.date_from:
+            where.append("occurred_on >= %s")
+            params.append(intent.date_from)
+        if intent.date_to:
+            where.append("occurred_on <= %s")
+            params.append(intent.date_to)
+        if intent.merchant:
+            # Space-insensitive substring on the normalized merchant, so "block house" matches
+            # "BLOCKHOUSE #42 HAMBURG" as well as "block house restaurant".
+            where.append("replace(merchant_normalized, ' ', '') ILIKE %s")
+            params.append(f"%{intent.merchant.strip().lower().replace(' ', '')}%")
+        clause = " AND ".join(where)
+
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT currency, COALESCE(SUM(amount_minor), 0) AS total_minor, "
+                f"COUNT(*) AS cnt FROM extracted_records WHERE {clause} "
+                "GROUP BY currency ORDER BY cnt DESC",
+                tuple(params),
+            ).fetchall()
+            samples: list[ExtractedRecord] = []
+            if intent.sample_limit > 0:
+                srows = cur.execute(
+                    f"SELECT {_REC_COLUMNS} FROM extracted_records WHERE {clause} "
+                    "ORDER BY occurred_on DESC NULLS LAST, id LIMIT %s",
+                    (*params, intent.sample_limit),
+                ).fetchall()
+                samples = [_row_to_record(r) for r in srows]
+
+        buckets = [
+            AggregationBucket(
+                currency=r["currency"], total_minor=int(r["total_minor"]), count=r["cnt"]
+            )
+            for r in rows
+        ]
+        return AggregationResult(
+            operation=intent.operation,
+            count=sum(b.count for b in buckets),
+            by_currency=buckets,
+            samples=samples,
+        )

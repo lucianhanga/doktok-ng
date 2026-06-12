@@ -299,6 +299,37 @@ class ExtractedRecord(BaseModel):
     confidence: float = 1.0
 
 
+class AggregationIntent(BaseModel):
+    """A typed aggregation over extracted_records (M6.3) - the deterministic answer to questions
+    like "how much did I spend at Block House" that top-k RAG cannot answer."""
+
+    operation: str = "sum"  # 'sum' (of amount_minor) | 'count'
+    record_type: str | None = None  # e.g. 'card_transaction'
+    merchant: str | None = None  # fuzzy substring-matched against merchant_normalized
+    direction: str | None = None  # 'debit' (spend) | 'credit' (refund/payment)
+    currency: str | None = None  # ISO 4217, exact
+    date_from: date | None = None
+    date_to: date | None = None
+    sample_limit: int = Field(default=10, ge=0, le=100)  # provenance rows to return
+
+
+class AggregationBucket(BaseModel):
+    """A per-currency rollup (money is never summed across currencies)."""
+
+    currency: str | None = None
+    total_minor: int = 0
+    count: int = 0
+
+
+class AggregationResult(BaseModel):
+    """The result of an AggregationIntent: per-currency totals + sample rows for provenance."""
+
+    operation: str
+    count: int = 0
+    by_currency: list[AggregationBucket] = Field(default_factory=list)
+    samples: list[ExtractedRecord] = Field(default_factory=list)
+
+
 class Category(BaseModel):
     """A controlled-vocabulary category for a tenant (M6.2, bounded to 20 active per tenant)."""
 

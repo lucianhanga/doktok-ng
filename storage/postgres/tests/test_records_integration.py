@@ -6,7 +6,12 @@ import uuid
 from datetime import UTC, date, datetime
 
 import pytest
-from doktok_contracts.schemas import Document, DocumentStatus, ExtractedRecord
+from doktok_contracts.schemas import (
+    AggregationIntent,
+    Document,
+    DocumentStatus,
+    ExtractedRecord,
+)
 from doktok_storage_postgres import Database, PostgresDocumentRepository, PostgresRecordRepository
 from psycopg import errors as pg_errors
 
@@ -56,6 +61,27 @@ def test_replace_and_list(db: Database) -> None:
     recs.replace_for_document(TENANT, "rd1", [_rec("rd1", "Shell", 6000)])
     listed = recs.list_for_document(TENANT, "rd1")
     assert len(listed) == 1 and listed[0].amount_minor == 6000
+
+
+def test_aggregate_sums_merchant_fuzzy_and_scopes_tenant(db: Database) -> None:
+    docs = PostgresDocumentRepository(db)
+    recs = PostgresRecordRepository(db)
+    _doc(docs, "rd3")
+    recs.replace_for_document(
+        TENANT,
+        "rd3",
+        [
+            _rec("rd3", "BLOCK HOUSE HAMBURG", 4250),
+            _rec("rd3", "BLOCKHOUSE #42 MUENCHEN", 3990),  # no space - must still match
+            _rec("rd3", "Shell Tankstelle", 7010),
+        ],
+    )
+    result = recs.aggregate(TENANT, AggregationIntent(merchant="block house"))
+    assert result.count == 2  # both Block House rows, not Shell
+    assert result.by_currency[0].currency == "EUR"
+    assert result.by_currency[0].total_minor == 4250 + 3990
+    # Tenant isolation: another tenant sees nothing.
+    assert recs.aggregate("test-other", AggregationIntent(merchant="block house")).count == 0
 
 
 def test_amount_requires_currency_constraint(db: Database) -> None:

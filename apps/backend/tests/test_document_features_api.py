@@ -27,6 +27,9 @@ class FakeFeatureRepository:
     def ensure_for_active(self, tenant_id, features) -> int:  # type: ignore[no-untyped-def]
         return 0
 
+    def seed_for_document(self, tenant_id, document_id, stages) -> int:  # type: ignore[no-untyped-def]
+        return 0
+
     def claim_next(self, tenant_id, *, now, reclaim_before, dependencies=()):  # type: ignore[no-untyped-def]
         return None
 

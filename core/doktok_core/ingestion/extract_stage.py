@@ -38,12 +38,12 @@ class ExtractStage:
         self,
         document_repo: DocumentRepository,
         file_storage: FileStorage,
-        layout: FilesystemLayout,
+        files_root: str,
         extractor: ContentExtractor,
     ) -> None:
         self._documents = document_repo
         self._files = file_storage
-        self._layout = layout
+        self._files_root = files_root  # the layout is tenant-scoped, so build it per call
         self._extract = extractor
 
     def process(self, tenant_id: str, document_id: str) -> None:
@@ -54,11 +54,12 @@ class ExtractStage:
         if not source:
             raise ValueError(f"processing document {document_id} has no staged source path")
 
+        layout = FilesystemLayout(self._files_root, tenant_id)
         result, normalized_pdf = self._extract(document.detected_mime or "", str(source))
         language = detect_language(result.content_md)
         artifacts = write_document_artifacts(
             self._files,
-            self._layout,
+            layout,
             document_id,
             tenant_id=tenant_id,
             original_source_path=str(source),

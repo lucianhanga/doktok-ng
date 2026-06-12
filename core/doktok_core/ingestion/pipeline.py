@@ -21,7 +21,7 @@ import logging
 import os
 import shutil
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -136,6 +136,11 @@ class IngestionServices:
     # Feature ledger (M5.10/ADR-0009). When present, features run inline are recorded as done so the
     # reconciler can backfill anything missing (e.g. a feature added after this doc was ingested).
     feature_repo: FeatureRepository | None = None
+    # Staged ingestion (ADR-0015): when on, intake creates a `processing` document + seeds the
+    # `stage_ledger` (the extract stage + every feature) and the reconciler drives extraction +
+    # activation, instead of the inline `_activate` path.
+    staged_ingestion: bool = False
+    stage_ledger: list[tuple[str, int]] = field(default_factory=list)
 
 
 def _structured_entities(
@@ -379,9 +384,40 @@ def process_file(services: IngestionServices, source_path: str) -> IngestionJob:
                 message=f"rejected mime={job.detected_mime} size={size_bytes}",
             )
 
+        if services.staged_ingestion and services.feature_repo is not None:
+            return _create_processing_document(services, job)
         return _activate(services, job, workdir)
     except Exception as exc:  # noqa: BLE001 - record any failure on the job, do not crash the worker
         return _fail(services, job, code="internal_error", message=str(exc))
+
+
+def _create_processing_document(services: IngestionServices, job: IngestionJob) -> IngestionJob:
+    """Staged ingestion (ADR-0015): create a ``processing`` document + seed the stage ledger, then
+    hand off. The reconciler's ``extract`` stage does the extraction + activation; intake ends here.
+    """
+    document_id = _new_id()
+    original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name
+    now = datetime.now(UTC)
+    document = Document(
+        id=document_id,
+        tenant_id=services.tenant_id,
+        sha256=job.sha256 or "",
+        original_filename=original_filename,
+        detected_mime=job.detected_mime,
+        title=Path(original_filename).stem or original_filename,
+        status=DocumentStatus.PROCESSING,
+        created_at=now,
+        metadata={"staged_source": job.source_path},  # workdir original; the extract stage reads it
+    )
+    services.document_repo.add(document)
+    assert services.feature_repo is not None  # guarded by the caller
+    services.feature_repo.seed_for_document(services.tenant_id, document_id, services.stage_ledger)
+
+    job.document_id = document_id
+    job.status = JobStatus.ACTIVE  # intake complete; the stage ledger drives extract -> activation
+    job.finished_at = now
+    services.job_repo.update(job)
+    return job
 
 
 def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> IngestionJob:

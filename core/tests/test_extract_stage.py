@@ -39,13 +39,13 @@ def _processing(doc_id: str, src: Path, *, sha: str = "a" * 64) -> Document:
 
 
 def _stage(tmp_path: Path, repo: InMemoryDocumentRepository) -> ExtractStage:
-    layout = FilesystemLayout(str(tmp_path / "files"), "t1")
-    layout.ensure()
+    files_root = str(tmp_path / "files")
+    FilesystemLayout(files_root, "t1").ensure()
 
     def extractor(mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
         return _result()
 
-    return ExtractStage(repo, LocalFileStorage(), layout, extractor)
+    return ExtractStage(repo, LocalFileStorage(), files_root, extractor)
 
 
 def test_extracts_writes_artifacts_and_activates(tmp_path: Path) -> None:

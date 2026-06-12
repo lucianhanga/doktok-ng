@@ -77,6 +77,27 @@ class InMemoryFeatureRepository:
                     affected += 1
         return affected
 
+    def seed_for_document(
+        self, tenant_id: str, document_id: str, stages: list[tuple[str, int]]
+    ) -> int:
+        now = datetime.now()
+        affected = 0
+        for name, version in stages:
+            if self._find(tenant_id, document_id, name) is None:
+                self.rows.append(
+                    DocumentFeature(
+                        id=uuid.uuid4().hex,
+                        tenant_id=tenant_id,
+                        document_id=document_id,
+                        feature=name,
+                        feature_version=version,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                affected += 1
+        return affected
+
     def claim_next(
         self,
         tenant_id: str,

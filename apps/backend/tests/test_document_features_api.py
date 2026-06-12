@@ -56,6 +56,9 @@ class FakeFeatureRepository:
         self.reset_calls.append((tenant_id, document_id, feature))
         return feature == "entities"
 
+    def requeue_running(self, tenant_id: str) -> int:
+        return 0
+
 
 def _client(repo: FakeFeatureRepository) -> TestClient:
     registry = build_registry()

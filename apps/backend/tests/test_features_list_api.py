@@ -35,6 +35,9 @@ class FakeFeatureRepository:
     def reset(self, tenant_id: str, document_id: str, feature: str) -> bool:
         return False
 
+    def requeue_running(self, tenant_id: str) -> int:
+        return 0
+
     def list_for_tenant(self, tenant_id: str, *, limit: int = 2000) -> list[DocumentFeature]:
         now = datetime.now(UTC)
         return [

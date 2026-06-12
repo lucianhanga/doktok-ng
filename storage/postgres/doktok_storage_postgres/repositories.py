@@ -979,6 +979,17 @@ class PostgresFeatureRepository:
             )
             return cur.rowcount > 0
 
+    def requeue_running(self, tenant_id: str) -> int:
+        # Keep attempts as-is (the orphaned attempt counted); clearing last_attempt_at + status
+        # makes claim_next pick it up on the next pass instead of after the lease window.
+        with self._db.connection() as conn:
+            cur = conn.execute(
+                "UPDATE document_features SET status='pending', last_attempt_at=NULL, "
+                "updated_at=now() WHERE tenant_id=%s AND status='running'",
+                (tenant_id,),
+            )
+            return cur.rowcount
+
 
 _CAT_COLUMNS = "id, tenant_id, name, normalized, status, created_at"
 

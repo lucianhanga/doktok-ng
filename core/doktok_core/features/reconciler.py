@@ -57,6 +57,14 @@ class FeatureReconciler:
             processed += self._drain(tenant_id)
         return processed
 
+    def recover_running(self) -> int:
+        """Requeue feature rows left ``running`` by a previously killed worker (returns the count).
+
+        Run once at startup: with no worker draining yet, any ``running`` row is an orphan, so this
+        recovers it immediately rather than waiting out the per-row lease.
+        """
+        return sum(self._repo.requeue_running(tenant_id) for tenant_id in self._tenant_ids)
+
     def _claim(self, tenant_id: str) -> DocumentFeature | None:
         now = self._clock()
         reclaim_before = now - timedelta(seconds=self._lease_seconds)

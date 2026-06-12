@@ -138,3 +138,12 @@ class InMemoryFeatureRepository:
         row.last_error = None
         row.next_attempt_at = None
         return True
+
+    def requeue_running(self, tenant_id: str) -> int:
+        n = 0
+        for row in self.rows:
+            if row.tenant_id == tenant_id and row.status is FeatureStatus.RUNNING:
+                row.status = FeatureStatus.PENDING
+                row.last_attempt_at = None
+                n += 1
+        return n

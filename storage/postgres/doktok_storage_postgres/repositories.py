@@ -937,6 +937,22 @@ class PostgresFeatureRepository:
                 affected += cur.rowcount
         return affected
 
+    def seed_for_document(
+        self, tenant_id: str, document_id: str, stages: list[tuple[str, int]]
+    ) -> int:
+        affected = 0
+        with self._db.connection() as conn, conn.transaction():
+            for name, version in stages:
+                cur = conn.execute(
+                    "INSERT INTO document_features "
+                    "(id, tenant_id, document_id, feature, feature_version, status) "
+                    "VALUES (gen_random_uuid()::text, %s, %s, %s, %s, 'pending') "
+                    "ON CONFLICT (tenant_id, document_id, feature) DO NOTHING",
+                    (tenant_id, document_id, name, version),
+                )
+                affected += cur.rowcount
+        return affected
+
     def claim_next(
         self,
         tenant_id: str,

@@ -468,6 +468,13 @@ class FeatureRepository(Protocol):
         self, tenant_id: str, document_id: str, feature: str, feature_version: int
     ) -> None: ...
     def ensure_for_active(self, tenant_id: str, features: list[tuple[str, int]]) -> int: ...
+    def seed_for_document(
+        self, tenant_id: str, document_id: str, stages: list[tuple[str, int]]
+    ) -> int:
+        """Seed pending stage rows for one document before it is active (e.g. a ``processing``
+        document at intake). Idempotent: skips stages that already have a row. Returns the count."""
+        ...
+
     def claim_next(
         self,
         tenant_id: str,

@@ -2,7 +2,18 @@
 
 ## Status
 
-Proposed
+Accepted
+
+The three flagged design points are resolved to this ADR's recommended path:
+
+1. **Eventual consistency — accepted.** A document is visible (`active`) once `extract` completes;
+   `chunk_embed` runs as a gated stage right after, so search inclusion is eventually consistent
+   (shown by the badge). This honours the chosen "visible once extraction completes" behaviour and
+   keeps maximum decoupling.
+2. **Per-stage concurrency — phased.** First cut uses the global `reconcile_concurrency` + the OCR
+   predictor pool; a dedicated `DOKTOK_OCR_CONCURRENCY` per-stage cap follows.
+3. **Cutover — flag-gated/shadow.** A `staged_ingestion` flag (default off) gates the new path so it
+   can be built and proven without changing default behaviour, then the default is flipped.
 
 ## Context
 

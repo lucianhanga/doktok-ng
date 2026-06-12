@@ -132,7 +132,10 @@ def build_services(
     pdf_classifier = PyMuPdfClassifier()
     chunker = FixedWindowChunker()
     embedding_provider = OllamaEmbeddingProvider(
-        settings.embedding_model, settings.ollama_base_url, timeout=timeout
+        settings.embedding_model,
+        settings.ollama_base_url,
+        timeout=timeout,
+        keep_alive=settings.embedding_keep_alive,
     )
     chunk_repo = PostgresChunkRepository(db)
     entity_extractor = RegexEntityExtractor()

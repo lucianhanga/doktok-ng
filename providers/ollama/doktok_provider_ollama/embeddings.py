@@ -13,17 +13,30 @@ import httpx
 class OllamaEmbeddingProvider:
     """``EmbeddingProvider`` backed by Ollama's ``/api/embed`` batch endpoint."""
 
-    def __init__(self, model: str, base_url: str, *, timeout: float = 600.0) -> None:
+    def __init__(
+        self,
+        model: str,
+        base_url: str,
+        *,
+        timeout: float = 600.0,
+        keep_alive: str | None = None,
+    ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._keep_alive = keep_alive
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        payload: dict[str, object] = {"model": self._model, "input": texts}
+        if self._keep_alive is not None:
+            # Pin the embedding model resident so it is not evicted and then unable to reload while
+            # the large chat model is pinned (which would hang the call and stall the reconciler).
+            payload["keep_alive"] = self._keep_alive
         response = httpx.post(
             f"{self._base_url}/api/embed",
-            json={"model": self._model, "input": texts},
+            json=payload,
             timeout=self._timeout,
         )
         response.raise_for_status()

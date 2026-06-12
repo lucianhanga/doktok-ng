@@ -89,6 +89,7 @@ testpaths = [
     "apps/mcp/tests",
     "core/tests",
     "contracts/tests",
+    "providers/ollama/tests",
     "providers/openai/tests",
     "storage/postgres/tests",
 ]

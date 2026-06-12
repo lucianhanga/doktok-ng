@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     default_model: str = "qwen3.6:35b-a3b"
     # qwen3-embedding (1024-dim) handles >512-token chunks; mxbai-embed-large truncates at 512.
     embedding_model: str = "qwen3-embedding:0.6b"
+    # Keep the (tiny ~1 GB) embedding model pinned as long as the chat/enrich models, so it is not
+    # evicted first and then unable to reload while the 24 GB chat model is pinned - which hangs
+    # chunk_embed and stalls the single-threaded reconciler. "-1" pins it forever.
+    embedding_keep_alive: str = "30m"
     # OCR engine: "paddleocr" (detect+recognize, no repeat-loops, native confidence) or "glm-ocr"
     # (Ollama vision model). PaddleOCR needs its extra: uv pip install paddleocr paddlepaddle.
     ocr_engine: str = "paddleocr"

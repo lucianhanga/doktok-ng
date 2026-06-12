@@ -20,6 +20,7 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentFeature,
+    DocumentSort,
     DocumentStatus,
     EntitySummary,
     EntityType,
@@ -27,7 +28,10 @@ from doktok_contracts.schemas import (
     FeatureStatus,
     IngestionJob,
     JobStatus,
+    ListAnchor,
+    SortDir,
     StatsSummary,
+    TokenMatch,
     TokenSuggestion,
 )
 from psycopg import errors as pg_errors
@@ -209,6 +213,79 @@ class PostgresIngestionJobRepository:
             )
 
 
+# Sort key -> (SQL ORDER BY expression, is_nullable, cursor-value cast). Static allowlist: the
+# request only ever supplies a DocumentSort enum, never raw SQL, so dynamic ORDER BY can't be
+# injected. The cast pins the cursor parameter's type (Postgres can't infer it from `IS NOT NULL`).
+# "acquired" uses created_at (set at ingest, never null) and rides the existing keyset index;
+# "category" is the alphabetically-first active category name (the one ordering not index-only).
+_SORT_EXPR: dict[DocumentSort, tuple[str, bool, str]] = {
+    DocumentSort.ACQUIRED: ("d.created_at", False, "timestamptz"),
+    DocumentSort.CREATED: ("d.document_date", True, "date"),
+    DocumentSort.TITLE: ("lower(d.title)", True, "text"),
+    DocumentSort.CATEGORY: (
+        "(SELECT min(c.name) FROM document_category_links l "
+        "JOIN categories c ON c.id = l.category_id AND c.tenant_id = l.tenant_id "
+        "WHERE l.document_id = d.id AND l.tenant_id = d.tenant_id AND c.status = 'active')",
+        True,
+        "text",
+    ),
+}
+
+
+def _doc_filter_sql(
+    tenant_id: str,
+    *,
+    status: DocumentStatus | None,
+    category: str | None,
+    needs_attention: bool,
+    tokens: tuple[str, ...],
+    token_type: EntityType | None,
+    token_match: TokenMatch,
+) -> tuple[str, dict[str, Any]]:
+    """Build the shared document-filter WHERE clause (status + category + needs-attention + tokens)
+    and its parameters. Used by both ``list_documents`` (adds keyset + order) and
+    ``list_document_ids``. All values are parameterized; tokens go in as a single ``text[]``."""
+    distinct_tokens = tuple(dict.fromkeys(tokens))  # dedupe, keep order
+    params: dict[str, Any] = {
+        "tenant": tenant_id,
+        "status": status.value if status else None,
+        "category": category,
+        "needs_attention": needs_attention,
+        "tokens": list(distinct_tokens),
+        "token_type": token_type.value if token_type else None,
+        "token_count": len(distinct_tokens),
+    }
+    where = (
+        "d.tenant_id = %(tenant)s "
+        "AND (%(status)s::text IS NULL OR d.status = %(status)s) "
+        "AND (%(category)s::text IS NULL OR EXISTS ("
+        "  SELECT 1 FROM document_category_links l JOIN categories c ON c.id = l.category_id "
+        "  WHERE l.document_id = d.id AND l.tenant_id = d.tenant_id "
+        "  AND c.name = %(category)s AND c.status = 'active')) "
+        "AND (NOT %(needs_attention)s OR EXISTS ("
+        "  SELECT 1 FROM document_features f "
+        "  WHERE f.tenant_id = d.tenant_id AND f.document_id = d.id AND f.status <> 'done'))"
+    )
+    if distinct_tokens:
+        # Tenant-scoped EXISTS over document_entities; ALL counts distinct matches == requested.
+        entity_pred = (
+            "SELECT 1 FROM document_entities e "
+            "WHERE e.tenant_id = d.tenant_id AND e.document_id = d.id "
+            "AND (%(token_type)s::text IS NULL OR e.entity_type = %(token_type)s) "
+            "AND e.normalized_value = ANY(%(tokens)s)"
+        )
+        if token_match is TokenMatch.ALL:
+            where += (
+                " AND (SELECT count(DISTINCT e.normalized_value) FROM document_entities e "
+                "WHERE e.tenant_id = d.tenant_id AND e.document_id = d.id "
+                "AND (%(token_type)s::text IS NULL OR e.entity_type = %(token_type)s) "
+                "AND e.normalized_value = ANY(%(tokens)s)) = %(token_count)s"
+            )
+        else:
+            where += f" AND EXISTS ({entity_pred})"
+    return where, params
+
+
 class PostgresDocumentRepository:
     """``DocumentRepository`` backed by PostgreSQL. Tenant-scoped reads."""
 
@@ -289,42 +366,52 @@ class PostgresDocumentRepository:
         tenant_id: str,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: ListAnchor | None = None,
         status: DocumentStatus | None = None,
         category: str | None = None,
         needs_attention: bool = False,
-    ) -> tuple[list[Document], int, tuple[datetime, str] | None]:
-        params: dict[str, Any] = {
-            "tenant": tenant_id,
-            "status": status.value if status else None,
-            "category": category,
-            "needs_attention": needs_attention,
-        }
-        # Shared filter predicate (status + category EXISTS + needs-attention EXISTS), composed.
-        where = (
-            "d.tenant_id = %(tenant)s "
-            "AND (%(status)s::text IS NULL OR d.status = %(status)s) "
-            "AND (%(category)s::text IS NULL OR EXISTS ("
-            "  SELECT 1 FROM document_category_links l JOIN categories c ON c.id = l.category_id "
-            "  WHERE l.document_id = d.id AND l.tenant_id = d.tenant_id "
-            "  AND c.name = %(category)s AND c.status = 'active')) "
-            "AND (NOT %(needs_attention)s OR EXISTS ("
-            "  SELECT 1 FROM document_features f "
-            "  WHERE f.tenant_id = d.tenant_id AND f.document_id = d.id AND f.status <> 'done'))"
+        sort: DocumentSort = DocumentSort.ACQUIRED,
+        direction: SortDir = SortDir.DESC,
+        tokens: tuple[str, ...] = (),
+        token_type: EntityType | None = None,
+        token_match: TokenMatch = TokenMatch.ALL,
+    ) -> tuple[list[Document], int, ListAnchor | None]:
+        where, params = _doc_filter_sql(
+            tenant_id,
+            status=status,
+            category=category,
+            needs_attention=needs_attention,
+            tokens=tokens,
+            token_type=token_type,
+            token_match=token_match,
         )
-        keyset = (
-            " AND (%(cursor_ts)s::timestamptz IS NULL "
-            "OR (d.created_at, d.id) < (%(cursor_ts)s, %(cursor_id)s))"
-        )
-        params["cursor_ts"] = cursor[0] if cursor else None
-        params["cursor_id"] = cursor[1] if cursor else None
-        # Fetch one extra row to detect whether a further page exists (and where it starts).
+        expr, nullable, cast = _SORT_EXPR[sort]
+        cv = f"%(cur_val)s::{cast}"  # typed cursor value (Postgres can't infer it from IS NOT NULL)
+        # Tie-break by id in the SAME direction as the sort key so the (value, id) ordering is a
+        # total order a single index can satisfy; nulls always sort last (explicit, not PG default).
+        op = "<" if direction is SortDir.DESC else ">"
+        dir_sql = "DESC" if direction is SortDir.DESC else "ASC"
+        order_by = f"ORDER BY {expr} {dir_sql} NULLS LAST, d.id {dir_sql}"
+        params["has_cursor"] = cursor is not None
+        params["cur_val"] = cursor.value if cursor else None
+        params["cur_id"] = cursor.doc_id if cursor else None
+        if nullable:
+            # Three branches because NULLS LAST breaks a plain row comparison: past-in-value, equal
+            # value past-in-id, or the trailing null block.
+            keyset = (
+                f" AND (NOT %(has_cursor)s"
+                f" OR ({cv} IS NOT NULL AND ({expr} {op} {cv}"
+                f" OR ({expr} = {cv} AND d.id {op} %(cur_id)s) OR {expr} IS NULL))"
+                f" OR ({cv} IS NULL AND {expr} IS NULL AND d.id {op} %(cur_id)s))"
+            )
+        else:
+            keyset = f" AND (NOT %(has_cursor)s OR ({expr}, d.id) {op} ({cv}, %(cur_id)s))"
         params["limit_plus_1"] = limit + 1
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                f"SELECT {_DOC_COLUMNS_D} FROM documents d WHERE {where}{keyset} "
-                "ORDER BY d.created_at DESC, d.id DESC LIMIT %(limit_plus_1)s",
+                f"SELECT {_DOC_COLUMNS_D}, {expr} AS sort_value FROM documents d "
+                f"WHERE {where}{keyset} {order_by} LIMIT %(limit_plus_1)s",
                 params,
             ).fetchall()
             total_row = cur.execute(
@@ -335,9 +422,47 @@ class PostgresDocumentRepository:
         rows = rows[:limit]
         documents = [_row_to_document(row) for row in rows]
         next_anchor = (
-            (documents[-1].created_at, documents[-1].id) if has_more and documents else None
+            ListAnchor(
+                sort=sort, direction=direction, value=rows[-1]["sort_value"], doc_id=rows[-1]["id"]
+            )
+            if has_more and rows
+            else None
         )
         return documents, int(total), next_anchor
+
+    def list_document_ids(
+        self,
+        tenant_id: str,
+        *,
+        status: DocumentStatus | None = None,
+        category: str | None = None,
+        needs_attention: bool = False,
+        tokens: tuple[str, ...] = (),
+        token_type: EntityType | None = None,
+        token_match: TokenMatch = TokenMatch.ALL,
+        cap: int = 10_000,
+    ) -> tuple[list[str], int, bool]:
+        where, params = _doc_filter_sql(
+            tenant_id,
+            status=status,
+            category=category,
+            needs_attention=needs_attention,
+            tokens=tokens,
+            token_type=token_type,
+            token_match=token_match,
+        )
+        params["cap"] = cap
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT d.id FROM documents d WHERE {where} ORDER BY d.id LIMIT %(cap)s",
+                params,
+            ).fetchall()
+            total_row = cur.execute(
+                f"SELECT COUNT(*) AS n FROM documents d WHERE {where}", params
+            ).fetchone()
+            total = int(total_row["n"]) if total_row else 0
+        return [r["id"] for r in rows], total, total > cap
 
     def delete(self, tenant_id: str, document_id: str) -> None:
         with self._db.connection() as conn:

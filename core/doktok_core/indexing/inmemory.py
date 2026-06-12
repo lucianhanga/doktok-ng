@@ -36,3 +36,7 @@ class InMemoryChunkRepository:
     def embedding_fingerprint(self, tenant_id: str) -> str:
         ids = sorted(c.id for c in self.chunks if c.tenant_id == tenant_id)
         return f"chunks={len(ids)};latest={ids[-1] if ids else ''}"
+
+    def read_texts(self, tenant_id: str, chunk_ids: list[str]) -> dict[str, str]:
+        wanted = set(chunk_ids)
+        return {c.id: c.text for c in self.chunks if c.tenant_id == tenant_id and c.id in wanted}

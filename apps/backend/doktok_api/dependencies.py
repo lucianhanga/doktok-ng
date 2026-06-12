@@ -16,10 +16,13 @@ from doktok_contracts.ports import (
     AuditLogRepository,
     CategoryRepository,
     ChatModelProvider,
+    ChunkRepository,
     DocumentRepository,
+    EmbeddingProjectionRepository,
     EntityRepository,
     FeatureRepository,
     IngestionJobRepository,
+    ProjectionRequestRepository,
     RagAnswerer,
     RecordRepository,
     Retriever,
@@ -30,6 +33,7 @@ from doktok_core.security.auth import resolve_tenant
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
+    from doktok_core.visualizations.map_service import EmbeddingMapService
     from doktok_storage_postgres import Database
 
 _BEARER_PREFIX = "Bearer "
@@ -261,6 +265,56 @@ def get_category_repository(request: Request) -> CategoryRepository:
     repository = PostgresCategoryRepository(_get_database(request))
     registry.register(CategoryRepository, repository)
     return repository
+
+
+def get_chunk_repository(request: Request) -> ChunkRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(ChunkRepository):
+        return cast(ChunkRepository, registry.resolve(ChunkRepository))
+
+    from doktok_storage_postgres import PostgresChunkRepository
+
+    repository = PostgresChunkRepository(_get_database(request))
+    registry.register(ChunkRepository, repository)
+    return repository
+
+
+def get_embedding_projection_repository(request: Request) -> EmbeddingProjectionRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(EmbeddingProjectionRepository):
+        return cast(EmbeddingProjectionRepository, registry.resolve(EmbeddingProjectionRepository))
+
+    from doktok_storage_postgres import PostgresEmbeddingProjectionRepository
+
+    repository = PostgresEmbeddingProjectionRepository(_get_database(request))
+    registry.register(EmbeddingProjectionRepository, repository)
+    return repository
+
+
+def get_projection_request_repository(request: Request) -> ProjectionRequestRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(ProjectionRequestRepository):
+        return cast(ProjectionRequestRepository, registry.resolve(ProjectionRequestRepository))
+
+    from doktok_storage_postgres import PostgresProjectionRequestRepository
+
+    repository = PostgresProjectionRequestRepository(_get_database(request))
+    registry.register(ProjectionRequestRepository, repository)
+    return repository
+
+
+def get_embedding_map_service(request: Request) -> EmbeddingMapService:
+    from doktok_core.visualizations.map_service import EmbeddingMapService
+
+    settings = request.app.state.settings
+    return EmbeddingMapService(
+        get_embedding_projection_repository(request),
+        get_chunk_repository(request),
+        get_category_repository(request),
+        get_projection_request_repository(request),
+        algorithm=settings.projection_algorithm,
+        version=settings.projection_version,
+    )
 
 
 def get_app_settings_repository(request: Request) -> AppSettingsRepository:

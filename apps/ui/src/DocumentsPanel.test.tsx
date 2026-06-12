@@ -162,3 +162,46 @@ test("Load more pages through the keyset cursor", async () => {
   expect(screen.getByText("d59.pdf")).toBeInTheDocument(); // now loaded
   expect(screen.queryByText("Load more")).not.toBeInTheDocument(); // last page reached
 });
+
+test("Thumbnails subtab shows a thumbnail grid for the same documents", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf", title: "Report" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument()); // list default
+
+  fireEvent.click(screen.getByText("Thumbnails"));
+  // No refetch needed: the card renders from the same data with a first-page preview image.
+  expect(screen.getByLabelText("Select all loaded documents")).toBeInTheDocument();
+  const img = screen.getByAltText("Preview of Report") as HTMLImageElement;
+  expect(img.getAttribute("src")).toContain("/api/v1/documents/a/thumbnail");
+});
+
+test("sort control changes the documents query", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "title" } });
+  await waitFor(() => {
+    const calledTitleSort = fetchMock.mock.calls.some(([input]) =>
+      String(input).includes("sort=title"),
+    );
+    expect(calledTitleSort).toBe(true);
+  });
+});
+
+test("adding a token filter narrows the query", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  const input = screen.getByLabelText("Filter by token");
+  fireEvent.change(input, { target: { value: "Acme" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => {
+    const calledWithToken = fetchMock.mock.calls.some((call) => {
+      const url = String(call[0]);
+      return url.includes("/api/v1/documents?") && url.includes("token=Acme");
+    });
+    expect(calledWithToken).toBe(true);
+  });
+});

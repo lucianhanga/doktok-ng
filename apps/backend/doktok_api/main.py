@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from doktok_api import __version__
 from doktok_api.routers import (
+    aggregate,
     audit,
     categories,
     chat,
@@ -128,6 +129,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(tokens.router)
     app.include_router(features.router)
     app.include_router(categories.router)
+    app.include_router(aggregate.router)
 
     return app
 

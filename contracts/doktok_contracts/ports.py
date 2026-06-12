@@ -22,6 +22,8 @@ from doktok_contracts.media import (
     TextChunk,
 )
 from doktok_contracts.schemas import (
+    AggregationIntent,
+    AggregationResult,
     AuditEvent,
     Category,
     CategorySummary,
@@ -251,6 +253,12 @@ class RecordRepository(Protocol):
         ...
 
     def list_for_document(self, tenant_id: str, document_id: str) -> list[ExtractedRecord]: ...
+
+    def aggregate(self, tenant_id: str, intent: AggregationIntent) -> AggregationResult:
+        """Deterministic typed aggregation (sum/count) over a tenant's records, filtered by the
+        intent (merchant fuzzy-match, type, direction, currency, date range). Money is summed per
+        currency, never across them."""
+        ...
 
 
 @runtime_checkable

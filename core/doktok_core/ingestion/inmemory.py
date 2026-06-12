@@ -47,27 +47,14 @@ class InMemoryIngestionJobRepository:
             if job.tenant_id == tenant_id and job.sha256 == sha256
         ]
 
-    def delete_failed_for_sha(self, tenant_id: str, sha256: str) -> int:
+    def delete_for_document(self, tenant_id: str, document_id: str) -> None:
         victims = [
             jid
             for jid, job in self._jobs.items()
-            if job.tenant_id == tenant_id
-            and job.sha256 == sha256
-            and job.status is JobStatus.FAILED
+            if job.tenant_id == tenant_id and job.document_id == document_id
         ]
         for jid in victims:
             del self._jobs[jid]
-        return len(victims)
-
-    def delete_for_sha(self, tenant_id: str, sha256: str) -> int:
-        victims = [
-            jid
-            for jid, job in self._jobs.items()
-            if job.tenant_id == tenant_id and job.sha256 == sha256
-        ]
-        for jid in victims:
-            del self._jobs[jid]
-        return len(victims)
 
     def list_in_flight(self, tenant_id: str, *, before: datetime) -> list[IngestionJob]:
         terminal = {

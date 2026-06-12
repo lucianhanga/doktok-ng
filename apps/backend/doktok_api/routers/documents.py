@@ -218,8 +218,7 @@ def reingest_document(
         raise HTTPException(status_code=404, detail="original file not found")
     data = source.read_bytes()  # read before purging, so nothing is lost
 
-    if document.sha256:
-        jobs.delete_for_sha(tenant.tenant_id, document.sha256)
+    jobs.delete_for_document(tenant.tenant_id, document_id)
     repo.delete(tenant.tenant_id, document_id)  # FK-cascades chunks/entities/features/links/records
     shutil.rmtree(base, ignore_errors=True)
 
@@ -243,8 +242,7 @@ def delete_document(
         return {"status": "deleted"}
 
     base = _document_dir(document, Path(request.app.state.settings.files_root))
-    if document.sha256:
-        jobs.delete_for_sha(tenant.tenant_id, document.sha256)
+    jobs.delete_for_document(tenant.tenant_id, document_id)
     repo.delete(tenant.tenant_id, document_id)  # FK-cascades derived rows
     # Remove files last: with DB rows already gone, a failed rmtree leaves only orphan files (which
     # a retry clears), never a dangling DB row pointing at missing files.

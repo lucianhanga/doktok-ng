@@ -174,21 +174,12 @@ class PostgresIngestionJobRepository:
             ).fetchall()
         return [_row_to_job(row) for row in rows]
 
-    def delete_failed_for_sha(self, tenant_id: str, sha256: str) -> int:
+    def delete_for_document(self, tenant_id: str, document_id: str) -> None:
         with self._db.connection() as conn:
-            cur = conn.execute(
-                "DELETE FROM ingestion_jobs WHERE tenant_id=%s AND sha256=%s AND status='failed'",
-                (tenant_id, sha256),
+            conn.execute(
+                "DELETE FROM ingestion_jobs WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
             )
-            return cur.rowcount
-
-    def delete_for_sha(self, tenant_id: str, sha256: str) -> int:
-        with self._db.connection() as conn:
-            cur = conn.execute(
-                "DELETE FROM ingestion_jobs WHERE tenant_id=%s AND sha256=%s",
-                (tenant_id, sha256),
-            )
-            return cur.rowcount
 
     def list_in_flight(self, tenant_id: str, *, before: datetime) -> list[IngestionJob]:
         with self._db.connection() as conn:

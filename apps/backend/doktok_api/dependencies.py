@@ -159,34 +159,49 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     if registry.is_registered(RagAnswerer):
         return cast(RagAnswerer, registry.resolve(RagAnswerer))
 
+    from doktok_contracts.ports import ChatModelProvider
     from doktok_core.rag.answerer import DefaultRagAnswerer
     from doktok_core.rag.reranker import LlmReranker
+    from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
     from doktok_provider_ollama import OllamaChatModelProvider
 
     settings = request.app.state.settings
     # Effective RAG model selection (Settings tab > AI section), persisted; applied at startup.
-    from doktok_core.settings.catalog import ollama_think_for
+    app_settings = get_app_settings_repository(request)
+    rag = app_settings.get_ai_settings().rag
+    openai_key = app_settings.get_openai_api_key()
+    chat_model: ChatModelProvider
+    rerank_model: ChatModelProvider
+    if rag.provider == "openai" and openai_key:
+        from doktok_provider_openai import OpenAiChatModelProvider
 
-    rag = get_app_settings_repository(request).get_ai_settings().rag
-    rag_think = ollama_think_for(rag.reasoning, rag.model, structured=False)
-    chat_model = OllamaChatModelProvider(
-        rag.model,
-        settings.ollama_base_url,
-        timeout=settings.rag_timeout_seconds,
-        num_ctx=rag.num_ctx,
-        keep_alive=settings.chat_keep_alive,
-        think=rag_think,
-    )
-    # The listwise reranker emits only a short JSON array - cap its output (and allow a smaller,
-    # swappable model) so it doesn't consume the answer call's full generation budget.
-    rerank_model = OllamaChatModelProvider(
-        settings.rerank_model or rag.model,
-        settings.ollama_base_url,
-        timeout=settings.rag_timeout_seconds,
-        num_ctx=rag.num_ctx,
-        num_predict=settings.rerank_num_predict,
-        keep_alive=settings.chat_keep_alive,
-    )
+        effort = openai_reasoning_effort(rag.reasoning, rag.model)
+        chat_model = OpenAiChatModelProvider(
+            rag.model, openai_key, timeout=settings.rag_timeout_seconds, reasoning_effort=effort
+        )
+        rerank_model = chat_model  # same remote model; the prompt already caps the rerank output
+    else:
+        # Ollama path: the selected Ollama model, or the env default if OpenAI lacks a key.
+        model = rag.model if rag.provider == "ollama" else settings.default_model
+        rag_think = ollama_think_for(rag.reasoning, model, structured=False)
+        chat_model = OllamaChatModelProvider(
+            model,
+            settings.ollama_base_url,
+            timeout=settings.rag_timeout_seconds,
+            num_ctx=rag.num_ctx,
+            keep_alive=settings.chat_keep_alive,
+            think=rag_think,
+        )
+        # The listwise reranker emits only a short JSON array - cap its output (and allow a smaller,
+        # swappable model) so it doesn't consume the answer call's full generation budget.
+        rerank_model = OllamaChatModelProvider(
+            settings.rerank_model or model,
+            settings.ollama_base_url,
+            timeout=settings.rag_timeout_seconds,
+            num_ctx=rag.num_ctx,
+            num_predict=settings.rerank_num_predict,
+            keep_alive=settings.chat_keep_alive,
+        )
     answerer = DefaultRagAnswerer(
         get_retriever(request),
         chat_model,

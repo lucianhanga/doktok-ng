@@ -28,6 +28,7 @@ members = [
     "doktok-modalities-files",
     "doktok-ng",
     "doktok-provider-ollama",
+    "doktok-provider-openai",
     "doktok-provider-paddleocr",
     "doktok-retrieval-hybrid",
     "doktok-storage-filesystem",
@@ -641,6 +642,7 @@ dependencies = [
     { name = "doktok-mcp" },
     { name = "doktok-modalities-files" },
     { name = "doktok-provider-ollama" },
+    { name = "doktok-provider-openai" },
     { name = "doktok-provider-paddleocr" },
     { name = "doktok-retrieval-hybrid" },
     { name = "doktok-storage-filesystem" },
@@ -668,6 +670,7 @@ requires-dist = [
     { name = "doktok-mcp", editable = "apps/mcp" },
     { name = "doktok-modalities-files", editable = "modalities/files" },
     { name = "doktok-provider-ollama", editable = "providers/ollama" },
+    { name = "doktok-provider-openai", editable = "providers/openai" },
     { name = "doktok-provider-paddleocr", editable = "providers/paddleocr" },
     { name = "doktok-retrieval-hybrid", editable = "retrieval/hybrid" },
     { name = "doktok-storage-filesystem", editable = "storage/filesystem" },
@@ -691,6 +694,21 @@ dev = [
 name = "doktok-provider-ollama"
 version = "0.0.0"
 source = { editable = "providers/ollama" }
+dependencies = [
+    { name = "doktok-contracts" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "doktok-contracts", editable = "contracts" },
+    { name = "httpx", specifier = ">=0.27" },
+]
+
+[[package]]
+name = "doktok-provider-openai"
+version = "0.0.0"
+source = { editable = "providers/openai" }
 dependencies = [
     { name = "doktok-contracts" },
     { name = "httpx" },

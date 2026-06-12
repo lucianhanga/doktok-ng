@@ -100,6 +100,7 @@ export function SettingsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [openaiKey, setOpenaiKey] = useState("");
 
   useEffect(() => {
     const c = new AbortController();
@@ -119,9 +120,11 @@ export function SettingsPanel() {
     if (!ai) return;
     setSaving(true);
     setNotice("");
-    putAiSettings({ pipeline: ai.pipeline, rag: ai.rag })
+    // Send the key only if the user typed one (empty leaves the stored key unchanged).
+    putAiSettings({ pipeline: ai.pipeline, rag: ai.rag, openai_api_key: openaiKey || null })
       .then((saved) => {
         setAi(saved);
+        setOpenaiKey("");
         setNotice("Saved. Restart the backend and worker to apply the new models.");
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not save"))
@@ -161,6 +164,28 @@ export function SettingsPanel() {
             reasoningLevels={catalog.reasoning_levels}
             onChange={(rag) => setAi({ ...ai, rag })}
           />
+          <div className="settings-purpose">
+            <h4>OpenAI</h4>
+            <p className="muted">
+              Required only if you pick an OpenAI model above. Selecting OpenAI sends document text to
+              api.openai.com (an explicit exception to the local-first / no-egress default). The key
+              is stored and never shown again.
+              {ai.openai_api_key_set ? " A key is currently configured." : ""}
+            </p>
+            <div className="settings-row">
+              <label>
+                API key{" "}
+                <input
+                  type="password"
+                  aria-label="OpenAI API key"
+                  value={openaiKey}
+                  onChange={(e) => setOpenaiKey(e.target.value)}
+                  placeholder={ai.openai_api_key_set ? "configured - type to replace" : "Enter key"}
+                />
+              </label>
+            </div>
+          </div>
+
           <div className="settings-actions">
             <button type="button" onClick={save} disabled={saving}>
               {saving ? "Saving…" : "Save"}

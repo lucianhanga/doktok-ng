@@ -12,6 +12,7 @@ dependencies = [
     "doktok-worker",
     "doktok-mcp",
     "doktok-provider-ollama",
+    "doktok-provider-openai",
     "doktok-provider-paddleocr",
     "doktok-storage-postgres",
     "doktok-storage-filesystem",
@@ -29,6 +30,7 @@ members = [
     "apps/worker",
     "apps/mcp",
     "providers/ollama",
+    "providers/openai",
     "providers/paddleocr",
     "storage/postgres",
     "storage/filesystem",
@@ -45,6 +47,7 @@ doktok-api = { workspace = true }
 doktok-worker = { workspace = true }
 doktok-mcp = { workspace = true }
 doktok-provider-ollama = { workspace = true }
+doktok-provider-openai = { workspace = true }
 doktok-provider-paddleocr = { workspace = true }
 doktok-storage-postgres = { workspace = true }
 doktok-storage-filesystem = { workspace = true }
@@ -86,6 +89,7 @@ testpaths = [
     "apps/mcp/tests",
     "core/tests",
     "contracts/tests",
+    "providers/openai/tests",
     "storage/postgres/tests",
 ]
 
@@ -100,6 +104,7 @@ root_packages = [
     "doktok_worker",
     "doktok_mcp",
     "doktok_provider_ollama",
+    "doktok_provider_openai",
     "doktok_storage_postgres",
     "doktok_storage_filesystem",
     "doktok_modalities_files",
@@ -120,6 +125,7 @@ forbidden_modules = [
     "doktok_worker",
     "doktok_mcp",
     "doktok_provider_ollama",
+    "doktok_provider_openai",
     "doktok_storage_postgres",
     "doktok_storage_filesystem",
     "doktok_modalities_files",

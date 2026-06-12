@@ -27,6 +27,20 @@ MODEL_CATALOG = ModelCatalog(
             contexts=[8192, 16384, 32768],
             supports_reasoning=True,
         ),
+        ModelOption(
+            provider="openai",
+            model="gpt-4o-mini",
+            label="OpenAI gpt-4o-mini - cheap remote (easy job)",
+            contexts=[128000],
+            supports_reasoning=False,
+        ),
+        ModelOption(
+            provider="openai",
+            model="gpt-5-nano",
+            label="OpenAI gpt-5-nano - cheapest reasoning remote",
+            contexts=[128000],
+            supports_reasoning=True,
+        ),
     ],
     rag=[
         ModelOption(
@@ -43,9 +57,26 @@ MODEL_CATALOG = ModelCatalog(
             contexts=[8192, 16384, 32768],
             supports_reasoning=True,
         ),
+        ModelOption(
+            provider="openai",
+            model="gpt-4o-mini",
+            label="OpenAI gpt-4o-mini - cheap remote",
+            contexts=[128000],
+            supports_reasoning=False,
+        ),
+        ModelOption(
+            provider="openai",
+            model="gpt-5-mini",
+            label="OpenAI gpt-5-mini - cheap reasoning remote",
+            contexts=[128000],
+            supports_reasoning=True,
+        ),
     ],
     reasoning_levels=REASONING_LEVELS,
 )
+
+# OpenAI models whose name starts with one of these reason; they take reasoning_effort, not temp.
+_OPENAI_REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
 def ollama_think_for(reasoning: str, model: str, *, structured: bool) -> bool:
@@ -57,3 +88,10 @@ def ollama_think_for(reasoning: str, model: str, *, structured: bool) -> bool:
     if structured and "a3b" in model:
         return True
     return reasoning != "off"
+
+
+def openai_reasoning_effort(reasoning: str, model: str) -> str | None:
+    """Map a density level to OpenAI ``reasoning_effort`` (None for non-reasoning models)."""
+    if not model.startswith(_OPENAI_REASONING_PREFIXES):
+        return None
+    return "minimal" if reasoning == "off" else reasoning

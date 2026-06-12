@@ -548,3 +548,36 @@ class ModelCatalog(BaseModel):
     pipeline: list[ModelOption] = Field(default_factory=list)
     rag: list[ModelOption] = Field(default_factory=list)
     reasoning_levels: list[str] = Field(default_factory=list)
+
+
+class ProjectionPoint(BaseModel):
+    """One chunk placed in the reduced (2D/3D) embedding space (ADR-0016, M7.1).
+
+    Geometry only; the point's color category and text snippet are resolved at read time from the
+    live category links and chunk text, so re-classification does not require re-projection.
+    """
+
+    chunk_id: str
+    document_id: str
+    x: float
+    y: float
+    z: float | None = None
+
+
+class EmbeddingProjection(BaseModel):
+    """A cached 2D/3D projection of a tenant's chunk embeddings for the Insights tab (ADR-0016).
+
+    One cached projection per (tenant_id, dim); recompute replaces it. ``input_fingerprint``
+    captures the inputs (chunk count + freshness + algorithm + version) so the UI can detect
+    staleness without refitting. ``points`` is empty in header-only reads (status checks).
+    """
+
+    tenant_id: str
+    dim: int
+    algorithm: str
+    version: int = 1
+    input_fingerprint: str
+    n_points: int
+    truncated: bool = False
+    computed_at: datetime
+    points: list[ProjectionPoint] = Field(default_factory=list)

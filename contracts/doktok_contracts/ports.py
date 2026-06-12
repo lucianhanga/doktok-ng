@@ -37,6 +37,7 @@ from doktok_contracts.schemas import (
     DocumentSort,
     DocumentStatus,
     DocumentVersion,
+    EmbeddingProjection,
     EntitySummary,
     EntityType,
     ExtractedRecord,
@@ -295,6 +296,23 @@ class EmbeddingProvider(Protocol):
 class ChunkRepository(Protocol):
     def add_chunks(self, chunks: list[DocumentChunk], embeddings: list[list[float]]) -> None: ...
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
+
+
+@runtime_checkable
+class EmbeddingProjectionRepository(Protocol):
+    """Cache of computed 2D/3D embedding-space projections for the Insights tab (ADR-0016, M7.1)."""
+
+    def upsert(self, projection: EmbeddingProjection) -> None:
+        """Replace the cached projection for (tenant_id, dim) with this one (points included)."""
+        ...
+
+    def get(self, tenant_id: str, dim: int) -> EmbeddingProjection | None:
+        """Latest cached projection for (tenant, dim), points included; None if not computed."""
+        ...
+
+    def get_header(self, tenant_id: str, dim: int) -> EmbeddingProjection | None:
+        """Projection metadata only (points empty) for status checks; None if not computed."""
+        ...
 
 
 @runtime_checkable

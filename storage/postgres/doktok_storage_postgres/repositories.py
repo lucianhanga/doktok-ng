@@ -23,6 +23,7 @@ from doktok_contracts.schemas import (
     DocumentFeature,
     DocumentSort,
     DocumentStatus,
+    EmbeddingProjection,
     EntitySummary,
     EntityType,
     ExtractedRecord,
@@ -30,6 +31,7 @@ from doktok_contracts.schemas import (
     IngestionJob,
     JobStatus,
     ListAnchor,
+    ProjectionPoint,
     SortDir,
     StatsSummary,
     TokenMatch,
@@ -1375,3 +1377,105 @@ class PostgresAppSettingsRepository:
 
     def set_openai_api_key(self, key: str) -> None:
         self._set("openai_api_key", key)
+
+
+_PROJECTION_HEADER_COLS = "algorithm, version, input_fingerprint, n_points, truncated, computed_at"
+
+
+class PostgresEmbeddingProjectionRepository:
+    """Caches one 2D/3D embedding-space projection per (tenant, dim) (ADR-0016)."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def upsert(self, projection: EmbeddingProjection) -> None:
+        projection_id = uuid.uuid4().hex
+        with self._db.connection() as conn, conn.transaction():
+            # Replace any existing projection for this (tenant, dim); cascade drops its points.
+            conn.execute(
+                "DELETE FROM embedding_projections WHERE tenant_id=%s AND dim=%s",
+                (projection.tenant_id, projection.dim),
+            )
+            conn.execute(
+                "INSERT INTO embedding_projections "
+                "(id, tenant_id, dim, algorithm, version, input_fingerprint, n_points, "
+                "truncated, computed_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    projection_id,
+                    projection.tenant_id,
+                    projection.dim,
+                    projection.algorithm,
+                    projection.version,
+                    projection.input_fingerprint,
+                    projection.n_points,
+                    projection.truncated,
+                    projection.computed_at,
+                ),
+            )
+            # COPY the points in one stream - projections can hold tens of thousands of rows.
+            with (
+                conn.cursor() as cur,
+                cur.copy(
+                    "COPY embedding_projection_points "
+                    "(projection_id, tenant_id, chunk_id, document_id, x, y, z) FROM STDIN"
+                ) as copy,
+            ):
+                for p in projection.points:
+                    copy.write_row(
+                        (
+                            projection_id,
+                            projection.tenant_id,
+                            p.chunk_id,
+                            p.document_id,
+                            p.x,
+                            p.y,
+                            p.z,
+                        )
+                    )
+
+    def get(self, tenant_id: str, dim: int) -> EmbeddingProjection | None:
+        with self._db.connection() as conn:
+            header = conn.execute(
+                f"SELECT id, {_PROJECTION_HEADER_COLS} FROM embedding_projections "
+                "WHERE tenant_id=%s AND dim=%s",
+                (tenant_id, dim),
+            ).fetchone()
+            if header is None:
+                return None
+            rows = conn.execute(
+                "SELECT chunk_id, document_id, x, y, z FROM embedding_projection_points "
+                "WHERE projection_id=%s",
+                (header[0],),
+            ).fetchall()
+        points = [
+            ProjectionPoint(chunk_id=r[0], document_id=r[1], x=r[2], y=r[3], z=r[4]) for r in rows
+        ]
+        return self._row_to_projection(tenant_id, dim, header, points)
+
+    def get_header(self, tenant_id: str, dim: int) -> EmbeddingProjection | None:
+        with self._db.connection() as conn:
+            header = conn.execute(
+                f"SELECT id, {_PROJECTION_HEADER_COLS} FROM embedding_projections "
+                "WHERE tenant_id=%s AND dim=%s",
+                (tenant_id, dim),
+            ).fetchone()
+        if header is None:
+            return None
+        return self._row_to_projection(tenant_id, dim, header, [])
+
+    @staticmethod
+    def _row_to_projection(
+        tenant_id: str, dim: int, header: tuple[Any, ...], points: list[ProjectionPoint]
+    ) -> EmbeddingProjection:
+        _id, algorithm, version, fingerprint, n_points, truncated, computed_at = header
+        return EmbeddingProjection(
+            tenant_id=tenant_id,
+            dim=dim,
+            algorithm=algorithm,
+            version=version,
+            input_fingerprint=fingerprint,
+            n_points=n_points,
+            truncated=truncated,
+            computed_at=computed_at,
+            points=points,
+        )

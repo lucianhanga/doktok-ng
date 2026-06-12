@@ -139,13 +139,22 @@ def build_services(
     entity_repo = PostgresEntityRepository(db)
     lexical_term_extractor = PostgresLexicalTermExtractor(db)
     feature_repo = PostgresFeatureRepository(db)
-    # The worker's chat model serves only the OCR-quality judge; point it at the judge model (dense,
-    # shared with enrichment) so ingestion never loads the 23 GB qwen3.6 and evicts qwen3:14b.
+    # The worker's chat model serves only the OCR-quality judge. Point it at the SAME model (and
+    # context) the pipeline/enrichment uses, so the worker keeps a single large model resident
+    # instead of loading a second one and thrashing GPU memory under a tight budget - which evicts
+    # the in-use model and stalls the single-threaded reconciler. When the pipeline runs on OpenAI
+    # (remote), the judge stays on the local judge model.
+    judge_model = (
+        settings.judge_model
+        if use_openai_pipeline
+        else (pipeline.model if pipeline.provider == "ollama" else settings.enrich_model)
+    )
+    judge_num_ctx = settings.judge_num_ctx if use_openai_pipeline else pipeline.num_ctx
     chat_model = OllamaChatModelProvider(
-        settings.judge_model,
+        judge_model,
         settings.ollama_base_url,
         timeout=timeout,
-        num_ctx=settings.judge_num_ctx,
+        num_ctx=judge_num_ctx,
         keep_alive=settings.enrich_keep_alive,
     )
     metadata_extractor: MetadataExtractor

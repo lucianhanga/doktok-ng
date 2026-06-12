@@ -204,6 +204,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Fixed
+- **Worker stalling under GPU memory thrash**: the OCR-quality judge was hardcoded to a second model
+  (`qwen3:14b`), so with the pipeline/RAG on the 24 GB `qwen3.6:35b-a3b` it loaded two large models on
+  a tight budget — Ollama evicted/reloaded the in-use model and the single-threaded reconciler blocked
+  on the stalled call (appearing "stuck" until a restart). The judge now uses the **same** model and
+  context as the configured Ollama pipeline, so the worker keeps one large model resident.
 - **Ingestion ledger over-deletion**: deleting or re-ingesting a document used `delete_for_sha`, which
   purged jobs by content hash and so could wipe out *other* documents' jobs that happened to share a
   SHA. Replaced it with `delete_for_document` (scoped by `document_id`) across the

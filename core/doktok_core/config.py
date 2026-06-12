@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     # of `ingest_concurrency` independent predictors, so this also sets how many pages OCR in
     # parallel - raise it to use more cores (bound by CPU count and Ollama/DB capacity).
     ingest_concurrency: int = 4
+    # Staged ingestion (ADR-0015): when on, intake creates a `processing` document + seeds the
+    # stage ledger and the `extract` stage does OCR/extraction + activation, instead of the inline
+    # pipeline. Default off while the staged path is built and proven; flip once it ships.
+    staged_ingestion: bool = False
     # How many feature-reconciler runs proceed in parallel (backfills drain faster). The reconciler
     # claims distinct rows with SKIP LOCKED, so this is safe; bound it by Ollama/DB capacity.
     reconcile_concurrency: int = 2

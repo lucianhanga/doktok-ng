@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from functools import cmp_to_key
 from typing import Any
 
@@ -81,6 +81,29 @@ class InMemoryDocumentRepository:
         doc.document_date = document_date
         doc.location = location
         doc.summary = summary
+
+    def activate(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        storage_path: str,
+        metadata: dict[str, object],
+    ) -> bool:
+        doc = self._docs.get(document_id)
+        if doc is None or doc.tenant_id != tenant_id or doc.status is not DocumentStatus.PROCESSING:
+            return False
+        if self.find_active_by_sha256(tenant_id, doc.sha256):
+            raise DuplicateActiveDocumentError(
+                f"active document with sha {doc.sha256[:8]} already exists"
+            )
+        now = datetime.now(UTC)
+        doc.status = DocumentStatus.ACTIVE
+        doc.storage_path = storage_path
+        doc.metadata = {**doc.metadata, **metadata}
+        doc.activated_at = now
+        doc.ingested_at = now
+        return True
 
     def _sort_value(self, d: Document, sort: DocumentSort) -> _SortVal:
         if sort is DocumentSort.ACQUIRED:

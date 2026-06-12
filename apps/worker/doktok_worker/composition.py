@@ -19,6 +19,7 @@ from doktok_core.features.processors import (
     DocMetadataFeature,
     EntitiesFeature,
     StructuredRecordsFeature,
+    ThumbnailFeature,
 )
 from doktok_core.features.reconciler import FeatureReconciler
 from doktok_core.indexing.chunker import FixedWindowChunker
@@ -32,6 +33,7 @@ from doktok_modalities_files import (
     PyMuPdfClassifier,
     PyMuPdfRenderer,
     PyMuPdfTextExtractor,
+    PyMuPdfThumbnailer,
     SearchablePdfBuilder,
 )
 from doktok_provider_ollama import (
@@ -126,6 +128,7 @@ def build_services(
         )
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
+    thumbnailer = PyMuPdfThumbnailer()
     pdf_classifier = PyMuPdfClassifier()
     chunker = FixedWindowChunker()
     embedding_provider = OllamaEmbeddingProvider(
@@ -211,6 +214,7 @@ def build_services(
         DocMetadataFeature(document_repo, file_storage, metadata_extractor),
         DocClassifyFeature(document_repo, file_storage, category_classifier, category_repo),
         StructuredRecordsFeature(document_repo, file_storage, record_extractor, record_repo),
+        ThumbnailFeature(document_repo, file_storage, thumbnailer),
     ]
     reconciler = FeatureReconciler(
         feature_repo,

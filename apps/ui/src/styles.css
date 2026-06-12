@@ -720,6 +720,48 @@ tr.row-selected {
   margin: 0.25rem 0 0;
   line-height: 1.5;
 }
+
+/* Under the title: thumbnail on the left, short description on the right. */
+.doc-overview {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+.doc-overview-text {
+  flex: 1;
+  min-width: 0;
+}
+.doc-overview-text p {
+  margin: 0.25rem 0 0;
+  line-height: 1.5;
+}
+.doc-thumb {
+  flex: 0 0 auto;
+  width: 128px;
+  height: auto;
+  max-height: 180px;
+  object-fit: contain;
+  object-position: top;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 6px;
+  background: #fff;
+}
+.doc-thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: rgba(127, 127, 127, 0.8);
+  background: rgba(127, 127, 127, 0.08);
+}
+@media (max-width: 560px) {
+  .doc-overview {
+    flex-direction: column;
+  }
+}
 .doc-tabs {
   margin: 0.5rem 0 0.75rem;
 }

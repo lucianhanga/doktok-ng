@@ -79,3 +79,23 @@ def test_normalized_variant_missing_is_404(tmp_path: Path) -> None:
 def test_unknown_document_is_404(tmp_path: Path) -> None:
     resp = _client(str(tmp_path)).get("/api/v1/documents/missing/file", headers=_auth())
     assert resp.status_code == 404
+
+
+def test_thumbnail_served_when_present(tmp_path: Path) -> None:
+    thumb = tmp_path / "thumbnails" / "thumb.webp"
+    thumb.parent.mkdir(parents=True)
+    thumb.write_bytes(b"RIFF....WEBP")
+    resp = _client(str(tmp_path)).get("/api/v1/documents/d1/thumbnail", headers=_auth())
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/webp"
+    assert resp.content == b"RIFF....WEBP"
+
+
+def test_thumbnail_missing_is_404(tmp_path: Path) -> None:
+    # No thumbnails/thumb.webp yet (feature not run) -> 404 so the UI shows a placeholder.
+    resp = _client(str(tmp_path)).get("/api/v1/documents/d1/thumbnail", headers=_auth())
+    assert resp.status_code == 404
+
+
+def test_thumbnail_requires_token(tmp_path: Path) -> None:
+    assert _client(str(tmp_path)).get("/api/v1/documents/d1/thumbnail").status_code == 401

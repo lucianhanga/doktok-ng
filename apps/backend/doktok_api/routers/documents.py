@@ -30,6 +30,7 @@ from doktok_contracts.schemas import (
     DocumentStatus,
     EntityTypeCount,
 )
+from doktok_core.documents.artifacts import THUMBNAIL_REL
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
@@ -292,4 +293,33 @@ def get_document_file(
         filename=document.original_filename,
         content_disposition_type=disposition,
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.get("/{document_id}/thumbnail")
+def get_document_thumbnail(
+    document_id: str,
+    tenant: Tenant,
+    repo: Repo,
+) -> FileResponse:
+    """Serve the document's first-page preview (WebP) for the card and grid/list views.
+
+    Returns 404 until the ``thumbnail`` feature has produced it (or for documents that cannot be
+    rendered), so the UI falls back to a placeholder.
+    """
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None or not document.storage_path:
+        raise HTTPException(status_code=404, detail="document not found")
+    base = Path(document.storage_path)
+    path = (base / THUMBNAIL_REL).resolve()
+    if base.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="thumbnail not available")
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            # Bytes are fixed for a document version; allow a day of private caching.
+            "Cache-Control": "private, max-age=86400",
+        },
     )

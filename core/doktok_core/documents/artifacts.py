@@ -43,6 +43,9 @@ _MIME_EXTENSION = {
 
 NORMALIZED_PDF_REL = "normalized/searchable.pdf"
 
+# First-page preview written by the ``thumbnail`` feature processor, relative to the document dir.
+THUMBNAIL_REL = "thumbnails/thumb.webp"
+
 
 def extension_for(mime: str | None, original_filename: str) -> str:
     """Choose a file extension from the detected MIME, falling back to the filename suffix."""

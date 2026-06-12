@@ -46,6 +46,7 @@ const FEATURE_LABELS: Record<string, string> = {
   doc_classify: "tags",
   entities: "ents",
   structured_records: "recs",
+  thumbnail: "thumb",
 };
 
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
@@ -55,6 +56,7 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   doc_classify: "Categories — assigns multi-label categories",
   entities: "Entities & keywords extracted from the text",
   structured_records: "Structured records — extracts transactions/line items for aggregation",
+  thumbnail: "Thumbnail — first-page preview image for the document card and grid/list views",
 };
 
 function featureTooltip(f: DocumentFeature): string {

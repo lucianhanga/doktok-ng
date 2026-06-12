@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   documentFileUrl,
+  documentThumbnailUrl,
   fetchDocumentContent,
   fetchDocumentDetail,
   fetchDocumentEntities,
@@ -21,7 +22,29 @@ const FEATURE_LABELS: Record<string, string> = {
   doc_classify: "Categories",
   entities: "Entities",
   structured_records: "Records",
+  thumbnail: "Thumbnail",
 };
+
+/** First-page preview; falls back to a file-type glyph until the thumbnail feature produces one. */
+function DocumentThumbnail({ id, title }: { id: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="doc-thumb doc-thumb-fallback" aria-hidden="true">
+        PDF
+      </div>
+    );
+  }
+  return (
+    <img
+      className="doc-thumb"
+      src={documentThumbnailUrl(id)}
+      alt={`First-page preview of ${title}`}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 export function DocumentDetail({
   id,
@@ -141,12 +164,13 @@ export function DocumentDetail({
       {data && doc && (
         <div className="doc-card-body">
           <div className="doc-card-main">
-            {doc.summary && (
-              <section className="doc-summary">
+            <section className="doc-overview">
+              <DocumentThumbnail id={id} title={title} />
+              <div className="doc-overview-text">
                 <h3>Summary</h3>
-                <p>{doc.summary}</p>
-              </section>
-            )}
+                {doc.summary ? <p>{doc.summary}</p> : <p className="muted">No summary yet.</p>}
+              </div>
+            </section>
 
             <nav className="tabs doc-tabs" aria-label="Document sections">
               <button

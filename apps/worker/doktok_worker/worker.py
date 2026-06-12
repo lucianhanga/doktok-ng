@@ -186,9 +186,22 @@ class IngestionWorker:
         except Exception:  # noqa: BLE001 - recovery must never take down the ingestion stream
             logger.exception("stale-job recovery failed")
 
+    def _recover_features(self) -> None:  # pragma: no cover - long-running loop helper
+        if self._reconciler is None:
+            return
+        try:
+            recovered = self._reconciler.recover_running()
+            if recovered:
+                logger.warning("re-queued %d feature(s) left running by a prior worker", recovered)
+        except Exception:  # noqa: BLE001 - recovery must never take down the reconcile stream
+            logger.exception("stale-feature recovery failed")
+
     def _reconcile_loop(
         self, stop: threading.Event
     ) -> None:  # pragma: no cover - long-running loop
+        # Recover features left mid-flight by a prior worker before draining the live backlog, so a
+        # restart doesn't leave them stuck for the full lease window.
+        self._recover_features()
         while not stop.is_set():
             processed = 0
             try:

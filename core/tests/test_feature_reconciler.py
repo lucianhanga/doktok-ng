@@ -44,6 +44,22 @@ def test_backfills_active_document_missing_a_feature() -> None:
     assert rows[0].feature == "demo" and rows[0].status is FeatureStatus.DONE
 
 
+def test_recover_running_requeues_orphaned_rows() -> None:
+    # A prior worker claimed the row and was killed mid-run, leaving it 'running' under its lease.
+    repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
+    repo.ensure_for_active("t1", [("demo", 1)])
+    claimed = repo.claim_next("t1", now=BASE, reclaim_before=BASE - timedelta(hours=1))
+    assert claimed is not None and claimed.status is FeatureStatus.RUNNING
+
+    rec = FeatureReconciler(repo, [FakeProcessor()], ["t1"], clock=lambda: BASE)
+    assert rec.recover_running() == 1  # startup recovery, no waiting out the lease
+    assert repo.list_for_document("t1", "d1")[0].status is FeatureStatus.PENDING
+
+    # The very next pass now drains it instead of stalling for the full lease window.
+    assert rec.reconcile() == 1
+    assert repo.list_for_document("t1", "d1")[0].status is FeatureStatus.DONE
+
+
 def test_retries_then_gives_up_recording_the_error() -> None:
     repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
     proc = FakeProcessor(fail_times=99)  # always fails

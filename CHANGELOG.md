@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Parallel OCR**: PaddleOCR now runs a pool of independent predictors (one per ingestion slot)
+  instead of serializing every `predict()` behind one lock, so pages OCR concurrently and use the
+  available CPU. `DOKTOK_INGEST_CONCURRENCY` (default raised 2 → 4) sizes both the ingestion workers
+  and the OCR predictor pool.
 - **Structured aggregation, end to end (M6.3)**: a **Totals** tab issues a typed `AggregationIntent`
   to `POST /api/v1/aggregate` for deterministic SUM/COUNT over `extracted_records` (per-currency
   rollups + provenance), and the **chat** endpoint now routes total/count questions ("how much did I

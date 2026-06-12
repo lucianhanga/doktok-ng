@@ -8,7 +8,7 @@
 -include .env
 export
 
-PY_SRC := contracts core apps/backend apps/worker storage modalities providers tools
+PY_SRC := contracts core apps/backend apps/worker apps/mcp storage modalities providers tools
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_.-]+:.*## ' $(MAKEFILE_LIST) | sort | \

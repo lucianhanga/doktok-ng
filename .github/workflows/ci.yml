@@ -49,7 +49,7 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
       - name: mypy
-        run: uv run mypy contracts core apps/backend apps/worker storage modalities
+        run: uv run mypy contracts core apps/backend apps/worker apps/mcp storage modalities
       - name: Pytest (includes Postgres integration)
         run: uv run pytest
       - name: Import boundaries (import-linter)

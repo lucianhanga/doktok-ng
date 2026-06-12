@@ -35,8 +35,14 @@ PostgreSQL `to_tsvector` in the document's **detected language** (stopwords remo
 stored as `CUSTOM_TOKEN` keyword entities — a multilingual lexical/keyword layer browsable and
 filterable in the Entities tab (`DOKTOK_LEXICAL_TERMS_LIMIT`).
 
-The **UI** has an Overview dashboard, a document viewer (extracted text + entities + activity per
-document), live auto-refresh, and cross-linking (search hit / entity / job → open the document).
+The **UI** has an Overview dashboard that separates the document **library** (Documents / Entities /
+Categories counts) from an **Ingestion** pipeline section showing only actionable states (Waiting /
+Processing / Failed / Pending features, or "Pipeline idle"); a **Documents** tab with **List** and
+**Thumbnails** views (a shared toolbar for sort / token-filter / status / category, multi-select with
+shift-range and select-all-matching, and bulk reingest/delete); a document detail card with a
+two-column thumbnail + summary layout (extracted text + entities + categories + per-feature
+processing + activity); a **Settings** tab to pick the AI model per purpose (see below); live
+auto-refresh; and cross-linking (search hit / entity / job → open the document).
 
 **M4 (Vector + full-text search).** On top of M3, every activated document is **chunked, embedded
 (Ollama `qwen3-embedding:0.6b` → pgvector) and full-text indexed** before it goes active. **Hybrid search**
@@ -84,6 +90,32 @@ host: `uv pip install paddleocr paddlepaddle`.
 
 For throughput tuning (parallel ingestion, `OLLAMA_NUM_PARALLEL`, and the memory cost of
 parallelism), see [docs/operations/performance-and-ollama.md](docs/operations/performance-and-ollama.md).
+
+### Choosing models at runtime (Settings tab)
+
+Beyond the environment defaults, the **Settings** tab (`GET`/`PUT /api/v1/settings/ai`) lets you pick
+the model **per purpose** — the ingestion pipeline (feature extraction) and RAG / interrogation — from
+a catalog of local Ollama models and remote OpenAI models, each with a reasoning-density control
+(`off|low|medium|high`). The choice is stored as global system settings (`app_settings` table) and
+applied on the next backend/worker restart. The OpenAI API key is **write-only** (set or cleared via
+the API, never read back). Selecting an OpenAI model is an explicit, opt-in exception to the
+local-first / no-egress default (ADR-0006, ADR-0014); the Ollama-only defaults keep everything local.
+
+## Documents list and views
+
+`GET /api/v1/documents` is **keyset-paginated** (opaque cursor) and supports:
+
+- **Sorting** — `sort=acquired` (ingestion time, default) / `created` (the document's own date) /
+  `title` / `category`, with `dir=asc|desc`.
+- **Filtering** — `status`, `category`, `needs_attention`, and **token** filters (`token[]`,
+  `token_match=all|any`, optional `token_type`).
+- **Select-all-matching** — `GET /api/v1/documents/ids` returns every id matching the same filters
+  (capped at 10k, with a `truncated` flag) so bulk actions can target the whole result set.
+
+The Documents tab renders these as **List** (table) and **Thumbnails** (gallery) views over one shared
+toolbar and selection model. Each document's first-page preview is served by
+`GET /api/v1/documents/{id}/thumbnail` (a WebP produced by the reconciled `thumbnail` feature;
+404 → placeholder until it has rendered).
 
 ## Quickstart
 
@@ -162,6 +194,7 @@ doktok-ng/
     worker/                  ingestion pipeline worker
     mcp/                     read-only MCP server (later)
   providers/ollama/          Ollama chat + embedding adapters
+  providers/openai/          OpenAI adapters (opt-in remote provider; off by default)
   storage/postgres/          PostgreSQL adapters + migrations
   storage/filesystem/        local filesystem storage adapter
   modalities/files/          file modality handling

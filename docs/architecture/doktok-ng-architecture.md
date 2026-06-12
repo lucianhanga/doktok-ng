@@ -166,7 +166,9 @@ rather than producing ungrounded answers.
 
 ### OCR routing (M3)
 
-OCR runs on a local Ollama vision model (`DOKTOK_OCR_MODEL`). A PDF page is OCR'd when it has no
+OCR runs on the configurable engine `DOKTOK_OCR_ENGINE` — default `paddleocr` (PP-OCRv5: a
+deterministic, CPU-only detection+recognition pipeline with native per-line confidence; ADR-0010); the
+legacy local Ollama vision model `glm-ocr` remains selectable. A PDF page is OCR'd when it has no
 embedded text **or** its largest image covers at least `DOKTOK_OCR_IMAGE_COVERAGE` of the page (a
 full-page scan). In the latter case any existing embedded text layer is **dropped and re-OCR'd**, so
 pages OCR'd by a weaker engine are redone. Born-digital pages (real text, only small figures) keep
@@ -198,7 +200,8 @@ SQL, no arbitrary filesystem access; all MCP access audited.
 - Backend: Python 3.12, FastAPI, Pydantic, `uv` workspace, pytest, ruff, mypy.
 - Frontend: TypeScript, React, Vite, `pnpm`, Vitest.
 - Database: PostgreSQL 17, pgvector, migrations (Alembic or equivalent).
-- AI runtime: Ollama (default chat `qwen3.6:35b-a3b`, default embedding `mxbai-embed-large:latest`).
+- AI runtime: Ollama by default (default chat `qwen3.6:35b-a3b`, default embedding
+  `qwen3-embedding:0.6b`); OpenAI is an opt-in remote provider selectable per purpose (see §17).
 - File processing: content-based MIME detection (libmagic/python-magic), PyMuPDF/Docling, OCRmyPDF/Tesseract.
 - Deployment: Docker Compose for local dev; no Kubernetes in the first phase.
 
@@ -223,7 +226,66 @@ DokTok NG is multi-tenant from the foundation (ADR-0007, ADR-0008).
 Tenant identity always comes from the authenticated token, never from request input. Every future
 milestone (extraction, search, RAG, MCP) inherits this scoping.
 
-## 16. Roadmap
+## 16. Document features, thumbnails, and the library/pipeline split
+
+Beyond the blocking extraction stage, additive capabilities run as **reconciled features** (ADR-0009):
+each is a versioned, idempotent `FeatureProcessor` listed in the feature catalog
+(`core/.../features/catalog.py`), driven to `done` per `(tenant, document, feature)` by the worker
+reconciler. The current catalog: `chunk_embed` (RAG index), `entities` (entities + keyword tokens),
+`doc_metadata` (title / date / location / summary), `doc_classify` (categories), `structured_records`
+(typed line items), and `thumbnail`.
+
+The **`thumbnail`** feature renders the first page of a document's normalized PDF to a small WebP via
+the `PyMuPdfThumbnailer` adapter (`modalities/files/.../render.py`; `fitz` rasterize → Pillow Lanczos
+downscale → WebP, both imported lazily). It writes `docs.active/<id>/thumbnails/thumb.webp`, served by
+`GET /api/v1/documents/{id}/thumbnail` (404 → UI placeholder until rendered, or for unrenderable
+documents). Because it is a reconciled feature, the whole corpus backfills automatically and a version
+bump re-renders it.
+
+Because a document is `active` as soon as it has extracted content (features fill in afterwards), the
+**Overview** dashboard separates two concerns:
+
+- the document **library** — Documents / Entities / Categories counts (steady-state inventory);
+- the **Ingestion** pipeline — only actionable states (Waiting in ingest / Processing / Failed /
+  Pending features), or "Pipeline idle" when nothing is in flight.
+
+The raw job count is deliberately not shown (an `active` job only duplicates the document count); in
+the Ingestion view a finished job's `active` status is relabelled "ingested" so the word "active" only
+ever describes a document.
+
+## 17. Document-list query model and runtime AI selection
+
+### Document-list querying
+
+`GET /api/v1/documents` is **keyset-paginated**, not offset-paginated: it returns an opaque cursor that
+encodes the active sort key, direction, the last row's value, and its id. NULLs sort last; a stale or
+mismatched cursor (e.g. a different sort) is rejected with `400` rather than silently mis-paging.
+Supported `sort` keys: `acquired` (ingestion `created_at`, default), `created` (the document's own
+`document_date`), `title`, `category`; with `dir=asc|desc`. Filters: `status`, `category`,
+`needs_attention`, and **token** filters (`token[]` with `token_match=all` (AND, default) `|any` (OR)
+and optional `token_type`). `GET /api/v1/documents/ids` returns every id matching the same filters
+(capped at 10k with a `truncated` flag) so "select all matching" acts on the full result set, not just
+the loaded page. Per-sort composite keyset indexes back these queries (migrations 0016, 0018); the
+`DocumentRepository` port carries `list_documents` (extended) and `list_document_ids`, with the
+`DocumentSort` / `SortDir` / `TokenMatch` / `ListAnchor` contracts. The Documents tab renders this as
+interchangeable **List** (table) and **Thumbnails** (gallery) views over one toolbar and one
+selection model. See ADR-0013.
+
+### Runtime AI model selection
+
+Model choice is configurable at runtime via the **Settings** tab, not only by environment variables.
+Global system settings (not tenant-scoped) persist in an `app_settings` key→JSON table (migration
+0017) and are merged over the env defaults at startup (changes apply on restart). The Settings UI lets
+the operator pick a model **per purpose** — the ingestion pipeline (feature extraction) and RAG /
+interrogation — from a catalog (`core/.../settings/catalog.py`) spanning local Ollama and remote
+OpenAI, with a unified reasoning-density control (`off|low|medium|high`) mapped to each provider's own
+knob. The OpenAI API key is **write-only** (set/cleared, never returned). Selecting an OpenAI model is
+an explicit, opt-in exception to the local-first / no-egress default (§12, ADR-0006); the defaults are
+Ollama-only. Adapters live in `providers/openai`. See ADR-0014.
+
+## 18. Roadmap
 
 See [../milestones/M0-M10.md](../milestones/M0-M10.md). Every milestone ships a runnable system; one
-milestone per pass. M0 (Skeleton) is the first implementation target.
+milestone per pass. The blocking ingestion foundation (M0–M3), search (M4), entities (M5), and RAG
+chat (M6) are implemented; current work is M7 (ingestion dashboard + hardening) and the document
+enrichment/aggregation features above.

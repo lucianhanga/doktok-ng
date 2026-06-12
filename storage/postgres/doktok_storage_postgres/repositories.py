@@ -618,6 +618,16 @@ class PostgresChunkRepository:
         count, latest = (row[0], row[1]) if row else (0, "")
         return f"chunks={count};latest={latest}"
 
+    def read_texts(self, tenant_id: str, chunk_ids: list[str]) -> dict[str, str]:
+        if not chunk_ids:
+            return {}
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT id, text FROM document_chunks WHERE tenant_id=%s AND id = ANY(%s)",
+                (tenant_id, list(chunk_ids)),
+            ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
 
 class PostgresEntityRepository:
     """``EntityRepository`` backed by PostgreSQL. Tenant-scoped."""
@@ -1239,6 +1249,29 @@ class PostgresCategoryRepository:
                 (tenant_id, name, limit, offset),
             ).fetchall()
         return [_row_to_document(row) for row in rows]
+
+    def primary_categories(
+        self, tenant_id: str, document_ids: list[str]
+    ) -> dict[str, str]:
+        if not document_ids:
+            return {}
+        # Rank each doc's categories by tenant-wide document count (name tiebreak); keep the top.
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "WITH counts AS ("
+                "  SELECT category_id, count(*) AS dc FROM document_category_links "
+                "  WHERE tenant_id=%s GROUP BY category_id"
+                "), ranked AS ("
+                "  SELECT l.document_id, c.name, row_number() OVER ("
+                "    PARTITION BY l.document_id ORDER BY co.dc DESC, c.name ASC) AS rn "
+                "  FROM document_category_links l "
+                "  JOIN categories c ON c.id = l.category_id AND c.status='active' "
+                "  JOIN counts co ON co.category_id = l.category_id "
+                "  WHERE l.tenant_id=%s AND l.document_id = ANY(%s)"
+                ") SELECT document_id, name FROM ranked WHERE rn = 1",
+                (tenant_id, tenant_id, list(document_ids)),
+            ).fetchall()
+        return {r[0]: r[1] for r in rows}
 
 
 _REC_COLUMNS = (

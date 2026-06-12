@@ -550,6 +550,69 @@ class ModelCatalog(BaseModel):
     reasoning_levels: list[str] = Field(default_factory=list)
 
 
+class VizLegendEntry(BaseModel):
+    """One category and its assigned color in the embedding-map legend (ADR-0016, M7.1)."""
+
+    category: str
+    color: str
+
+
+class VizPoint(BaseModel):
+    """A chunk rendered on the embedding map: coordinates + its color category + a text snippet."""
+
+    chunk_id: str
+    document_id: str
+    x: float
+    y: float
+    z: float | None = None
+    category: str
+    snippet: str
+
+
+class ProjectionMeta(BaseModel):
+    """Metadata describing the cached projection a map was built from (ADR-0016, M7.1)."""
+
+    dim: int
+    algorithm: str
+    version: int
+    computed_at: datetime
+    n_points: int
+    truncated: bool
+    stale: bool
+
+
+class EmbeddingMap(BaseModel):
+    """The full embedding-map payload for one dimension: points + legend + projection metadata.
+
+    ``computed`` is False when no projection has been built yet; ``recompute_pending`` is True while
+    a recompute is queued or running, so the UI can show a busy state.
+    """
+
+    dim: int
+    computed: bool
+    recompute_pending: bool = False
+    points: list[VizPoint] = Field(default_factory=list)
+    legend: list[VizLegendEntry] = Field(default_factory=list)
+    meta: ProjectionMeta | None = None
+
+
+class ProjectionDimStatus(BaseModel):
+    """Cache state of one dimension's projection (for the status endpoint)."""
+
+    dim: int
+    computed: bool
+    stale: bool
+    n_points: int = 0
+    computed_at: datetime | None = None
+
+
+class ProjectionStatus(BaseModel):
+    """Whether a recompute is in flight and the per-dimension cache state (ADR-0016, M7.1)."""
+
+    recompute_pending: bool
+    dims: list[ProjectionDimStatus] = Field(default_factory=list)
+
+
 class ProjectionRequest(BaseModel):
     """A pending request to recompute a tenant's embedding projections (ADR-0016, M7.1).
 

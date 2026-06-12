@@ -107,3 +107,17 @@ class InMemoryCategoryRepository:
         # The in-memory repo holds no documents; the document<->category join is covered by the
         # Postgres integration test.
         return []
+
+    def primary_categories(self, tenant_id: str, document_ids: list[str]) -> dict[str, str]:
+        # Rank categories by tenant-wide document count (name tiebreak), then pick each document's
+        # highest-ranked linked category - mirrors the Postgres window query.
+        rank = {s.name: i for i, s in enumerate(self.list_summary(tenant_id))}
+        wanted = set(document_ids)
+        result: dict[str, str] = {}
+        for (tid, doc), ids in self._links.items():
+            if tid != tenant_id or doc not in wanted:
+                continue
+            names = [self._cats[i].name for i in ids if i in self._cats]
+            if names:
+                result[doc] = min(names, key=lambda n: (rank.get(n, len(rank)), n))
+        return result

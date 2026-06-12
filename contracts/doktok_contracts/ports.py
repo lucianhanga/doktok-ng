@@ -312,6 +312,10 @@ class ChunkRepository(Protocol):
         """
         ...
 
+    def read_texts(self, tenant_id: str, chunk_ids: list[str]) -> dict[str, str]:
+        """Map each requested chunk id to its text, for embedding-map tooltips (M7.1)."""
+        ...
+
 
 @runtime_checkable
 class DimensionalityReducer(Protocol):
@@ -435,6 +439,14 @@ class CategoryRepository(Protocol):
     def documents_for_category(
         self, tenant_id: str, name: str, *, limit: int = 50, offset: int = 0
     ) -> list[Document]: ...
+
+    def primary_categories(self, tenant_id: str, document_ids: list[str]) -> dict[str, str]:
+        """Map each document to its single primary category name, for embedding-map coloring (M7.1).
+
+        The primary is the linked category with the highest tenant-wide document count (name as
+        tiebreak). Documents with no category are omitted (the caller colors them 'Uncategorized').
+        """
+        ...
 
 
 @runtime_checkable

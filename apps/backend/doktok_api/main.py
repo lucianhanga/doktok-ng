@@ -30,6 +30,7 @@ from doktok_api.routers import (
     search,
     stats,
     tokens,
+    visualizations,
 )
 from doktok_api.routers import (
     settings as settings_router,
@@ -133,6 +134,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(features.router)
     app.include_router(categories.router)
     app.include_router(aggregate.router)
+    app.include_router(visualizations.router)
     app.include_router(settings_router.router)
 
     return app

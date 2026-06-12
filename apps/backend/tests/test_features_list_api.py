@@ -24,7 +24,7 @@ class FakeFeatureRepository:
     def ensure_for_active(self, tenant_id, features) -> int:  # type: ignore[no-untyped-def]
         return 0
 
-    def claim_next(self, tenant_id, *, now, reclaim_before):  # type: ignore[no-untyped-def]
+    def claim_next(self, tenant_id, *, now, reclaim_before, dependencies=()):  # type: ignore[no-untyped-def]
         return None
 
     def mark_done(self, feature_id, *, feature_version) -> None: ...  # type: ignore[no-untyped-def]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any
 
@@ -914,22 +915,45 @@ class PostgresFeatureRepository:
         return affected
 
     def claim_next(
-        self, tenant_id: str, *, now: datetime, reclaim_before: datetime
+        self,
+        tenant_id: str,
+        *,
+        now: datetime,
+        reclaim_before: datetime,
+        dependencies: Sequence[tuple[str, str]] = (),
     ) -> DocumentFeature | None:
+        params = {
+            "tenant": tenant_id,
+            "now": now,
+            "reclaim_before": reclaim_before,
+            "dep_features": [d[0] for d in dependencies],
+            "dep_prereqs": [d[1] for d in dependencies],
+        }
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
-                "WITH due AS ("
-                "  SELECT id FROM document_features WHERE tenant_id=%s AND ("
-                "    status='pending'"
-                "    OR (status='failed' AND attempts < max_attempts "
-                "        AND (next_attempt_at IS NULL OR next_attempt_at <= %s))"
-                "    OR (status='running' AND last_attempt_at < %s))"
-                "  ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
+                # ``deps`` is the (feature, prerequisite) edge set. A row is only claimable when
+                # none of its prerequisites is still missing a 'done' row on the same document - so
+                # a stage waits for its inputs. Empty deps -> no gating (backward compatible).
+                "WITH deps(feature, prereq) AS ("
+                "  SELECT * FROM unnest(%(dep_features)s::text[], %(dep_prereqs)s::text[])"
+                "    AS t(feature, prereq)"
+                "), due AS ("
+                "  SELECT f.id FROM document_features f WHERE f.tenant_id=%(tenant)s AND ("
+                "    f.status='pending'"
+                "    OR (f.status='failed' AND f.attempts < f.max_attempts "
+                "        AND (f.next_attempt_at IS NULL OR f.next_attempt_at <= %(now)s))"
+                "    OR (f.status='running' AND f.last_attempt_at < %(reclaim_before)s))"
+                "  AND NOT EXISTS ("
+                "    SELECT 1 FROM deps d WHERE d.feature = f.feature AND NOT EXISTS ("
+                "      SELECT 1 FROM document_features p WHERE p.tenant_id = f.tenant_id"
+                "        AND p.document_id = f.document_id AND p.feature = d.prereq"
+                "        AND p.status = 'done'))"
+                "  ORDER BY f.created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
                 "UPDATE document_features f SET status='running', attempts=f.attempts+1, "
-                "last_attempt_at=%s, updated_at=now() FROM due WHERE f.id=due.id "
+                "last_attempt_at=%(now)s, updated_at=now() FROM due WHERE f.id=due.id "
                 f"RETURNING {_FEATURE_COLUMNS_F}",
-                (tenant_id, now, reclaim_before, now),
+                params,
             ).fetchone()
         return _row_to_feature(row) if row else None
 

@@ -44,6 +44,53 @@ def test_backfills_active_document_missing_a_feature() -> None:
     assert rows[0].feature == "demo" and rows[0].status is FeatureStatus.DONE
 
 
+class _Stage:
+    """A processor with declared prerequisites, for stage-dependency tests."""
+
+    version = 1
+
+    def __init__(
+        self, name: str, *, dependencies: tuple[str, ...] = (), fail_times: int = 0
+    ) -> None:
+        self.name = name
+        self.dependencies = dependencies
+        self.calls: list[str] = []
+        self._fail_times = fail_times
+
+    def process(self, tenant_id: str, document_id: str) -> None:  # noqa: ARG002
+        self.calls.append(document_id)
+        if len(self.calls) <= self._fail_times:
+            raise RuntimeError("boom")
+
+
+def test_dependent_stage_is_blocked_until_its_prerequisite_succeeds() -> None:
+    repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
+    child = _Stage("child", dependencies=("root",))
+    root = _Stage("root", fail_times=99)  # never reaches 'done'
+    rec = FeatureReconciler(
+        repo, [child, root], ["t1"], backoff_base_seconds=0.0, clock=_advancing_clock()
+    )
+    for _ in range(6):
+        rec.reconcile()
+
+    assert child.calls == []  # child never ran - its prerequisite never succeeded
+    rows = {r.feature: r.status for r in repo.list_for_document("t1", "d1")}
+    assert rows["root"] is FeatureStatus.FAILED
+    assert rows["child"] is FeatureStatus.PENDING  # still waiting on its input
+
+
+def test_dependent_stage_runs_once_its_prerequisite_is_done() -> None:
+    repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
+    child = _Stage("child", dependencies=("root",))
+    root = _Stage("root")
+    # One pass drains both: root is claimed first (child gated), then child becomes claimable.
+    FeatureReconciler(repo, [child, root], ["t1"], clock=lambda: BASE).reconcile()
+
+    assert root.calls == ["d1"] and child.calls == ["d1"]
+    rows = {r.feature: r.status for r in repo.list_for_document("t1", "d1")}
+    assert rows["root"] is FeatureStatus.DONE and rows["child"] is FeatureStatus.DONE
+
+
 def test_recover_running_requeues_orphaned_rows() -> None:
     # A prior worker claimed the row and was killed mid-run, leaving it 'running' under its lease.
     repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
@@ -139,7 +186,7 @@ def test_concurrent_drain_processes_every_row_exactly_once() -> None:
         def ensure_for_active(self, tenant_id, registered):  # type: ignore[no-untyped-def]
             return 0
 
-        def claim_next(self, tenant_id, *, now, reclaim_before):  # type: ignore[no-untyped-def]
+        def claim_next(self, tenant_id, *, now, reclaim_before, dependencies=()):  # type: ignore[no-untyped-def]
             with lock:
                 return next(cursor, None)
 

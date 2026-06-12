@@ -9,6 +9,7 @@ See brief section 9 for the full list.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
@@ -453,8 +454,18 @@ class FeatureRepository(Protocol):
     ) -> None: ...
     def ensure_for_active(self, tenant_id: str, features: list[tuple[str, int]]) -> int: ...
     def claim_next(
-        self, tenant_id: str, *, now: datetime, reclaim_before: datetime
-    ) -> DocumentFeature | None: ...
+        self,
+        tenant_id: str,
+        *,
+        now: datetime,
+        reclaim_before: datetime,
+        dependencies: Sequence[tuple[str, str]] = (),
+    ) -> DocumentFeature | None:
+        """Claim the next due feature row (pending / retryable-failed / stale-running). A row is
+        only claimable once every ``(feature, prerequisite)`` edge in ``dependencies`` for its
+        feature has a ``done`` row on the same document - so a stage waits for its inputs."""
+        ...
+
     def mark_done(self, feature_id: str, *, feature_version: int) -> None: ...
     def mark_failed(self, feature_id: str, *, error: str, next_attempt_at: datetime) -> None: ...
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentFeature]: ...

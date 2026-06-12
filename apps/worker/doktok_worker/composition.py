@@ -13,6 +13,7 @@ from doktok_contracts.ports import (
 )
 from doktok_core.config import Settings
 from doktok_core.entities.extractor import RegexEntityExtractor
+from doktok_core.extraction.service import ExtractionResult, extract_document
 from doktok_core.features.processors import (
     ChunkEmbedFeature,
     DocClassifyFeature,
@@ -23,6 +24,7 @@ from doktok_core.features.processors import (
 )
 from doktok_core.features.reconciler import FeatureReconciler
 from doktok_core.indexing.chunker import FixedWindowChunker
+from doktok_core.ingestion.extract_stage import ExtractStage
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.policy import DefaultSecurityPolicy
@@ -229,6 +231,33 @@ def build_services(
         StructuredRecordsFeature(document_repo, file_storage, record_extractor, record_repo),
         ThumbnailFeature(document_repo, file_storage, thumbnailer),
     ]
+
+    # Staged ingestion (ADR-0015): the `extract` stage runs OCR/extraction + activation in the
+    # reconciler. Register it ahead of the feature stages when enabled; the stage ledger (seeded at
+    # intake) is exactly the registered stages, so they all get a row and the dependency gate orders
+    # extract -> features.
+    def _extract(mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
+        return extract_document(
+            mime,
+            path,
+            text_extractor=text_extractor,
+            pdf_extractor=pdf_extractor,
+            ocr=ocr_extractor,
+            renderer=pdf_renderer,
+            builder=searchable_pdf_builder,
+            classifier=pdf_classifier,
+            ocr_image_coverage=settings.ocr_image_coverage,
+            ocr_min_text_quality=settings.ocr_min_text_quality,
+            chat_model=chat_model,
+            max_pages=settings.max_pages,
+        )
+
+    if settings.staged_ingestion:
+        processors.insert(
+            0, ExtractStage(document_repo, file_storage, settings.files_root, _extract)
+        )
+    stage_ledger = [(p.name, p.version) for p in processors]
+
     reconciler = FeatureReconciler(
         feature_repo,
         processors,
@@ -270,6 +299,8 @@ def build_services(
                 lexical_term_extractor=lexical_term_extractor,
                 lexical_terms_limit=settings.lexical_terms_limit,
                 feature_repo=feature_repo,
+                staged_ingestion=settings.staged_ingestion,
+                stage_ledger=stage_ledger,
             )
         )
     return services, reconciler, db

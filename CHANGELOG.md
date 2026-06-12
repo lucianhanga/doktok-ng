@@ -8,6 +8,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Documents tab: List and Thumbnails views** (`DocumentsPanel.tsx`). The existing table is now the
+  **List** view (default); a new **Thumbnails** gallery shows each document as a card with its
+  first-page preview and overlaid selection / status / per-feature badges, with an S/M/L size control
+  persisted to `localStorage`. Both views share one toolbar (sort, token-filter chips, status /
+  category / needs-attention) and one multi-select model (individual, shift-range, and select-all-
+  matching) with the same bulk actions.
+- **Document thumbnails**: a versioned `thumbnail` `FeatureProcessor` (reconciled via the ADR-0009
+  framework, registered in the feature catalog) renders the first page of each document's normalized
+  PDF to a small WebP via the new `PyMuPdfThumbnailer` adapter (`modalities/files/.../render.py`, using
+  `fitz` + Pillow — Pillow is now a core dependency of `modalities/files`). Stored at
+  `docs.active/<id>/thumbnails/thumb.webp` and served by `GET /api/v1/documents/{id}/thumbnail` (404 →
+  placeholder until rendered). The document detail card now uses a two-column thumbnail + summary
+  layout.
+- **Documents list API: sorting, token filtering, and select-all** (`GET /api/v1/documents`). New
+  `sort` (`acquired` = ingestion time / `created` = the document's own date / `title` / `category`) +
+  `dir`, plus token filtering (`token[]`, `token_match` = `all` (AND, default) / `any` (OR), optional
+  `token_type`). The list is **keyset-paginated** with a self-describing opaque cursor (it encodes the
+  sort + dir + value + id, sorts NULLs last, and returns 400 on a stale or mismatched cursor instead of
+  silently mis-paging). New `GET /api/v1/documents/ids` returns every id matching a filter (capped at
+  10k with a `truncated` flag) so "select all matching" can act on the whole result set, not just the
+  loaded page. Backed by migration `0018_documents_list_sort_indexes.sql` (per-sort keyset indexes;
+  keyset pagination itself landed in `0016_documents_keyset_pagination.sql`). New
+  `DocumentRepository.list_document_ids`, extended `list_documents`, and the
+  `DocumentSort` / `SortDir` / `TokenMatch` / `ListAnchor` / `DocumentIdSelection` contracts.
+- **Settings tab: AI model selection** (`SettingsPanel.tsx`, `routers/settings.py`,
+  `core/.../settings/catalog.py`, `providers/openai/`). Choose the model per purpose — pipeline
+  feature-extraction vs RAG / interrogation — across local Ollama and remote OpenAI, with a unified
+  reasoning-density control (`off|low|medium|high`, mapped to each provider's knob) and a **write-only**
+  OpenAI API key (never returned; GET reports only whether one is set). Persisted as global system
+  settings in `app_settings` (migration `0017_app_settings.sql`) and applied on the next restart.
+  Selecting an OpenAI model is an explicit, opt-in exception to the local-first / no-egress default
+  (ADR-0006). New `GET /api/v1/settings/ai`, `GET /api/v1/settings/ai/catalog`, `PUT
+  /api/v1/settings/ai`.
+- **Overview dashboard redesign** (`OverviewPanel.tsx`): the document **library** (Documents /
+  Entities / Categories counts) is now separated from an **Ingestion** pipeline section that shows only
+  actionable states — Waiting / Processing / Failed / Pending features — plus a "Pipeline idle" message
+  when nothing is in flight. The raw "Jobs" tile and the "Jobs by status" list are gone (the active-job
+  count only duplicated the document count and invited a false comparison); in the Ingestion view a
+  finished job's `active` status is relabelled **"ingested"**, so "active" only ever describes a
+  document.
 - **PaddleOCR (PP-OCRv5) is now the default OCR engine** (`DOKTOK_OCR_ENGINE=paddleocr`), replacing the
   glm-ocr vision model. PaddleOCR is a detection+recognition pipeline, so it **structurally cannot
   repeat-loop** into garbage on sparse/stamp pages (it returns no text instead) and provides **native
@@ -156,6 +196,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (tsvector/tsquery/`ts_rank`/GIN on `document_chunks`).
 
 ### Fixed
+- **Ingestion ledger over-deletion**: deleting or re-ingesting a document used `delete_for_sha`, which
+  purged jobs by content hash and so could wipe out *other* documents' jobs that happened to share a
+  SHA. Replaced it with `delete_for_document` (scoped by `document_id`) across the
+  `IngestionJobRepository` port and its adapters; the document delete and reingest paths now use it.
 - OCR **repeat-loops** no longer poison enrichment. On sparse/stamp pages glm-ocr could loop a line
   hundreds of times (e.g. `1.0 JAN. 2025 / SSOS MAL …`) until the output cap, filling `content.md`
   with garbage — which the enrichment LLM then "described" as titles like *"Unusual Repeating Text in

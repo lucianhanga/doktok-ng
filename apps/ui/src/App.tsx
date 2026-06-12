@@ -7,6 +7,7 @@ import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { EntitiesPanel } from "./EntitiesPanel";
+import { InsightsPanel } from "./InsightsPanel";
 import { JobsPanel } from "./JobsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SearchPanel } from "./SearchPanel";
@@ -75,6 +76,7 @@ type View =
   | "chat"
   | "entities"
   | "totals"
+  | "insights"
   | "activity"
   | "settings";
 
@@ -86,6 +88,7 @@ const TABS: { id: View; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "entities", label: "Entities" },
   { id: "totals", label: "Totals" },
+  { id: "insights", label: "Insights" },
   { id: "ingestion", label: "Ingestion" },
   { id: "activity", label: "Activity" },
   { id: "status", label: "Status" },
@@ -146,6 +149,7 @@ export default function App() {
           {view === "chat" && <ChatPanel onOpenDocument={setOpenDoc} />}
           {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
           {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
+          {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}
           {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
           {view === "activity" && <ActivityPanel />}
           {view === "status" && <HealthPanel />}

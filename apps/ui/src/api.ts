@@ -268,6 +268,56 @@ export function fetchFeatures(signal?: AbortSignal): Promise<DocumentFeature[]> 
   return getJson<DocumentFeature[]>("/api/v1/features", signal);
 }
 
+export interface AiPurposeSettings {
+  provider: string;
+  model: string;
+  num_ctx: number;
+  reasoning: string;
+}
+
+export interface AiSettings {
+  pipeline: AiPurposeSettings;
+  rag: AiPurposeSettings;
+  openai_api_key_set?: boolean;
+}
+
+export interface ModelOption {
+  provider: string;
+  model: string;
+  label: string;
+  contexts: number[];
+  supports_reasoning: boolean;
+}
+
+export interface ModelCatalog {
+  pipeline: ModelOption[];
+  rag: ModelOption[];
+  reasoning_levels: string[];
+}
+
+export function fetchAiSettings(signal?: AbortSignal): Promise<AiSettings> {
+  return getJson<AiSettings>("/api/v1/settings/ai", signal);
+}
+
+export function fetchModelCatalog(signal?: AbortSignal): Promise<ModelCatalog> {
+  return getJson<ModelCatalog>("/api/v1/settings/ai/catalog", signal);
+}
+
+/** Persist AI settings. openai_api_key: omit/null = unchanged, "" = clear, value = set. */
+export async function putAiSettings(
+  body: AiSettings & { openai_api_key?: string | null },
+): Promise<AiSettings> {
+  const response = await fetch("/api/v1/settings/ai", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as AiSettings;
+}
+
 export interface FeatureCatalogEntry {
   name: string;
   version: number;

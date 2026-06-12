@@ -12,6 +12,7 @@ import threading
 from typing import TYPE_CHECKING, Annotated, cast
 
 from doktok_contracts.ports import (
+    AppSettingsRepository,
     AuditLogRepository,
     CategoryRepository,
     DocumentRepository,
@@ -163,20 +164,26 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     from doktok_provider_ollama import OllamaChatModelProvider
 
     settings = request.app.state.settings
+    # Effective RAG model selection (Settings tab > AI section), persisted; applied at startup.
+    from doktok_core.settings.catalog import ollama_think_for
+
+    rag = get_app_settings_repository(request).get_ai_settings().rag
+    rag_think = ollama_think_for(rag.reasoning, rag.model, structured=False)
     chat_model = OllamaChatModelProvider(
-        settings.default_model,
+        rag.model,
         settings.ollama_base_url,
         timeout=settings.rag_timeout_seconds,
-        num_ctx=settings.chat_num_ctx,
+        num_ctx=rag.num_ctx,
         keep_alive=settings.chat_keep_alive,
+        think=rag_think,
     )
     # The listwise reranker emits only a short JSON array - cap its output (and allow a smaller,
     # swappable model) so it doesn't consume the answer call's full generation budget.
     rerank_model = OllamaChatModelProvider(
-        settings.rerank_model or settings.default_model,
+        settings.rerank_model or rag.model,
         settings.ollama_base_url,
         timeout=settings.rag_timeout_seconds,
-        num_ctx=settings.chat_num_ctx,
+        num_ctx=rag.num_ctx,
         num_predict=settings.rerank_num_predict,
         keep_alive=settings.chat_keep_alive,
     )
@@ -212,6 +219,18 @@ def get_category_repository(request: Request) -> CategoryRepository:
 
     repository = PostgresCategoryRepository(_get_database(request))
     registry.register(CategoryRepository, repository)
+    return repository
+
+
+def get_app_settings_repository(request: Request) -> AppSettingsRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(AppSettingsRepository):
+        return cast(AppSettingsRepository, registry.resolve(AppSettingsRepository))
+
+    from doktok_storage_postgres import PostgresAppSettingsRepository
+
+    repository = PostgresAppSettingsRepository(_get_database(request))
+    registry.register(AppSettingsRepository, repository)
     return repository
 
 

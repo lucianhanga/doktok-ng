@@ -9,6 +9,7 @@ import { EntitiesPanel } from "./EntitiesPanel";
 import { JobsPanel } from "./JobsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SearchPanel } from "./SearchPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import { TokenSearchPanel } from "./TokenSearchPanel";
 
 type HealthState =
@@ -72,7 +73,8 @@ type View =
   | "tokensearch"
   | "chat"
   | "entities"
-  | "activity";
+  | "activity"
+  | "settings";
 
 const TABS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -84,6 +86,7 @@ const TABS: { id: View; label: string }[] = [
   { id: "ingestion", label: "Ingestion" },
   { id: "activity", label: "Activity" },
   { id: "status", label: "Status" },
+  { id: "settings", label: "Settings" },
 ];
 
 export default function App() {
@@ -142,6 +145,7 @@ export default function App() {
           {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
           {view === "activity" && <ActivityPanel />}
           {view === "status" && <HealthPanel />}
+          {view === "settings" && <SettingsPanel />}
         </>
       )}
     </main>

@@ -31,6 +31,9 @@ from doktok_api.routers import (
     stats,
     tokens,
 )
+from doktok_api.routers import (
+    settings as settings_router,
+)
 
 SERVICE_NAME = "doktok-ng-backend"
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -130,6 +133,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(features.router)
     app.include_router(categories.router)
     app.include_router(aggregate.router)
+    app.include_router(settings_router.router)
 
     return app
 

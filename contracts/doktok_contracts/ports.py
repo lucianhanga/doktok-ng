@@ -24,6 +24,7 @@ from doktok_contracts.media import (
 from doktok_contracts.schemas import (
     AggregationIntent,
     AggregationResult,
+    AiSettings,
     AuditEvent,
     Category,
     CategorySummary,
@@ -127,6 +128,19 @@ class IngestionJobRepository(Protocol):
 class DocumentArtifactRepository(Protocol):
     def add(self, artifact: DocumentArtifact) -> None: ...
     def list_for_document(self, document_id: str) -> list[DocumentArtifact]: ...
+
+
+@runtime_checkable
+class AppSettingsRepository(Protocol):
+    """Persisted global system settings (the Settings tab). Not tenant-scoped - single-user config.
+
+    The OpenAI key is stored separately and write-only: it is never returned, only set/cleared.
+    """
+
+    def get_ai_settings(self) -> AiSettings: ...
+    def set_ai_settings(self, settings: AiSettings) -> None: ...
+    def get_openai_api_key(self) -> str: ...
+    def set_openai_api_key(self, key: str) -> None: ...
 
 
 @runtime_checkable

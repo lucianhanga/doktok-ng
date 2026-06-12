@@ -116,7 +116,8 @@ def build_services(
     timeout = settings.ollama_timeout_seconds
     ocr_extractor: OcrExtractor
     if settings.ocr_engine == "paddleocr":
-        ocr_extractor = PaddleOcr(lang=settings.ocr_lang)
+        # One predictor per ingestion slot so pages OCR in parallel (PaddleOCR is CPU-bound).
+        ocr_extractor = PaddleOcr(lang=settings.ocr_lang, pool_size=settings.ingest_concurrency)
     else:
         ocr_extractor = OllamaVisionOcr(
             settings.ocr_model,

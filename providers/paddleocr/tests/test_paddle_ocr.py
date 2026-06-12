@@ -37,7 +37,9 @@ def test_handles_polys_and_empty() -> None:
 
 
 def test_ocr_image_uses_injected_engine() -> None:
-    pytest.importorskip("PIL")  # image decode needs pillow/numpy (the optional `engine` extra)
+    import io
+
+    image_mod = pytest.importorskip("PIL.Image")  # decode needs pillow + numpy (the `engine` extra)
     pytest.importorskip("numpy")
 
     class FakeEngine:
@@ -46,12 +48,36 @@ def test_ocr_image_uses_injected_engine() -> None:
                 {"rec_texts": ["page text"], "rec_scores": [0.97], "rec_boxes": [[0, 0, 10, 10]]}
             ]
 
-    # A tiny 1x1 PNG so PIL can decode it without paddle installed.
-    png = bytes.fromhex(
-        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
-        "890000000d4944415478da6360000002000001e221bc330000000049454e44ae426082"
-    )
+    # A small valid PNG that PIL can decode without paddle installed.
+    buffer = io.BytesIO()
+    image_mod.new("RGB", (4, 4), "white").save(buffer, format="PNG")
+    png = buffer.getvalue()
     ocr = PaddleOcr(engine=FakeEngine())
     result = ocr.ocr_image(png)
     assert result.text == "page text"
     assert result.confidence is not None and abs(result.confidence - 0.97) < 1e-6
+
+
+def test_engine_pool_grows_to_pool_size_then_reuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Up to pool_size independent predictors are built for concurrent pages, then reused - no
+    # global lock serializing all OCR. (Uses fake predictors so no paddle/numpy is needed.)
+    import itertools
+
+    built = itertools.count()
+    monkeypatch.setattr(PaddleOcr, "_build_engine", lambda self: f"engine-{next(built)}")
+
+    ocr = PaddleOcr(pool_size=2)
+    e1 = ocr._acquire()
+    e2 = ocr._acquire()  # first is still in flight -> a second predictor is built
+    assert {e1, e2} == {"engine-0", "engine-1"}
+
+    ocr._pool.put(e1)  # page finished
+    assert ocr._acquire() == e1  # idle predictor reused
+    assert ocr._created == 2  # never exceeds pool_size
+
+
+def test_injected_engine_is_the_only_predictor() -> None:
+    ocr = PaddleOcr(engine="fake-engine")
+    assert ocr._acquire() == "fake-engine"
+    ocr._pool.put("fake-engine")
+    assert ocr._acquire() == "fake-engine"  # pinned to the one injected predictor

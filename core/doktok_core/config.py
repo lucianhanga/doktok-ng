@@ -121,9 +121,10 @@ class Settings(BaseSettings):
     max_pages: int = 500
     file_stability_seconds: int = 3
     # How many stable files the worker processes in parallel (1 = sequential). Throughput gains
-    # depend on Ollama parallelism (OLLAMA_NUM_PARALLEL); 2 keeps OCR+embedding+enrichment from
-    # thrashing Ollama's memory on a single ~48 GB box (raise once it's proven stable).
-    ingest_concurrency: int = 2
+    # depend on Ollama parallelism (OLLAMA_NUM_PARALLEL). PaddleOCR is CPU-bound and now runs a pool
+    # of `ingest_concurrency` independent predictors, so this also sets how many pages OCR in
+    # parallel - raise it to use more cores (bound by CPU count and Ollama/DB capacity).
+    ingest_concurrency: int = 4
     # How many feature-reconciler runs proceed in parallel (backfills drain faster). The reconciler
     # claims distinct rows with SKIP LOCKED, so this is safe; bound it by Ollama/DB capacity.
     reconcile_concurrency: int = 2

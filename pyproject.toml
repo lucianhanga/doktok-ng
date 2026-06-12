@@ -91,6 +91,7 @@ testpaths = [
     "contracts/tests",
     "providers/ollama/tests",
     "providers/openai/tests",
+    "providers/paddleocr/tests",
     "storage/postgres/tests",
 ]
 

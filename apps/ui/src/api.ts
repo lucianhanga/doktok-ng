@@ -77,14 +77,24 @@ export interface DocumentPage {
   next_cursor: string | null;
 }
 
+export type DocumentSort = "acquired" | "created" | "title" | "category";
+export type SortDir = "asc" | "desc";
+export type TokenMatch = "all" | "any";
+
+export interface DocumentQuery {
+  category?: string;
+  status?: string;
+  cursor?: string;
+  needsAttention?: boolean;
+  limit?: number;
+  sort?: DocumentSort;
+  dir?: SortDir;
+  tokens?: string[];
+  tokenMatch?: TokenMatch;
+}
+
 export async function fetchDocuments(
-  opts?: {
-    category?: string;
-    status?: string;
-    cursor?: string;
-    needsAttention?: boolean;
-    limit?: number;
-  },
+  opts?: DocumentQuery,
   signal?: AbortSignal,
 ): Promise<DocumentPage> {
   const params = new URLSearchParams();
@@ -93,6 +103,10 @@ export async function fetchDocuments(
   if (opts?.cursor) params.set("cursor", opts.cursor);
   if (opts?.needsAttention) params.set("needs_attention", "true");
   if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.sort) params.set("sort", opts.sort);
+  if (opts?.dir) params.set("dir", opts.dir);
+  if (opts?.tokenMatch) params.set("token_match", opts.tokenMatch);
+  (opts?.tokens ?? []).forEach((t) => params.append("token", t));
   const qs = params.toString();
   const response = await fetch(`/api/v1/documents${qs ? `?${qs}` : ""}`, { signal });
   if (!response.ok) {

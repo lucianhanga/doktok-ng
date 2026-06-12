@@ -856,3 +856,152 @@ tr.row-selected {
   gap: 0.75rem;
   margin-top: 0.5rem;
 }
+
+/* ---- Documents tab: shared toolbar + List/Thumbnails views ---- */
+.docs-subtabs {
+  margin-left: auto;
+}
+.docs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0.5rem 0;
+}
+.sort-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.sort-control .dir-toggle {
+  padding: 0.1rem 0.45rem;
+  line-height: 1.4;
+}
+
+/* S/M/L segmented thumbnail-size control */
+.thumb-size {
+  display: inline-flex;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.thumb-size button {
+  border: none;
+  border-left: 1px solid rgba(127, 127, 127, 0.4);
+  padding: 0.15rem 0.5rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.thumb-size button:first-child {
+  border-left: none;
+}
+.thumb-size button[aria-checked="true"] {
+  background: rgba(127, 127, 127, 0.25);
+  font-weight: 600;
+}
+.token-match select {
+  font-size: 0.8rem;
+}
+
+.docs-select-all {
+  margin: 0.25rem 0 0.6rem;
+  font-size: 0.85rem;
+}
+
+/* Thumbnail gallery grid. The S/M/L data-size sets the min card width. */
+.docs-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-min, 180px), 1fr));
+}
+.docs-grid[data-size="s"] {
+  --thumb-min: 120px;
+}
+.docs-grid[data-size="m"] {
+  --thumb-min: 180px;
+}
+.docs-grid[data-size="l"] {
+  --thumb-min: 260px;
+}
+
+.doc-card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 8px;
+  padding: 0.5rem;
+  background: rgba(127, 127, 127, 0.04);
+}
+.doc-card-grid.selected {
+  border-color: #2f6feb;
+  box-shadow: 0 0 0 1px #2f6feb inset;
+}
+.doc-card-thumb-wrap {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  background: #fff;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.doc-card-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: top;
+  display: block;
+  cursor: pointer;
+}
+.doc-card-thumb.doc-thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  color: rgba(80, 80, 80, 0.7);
+  background: rgba(127, 127, 127, 0.12);
+}
+/* Overlays: selection box top-left, status top-right, feature badges along the bottom. */
+.doc-card-check {
+  position: absolute;
+  top: 0.3rem;
+  left: 0.3rem;
+  padding: 0.15rem;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.45);
+  line-height: 0;
+}
+.doc-card-status {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+}
+.doc-card-badges {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.25rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+}
+.doc-card-title {
+  font-weight: 600;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-card-summary {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(127, 127, 127, 0.95);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

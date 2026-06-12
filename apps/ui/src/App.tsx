@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { fetchHealth, type HealthStatus } from "./api";
 import { ActivityPanel } from "./ActivityPanel";
+import { AggregatePanel } from "./AggregatePanel";
 import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
@@ -73,6 +74,7 @@ type View =
   | "tokensearch"
   | "chat"
   | "entities"
+  | "totals"
   | "activity"
   | "settings";
 
@@ -83,6 +85,7 @@ const TABS: { id: View; label: string }[] = [
   { id: "tokensearch", label: "Token Search" },
   { id: "chat", label: "Chat" },
   { id: "entities", label: "Entities" },
+  { id: "totals", label: "Totals" },
   { id: "ingestion", label: "Ingestion" },
   { id: "activity", label: "Activity" },
   { id: "status", label: "Status" },
@@ -142,6 +145,7 @@ export default function App() {
           {view === "tokensearch" && <TokenSearchPanel onOpenDocument={setOpenDoc} />}
           {view === "chat" && <ChatPanel onOpenDocument={setOpenDoc} />}
           {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
+          {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
           {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
           {view === "activity" && <ActivityPanel />}
           {view === "status" && <HealthPanel />}

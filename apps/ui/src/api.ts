@@ -443,3 +443,72 @@ export async function chat(question: string, signal?: AbortSignal): Promise<RagA
   }
   return (await response.json()) as RagAnswer;
 }
+
+// ---- Structured aggregation (M6.3): deterministic SUM/COUNT over extracted records ----
+
+export interface AggregationIntent {
+  operation: "sum" | "count";
+  merchant?: string | null;
+  direction?: "debit" | "credit" | null;
+  currency?: string | null;
+  record_type?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+  sample_limit?: number;
+}
+
+export interface AggregationBucket {
+  currency: string | null;
+  total_minor: number;
+  count: number;
+}
+
+export interface AggregatedRecord {
+  id: string;
+  document_id: string;
+  record_type: string;
+  occurred_on: string | null;
+  amount_minor: number | null;
+  currency: string | null;
+  direction: string | null;
+  merchant_normalized: string | null;
+  merchant_raw: string | null;
+  description: string | null;
+  raw_text: string;
+}
+
+export interface AggregationResult {
+  operation: string;
+  count: number;
+  by_currency: AggregationBucket[];
+  samples: AggregatedRecord[];
+}
+
+export async function aggregate(
+  intent: AggregationIntent,
+  signal?: AbortSignal,
+): Promise<AggregationResult> {
+  const response = await fetch("/api/v1/aggregate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(intent),
+    signal,
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as AggregationResult;
+}
+
+/** Format integer minor units (e.g. cents) as a currency string, e.g. 1242022 EUR -> "12,420.22 EUR". */
+export function formatMoneyMinor(totalMinor: number, currency: string | null): string {
+  const major = totalMinor / 100;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: currency ?? "EUR",
+    }).format(major);
+  } catch {
+    return `${major.toFixed(2)} ${currency ?? ""}`.trim();
+  }
+}

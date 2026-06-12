@@ -6,6 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
+from doktok_contracts.errors import DuplicateActiveDocumentError
 from doktok_contracts.media import ExtractedTerm
 from doktok_contracts.schemas import (
     AggregationBucket,
@@ -214,30 +215,47 @@ class PostgresDocumentRepository:
         self._db = db
 
     def add(self, document: Document) -> None:
+        try:
+            with self._db.connection() as conn:
+                conn.execute(
+                    f"INSERT INTO documents ({_DOC_COLUMNS}) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        document.id,
+                        document.tenant_id,
+                        document.current_version_id,
+                        document.sha256,
+                        document.original_filename,
+                        document.detected_mime,
+                        document.title,
+                        document.status.value,
+                        document.storage_path,
+                        document.created_at,
+                        document.activated_at,
+                        document.duplicate_of,
+                        Json(document.metadata),
+                        document.ingested_at,
+                        document.document_date,
+                        document.location,
+                        document.summary,
+                    ),
+                )
+        except pg_errors.UniqueViolation as exc:
+            # The active content-dedup constraint fired (a concurrent ingest of the same content
+            # won the race). Translate to a domain error so the pipeline marks this copy duplicate.
+            if getattr(exc.diag, "constraint_name", "") == "uq_documents_active_sha":
+                raise DuplicateActiveDocumentError(str(exc)) from exc
+            raise
+
+    def find_active_by_sha256(self, tenant_id: str, sha256: str) -> str | None:
         with self._db.connection() as conn:
-            conn.execute(
-                f"INSERT INTO documents ({_DOC_COLUMNS}) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    document.id,
-                    document.tenant_id,
-                    document.current_version_id,
-                    document.sha256,
-                    document.original_filename,
-                    document.detected_mime,
-                    document.title,
-                    document.status.value,
-                    document.storage_path,
-                    document.created_at,
-                    document.activated_at,
-                    document.duplicate_of,
-                    Json(document.metadata),
-                    document.ingested_at,
-                    document.document_date,
-                    document.location,
-                    document.summary,
-                ),
-            )
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id FROM documents WHERE tenant_id=%s AND sha256=%s AND status='active' "
+                "LIMIT 1",
+                (tenant_id, sha256),
+            ).fetchone()
+        return str(row["id"]) if row else None
 
     def set_metadata(
         self,

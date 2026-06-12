@@ -25,7 +25,7 @@ def _doc(doc_id: str, tenant: str) -> Document:
     return Document(
         id=doc_id,
         tenant_id=tenant,
-        sha256="a" * 64,
+        sha256=(doc_id + "a" * 64)[:64],  # distinct per doc (active-sha dedup invariant)
         original_filename=f"{doc_id}.txt",
         detected_mime="text/plain",
         title=doc_id,

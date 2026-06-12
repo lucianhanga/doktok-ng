@@ -20,7 +20,11 @@ function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknow
     if (url.includes("/api/v1/categories")) {
       return new Response(JSON.stringify([]), { status: 200 });
     }
-    return new Response(JSON.stringify(docs), { status: 200 });
+    // The documents list is a keyset-paginated envelope (single page in tests).
+    return new Response(
+      JSON.stringify({ items: docs, total: docs.length, next_cursor: null }),
+      { status: 200 },
+    );
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -118,4 +122,43 @@ test("shows an error when the request fails", async () => {
   );
   render(<DocumentsPanel />);
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not load documents"));
+});
+
+
+test("shows a count line and sends needs_attention when the filter is toggled", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText(/Showing 1 of 1 document/i)).toBeInTheDocument());
+
+  fireEvent.click(screen.getByLabelText(/Needs attention/i));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("needs_attention=true")),
+    ).toBe(true),
+  );
+});
+
+test("Load more pages through the keyset cursor", async () => {
+  const all = Array.from({ length: 60 }, (_, i) => doc({ id: `d${i}`, original_filename: `d${i}.pdf` }));
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+    const start = Number(new URL(url, "http://x").searchParams.get("cursor") ?? "0");
+    const items = all.slice(start, start + 50);
+    const nextStart = start + 50;
+    const next_cursor = nextStart < all.length ? String(nextStart) : null;
+    return new Response(JSON.stringify({ items, total: all.length, next_cursor }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText(/Showing 50 of 60/i)).toBeInTheDocument());
+  expect(screen.queryByText("d59.pdf")).not.toBeInTheDocument(); // off the first window
+
+  fireEvent.click(screen.getByText("Load more"));
+  await waitFor(() => expect(screen.getByText(/Showing 60 of 60/i)).toBeInTheDocument());
+  expect(screen.getByText("d59.pdf")).toBeInTheDocument(); // now loaded
+  expect(screen.queryByText("Load more")).not.toBeInTheDocument(); // last page reached
 });

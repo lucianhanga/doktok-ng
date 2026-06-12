@@ -42,7 +42,7 @@ def list_documents(
 ) -> list[dict[str, Any]]:
     """List the tenant's active documents with their enrichment metadata."""
     limit = max(1, min(limit, 200))
-    docs = repo.list_documents(tenant_id, limit=limit, status=DocumentStatus.ACTIVE)
+    docs, _total, _next = repo.list_documents(tenant_id, limit=limit, status=DocumentStatus.ACTIVE)
     return [
         {
             "document_id": d.id,

@@ -1,2 +1,3 @@
 - [Frontend stack and auth model](frontend-stack-auth.md) — React+Vite+TS SPA, same-origin Vite proxy injects bearer token on all /api requests; token-free bundle
 - [DocumentDetail card](document-detail-card.md) — structure of the DocumentDetail component and the file-actions feature added to it
+- [Documents list paging](documents-list-paging.md) — load-more + filter-first, live-poll coexistence rule, needs-attention filter, count line, Overview deep-link

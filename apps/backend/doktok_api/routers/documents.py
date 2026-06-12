@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -19,6 +21,7 @@ from doktok_contracts.schemas import (
     DocumentContent,
     DocumentEntity,
     DocumentFeature,
+    DocumentListPage,
     DocumentStatus,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -42,21 +45,42 @@ Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
 Jobs = Annotated[IngestionJobRepository, Depends(get_job_repository)]
 
 
-@router.get("", response_model=list[Document])
+def _encode_cursor(anchor: tuple[datetime, str] | None) -> str | None:
+    if anchor is None:
+        return None
+    raw = f"{anchor[0].isoformat()}|{anchor[1]}".encode()
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+def _decode_cursor(token: str | None) -> tuple[datetime, str] | None:
+    if not token:
+        return None
+    try:
+        ts, doc_id = base64.urlsafe_b64decode(token).decode().split("|", 1)
+        return datetime.fromisoformat(ts), doc_id
+    except (ValueError, TypeError) as exc:  # malformed/stale token is client input, not a 500
+        raise HTTPException(status_code=400, detail="invalid cursor") from exc
+
+
+@router.get("", response_model=DocumentListPage)
 def list_documents(
     tenant: Tenant,
     repo: Repo,
-    categories: Categories,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[str | None, Query()] = None,
     category: Annotated[str | None, Query()] = None,
     status: Annotated[DocumentStatus | None, Query()] = None,
-) -> list[Document]:
-    if category:
-        return categories.documents_for_category(
-            tenant.tenant_id, category, limit=limit, offset=offset
-        )
-    return repo.list_documents(tenant.tenant_id, limit=limit, offset=offset, status=status)
+    needs_attention: Annotated[bool, Query()] = False,
+) -> DocumentListPage:
+    items, total, next_anchor = repo.list_documents(
+        tenant.tenant_id,
+        limit=limit,
+        cursor=_decode_cursor(cursor),
+        status=status,
+        category=category,
+        needs_attention=needs_attention,
+    )
+    return DocumentListPage(items=items, total=total, next_cursor=_encode_cursor(next_anchor))
 
 
 @router.get("/{document_id}", response_model=Document)

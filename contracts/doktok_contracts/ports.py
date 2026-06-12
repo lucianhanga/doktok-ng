@@ -55,11 +55,22 @@ class DocumentRepository(Protocol):
     def list_documents(
         self,
         tenant_id: str,
-        limit: int = 50,
-        offset: int = 0,
         *,
+        limit: int = 50,
+        cursor: tuple[datetime, str] | None = None,
         status: DocumentStatus | None = None,
-    ) -> list[Document]: ...
+        category: str | None = None,
+        needs_attention: bool = False,
+    ) -> tuple[list[Document], int, tuple[datetime, str] | None]:
+        """Keyset-paginated documents ordered (created_at DESC, id DESC).
+
+        ``cursor`` is the (created_at, id) of the last row already seen (None = first page).
+        ``needs_attention`` keeps only documents with at least one non-done feature; ``category``
+        keeps only documents linked to that active category. All filters compose. Returns
+        ``(items, total, next_anchor)`` where ``next_anchor`` is None on the last page.
+        """
+        ...
+
     def delete(self, tenant_id: str, document_id: str) -> None: ...
     def set_metadata(
         self,

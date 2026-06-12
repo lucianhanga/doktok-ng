@@ -65,19 +65,34 @@ export function documentFileUrl(
   return `/api/v1/documents/${encodeURIComponent(id)}/file${qs ? `?${qs}` : ""}`;
 }
 
+export interface DocumentPage {
+  items: DokDocument[];
+  total: number;
+  next_cursor: string | null;
+}
+
 export async function fetchDocuments(
-  opts?: { category?: string; status?: string },
+  opts?: {
+    category?: string;
+    status?: string;
+    cursor?: string;
+    needsAttention?: boolean;
+    limit?: number;
+  },
   signal?: AbortSignal,
-): Promise<DokDocument[]> {
+): Promise<DocumentPage> {
   const params = new URLSearchParams();
   if (opts?.category) params.set("category", opts.category);
   if (opts?.status) params.set("status", opts.status);
+  if (opts?.cursor) params.set("cursor", opts.cursor);
+  if (opts?.needsAttention) params.set("needs_attention", "true");
+  if (opts?.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
   const response = await fetch(`/api/v1/documents${qs ? `?${qs}` : ""}`, { signal });
   if (!response.ok) {
     throw friendlyHttpError(response.status);
   }
-  return (await response.json()) as DokDocument[];
+  return (await response.json()) as DocumentPage;
 }
 
 export interface CategorySummary {

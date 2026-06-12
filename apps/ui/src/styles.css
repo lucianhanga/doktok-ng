@@ -600,3 +600,26 @@ tr.row-selected {
 .chip-legend .chip {
   margin: 0 0.1rem;
 }
+
+/* Pagination follow-up: count line, Load more, and the clickable Overview "pending" card. */
+.result-count {
+  margin: 0.5rem 0 0.25rem;
+}
+.load-more {
+  display: flex;
+  justify-content: center;
+  margin: 0.75rem 0 0.25rem;
+}
+.card-button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.card-button:hover:not(:disabled),
+.card-button:focus-visible:not(:disabled) {
+  border-color: rgba(80, 130, 255, 0.6);
+  background: rgba(80, 130, 255, 0.08);
+}
+.card-button:disabled {
+  cursor: default;
+}

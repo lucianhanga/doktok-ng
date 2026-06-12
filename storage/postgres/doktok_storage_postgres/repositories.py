@@ -268,21 +268,57 @@ class PostgresDocumentRepository:
     def list_documents(
         self,
         tenant_id: str,
-        limit: int = 50,
-        offset: int = 0,
         *,
+        limit: int = 50,
+        cursor: tuple[datetime, str] | None = None,
         status: DocumentStatus | None = None,
-    ) -> list[Document]:
-        status_value = status.value if status else None
+        category: str | None = None,
+        needs_attention: bool = False,
+    ) -> tuple[list[Document], int, tuple[datetime, str] | None]:
+        params: dict[str, Any] = {
+            "tenant": tenant_id,
+            "status": status.value if status else None,
+            "category": category,
+            "needs_attention": needs_attention,
+        }
+        # Shared filter predicate (status + category EXISTS + needs-attention EXISTS), composed.
+        where = (
+            "d.tenant_id = %(tenant)s "
+            "AND (%(status)s::text IS NULL OR d.status = %(status)s) "
+            "AND (%(category)s::text IS NULL OR EXISTS ("
+            "  SELECT 1 FROM document_category_links l JOIN categories c ON c.id = l.category_id "
+            "  WHERE l.document_id = d.id AND l.tenant_id = d.tenant_id "
+            "  AND c.name = %(category)s AND c.status = 'active')) "
+            "AND (NOT %(needs_attention)s OR EXISTS ("
+            "  SELECT 1 FROM document_features f "
+            "  WHERE f.tenant_id = d.tenant_id AND f.document_id = d.id AND f.status <> 'done'))"
+        )
+        keyset = (
+            " AND (%(cursor_ts)s::timestamptz IS NULL "
+            "OR (d.created_at, d.id) < (%(cursor_ts)s, %(cursor_id)s))"
+        )
+        params["cursor_ts"] = cursor[0] if cursor else None
+        params["cursor_id"] = cursor[1] if cursor else None
+        # Fetch one extra row to detect whether a further page exists (and where it starts).
+        params["limit_plus_1"] = limit + 1
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                f"SELECT {_DOC_COLUMNS} FROM documents "
-                "WHERE tenant_id=%s AND (%s::text IS NULL OR status=%s) "
-                "ORDER BY created_at DESC LIMIT %s OFFSET %s",
-                (tenant_id, status_value, status_value, limit, offset),
+                f"SELECT {_DOC_COLUMNS_D} FROM documents d WHERE {where}{keyset} "
+                "ORDER BY d.created_at DESC, d.id DESC LIMIT %(limit_plus_1)s",
+                params,
             ).fetchall()
-        return [_row_to_document(row) for row in rows]
+            total_row = cur.execute(
+                f"SELECT COUNT(*) AS n FROM documents d WHERE {where}", params
+            ).fetchone()
+            total = total_row["n"] if total_row else 0
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        documents = [_row_to_document(row) for row in rows]
+        next_anchor = (
+            (documents[-1].created_at, documents[-1].id) if has_more and documents else None
+        )
+        return documents, int(total), next_anchor
 
     def delete(self, tenant_id: str, document_id: str) -> None:
         with self._db.connection() as conn:

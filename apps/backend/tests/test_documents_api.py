@@ -1,5 +1,5 @@
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from doktok_api.main import create_app
@@ -61,17 +61,68 @@ def test_status_filter() -> None:
     failed = _doc("f1", "tenant-a")
     failed.status = DocumentStatus.FAILED
     client = _client(active, failed)
-    all_ids = {d["id"] for d in client.get("/api/v1/documents", headers=_auth("tok-a")).json()}
-    assert all_ids == {"a1", "f1"}
+    body = client.get("/api/v1/documents", headers=_auth("tok-a")).json()
+    assert {d["id"] for d in body["items"]} == {"a1", "f1"}
+    assert body["total"] == 2
     failed_only = client.get("/api/v1/documents?status=failed", headers=_auth("tok-a")).json()
-    assert [d["id"] for d in failed_only] == ["f1"]
+    assert [d["id"] for d in failed_only["items"]] == ["f1"]
+    assert failed_only["total"] == 1
 
 
 def test_lists_only_callers_tenant() -> None:
     client = _client(_doc("a-doc", "tenant-a"), _doc("b-doc", "tenant-b"))
     response = client.get("/api/v1/documents", headers=_auth("tok-a"))
     assert response.status_code == 200
-    assert [row["id"] for row in response.json()] == ["a-doc"]
+    body = response.json()
+    assert [row["id"] for row in body["items"]] == ["a-doc"]
+    assert body["total"] == 1 and body["next_cursor"] is None
+
+
+def test_keyset_pagination_pages_without_overlap() -> None:
+    base = datetime(2024, 1, 1, tzinfo=UTC)
+    docs = []
+    for i in range(5):
+        d = _doc(f"d{i}", "tenant-a")
+        d.created_at = base + timedelta(minutes=i)  # distinct, ascending
+        docs.append(d)
+    client = _client(*docs)
+
+    p1 = client.get("/api/v1/documents?limit=2", headers=_auth("tok-a")).json()
+    assert [d["id"] for d in p1["items"]] == ["d4", "d3"]  # newest first
+    assert p1["total"] == 5 and p1["next_cursor"]
+
+    p2 = client.get(
+        f"/api/v1/documents?limit=2&cursor={p1['next_cursor']}", headers=_auth("tok-a")
+    ).json()
+    assert [d["id"] for d in p2["items"]] == ["d2", "d1"]  # no overlap with page 1
+
+    p3 = client.get(
+        f"/api/v1/documents?limit=2&cursor={p2['next_cursor']}", headers=_auth("tok-a")
+    ).json()
+    assert [d["id"] for d in p3["items"]] == ["d0"]
+    assert p3["next_cursor"] is None  # last page
+
+
+def test_needs_attention_filter() -> None:
+    repo = InMemoryDocumentRepository()
+    repo.add(_doc("ok", "tenant-a"))
+    repo.add(_doc("stuck", "tenant-a"))
+    repo.attention_ids = {"stuck"}  # only this doc has a non-done feature
+    registry = build_registry()
+    registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+
+    body = client.get("/api/v1/documents?needs_attention=true", headers=_auth("tok-a")).json()
+    assert [d["id"] for d in body["items"]] == ["stuck"]
+    assert body["total"] == 1
+
+
+def test_invalid_cursor_is_400() -> None:
+    client = _client(_doc("d1", "tenant-a"))
+    resp = client.get("/api/v1/documents?cursor=not-a-cursor", headers=_auth("tok-a"))
+    assert resp.status_code == 400
 
 
 def test_cannot_read_another_tenants_document() -> None:

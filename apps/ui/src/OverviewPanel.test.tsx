@@ -42,10 +42,16 @@ test("renders counts and recent activity", async () => {
   );
   render(<OverviewPanel />);
   await waitFor(() => expect(screen.getByText("7")).toBeInTheDocument()); // entities (unique count)
+  // Library counters
   expect(screen.getByText("Documents")).toBeInTheDocument();
   expect(screen.getByText("Entities")).toBeInTheDocument();
-  expect(screen.getByText("Waiting in ingest")).toBeInTheDocument();
-  expect(screen.getByText("9")).toBeInTheDocument(); // pending in ingest
+  // Ingestion pipeline surfaces only actionable states - no "Jobs"/"active" count
+  expect(screen.getByText("Ingestion")).toBeInTheDocument();
+  expect(screen.getByText("Waiting")).toBeInTheDocument();
+  expect(screen.getByText("9")).toBeInTheDocument(); // waiting in ingest
+  expect(screen.getByText("Processing")).toBeInTheDocument();
   expect(screen.getByText("Pending features")).toBeInTheDocument();
+  expect(screen.getByText("5")).toBeInTheDocument(); // documents with pending features
+  expect(screen.queryByText("Jobs by status")).not.toBeInTheDocument();
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
 });

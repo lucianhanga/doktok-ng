@@ -43,6 +43,7 @@ from doktok_contracts.schemas import (
     ExtractedRecord,
     IngestionJob,
     ListAnchor,
+    ProjectionRequest,
     RagAnswer,
     SearchHit,
     SecurityDecision,
@@ -296,6 +297,50 @@ class EmbeddingProvider(Protocol):
 class ChunkRepository(Protocol):
     def add_chunks(self, chunks: list[DocumentChunk], embeddings: list[list[float]]) -> None: ...
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
+
+    def read_embeddings(self, tenant_id: str, limit: int) -> list[tuple[str, str, list[float]]]:
+        """Read up to ``limit`` (chunk_id, document_id, embedding) rows for the embed map (M7.1).
+
+        Ordered deterministically (by chunk id) so a truncated read is stable across calls.
+        """
+        ...
+
+    def embedding_fingerprint(self, tenant_id: str) -> str:
+        """A cheap fingerprint of the tenant's embeddings (count + newest row) for staleness (M7.1).
+
+        Lets the Insights tab tell whether a cached projection is stale without re-reading vectors.
+        """
+        ...
+
+
+@runtime_checkable
+class DimensionalityReducer(Protocol):
+    """Project high-dimensional embeddings down to ``dim`` (2 or 3) for visualization (M7.1)."""
+
+    def reduce(self, vectors: list[list[float]], dim: int) -> list[list[float]]:
+        """Return one ``dim``-length coordinate per input vector, in the same order."""
+        ...
+
+
+@runtime_checkable
+class ProjectionRequestRepository(Protocol):
+    """The DB-backed recompute queue for embedding projections (ADR-0016, M7.1)."""
+
+    def request(self, tenant_id: str) -> None:
+        """Enqueue a recompute for a tenant (idempotent while one is already pending)."""
+        ...
+
+    def has_pending(self, tenant_id: str) -> bool:
+        """Whether a recompute is queued/running for the tenant (drives the UI busy state)."""
+        ...
+
+    def claim_next(self) -> ProjectionRequest | None:
+        """Claim the oldest pending request across tenants (marks it running); None if none."""
+        ...
+
+    def complete(self, request_id: str) -> None:
+        """Remove a finished request from the queue."""
+        ...
 
 
 @runtime_checkable

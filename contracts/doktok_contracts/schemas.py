@@ -550,6 +550,19 @@ class ModelCatalog(BaseModel):
     reasoning_levels: list[str] = Field(default_factory=list)
 
 
+class ProjectionRequest(BaseModel):
+    """A pending request to recompute a tenant's embedding projections (ADR-0016, M7.1).
+
+    The API enqueues one; the worker claims it, fits the 2D and 3D projections, writes the cache,
+    and clears it. There is no message broker, so this DB row is the queue.
+    """
+
+    id: str
+    tenant_id: str
+    requested_at: datetime
+    status: str = "pending"
+
+
 class ProjectionPoint(BaseModel):
     """One chunk placed in the reduced (2D/3D) embedding space (ADR-0016, M7.1).
 

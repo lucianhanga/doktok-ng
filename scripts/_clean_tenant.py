@@ -21,6 +21,7 @@ _TENANT_TABLES = [
     "document_category_links",
     "categories",  # no document FK, so must be deleted explicitly (not cascaded)
     "embedding_projections",  # derived cache; points cascade from the header
+    "projection_requests",
     "document_entities",
     "document_chunks",
     "audit_events",

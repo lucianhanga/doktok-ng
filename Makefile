@@ -1,5 +1,5 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend run-worker run-ui clean-tenant rag-eval enrich-eval ocr-paddle db db-down \
+        run-backend run-worker run-ui clean-tenant rag-eval enrich-eval ocr-paddle projection-engine db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks
 
@@ -53,6 +53,9 @@ enrich-eval: ## Run the document-enrichment eval against real Ollama (needs `mak
 
 ocr-paddle: ## Install the PaddleOCR runtime (the DOKTOK_OCR_ENGINE=paddleocr extra)
 	uv pip install paddleocr paddlepaddle pillow numpy
+
+projection-engine: ## Install the embedding-projection runtime (UMAP/PCA for the Insights tab)
+	uv pip install umap-learn scikit-learn numpy
 
 db: ## Start local Postgres + pgvector (docker compose)
 	docker compose up -d

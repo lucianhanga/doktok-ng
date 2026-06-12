@@ -32,6 +32,7 @@ from doktok_contracts.schemas import (
     JobStatus,
     ListAnchor,
     ProjectionPoint,
+    ProjectionRequest,
     SortDir,
     StatsSummary,
     TokenMatch,
@@ -47,6 +48,13 @@ from doktok_storage_postgres.db import Database
 def to_vector_literal(values: list[float]) -> str:
     """Format a float vector as a pgvector literal, e.g. ``[0.1,0.2,0.3]``."""
     return "[" + ",".join(repr(float(v)) for v in values) + "]"
+
+
+def from_vector_literal(raw: str | None) -> list[float]:
+    """Parse a pgvector text value (``[0.1,0.2,...]``) back into a float list; ``[]`` for NULL."""
+    if not raw:
+        return []
+    return [float(part) for part in raw.strip().lstrip("[").rstrip("]").split(",") if part]
 
 
 _DOC_COLUMNS = (
@@ -590,6 +598,25 @@ class PostgresChunkRepository:
                 "DELETE FROM document_chunks WHERE tenant_id=%s AND document_id=%s",
                 (tenant_id, document_id),
             )
+
+    def read_embeddings(self, tenant_id: str, limit: int) -> list[tuple[str, str, list[float]]]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT id, document_id, embedding::text FROM document_chunks "
+                "WHERE tenant_id=%s AND embedding IS NOT NULL ORDER BY id LIMIT %s",
+                (tenant_id, limit),
+            ).fetchall()
+        return [(r[0], r[1], from_vector_literal(r[2])) for r in rows]
+
+    def embedding_fingerprint(self, tenant_id: str) -> str:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT count(*), coalesce(max(created_at)::text, '') FROM document_chunks "
+                "WHERE tenant_id=%s AND embedding IS NOT NULL",
+                (tenant_id,),
+            ).fetchone()
+        count, latest = (row[0], row[1]) if row else (0, "")
+        return f"chunks={count};latest={latest}"
 
 
 class PostgresEntityRepository:
@@ -1479,3 +1506,46 @@ class PostgresEmbeddingProjectionRepository:
             computed_at=computed_at,
             points=points,
         )
+
+
+class PostgresProjectionRequestRepository:
+    """DB-backed recompute queue for embedding projections (ADR-0016, M7.1)."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def request(self, tenant_id: str) -> None:
+        # One live request per tenant: a repeat press while one is pending/running is a no-op.
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO projection_requests (id, tenant_id, status) "
+                "VALUES (%s, %s, 'pending') "
+                "ON CONFLICT (tenant_id) DO NOTHING",
+                (uuid.uuid4().hex, tenant_id),
+            )
+
+    def has_pending(self, tenant_id: str) -> bool:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM projection_requests WHERE tenant_id=%s", (tenant_id,)
+            ).fetchone()
+        return row is not None
+
+    def claim_next(self) -> ProjectionRequest | None:
+        # Claim the oldest pending request; SKIP LOCKED stops two workers grabbing the same one.
+        with self._db.connection() as conn, conn.transaction():
+            row = conn.execute(
+                "SELECT id, tenant_id, requested_at FROM projection_requests "
+                "WHERE status='pending' ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE projection_requests SET status='running', claimed_at=now() WHERE id=%s",
+                (row[0],),
+            )
+        return ProjectionRequest(id=row[0], tenant_id=row[1], requested_at=row[2], status="running")
+
+    def complete(self, request_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute("DELETE FROM projection_requests WHERE id=%s", (request_id,))

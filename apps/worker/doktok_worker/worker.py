@@ -24,6 +24,7 @@ from doktok_contracts.schemas import IngestionJob
 from doktok_core.features.reconciler import FeatureReconciler
 from doktok_core.ingestion.pipeline import IngestionServices, process_file, recover_stale_jobs
 from doktok_core.ingestion.stability import FileObservation, StabilityTracker
+from doktok_core.visualizations.service import ProjectionRunner
 
 logger = logging.getLogger("doktok.worker")
 
@@ -42,6 +43,8 @@ class IngestionWorker:
         reconcile_interval: float = 2.0,
         stale_job_minutes: float = 10.0,
         recover_interval: float = 60.0,
+        projection_runner: ProjectionRunner | None = None,
+        projection_interval: float = 5.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         # One IngestionServices per tenant (each carries that tenant's layout + tenant_id).
@@ -53,7 +56,15 @@ class IngestionWorker:
         self._reconcile_interval = reconcile_interval
         self._stale_job_minutes = stale_job_minutes
         self._recover_interval = recover_interval
+        self._projection_runner = projection_runner
+        self._projection_interval = projection_interval
         self._clock = clock
+
+    def run_projections(self) -> int:
+        """Drain the embedding-projection recompute queue (Insights tab, ADR-0016)."""
+        if self._projection_runner is None:
+            return 0
+        return self._projection_runner.run_pending()
 
     def reconcile(self) -> int:
         """Drive active documents toward having every registered feature processed (ADR-0009)."""
@@ -157,6 +168,12 @@ class IngestionWorker:
                     target=self._reconcile_loop, args=(stop,), name="reconcile", daemon=True
                 )
             )
+        if self._projection_runner is not None:
+            threads.append(
+                threading.Thread(
+                    target=self._projection_loop, args=(stop,), name="projection", daemon=True
+                )
+            )
         for thread in threads:
             thread.start()
         try:
@@ -210,3 +227,15 @@ class IngestionWorker:
                 logger.exception("reconcile pass failed")
             # Keep draining while there is work; back off to a poll cadence when idle.
             stop.wait(0.1 if processed else self._reconcile_interval)
+
+    def _projection_loop(
+        self, stop: threading.Event
+    ) -> None:  # pragma: no cover - long-running loop
+        # A separate stream: fitting UMAP is CPU-heavy and must not stall ingestion/reconciliation.
+        while not stop.is_set():
+            processed = 0
+            try:
+                processed = self.run_projections()
+            except Exception:  # noqa: BLE001 - keep the stream alive across unexpected errors
+                logger.exception("projection recompute pass failed")
+            stop.wait(0.1 if processed else self._projection_interval)

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from doktok_contracts.schemas import EmbeddingProjection
+import uuid
+from datetime import UTC, datetime
+
+from doktok_contracts.schemas import EmbeddingProjection, ProjectionRequest
 
 
 class InMemoryEmbeddingProjectionRepository:
@@ -22,3 +25,35 @@ class InMemoryEmbeddingProjectionRepository:
         if projection is None:
             return None
         return projection.model_copy(update={"points": []})
+
+
+class InMemoryProjectionRequestRepository:
+    """One live recompute request per tenant; FIFO claim, matching the Postgres adapter (M7.1)."""
+
+    def __init__(self) -> None:
+        self.requests: list[ProjectionRequest] = []
+
+    def request(self, tenant_id: str) -> None:
+        if any(r.tenant_id == tenant_id for r in self.requests):
+            return
+        self.requests.append(
+            ProjectionRequest(
+                id=uuid.uuid4().hex,
+                tenant_id=tenant_id,
+                requested_at=datetime.now(UTC),
+                status="pending",
+            )
+        )
+
+    def has_pending(self, tenant_id: str) -> bool:
+        return any(r.tenant_id == tenant_id for r in self.requests)
+
+    def claim_next(self) -> ProjectionRequest | None:
+        for request in self.requests:
+            if request.status == "pending":
+                request.status = "running"
+                return request
+        return None
+
+    def complete(self, request_id: str) -> None:
+        self.requests = [r for r in self.requests if r.id != request_id]

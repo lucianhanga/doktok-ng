@@ -17,6 +17,7 @@ from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.policy import DefaultSecurityPolicy
+from doktok_core.settings.catalog import ollama_think_for
 from doktok_modalities_files import (
     DirectTextExtractor,
     LibmagicMimeDetector,
@@ -41,6 +42,7 @@ from doktok_storage_filesystem import (
 )
 from doktok_storage_postgres import (
     Database,
+    PostgresAppSettingsRepository,
     PostgresAuditLogRepository,
     PostgresCategoryRepository,
     PostgresChunkRepository,
@@ -76,6 +78,11 @@ def build_services(
         max_size=max(6, settings.ingest_concurrency + settings.reconcile_concurrency + 2),
     )
     migrate(db)
+
+    # Effective AI model selection (Settings tab > AI section), persisted; applied at startup.
+    ai = PostgresAppSettingsRepository(db).get_ai_settings()
+    pipeline = ai.pipeline
+    pipeline_think = ollama_think_for(pipeline.reasoning, pipeline.model, structured=True)
 
     job_repo = PostgresIngestionJobRepository(db)
     document_repo = PostgresDocumentRepository(db)
@@ -121,31 +128,31 @@ def build_services(
         keep_alive=settings.enrich_keep_alive,
     )
     metadata_extractor = OllamaMetadataExtractor(
-        settings.enrich_model,
+        pipeline.model,
         settings.enrich_repair_model,
         settings.ollama_base_url,
         timeout=timeout,
-        num_ctx=settings.enrich_num_ctx,
-        think=settings.enrich_think,
+        num_ctx=pipeline.num_ctx,
+        think=pipeline_think,
         keep_alive=settings.enrich_keep_alive,
     )
     category_classifier = OllamaCategoryClassifier(
-        settings.enrich_model,
+        pipeline.model,
         settings.enrich_repair_model,
         settings.ollama_base_url,
         timeout=timeout,
-        num_ctx=settings.enrich_num_ctx,
-        think=settings.enrich_think,
+        num_ctx=pipeline.num_ctx,
+        think=pipeline_think,
         keep_alive=settings.enrich_keep_alive,
     )
     category_repo = PostgresCategoryRepository(db)
     record_extractor = OllamaRecordExtractor(
-        settings.enrich_model,
+        pipeline.model,
         settings.enrich_repair_model,
         settings.ollama_base_url,
         timeout=timeout,
-        num_ctx=settings.enrich_num_ctx,
-        think=settings.enrich_think,
+        num_ctx=pipeline.num_ctx,
+        think=pipeline_think,
         keep_alive=settings.enrich_keep_alive,
     )
     record_repo = PostgresRecordRepository(db)

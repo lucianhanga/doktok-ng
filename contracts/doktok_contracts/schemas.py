@@ -442,3 +442,58 @@ class DocumentDetail(BaseModel):
     entities: DocumentEntitySummary = Field(default_factory=DocumentEntitySummary)
     content: DocumentContentMeta = Field(default_factory=DocumentContentMeta)
     recent_activity: list[AuditEvent] = Field(default_factory=list)
+
+
+class AiPurposeSettings(BaseModel):
+    """Model choice for one AI purpose (the data pipeline, or document interrogation)."""
+
+    provider: str = "ollama"  # 'ollama' | 'openai'
+    model: str
+    num_ctx: int
+    reasoning: str = "off"  # 'off' | 'low' | 'medium' | 'high' (ignored by non-reasoning models)
+
+
+def _default_pipeline() -> AiPurposeSettings:
+    return AiPurposeSettings(provider="ollama", model="qwen3:14b", num_ctx=8192)
+
+
+def _default_rag() -> AiPurposeSettings:
+    return AiPurposeSettings(provider="ollama", model="qwen3.6:35b-a3b", num_ctx=32768)
+
+
+class AiSettings(BaseModel):
+    """The configurable AI model selection (Settings tab > AI section). Applied on restart."""
+
+    pipeline: AiPurposeSettings = Field(default_factory=_default_pipeline)
+    rag: AiPurposeSettings = Field(default_factory=_default_rag)
+
+
+class AiSettingsResponse(AiSettings):
+    """AI settings as returned to the UI - never the OpenAI key, only whether one is set."""
+
+    openai_api_key_set: bool = False
+
+
+class AiSettingsUpdate(AiSettings):
+    """AI settings update from the UI. ``openai_api_key`` is write-only: None leaves it unchanged,
+    "" clears it, a value sets it."""
+
+    openai_api_key: str | None = None
+
+
+class ModelOption(BaseModel):
+    """A selectable model for a purpose, with its allowed context sizes."""
+
+    provider: str
+    model: str
+    label: str
+    contexts: list[int]
+    supports_reasoning: bool = False
+
+
+class ModelCatalog(BaseModel):
+    """The models the Settings UI offers per purpose + the reasoning-density levels."""
+
+    pipeline: list[ModelOption] = Field(default_factory=list)
+    rag: list[ModelOption] = Field(default_factory=list)
+    reasoning_levels: list[str] = Field(default_factory=list)

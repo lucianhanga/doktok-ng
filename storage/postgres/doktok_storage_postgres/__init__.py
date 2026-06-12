@@ -2,6 +2,7 @@
 
 from doktok_storage_postgres.db import Database, migrate
 from doktok_storage_postgres.repositories import (
+    PostgresAppSettingsRepository,
     PostgresAuditLogRepository,
     PostgresCategoryRepository,
     PostgresChunkRepository,
@@ -18,6 +19,7 @@ __version__ = "0.0.0"
 
 __all__ = [
     "Database",
+    "PostgresAppSettingsRepository",
     "PostgresAuditLogRepository",
     "PostgresCategoryRepository",
     "PostgresChunkRepository",

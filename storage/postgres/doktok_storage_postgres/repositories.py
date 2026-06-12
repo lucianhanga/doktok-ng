@@ -12,6 +12,7 @@ from doktok_contracts.schemas import (
     AggregationBucket,
     AggregationIntent,
     AggregationResult,
+    AiSettings,
     AuditEvent,
     Category,
     CategorySummary,
@@ -1133,3 +1134,38 @@ class PostgresRecordRepository:
             by_currency=buckets,
             samples=samples,
         )
+
+
+class PostgresAppSettingsRepository:
+    """Global app settings backed by the ``app_settings`` key -> JSON table (not tenant-scoped)."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def _get(self, key: str) -> Any:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute("SELECT value FROM app_settings WHERE key=%s", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def _set(self, key: str, value: Any) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()",
+                (key, Json(value)),
+            )
+
+    def get_ai_settings(self) -> AiSettings:
+        raw = self._get("ai_settings")
+        return AiSettings.model_validate(raw) if raw else AiSettings()
+
+    def set_ai_settings(self, settings: AiSettings) -> None:
+        self._set("ai_settings", settings.model_dump())
+
+    def get_openai_api_key(self) -> str:
+        raw = self._get("openai_api_key")
+        return str(raw) if raw else ""
+
+    def set_openai_api_key(self, key: str) -> None:
+        self._set("openai_api_key", key)

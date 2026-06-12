@@ -21,6 +21,7 @@ class OllamaChatModelProvider:
         num_ctx: int | None = None,
         num_predict: int | None = None,
         keep_alive: str | None = None,
+        think: bool = False,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
@@ -30,6 +31,9 @@ class OllamaChatModelProvider:
         self._num_predict = num_predict
         # Residency hint: keep the (large) RAG model warm so idle gaps don't trigger a cold reload.
         self._keep_alive = keep_alive
+        # Whether the model reasons before answering (reasoning density off -> False). No structured
+        # `format` here, so toggling think is always safe.
+        self._think = think
 
     def complete(self, prompt: str) -> str:
         options: dict[str, object] = {"temperature": 0}
@@ -41,9 +45,7 @@ class OllamaChatModelProvider:
             "model": self._model,
             "prompt": prompt,
             "stream": False,
-            # No structured `format` here, so disabling thinking is safe and faster (the judge,
-            # RAG answerer, and reranker don't need chain-of-thought).
-            "think": False,
+            "think": self._think,
             "options": options,
         }
         if self._keep_alive is not None:

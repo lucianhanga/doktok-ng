@@ -1005,3 +1005,24 @@ tr.row-selected {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ---- Totals / structured aggregation ---- */
+.agg-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 0;
+}
+.agg-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+.agg-form input[type="text"] {
+  width: 11rem;
+}
+.agg-result {
+  margin-top: 0.5rem;
+}

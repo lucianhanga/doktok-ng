@@ -31,9 +31,20 @@ class FakeRagAnswerer:
         )
 
 
+class _SemanticChat:
+    """Classifies nothing as aggregation, so chat deterministically falls through to RAG without
+    touching a real model (some questions, e.g. 'what is the total?', trip the keyword gate)."""
+
+    def complete(self, prompt: str) -> str:  # noqa: ARG002
+        return '{"is_aggregation": false}'
+
+
 def _client(answerer: FakeRagAnswerer) -> TestClient:
+    from doktok_contracts.ports import ChatModelProvider
+
     registry = build_registry()
     registry.register(RagAnswerer, answerer)  # type: ignore[type-abstract]
+    registry.register(ChatModelProvider, _SemanticChat())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -81,3 +92,63 @@ def test_response_carries_request_id_header() -> None:
         headers={"Authorization": "Bearer tok-a", "X-Request-ID": "abc123"},
     )
     assert resp.headers.get("X-Request-ID") == "abc123"
+
+
+# --- M6.3 #158: an aggregation question is answered deterministically from records, not RAG ---
+
+
+class FakeChatModel:
+    def complete(self, prompt: str) -> str:  # noqa: ARG002
+        return (
+            '{"is_aggregation": true, "operation": "sum", "merchant": "Block House", '
+            '"direction": "debit", "currency": "EUR", "date_from": null, "date_to": null}'
+        )
+
+
+class FakeRecordRepository:
+    def aggregate(self, tenant_id: str, intent: object) -> object:  # noqa: ARG002
+        from doktok_contracts.schemas import AggregationBucket, AggregationResult, ExtractedRecord
+
+        return AggregationResult(
+            operation="sum",
+            count=2,
+            by_currency=[AggregationBucket(currency="EUR", total_minor=8500, count=2)],
+            samples=[
+                ExtractedRecord(
+                    id="r1",
+                    tenant_id=tenant_id,
+                    document_id="d1",
+                    raw_text="BLOCK HOUSE 42.50",
+                    amount_minor=4250,
+                    currency="EUR",
+                    direction="debit",
+                )
+            ],
+        )
+
+    def replace_for_document(self, tenant_id: str, document_id: str, records: object) -> None: ...  # noqa: ARG002
+
+
+def test_aggregation_question_answered_from_records_not_rag() -> None:
+    from doktok_contracts.ports import ChatModelProvider, DocumentRepository, RecordRepository
+    from doktok_core.documents.inmemory import InMemoryDocumentRepository
+
+    answerer = FakeRagAnswerer()
+    registry = build_registry()
+    registry.register(RagAnswerer, answerer)  # type: ignore[type-abstract]
+    registry.register(ChatModelProvider, FakeChatModel())  # type: ignore[type-abstract]
+    registry.register(RecordRepository, FakeRecordRepository())
+    registry.register(DocumentRepository, InMemoryDocumentRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+
+    resp = client.post(
+        "/api/v1/chat",
+        json={"question": "how much did I spend at Block House?"},
+        headers={"Authorization": "Bearer tok-a"},
+    )
+    body = resp.json()
+    assert resp.status_code == 200
+    assert "85.00" in body["answer"] and "EUR" in body["answer"]  # deterministic total
+    assert body["citations"][0]["document_id"] == "d1"
+    assert answerer.seen is None  # RAG was bypassed

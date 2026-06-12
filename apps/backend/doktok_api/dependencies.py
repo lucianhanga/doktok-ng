@@ -15,6 +15,7 @@ from doktok_contracts.ports import (
     AppSettingsRepository,
     AuditLogRepository,
     CategoryRepository,
+    ChatModelProvider,
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
@@ -154,46 +155,70 @@ def get_retriever(request: Request) -> Retriever:
     return retriever
 
 
+def _build_rag_chat_model(request: Request) -> ChatModelProvider:
+    """The chat model for the RAG/interrogation purpose (Settings tab > AI), built per its provider.
+    Shared by the RAG answerer and the chat aggregation router so both use the configured model."""
+    from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
+
+    settings = request.app.state.settings
+    app_settings = get_app_settings_repository(request)
+    rag = app_settings.get_ai_settings().rag
+    openai_key = app_settings.get_openai_api_key()
+    model_provider: ChatModelProvider
+    if rag.provider == "openai" and openai_key:
+        from doktok_provider_openai import OpenAiChatModelProvider
+
+        effort = openai_reasoning_effort(rag.reasoning, rag.model)
+        model_provider = OpenAiChatModelProvider(
+            rag.model, openai_key, timeout=settings.rag_timeout_seconds, reasoning_effort=effort
+        )
+    else:
+        from doktok_provider_ollama import OllamaChatModelProvider
+
+        model = rag.model if rag.provider == "ollama" else settings.default_model
+        model_provider = OllamaChatModelProvider(
+            model,
+            settings.ollama_base_url,
+            timeout=settings.rag_timeout_seconds,
+            num_ctx=rag.num_ctx,
+            keep_alive=settings.chat_keep_alive,
+            think=ollama_think_for(rag.reasoning, model, structured=False),
+        )
+    return model_provider
+
+
+def get_chat_model(request: Request) -> ChatModelProvider:
+    registry = request.app.state.registry
+    if registry.is_registered(ChatModelProvider):
+        return cast(ChatModelProvider, registry.resolve(ChatModelProvider))
+    model = _build_rag_chat_model(request)
+    registry.register(ChatModelProvider, model)
+    return model
+
+
 def get_rag_answerer(request: Request) -> RagAnswerer:
     registry = request.app.state.registry
     if registry.is_registered(RagAnswerer):
         return cast(RagAnswerer, registry.resolve(RagAnswerer))
 
-    from doktok_contracts.ports import ChatModelProvider
     from doktok_core.rag.answerer import DefaultRagAnswerer
     from doktok_core.rag.reranker import LlmReranker
-    from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
-    from doktok_provider_ollama import OllamaChatModelProvider
 
     settings = request.app.state.settings
     # Effective RAG model selection (Settings tab > AI section), persisted; applied at startup.
     app_settings = get_app_settings_repository(request)
     rag = app_settings.get_ai_settings().rag
     openai_key = app_settings.get_openai_api_key()
-    chat_model: ChatModelProvider
+    chat_model = _build_rag_chat_model(request)
     rerank_model: ChatModelProvider
     if rag.provider == "openai" and openai_key:
-        from doktok_provider_openai import OpenAiChatModelProvider
-
-        effort = openai_reasoning_effort(rag.reasoning, rag.model)
-        chat_model = OpenAiChatModelProvider(
-            rag.model, openai_key, timeout=settings.rag_timeout_seconds, reasoning_effort=effort
-        )
         rerank_model = chat_model  # same remote model; the prompt already caps the rerank output
     else:
-        # Ollama path: the selected Ollama model, or the env default if OpenAI lacks a key.
-        model = rag.model if rag.provider == "ollama" else settings.default_model
-        rag_think = ollama_think_for(rag.reasoning, model, structured=False)
-        chat_model = OllamaChatModelProvider(
-            model,
-            settings.ollama_base_url,
-            timeout=settings.rag_timeout_seconds,
-            num_ctx=rag.num_ctx,
-            keep_alive=settings.chat_keep_alive,
-            think=rag_think,
-        )
+        from doktok_provider_ollama import OllamaChatModelProvider
+
         # The listwise reranker emits only a short JSON array - cap its output (and allow a smaller,
         # swappable model) so it doesn't consume the answer call's full generation budget.
+        model = rag.model if rag.provider == "ollama" else settings.default_model
         rerank_model = OllamaChatModelProvider(
             settings.rerank_model or model,
             settings.ollama_base_url,

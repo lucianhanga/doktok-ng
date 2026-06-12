@@ -75,6 +75,24 @@ class InMemoryFeatureRepository:
                     row.feature_version = version
                     row.attempts = 0
                     affected += 1
+            # 'extract' is the inline activation marker (the 'text' badge), not a reconciler
+            # processor, so the loop never seeds it. An active document IS extracted, so ensure a
+            # done extract row exists for any active doc missing it - the badge self-heals.
+            if self._find(tenant_id, document_id, "extract") is None:
+                self.rows.append(
+                    DocumentFeature(
+                        id=uuid.uuid4().hex,
+                        tenant_id=tenant_id,
+                        document_id=document_id,
+                        feature="extract",
+                        feature_version=1,
+                        status=FeatureStatus.DONE,
+                        completed_at=now,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                affected += 1
         return affected
 
     def seed_for_document(

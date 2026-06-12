@@ -1250,9 +1250,7 @@ class PostgresCategoryRepository:
             ).fetchall()
         return [_row_to_document(row) for row in rows]
 
-    def primary_categories(
-        self, tenant_id: str, document_ids: list[str]
-    ) -> dict[str, str]:
+    def primary_categories(self, tenant_id: str, document_ids: list[str]) -> dict[str, str]:
         if not document_ids:
             return {}
         # Rank each doc's categories by tenant-wide document count (name tiebreak); keep the top.

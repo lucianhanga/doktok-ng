@@ -149,6 +149,7 @@ def get_retriever(request: Request) -> Retriever:
             settings.embedding_model,
             settings.ollama_base_url,
             timeout=settings.rag_timeout_seconds,
+            keep_alive=settings.embedding_keep_alive,
         ),
     )
     registry.register(Retriever, retriever)

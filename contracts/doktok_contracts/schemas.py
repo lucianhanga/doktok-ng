@@ -105,6 +105,20 @@ class Document(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class DocumentListPage(BaseModel):
+    """A keyset-paginated page of documents, ordered (created_at DESC, id DESC).
+
+    ``next_cursor`` is an opaque token for the next (older) page; ``None`` means this is the last
+    page. ``total`` is the count for the active filters (exact at this scale; may become approximate
+    for very large corpora). Keyset paging is correct under the live 4s poll: unlike offset, inserts
+    and deletes elsewhere cannot make a page skip or duplicate rows.
+    """
+
+    items: list[Document] = Field(default_factory=list)
+    total: int = 0
+    next_cursor: str | None = None
+
+
 class DocumentVersion(BaseModel):
     id: str
     tenant_id: str

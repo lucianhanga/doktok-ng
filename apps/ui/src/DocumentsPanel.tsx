@@ -17,8 +17,16 @@ import { useInterval } from "./hooks";
 
 type DocsState =
   | { kind: "loading" }
-  | { kind: "ok"; docs: DokDocument[]; features: Map<string, DocumentFeature[]> }
+  | {
+      kind: "ok";
+      docs: DokDocument[];
+      features: Map<string, DocumentFeature[]>;
+      total: number;
+      hasMore: boolean;
+    }
   | { kind: "error"; message: string };
+
+const PAGE_SIZE = 50;
 
 function groupByDocument(features: DocumentFeature[]): Map<string, DocumentFeature[]> {
   const map = new Map<string, DocumentFeature[]>();
@@ -72,11 +80,19 @@ function FeatureChips({ features }: { features: DocumentFeature[] }) {
   );
 }
 
-export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
+export function DocumentsPanel({
+  onOpenDocument,
+  initialNeedsAttention = false,
+}: {
+  onOpenDocument?: (id: string) => void;
+  initialNeedsAttention?: boolean;
+}) {
   const [state, setState] = useState<DocsState>({ kind: "loading" });
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [category, setCategory] = useState("");
   const [status, setStatus] = useState("");
+  const [needsAttention, setNeedsAttention] = useState(initialNeedsAttention);
+  const [windowSize, setWindowSize] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [catalog, setCatalog] = useState<FeatureCatalogEntry[]>([]);
@@ -85,25 +101,48 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
   const loadAbort = useRef<AbortController | null>(null);
 
   const load = useCallback(() => {
-    const opts: { category?: string; status?: string } = {};
-    if (category) opts.category = category;
-    if (status) opts.status = status;
+    const filters = {
+      category: category || undefined,
+      status: status || undefined,
+      needsAttention: needsAttention || undefined,
+    };
     // Abort any in-flight poll so a slow response can't land after a newer one (last-write-wins).
     loadAbort.current?.abort();
     const ctrl = new AbortController();
     loadAbort.current = ctrl;
-    Promise.all([fetchDocuments(opts, ctrl.signal), fetchFeatures(ctrl.signal)])
-      .then(([docs, features]) =>
-        setState({ kind: "ok", docs, features: groupByDocument(features) }),
-      )
-      .catch((err: unknown) => {
-        if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
-        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
+    void (async () => {
+      // Rebuild the current window (newest `windowSize`) from the top via keyset pages, so the poll
+      // refreshes the whole loaded window in place - never resetting to one page, never blanking.
+      let items: DokDocument[] = [];
+      let total = 0;
+      let cursor: string | undefined;
+      let next: string | null = null;
+      do {
+        const page = await fetchDocuments({ ...filters, cursor, limit: PAGE_SIZE }, ctrl.signal);
+        items = items.concat(page.items);
+        total = page.total;
+        next = page.next_cursor;
+        cursor = next ?? undefined;
+      } while (next && items.length < windowSize);
+      const features = await fetchFeatures(ctrl.signal);
+      setState({
+        kind: "ok",
+        docs: items,
+        total,
+        hasMore: next !== null,
+        features: groupByDocument(features),
       });
-  }, [category, status]);
+    })().catch((err: unknown) => {
+      if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
+      setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
+    });
+  }, [category, status, needsAttention, windowSize]);
 
   useEffect(load, [load]);
   useInterval(load, 4000);
+
+  // Reset to the first window whenever a filter changes (a new filter set is a fresh browse).
+  useEffect(() => setWindowSize(PAGE_SIZE), [category, status, needsAttention]);
 
   // Keep the bulk selection in sync with what's actually shown (filter/poll can drop documents),
   // so an action never targets a hidden/gone document and select-all stays correct.
@@ -125,6 +164,8 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
   }, []);
 
   const docs = state.kind === "ok" ? state.docs : [];
+  const total = state.kind === "ok" ? state.total : 0;
+  const hasMore = state.kind === "ok" && state.hasMore;
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -192,6 +233,14 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
             </select>
           </label>
         )}
+        <label>
+          <input
+            type="checkbox"
+            checked={needsAttention}
+            onChange={(e) => setNeedsAttention(e.target.checked)}
+          />{" "}
+          Needs attention
+        </label>
         <button type="button" onClick={load}>
           Refresh
         </button>
@@ -261,6 +310,13 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
       {notice && (
         <p role="status" className="bulk-notice">
           {notice}
+        </p>
+      )}
+
+      {state.kind === "ok" && (
+        <p className="muted result-count">
+          Showing {docs.length} of {total} document{total === 1 ? "" : "s"}
+          {(category || status || needsAttention) && " (filtered)"}
         </p>
       )}
 
@@ -360,6 +416,14 @@ export function DocumentsPanel({ onOpenDocument }: { onOpenDocument?: (id: strin
             ))}
           </tbody>
         </table>
+      )}
+
+      {hasMore && (
+        <div className="load-more">
+          <button type="button" onClick={() => setWindowSize((w) => w + PAGE_SIZE)}>
+            Load more
+          </button>
+        </div>
       )}
     </section>
   );

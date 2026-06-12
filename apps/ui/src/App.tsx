@@ -89,10 +89,18 @@ const TABS: { id: View; label: string }[] = [
 export default function App() {
   const [view, setView] = useState<View>("overview");
   const [openDoc, setOpenDoc] = useState<string | null>(null);
+  const [docsNeedsAttention, setDocsNeedsAttention] = useState(false);
 
   function go(next: View) {
     setOpenDoc(null);
+    setDocsNeedsAttention(false);
     setView(next);
+  }
+
+  function showPendingFeatures() {
+    setOpenDoc(null);
+    setDocsNeedsAttention(true);
+    setView("documents");
   }
 
   return (
@@ -119,8 +127,14 @@ export default function App() {
         <DocumentDetail id={openDoc} onClose={() => setOpenDoc(null)} onOpenDocument={setOpenDoc} />
       ) : (
         <>
-          {view === "overview" && <OverviewPanel />}
-          {view === "documents" && <DocumentsPanel onOpenDocument={setOpenDoc} />}
+          {view === "overview" && <OverviewPanel onShowPendingFeatures={showPendingFeatures} />}
+          {view === "documents" && (
+            <DocumentsPanel
+              key={`docs-${docsNeedsAttention}`}
+              onOpenDocument={setOpenDoc}
+              initialNeedsAttention={docsNeedsAttention}
+            />
+          )}
           {view === "search" && <SearchPanel onOpenDocument={setOpenDoc} />}
           {view === "tokensearch" && <TokenSearchPanel onOpenDocument={setOpenDoc} />}
           {view === "chat" && <ChatPanel onOpenDocument={setOpenDoc} />}

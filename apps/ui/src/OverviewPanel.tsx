@@ -10,7 +10,11 @@ import {
 } from "./api";
 import { useInterval } from "./hooks";
 
-export function OverviewPanel() {
+export function OverviewPanel({
+  onShowPendingFeatures,
+}: {
+  onShowPendingFeatures?: () => void;
+}) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<AuditEvent[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
@@ -67,10 +71,16 @@ export function OverviewPanel() {
           <div className="card-value">{stats?.pending_ingest ?? "-"}</div>
           <div className="card-label">Waiting in ingest</div>
         </div>
-        <div className="card">
+        <button
+          type="button"
+          className="card card-button"
+          onClick={onShowPendingFeatures}
+          disabled={!onShowPendingFeatures || !stats?.documents_pending_features}
+          title="Show documents with a failed or unfinished feature"
+        >
           <div className="card-value">{stats?.documents_pending_features ?? "-"}</div>
           <div className="card-label">Pending features</div>
-        </div>
+        </button>
       </div>
 
       {jobEntries.length > 0 && (

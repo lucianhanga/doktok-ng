@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from doktok_contracts.schemas import JobStatus
+from doktok_contracts.schemas import DocumentStatus, JobStatus
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.indexing.inmemory import InMemoryChunkRepository
@@ -82,3 +82,12 @@ def test_indexing_failure_fails_the_job(tmp_path: Path) -> None:
     assert job.status is JobStatus.FAILED
     assert job.error_code == "indexing_error"
     assert repo.chunks == []
+
+    # Regression: the failed document keeps its original under docs.failed so it stays reingestable
+    # (previously the original was orphaned in docs.active and the reingest endpoint 404'd).
+    assert job.document_id is not None
+    failed = services.document_repo.get(TENANT, job.document_id)
+    assert failed is not None and failed.status is DocumentStatus.FAILED
+    assert (Path(failed.storage_path or "") / failed.original_filename).is_file()
+    active_root = Path(tmp_path) / TENANT / "docs.active"
+    assert not active_root.exists() or list(active_root.glob("*")) == []  # no orphan left behind

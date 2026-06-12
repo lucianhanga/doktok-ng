@@ -508,8 +508,14 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         chunk_count = _index_document(services, document_id, result)
         entity_count = _index_entities(services, document_id, result, language)
     except Exception as exc:  # noqa: BLE001 - indexing failure fails the job, not the worker
+        # write_document_artifacts already moved the original into docs.active/<id>/; point the job
+        # at it so _fail relocates it into docs.failed (keeping the failed document reingestable -
+        # otherwise the original is orphaned and reingest 404s), then drop the leftover artifacts.
+        job.source_path = str(Path(artifacts.storage_path) / artifacts.original)
         services.document_repo.delete(services.tenant_id, document_id)
-        return _fail(services, job, code="indexing_error", message=str(exc))
+        failed_job = _fail(services, job, code="indexing_error", message=str(exc))
+        shutil.rmtree(artifacts.storage_path, ignore_errors=True)
+        return failed_job
 
     _record_features_done(services, document_id)
 

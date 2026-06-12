@@ -344,6 +344,29 @@ class PostgresDocumentRepository:
                 (title, document_date, location, summary, document_id, tenant_id),
             )
 
+    def activate(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        storage_path: str,
+        metadata: dict[str, object],
+    ) -> bool:
+        # Setting status='active' enforces uq_documents_active_sha (partial unique on active rows):
+        # a content race surfaces as UniqueViolation, translated to DuplicateActiveDocumentError so
+        # the caller records a duplicate (mirrors `add`).
+        try:
+            with self._db.connection() as conn:
+                cur = conn.execute(
+                    "UPDATE documents SET status='active', storage_path=%s, metadata=%s, "
+                    "activated_at=now(), ingested_at=now() "
+                    "WHERE id=%s AND tenant_id=%s AND status='processing'",
+                    (storage_path, Json(metadata), document_id, tenant_id),
+                )
+                return cur.rowcount > 0
+        except pg_errors.UniqueViolation as exc:
+            raise DuplicateActiveDocumentError(str(exc)) from exc
+
     def get(self, tenant_id: str, document_id: str) -> Document | None:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)

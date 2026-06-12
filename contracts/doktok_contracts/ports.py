@@ -125,6 +125,21 @@ class DocumentRepository(Protocol):
         """Persist enrichment fields (M6.2). Idempotent overwrite."""
         ...
 
+    def activate(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        storage_path: str,
+        metadata: dict[str, object],
+    ) -> bool:
+        """Flip a ``processing`` document to ``active`` once its content is extracted (ADR-0015):
+        sets the storage path + metadata and stamps ``activated_at``/``ingested_at``. Returns False
+        if the document is not ``processing`` (already activated or gone). Raises
+        ``DuplicateActiveDocumentError`` if another active document already holds this content (the
+        content-dedup race, ``uq_documents_active_sha``)."""
+        ...
+
 
 @runtime_checkable
 class DocumentVersionRepository(Protocol):

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Structured aggregation, end to end (M6.3)**: a **Totals** tab issues a typed `AggregationIntent`
+  to `POST /api/v1/aggregate` for deterministic SUM/COUNT over `extracted_records` (per-currency
+  rollups + provenance), and the **chat** endpoint now routes total/count questions ("how much did I
+  spend at X") to the same deterministic path — a keyword gate + LLM slot-fill build the intent, and
+  any failure falls back to semantic RAG so chat never breaks.
+- **Worker startup feature recovery**: `FeatureReconciler.recover_running()` requeues feature rows
+  left `running` by a killed worker at reconcile-loop startup, so a restart no longer strands a
+  document's feature for the full lease window.
 - **Documents tab: List and Thumbnails views** (`DocumentsPanel.tsx`). The existing table is now the
   **List** view (default); a new **Thumbnails** gallery shows each document as a card with its
   first-page preview and overlaid selection / status / per-feature badges, with an S/M/L size control

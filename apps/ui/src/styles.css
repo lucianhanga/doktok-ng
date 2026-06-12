@@ -1026,3 +1026,114 @@ tr.row-selected {
 .agg-result {
   margin-top: 0.5rem;
 }
+
+/* Insights tab: embedding-space scatter (M7.1) */
+.insights-subtabs {
+  margin: 0.5rem 0 0.25rem;
+}
+.insights-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0.75rem;
+}
+.insights-controls .seg {
+  display: inline-flex;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.insights-controls .seg button {
+  border: none;
+  border-radius: 0;
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+}
+.insights-controls .seg button.active {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+}
+.insights-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  align-items: start;
+}
+.insights-canvas {
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 1 / 1;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 10px;
+  touch-action: none;
+}
+.insights-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 150px;
+  max-height: 620px;
+  overflow-y: auto;
+}
+.insights-legend button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.2rem 0.35rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.insights-legend button:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.insights-legend button.legend-off {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.insights-tooltip {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  background: rgba(17, 24, 39, 0.92);
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  pointer-events: none;
+}
+.insights-tooltip .tip-cat {
+  font-weight: 600;
+}
+.insights-tooltip .tip-snippet {
+  font-size: 0.85rem;
+}
+.insights-meta {
+  margin-top: 0.5rem;
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 1.5rem 0;
+}

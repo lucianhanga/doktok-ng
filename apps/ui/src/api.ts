@@ -512,3 +512,68 @@ export function formatMoneyMinor(totalMinor: number, currency: string | null): s
     return `${major.toFixed(2)} ${currency ?? ""}`.trim();
   }
 }
+
+// --- Embedding-space visualization (Insights tab, M7.1) -------------------------------------
+
+export interface VizPoint {
+  chunk_id: string;
+  document_id: string;
+  x: number;
+  y: number;
+  z: number | null;
+  category: string;
+  snippet: string;
+}
+
+export interface VizLegendEntry {
+  category: string;
+  color: string;
+}
+
+export interface ProjectionMeta {
+  dim: number;
+  algorithm: string;
+  version: number;
+  computed_at: string;
+  n_points: number;
+  truncated: boolean;
+  stale: boolean;
+}
+
+export interface EmbeddingMap {
+  dim: number;
+  computed: boolean;
+  recompute_pending: boolean;
+  points: VizPoint[];
+  legend: VizLegendEntry[];
+  meta: ProjectionMeta | null;
+}
+
+export interface ProjectionDimStatus {
+  dim: number;
+  computed: boolean;
+  stale: boolean;
+  n_points: number;
+  computed_at: string | null;
+}
+
+export interface ProjectionStatus {
+  recompute_pending: boolean;
+  dims: ProjectionDimStatus[];
+}
+
+export function fetchEmbeddingMap(dim: 2 | 3, signal?: AbortSignal): Promise<EmbeddingMap> {
+  return getJson<EmbeddingMap>(`/api/v1/visualizations/embeddings?dim=${dim}`, signal);
+}
+
+export function fetchProjectionStatus(signal?: AbortSignal): Promise<ProjectionStatus> {
+  return getJson<ProjectionStatus>("/api/v1/visualizations/embeddings/status", signal);
+}
+
+/** Enqueue a recompute of the tenant's 2D + 3D projections (the worker fits them). */
+export async function requestProjectionRecompute(): Promise<void> {
+  const response = await fetch("/api/v1/visualizations/embeddings/recompute", { method: "POST" });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+}

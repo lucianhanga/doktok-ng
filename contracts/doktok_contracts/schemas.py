@@ -10,6 +10,7 @@ authenticated token, never from request input (ADR-0008).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
@@ -117,6 +118,56 @@ class DocumentListPage(BaseModel):
     items: list[Document] = Field(default_factory=list)
     total: int = 0
     next_cursor: str | None = None
+
+
+class DocumentSort(StrEnum):
+    """Sort key for the document list. ``acquired`` = when it entered the system (created_at);
+    ``created`` = the document's own date (document_date)."""
+
+    ACQUIRED = "acquired"
+    CREATED = "created"
+    TITLE = "title"
+    CATEGORY = "category"
+
+
+class SortDir(StrEnum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+class TokenMatch(StrEnum):
+    """How multiple token filters combine: ANY = OR, ALL = AND (the document must carry all)."""
+
+    ANY = "any"
+    ALL = "all"
+
+
+@dataclass(frozen=True)
+class ListAnchor:
+    """Keyset cursor anchor for the document list: the sort value + unique id of the last row seen.
+
+    It carries the ``sort``/``direction`` it was produced for so a cursor is self-describing and
+    can be rejected if replayed against a different ordering. ``value`` is the row's value for the
+    chosen sort column (a datetime for ``acquired``, a date for ``created``, a string for
+    ``title``/``category``, or ``None`` when that column is null - null rows always sort last).
+    """
+
+    sort: DocumentSort
+    direction: SortDir
+    value: datetime | date | str | None
+    doc_id: str
+
+
+class DocumentIdSelection(BaseModel):
+    """All document ids matching a filter, for 'select all matching' bulk actions.
+
+    Capped: when more than the cap match, ``ids`` holds the first ``cap`` and ``truncated`` is
+    true, signalling the client to act on the filter server-side rather than shipping an id list.
+    """
+
+    ids: list[str] = Field(default_factory=list)
+    total: int = 0
+    truncated: bool = False
 
 
 class DocumentVersion(BaseModel):

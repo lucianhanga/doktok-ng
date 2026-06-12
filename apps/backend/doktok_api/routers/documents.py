@@ -5,9 +5,10 @@ from __future__ import annotations
 import base64
 import shutil
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import quote, unquote
 
 from doktok_contracts.ports import (
     AuditLogRepository,
@@ -26,9 +27,15 @@ from doktok_contracts.schemas import (
     DocumentEntity,
     DocumentEntitySummary,
     DocumentFeature,
+    DocumentIdSelection,
     DocumentListPage,
+    DocumentSort,
     DocumentStatus,
+    EntityType,
     EntityTypeCount,
+    ListAnchor,
+    SortDir,
+    TokenMatch,
 )
 from doktok_core.documents.artifacts import THUMBNAIL_REL
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -59,20 +66,50 @@ _EXCERPT_CHARS = 4000
 _TOP_ENTITIES = 12
 
 
-def _encode_cursor(anchor: tuple[datetime, str] | None) -> str | None:
+_MAX_TOKENS = 20  # cap on token filters per request
+
+
+def _encode_cursor(anchor: ListAnchor | None) -> str | None:
     if anchor is None:
         return None
-    raw = f"{anchor[0].isoformat()}|{anchor[1]}".encode()
+    value = anchor.value
+    if value is None:
+        payload = "n:"
+    elif isinstance(value, datetime):
+        payload = "t:" + value.isoformat()
+    elif isinstance(value, date):
+        payload = "d:" + value.isoformat()
+    else:
+        payload = "s:" + quote(str(value), safe="")  # percent-encode so '|' can't break the split
+    raw = f"v2|{anchor.sort.value}|{anchor.direction.value}|{payload}|{anchor.doc_id}".encode()
     return base64.urlsafe_b64encode(raw).decode()
 
 
-def _decode_cursor(token: str | None) -> tuple[datetime, str] | None:
+def _decode_cursor(token: str | None, sort: DocumentSort, direction: SortDir) -> ListAnchor | None:
+    """Decode an opaque cursor and verify it was produced for the requested sort/direction; a
+    malformed, stale (v1), or mismatched cursor is client input -> 400, never a 500."""
     if not token:
         return None
     try:
-        ts, doc_id = base64.urlsafe_b64decode(token).decode().split("|", 1)
-        return datetime.fromisoformat(ts), doc_id
-    except (ValueError, TypeError) as exc:  # malformed/stale token is client input, not a 500
+        ver, csort, cdir, payload, doc_id = base64.urlsafe_b64decode(token).decode().split("|")
+        if ver != "v2":
+            raise ValueError("stale cursor")
+        if csort != sort.value or cdir != direction.value:
+            raise ValueError("cursor does not match the requested ordering")
+        tag, _, body = payload.partition(":")
+        value: datetime | date | str | None
+        if tag == "n":
+            value = None
+        elif tag == "t":
+            value = datetime.fromisoformat(body)
+        elif tag == "d":
+            value = date.fromisoformat(body)
+        elif tag == "s":
+            value = unquote(body)
+        else:
+            raise ValueError("bad cursor value")
+        return ListAnchor(sort=sort, direction=direction, value=value, doc_id=doc_id)
+    except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="invalid cursor") from exc
 
 
@@ -85,16 +122,58 @@ def list_documents(
     category: Annotated[str | None, Query()] = None,
     status: Annotated[DocumentStatus | None, Query()] = None,
     needs_attention: Annotated[bool, Query()] = False,
+    sort: Annotated[DocumentSort, Query()] = DocumentSort.ACQUIRED,
+    direction: Annotated[SortDir, Query(alias="dir")] = SortDir.DESC,
+    token: Annotated[list[str] | None, Query()] = None,
+    token_type: Annotated[EntityType | None, Query()] = None,
+    token_match: Annotated[TokenMatch, Query()] = TokenMatch.ALL,
 ) -> DocumentListPage:
+    tokens = _validated_tokens(token)
     items, total, next_anchor = repo.list_documents(
         tenant.tenant_id,
         limit=limit,
-        cursor=_decode_cursor(cursor),
+        cursor=_decode_cursor(cursor, sort, direction),
         status=status,
         category=category,
         needs_attention=needs_attention,
+        sort=sort,
+        direction=direction,
+        tokens=tokens,
+        token_type=token_type,
+        token_match=token_match,
     )
     return DocumentListPage(items=items, total=total, next_cursor=_encode_cursor(next_anchor))
+
+
+def _validated_tokens(token: list[str] | None) -> tuple[str, ...]:
+    tokens = tuple(t for t in (token or []) if t.strip())
+    if len(tokens) > _MAX_TOKENS:
+        raise HTTPException(status_code=400, detail=f"at most {_MAX_TOKENS} tokens")
+    return tokens
+
+
+@router.get("/ids", response_model=DocumentIdSelection)
+def list_document_ids(
+    tenant: Tenant,
+    repo: Repo,
+    category: Annotated[str | None, Query()] = None,
+    status: Annotated[DocumentStatus | None, Query()] = None,
+    needs_attention: Annotated[bool, Query()] = False,
+    token: Annotated[list[str] | None, Query()] = None,
+    token_type: Annotated[EntityType | None, Query()] = None,
+    token_match: Annotated[TokenMatch, Query()] = TokenMatch.ALL,
+) -> DocumentIdSelection:
+    """All document ids matching the filters (for 'select all matching' bulk actions)."""
+    ids, total, truncated = repo.list_document_ids(
+        tenant.tenant_id,
+        status=status,
+        category=category,
+        needs_attention=needs_attention,
+        tokens=_validated_tokens(token),
+        token_type=token_type,
+        token_match=token_match,
+    )
+    return DocumentIdSelection(ids=ids, total=total, truncated=truncated)
 
 
 @router.get("/{document_id}", response_model=Document)

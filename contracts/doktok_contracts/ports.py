@@ -33,16 +33,20 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentFeature,
+    DocumentSort,
     DocumentStatus,
     DocumentVersion,
     EntitySummary,
     EntityType,
     ExtractedRecord,
     IngestionJob,
+    ListAnchor,
     RagAnswer,
     SearchHit,
     SecurityDecision,
+    SortDir,
     StatsSummary,
+    TokenMatch,
     TokenSuggestion,
 )
 
@@ -67,17 +71,42 @@ class DocumentRepository(Protocol):
         tenant_id: str,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: ListAnchor | None = None,
         status: DocumentStatus | None = None,
         category: str | None = None,
         needs_attention: bool = False,
-    ) -> tuple[list[Document], int, tuple[datetime, str] | None]:
-        """Keyset-paginated documents ordered (created_at DESC, id DESC).
+        sort: DocumentSort = DocumentSort.ACQUIRED,
+        direction: SortDir = SortDir.DESC,
+        tokens: tuple[str, ...] = (),
+        token_type: EntityType | None = None,
+        token_match: TokenMatch = TokenMatch.ALL,
+    ) -> tuple[list[Document], int, ListAnchor | None]:
+        """Keyset-paginated documents ordered by ``sort``/``direction`` with ``id`` as tie-breaker.
 
-        ``cursor`` is the (created_at, id) of the last row already seen (None = first page).
-        ``needs_attention`` keeps only documents with at least one non-done feature; ``category``
-        keeps only documents linked to that active category. All filters compose. Returns
-        ``(items, total, next_anchor)`` where ``next_anchor`` is None on the last page.
+        ``cursor`` is the ``ListAnchor`` of the last row already seen (None = first page); it must
+        match the requested ``sort``/``direction``. Null sort values always sort last. ``tokens``
+        keeps only documents carrying those entity/keyword values (combined per ``token_match``,
+        optionally constrained to ``token_type``); ``needs_attention`` keeps documents with a
+        non-done feature; ``category`` keeps documents linked to that active category. All filters
+        compose. Returns ``(items, total, next_anchor)``; ``next_anchor`` is None on the last page.
+        """
+        ...
+
+    def list_document_ids(
+        self,
+        tenant_id: str,
+        *,
+        status: DocumentStatus | None = None,
+        category: str | None = None,
+        needs_attention: bool = False,
+        tokens: tuple[str, ...] = (),
+        token_type: EntityType | None = None,
+        token_match: TokenMatch = TokenMatch.ALL,
+        cap: int = 10_000,
+    ) -> tuple[list[str], int, bool]:
+        """All document ids matching the filters (same filters as ``list_documents``, no paging),
+        for 'select all matching' bulk actions. Returns ``(ids, total, truncated)``; when more than
+        ``cap`` match, ``ids`` holds the first ``cap`` (by id) and ``truncated`` is True.
         """
         ...
 

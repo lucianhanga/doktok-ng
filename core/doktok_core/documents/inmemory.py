@@ -3,18 +3,38 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from functools import cmp_to_key
+from typing import Any
 
 from doktok_contracts.errors import DuplicateActiveDocumentError
-from doktok_contracts.schemas import Document, DocumentStatus
+from doktok_contracts.schemas import (
+    Document,
+    DocumentSort,
+    DocumentStatus,
+    EntityType,
+    ListAnchor,
+    SortDir,
+    TokenMatch,
+)
+
+# A sort value can be a datetime (acquired), date (created), string (title/category) or None.
+type _SortVal = datetime | date | str | None
+
+
+def _cmp_scalar(x: Any, y: Any) -> int:
+    """Three-way compare two same-typed, non-null sort values (always same type per sort key)."""
+    return int((x > y) - (x < y))
 
 
 class InMemoryDocumentRepository:
     def __init__(self) -> None:
         self._docs: dict[str, Document] = {}
         # Test seams for the join-based filters the real repo derives in SQL: ids of documents with
-        # a non-done feature, and the active category names per document.
+        # a non-done feature, the active category names per document, and the (entity_type, value)
+        # tokens per document (for token filtering).
         self.attention_ids: set[str] = set()
         self.categories_by_doc: dict[str, set[str]] = {}
+        self.tokens_by_doc: dict[str, set[tuple[str, str]]] = {}
 
     def add(self, document: Document) -> None:
         if document.id in self._docs:
@@ -62,32 +82,140 @@ class InMemoryDocumentRepository:
         doc.location = location
         doc.summary = summary
 
-    def list_documents(
+    def _sort_value(self, d: Document, sort: DocumentSort) -> _SortVal:
+        if sort is DocumentSort.ACQUIRED:
+            return d.created_at
+        if sort is DocumentSort.CREATED:
+            return d.document_date
+        if sort is DocumentSort.TITLE:
+            return d.title.lower() if d.title else None
+        cats = self.categories_by_doc.get(d.id, set())
+        return min(cats) if cats else None  # CATEGORY: alphabetically-first active category
+
+    def _matches_tokens(
+        self,
+        d: Document,
+        tokens: tuple[str, ...],
+        token_type: EntityType | None,
+        token_match: TokenMatch,
+    ) -> bool:
+        if not tokens:
+            return True
+        pairs = self.tokens_by_doc.get(d.id, set())
+        values = {v for (t, v) in pairs if token_type is None or t == token_type.value}
+        requested = set(tokens)
+        if token_match is TokenMatch.ALL:
+            return requested <= values
+        return bool(requested & values)
+
+    def _filtered(
         self,
         tenant_id: str,
         *,
-        limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
-        status: DocumentStatus | None = None,
-        category: str | None = None,
-        needs_attention: bool = False,
-    ) -> tuple[list[Document], int, tuple[datetime, str] | None]:
-        docs = [
+        status: DocumentStatus | None,
+        category: str | None,
+        needs_attention: bool,
+        tokens: tuple[str, ...],
+        token_type: EntityType | None,
+        token_match: TokenMatch,
+    ) -> list[Document]:
+        return [
             d
             for d in self._docs.values()
             if d.tenant_id == tenant_id
             and (status is None or d.status == status)
             and (not needs_attention or d.id in self.attention_ids)
             and (category is None or category in self.categories_by_doc.get(d.id, set()))
+            and self._matches_tokens(d, tokens, token_type, token_match)
         ]
-        # Keyset order: (created_at DESC, id DESC), a total order matching the SQL.
-        docs.sort(key=lambda d: (d.created_at, d.id), reverse=True)
+
+    def list_documents(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 50,
+        cursor: ListAnchor | None = None,
+        status: DocumentStatus | None = None,
+        category: str | None = None,
+        needs_attention: bool = False,
+        sort: DocumentSort = DocumentSort.ACQUIRED,
+        direction: SortDir = SortDir.DESC,
+        tokens: tuple[str, ...] = (),
+        token_type: EntityType | None = None,
+        token_match: TokenMatch = TokenMatch.ALL,
+    ) -> tuple[list[Document], int, ListAnchor | None]:
+        docs = self._filtered(
+            tenant_id,
+            status=status,
+            category=category,
+            needs_attention=needs_attention,
+            tokens=tokens,
+            token_type=token_type,
+            token_match=token_match,
+        )
+
+        def cmp(a: tuple[_SortVal, str], b: tuple[_SortVal, str]) -> int:
+            av, ai = a
+            bv, bi = b
+            if av is None and bv is None:
+                base = _cmp_scalar(ai, bi)
+            elif av is None:
+                return 1  # nulls always sort last, regardless of direction
+            elif bv is None:
+                return -1
+            else:
+                base = _cmp_scalar(av, bv) or _cmp_scalar(ai, bi)
+            return -base if direction is SortDir.DESC else base
+
+        docs.sort(
+            key=cmp_to_key(
+                lambda x, y: cmp(
+                    (self._sort_value(x, sort), x.id), (self._sort_value(y, sort), y.id)
+                )
+            )
+        )
         total = len(docs)
         if cursor is not None:
-            docs = [d for d in docs if (d.created_at, d.id) < cursor]
+            anchor = (cursor.value, cursor.doc_id)
+            docs = [d for d in docs if cmp((self._sort_value(d, sort), d.id), anchor) > 0]
         page = docs[:limit]
-        next_anchor = (page[-1].created_at, page[-1].id) if len(docs) > limit and page else None
+        next_anchor = (
+            ListAnchor(
+                sort=sort,
+                direction=direction,
+                value=self._sort_value(page[-1], sort),
+                doc_id=page[-1].id,
+            )
+            if len(docs) > limit and page
+            else None
+        )
         return [d.model_copy(deep=True) for d in page], total, next_anchor
+
+    def list_document_ids(
+        self,
+        tenant_id: str,
+        *,
+        status: DocumentStatus | None = None,
+        category: str | None = None,
+        needs_attention: bool = False,
+        tokens: tuple[str, ...] = (),
+        token_type: EntityType | None = None,
+        token_match: TokenMatch = TokenMatch.ALL,
+        cap: int = 10_000,
+    ) -> tuple[list[str], int, bool]:
+        ids = sorted(
+            d.id
+            for d in self._filtered(
+                tenant_id,
+                status=status,
+                category=category,
+                needs_attention=needs_attention,
+                tokens=tokens,
+                token_type=token_type,
+                token_match=token_match,
+            )
+        )
+        return ids[:cap], len(ids), len(ids) > cap
 
     def delete(self, tenant_id: str, document_id: str) -> None:
         doc = self._docs.get(document_id)

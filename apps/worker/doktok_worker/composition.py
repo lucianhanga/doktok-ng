@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from doktok_contracts.ports import FeatureProcessor, OcrExtractor
+import logging
+
+from doktok_contracts.ports import (
+    CategoryClassifier,
+    FeatureProcessor,
+    MetadataExtractor,
+    OcrExtractor,
+    RecordExtractor,
+)
 from doktok_core.config import Settings
 from doktok_core.entities.extractor import RegexEntityExtractor
 from doktok_core.features.processors import (
@@ -17,7 +25,7 @@ from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.policy import DefaultSecurityPolicy
-from doktok_core.settings.catalog import ollama_think_for
+from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
 from doktok_modalities_files import (
     DirectTextExtractor,
     LibmagicMimeDetector,
@@ -33,6 +41,11 @@ from doktok_provider_ollama import (
     OllamaMetadataExtractor,
     OllamaRecordExtractor,
     OllamaVisionOcr,
+)
+from doktok_provider_openai import (
+    OpenAiCategoryClassifier,
+    OpenAiMetadataExtractor,
+    OpenAiRecordExtractor,
 )
 from doktok_provider_paddleocr import PaddleOcr
 from doktok_storage_filesystem import (
@@ -54,6 +67,8 @@ from doktok_storage_postgres import (
     PostgresRecordRepository,
     migrate,
 )
+
+logger = logging.getLogger("doktok.worker")
 
 
 def tenant_ids(settings: Settings) -> list[str]:
@@ -80,9 +95,12 @@ def build_services(
     migrate(db)
 
     # Effective AI model selection (Settings tab > AI section), persisted; applied at startup.
-    ai = PostgresAppSettingsRepository(db).get_ai_settings()
-    pipeline = ai.pipeline
-    pipeline_think = ollama_think_for(pipeline.reasoning, pipeline.model, structured=True)
+    app_settings = PostgresAppSettingsRepository(db)
+    pipeline = app_settings.get_ai_settings().pipeline
+    openai_key = app_settings.get_openai_api_key()
+    use_openai_pipeline = pipeline.provider == "openai" and bool(openai_key)
+    if pipeline.provider == "openai" and not openai_key:
+        logger.warning("pipeline set to OpenAI but no API key configured; using Ollama defaults")
 
     job_repo = PostgresIngestionJobRepository(db)
     document_repo = PostgresDocumentRepository(db)
@@ -127,34 +145,56 @@ def build_services(
         num_ctx=settings.judge_num_ctx,
         keep_alive=settings.enrich_keep_alive,
     )
-    metadata_extractor = OllamaMetadataExtractor(
-        pipeline.model,
-        settings.enrich_repair_model,
-        settings.ollama_base_url,
-        timeout=timeout,
-        num_ctx=pipeline.num_ctx,
-        think=pipeline_think,
-        keep_alive=settings.enrich_keep_alive,
-    )
-    category_classifier = OllamaCategoryClassifier(
-        pipeline.model,
-        settings.enrich_repair_model,
-        settings.ollama_base_url,
-        timeout=timeout,
-        num_ctx=pipeline.num_ctx,
-        think=pipeline_think,
-        keep_alive=settings.enrich_keep_alive,
-    )
+    metadata_extractor: MetadataExtractor
+    category_classifier: CategoryClassifier
+    record_extractor: RecordExtractor
+    if use_openai_pipeline:
+        logger.info(
+            "pipeline extraction via OpenAI %s (egress enabled by AI settings)", pipeline.model
+        )
+        effort = openai_reasoning_effort(pipeline.reasoning, pipeline.model)
+        metadata_extractor = OpenAiMetadataExtractor(
+            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
+        )
+        category_classifier = OpenAiCategoryClassifier(
+            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
+        )
+        record_extractor = OpenAiRecordExtractor(
+            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
+        )
+    else:
+        # Ollama path: the selected Ollama model, or the env default if OpenAI lacks a key.
+        p_model = pipeline.model if pipeline.provider == "ollama" else settings.enrich_model
+        p_ctx = pipeline.num_ctx if pipeline.provider == "ollama" else settings.enrich_num_ctx
+        p_think = ollama_think_for(pipeline.reasoning, p_model, structured=True)
+        metadata_extractor = OllamaMetadataExtractor(
+            p_model,
+            settings.enrich_repair_model,
+            settings.ollama_base_url,
+            timeout=timeout,
+            num_ctx=p_ctx,
+            think=p_think,
+            keep_alive=settings.enrich_keep_alive,
+        )
+        category_classifier = OllamaCategoryClassifier(
+            p_model,
+            settings.enrich_repair_model,
+            settings.ollama_base_url,
+            timeout=timeout,
+            num_ctx=p_ctx,
+            think=p_think,
+            keep_alive=settings.enrich_keep_alive,
+        )
+        record_extractor = OllamaRecordExtractor(
+            p_model,
+            settings.enrich_repair_model,
+            settings.ollama_base_url,
+            timeout=timeout,
+            num_ctx=p_ctx,
+            think=p_think,
+            keep_alive=settings.enrich_keep_alive,
+        )
     category_repo = PostgresCategoryRepository(db)
-    record_extractor = OllamaRecordExtractor(
-        pipeline.model,
-        settings.enrich_repair_model,
-        settings.ollama_base_url,
-        timeout=timeout,
-        num_ctx=pipeline.num_ctx,
-        think=pipeline_think,
-        keep_alive=settings.enrich_keep_alive,
-    )
     record_repo = PostgresRecordRepository(db)
 
     # Reconciler processors re-derive from stored artifacts, so they share the same adapters.

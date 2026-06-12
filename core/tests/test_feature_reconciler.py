@@ -39,9 +39,11 @@ def test_backfills_active_document_missing_a_feature() -> None:
 
     assert processed == 1
     assert proc.calls == ["d1"]
-    rows = repo.list_for_document("t1", "d1")
-    assert len(rows) == 1
-    assert rows[0].feature == "demo" and rows[0].status is FeatureStatus.DONE
+    rows = {r.feature: r for r in repo.list_for_document("t1", "d1")}
+    assert rows["demo"].status is FeatureStatus.DONE
+    # The 'extract' marker (the 'text' badge) self-heals: an active document always gets a done
+    # extract row even though it has no reconciler processor.
+    assert rows["extract"].status is FeatureStatus.DONE
 
 
 class _Stage:
@@ -89,6 +91,34 @@ def test_dependent_stage_runs_once_its_prerequisite_is_done() -> None:
     assert root.calls == ["d1"] and child.calls == ["d1"]
     rows = {r.feature: r.status for r in repo.list_for_document("t1", "d1")}
     assert rows["root"] is FeatureStatus.DONE and rows["child"] is FeatureStatus.DONE
+
+
+def test_ensure_for_active_self_heals_a_missing_extract_marker() -> None:
+    # A document activated by a path that skipped the inline 'extract' write has every processor
+    # feature but no extract row, so the 'text' badge is missing. ensure_for_active backfills it.
+    repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
+    repo.rows.append(
+        DocumentFeature(
+            id="x",
+            tenant_id="t1",
+            document_id="d1",
+            feature="demo",
+            feature_version=1,
+            status=FeatureStatus.DONE,
+            created_at=BASE,
+            updated_at=BASE,
+        )
+    )
+
+    repo.ensure_for_active("t1", [("demo", 1)])
+
+    rows = {r.feature: r for r in repo.list_for_document("t1", "d1")}
+    assert rows["extract"].status is FeatureStatus.DONE
+    assert rows["extract"].completed_at is not None
+    # Idempotent: a second pass does not duplicate the marker.
+    repo.ensure_for_active("t1", [("demo", 1)])
+    extracts = [r for r in repo.list_for_document("t1", "d1") if r.feature == "extract"]
+    assert len(extracts) == 1
 
 
 def test_recover_running_requeues_orphaned_rows() -> None:

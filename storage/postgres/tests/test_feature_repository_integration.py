@@ -28,11 +28,17 @@ def test_ensure_creates_rows_only_for_active_documents(db: Database) -> None:
     _active_doc(docs, "d1")
     repo = PostgresFeatureRepository(db)
 
+    # 2 processor features + the self-healed 'extract' marker (the 'text' badge) every active doc
+    # gets even though it has no reconciler processor.
     created = repo.ensure_for_active(TENANT, [("chunk_embed", 1), ("entities", 1)])
-    assert created == 2
+    assert created == 3
     # idempotent: a second ensure creates nothing new
     assert repo.ensure_for_active(TENANT, [("chunk_embed", 1), ("entities", 1)]) == 0
-    assert {r.feature for r in repo.list_for_document(TENANT, "d1")} == {"chunk_embed", "entities"}
+    assert {r.feature for r in repo.list_for_document(TENANT, "d1")} == {
+        "chunk_embed",
+        "entities",
+        "extract",
+    }
 
 
 def test_claim_mark_retry_and_reset(db: Database) -> None:

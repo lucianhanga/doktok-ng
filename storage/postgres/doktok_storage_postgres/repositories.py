@@ -935,6 +935,22 @@ class PostgresFeatureRepository:
                     (version, tenant_id, name, version),
                 )
                 affected += cur.rowcount
+            # 'extract' is an inline activation marker (the 'text' badge), not a reconciler
+            # processor, so the loop above never seeds it - a document activated by a path that
+            # skipped the inline write would silently lack the badge forever. An active document IS
+            # extracted by definition, so record extract done for any active doc missing it; the
+            # missing badge self-heals on the next reconcile pass. (In staged mode the registered
+            # ExtractStage already seeds it, so NOT EXISTS makes this a no-op.)
+            cur = conn.execute(
+                "INSERT INTO document_features "
+                "(id, tenant_id, document_id, feature, feature_version, status, completed_at) "
+                "SELECT gen_random_uuid()::text, d.tenant_id, d.id, 'extract', 1, 'done', now() "
+                "FROM documents d WHERE d.tenant_id=%s AND d.status='active' "
+                "AND NOT EXISTS (SELECT 1 FROM document_features f "
+                "WHERE f.tenant_id=d.tenant_id AND f.document_id=d.id AND f.feature='extract')",
+                (tenant_id,),
+            )
+            affected += cur.rowcount
         return affected
 
     def seed_for_document(

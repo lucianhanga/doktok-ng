@@ -217,6 +217,52 @@ table.jobs td {
   gap: 0.5rem;
 }
 
+/* Ingestion pipeline summary: small, actionable counters - never competes with the document count. */
+.pipeline-stats {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+
+.pipeline-stats li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.pipeline-stats strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.pipeline-stats .pipeline-alert strong {
+  color: #b60205;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  cursor: pointer;
+  color: inherit;
+}
+
+.link-button:disabled {
+  cursor: default;
+}
+
+.link-button:not(:disabled):hover .muted,
+.link-button:not(:disabled):focus-visible .muted {
+  text-decoration: underline;
+}
+
 .timeline {
   list-style: none;
   padding: 0;

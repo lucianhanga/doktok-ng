@@ -18,6 +18,14 @@ function basename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+// "active" is a finished ingest; show it as "ingested" so the word "active" only ever describes
+// a document in the library, not a job in the pipeline.
+const JOB_STATUS_LABEL: Record<string, string> = { active: "ingested" };
+
+function jobStatusLabel(status: string): string {
+  return JOB_STATUS_LABEL[status] ?? status;
+}
+
 export function JobsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [state, setState] = useState<JobsState>({ kind: "loading" });
 
@@ -68,7 +76,7 @@ export function JobsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
               >
                 <td>{basename(job.source_path)}</td>
                 <td>
-                  <span className={`badge status-${job.status}`}>{job.status}</span>
+                  <span className={`badge status-${job.status}`}>{jobStatusLabel(job.status)}</span>
                   {job.error_code && <span className="muted"> ({job.error_code})</span>}
                 </td>
                 <td>{job.detected_mime ?? "-"}</td>

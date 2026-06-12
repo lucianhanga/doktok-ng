@@ -36,8 +36,19 @@ export function OverviewPanel({
   useEffect(load, [load]);
   useInterval(load, 5000);
 
+  // The "library" is what the user owns (documents); the "pipeline" is the live ingestion work.
+  // We surface only actionable pipeline states - waiting, processing, failed - never a "done"/
+  // "active" job count, which only duplicates the document count and invites a false comparison.
   const jobs = stats?.jobs ?? {};
-  const jobEntries = Object.entries(jobs).sort();
+  const TERMINAL_JOB = new Set(["active", "failed", "quarantined", "duplicate"]);
+  const processing = Object.entries(jobs).reduce(
+    (sum, [status, n]) => (TERMINAL_JOB.has(status) ? sum : sum + n),
+    0,
+  );
+  const failed = (jobs.failed ?? 0) + (jobs.quarantined ?? 0);
+  const waiting = stats?.pending_ingest ?? 0;
+  const pendingFeatures = stats?.documents_pending_features ?? 0;
+  const pipelineBusy = waiting + processing + failed + pendingFeatures > 0;
 
   return (
     <section aria-label="Overview" className="panel">
@@ -62,39 +73,39 @@ export function OverviewPanel({
           <div className="card-label">Entities</div>
         </div>
         <div className="card">
-          <div className="card-value">
-            {jobEntries.reduce((sum, [, n]) => sum + n, 0)}
-          </div>
-          <div className="card-label">Jobs</div>
+          <div className="card-value">{stats ? categories.length : "-"}</div>
+          <div className="card-label">Categories</div>
         </div>
-        <div className="card">
-          <div className="card-value">{stats?.pending_ingest ?? "-"}</div>
-          <div className="card-label">Waiting in ingest</div>
-        </div>
-        <button
-          type="button"
-          className="card card-button"
-          onClick={onShowPendingFeatures}
-          disabled={!onShowPendingFeatures || !stats?.documents_pending_features}
-          title="Show documents with a failed or unfinished feature"
-        >
-          <div className="card-value">{stats?.documents_pending_features ?? "-"}</div>
-          <div className="card-label">Pending features</div>
-        </button>
       </div>
 
-      {jobEntries.length > 0 && (
-        <div className="doc-section">
-          <h3>Jobs by status</h3>
-          <ul className="entity-chips">
-            {jobEntries.map(([status, n]) => (
-              <li key={status}>
-                <span className={`badge status-${status}`}>{status}</span> {n}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <div className="doc-section">
+        <h3>Ingestion</h3>
+        <ul className="pipeline-stats">
+          <li>
+            <span className="muted">Waiting</span> <strong>{waiting}</strong>
+          </li>
+          <li>
+            <span className="muted">Processing</span> <strong>{processing}</strong>
+          </li>
+          <li className={failed > 0 ? "pipeline-alert" : undefined}>
+            <span className="muted">Failed</span> <strong>{failed}</strong>
+          </li>
+          <li>
+            <button
+              type="button"
+              className="link-button"
+              onClick={onShowPendingFeatures}
+              disabled={!onShowPendingFeatures || !pendingFeatures}
+              title="Show documents with a failed or unfinished feature"
+            >
+              <span className="muted">Pending features</span> <strong>{pendingFeatures}</strong>
+            </button>
+          </li>
+        </ul>
+        {stats && !pipelineBusy && (
+          <p className="muted">Pipeline idle - every document is fully processed.</p>
+        )}
+      </div>
 
       {categories.length > 0 && (
         <div className="doc-section">

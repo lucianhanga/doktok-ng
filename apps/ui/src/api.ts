@@ -240,6 +240,29 @@ export function fetchDocumentFeatures(id: string, signal?: AbortSignal): Promise
   return getJson<DocumentFeature[]>(`/api/v1/documents/${encodeURIComponent(id)}/features`, signal);
 }
 
+export interface DocEntitySummary {
+  total: number;
+  by_type: { entity_type: string; count: number }[];
+  top: DocEntity[];
+}
+
+export interface DocumentDetailData {
+  document: DokDocument;
+  features: DocumentFeature[];
+  categories: DokCategory[];
+  entities: DocEntitySummary;
+  content: { length: number; excerpt: string };
+  recent_activity: AuditEvent[];
+}
+
+/** One-round-trip aggregate for the document detail card (full text/entities fetched lazily). */
+export function fetchDocumentDetail(
+  id: string,
+  signal?: AbortSignal,
+): Promise<DocumentDetailData> {
+  return getJson<DocumentDetailData>(`/api/v1/documents/${encodeURIComponent(id)}/detail`, signal);
+}
+
 /** All feature rows for the tenant (UI groups by document_id for the list badges). */
 export function fetchFeatures(signal?: AbortSignal): Promise<DocumentFeature[]> {
   return getJson<DocumentFeature[]>("/api/v1/features", signal);

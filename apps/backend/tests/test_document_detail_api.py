@@ -79,3 +79,72 @@ def test_document_entities(tmp_path: Path) -> None:
     client = _client(str(tmp_path))
     rows = client.get("/api/v1/documents/d1/entities", headers=_auth()).json()
     assert [r["normalized_value"] for r in rows] == ["a@b.com"]
+
+
+def _detail_client(tmp_path: Path) -> TestClient:
+    from doktok_contracts.ports import (
+        AuditLogRepository,
+        CategoryRepository,
+        FeatureRepository,
+    )
+    from doktok_core.audit.inmemory import InMemoryAuditLogRepository
+    from doktok_core.categories.inmemory import InMemoryCategoryRepository
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+
+    (tmp_path / "content.md").write_text("x" * 9000, encoding="utf-8")  # longer than the excerpt
+    doc = Document(
+        id="d1",
+        tenant_id="tenant-a",
+        sha256="a" * 64,
+        original_filename="note.txt",
+        title="note",
+        status=DocumentStatus.ACTIVE,
+        storage_path=str(tmp_path),
+        created_at=datetime.now(UTC),
+    )
+    doc_repo = InMemoryDocumentRepository()
+    doc_repo.add(doc)
+    entity_repo = InMemoryEntityRepository()
+    entity_repo.add_entities(
+        [
+            DocumentEntity(
+                id=f"e{i}",
+                tenant_id="tenant-a",
+                document_id="d1",
+                version_id="",
+                entity_text=f"v{i}",
+                entity_type=EntityType.EMAIL if i % 2 else EntityType.DATE,
+                normalized_value=f"v{i}",
+                frequency=i,
+            )
+            for i in range(1, 6)
+        ]
+    )
+    registry = build_registry()
+    registry.register(DocumentRepository, doc_repo)  # type: ignore[type-abstract]
+    registry.register(EntityRepository, entity_repo)  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    return TestClient(create_app(settings=settings, registry=registry))
+
+
+def test_detail_aggregate(tmp_path: Path) -> None:
+    body = _detail_client(tmp_path).get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    assert body["document"]["id"] == "d1"
+    # Entity summary: total + by-type counts + top-by-frequency (not the full list).
+    assert body["entities"]["total"] == 5
+    assert {b["entity_type"]: b["count"] for b in body["entities"]["by_type"]} == {
+        "EMAIL": 3,
+        "DATE": 2,
+    }
+    assert body["entities"]["top"][0]["frequency"] == 5  # highest first
+    # Content is a bounded excerpt + the true length (full text fetched lazily elsewhere).
+    assert body["content"]["length"] == 9000
+    assert len(body["content"]["excerpt"]) == 4000
+
+
+def test_detail_other_tenant_is_404(tmp_path: Path) -> None:
+    client = _detail_client(tmp_path)
+    assert client.get("/api/v1/documents/missing/detail", headers=_auth()).status_code == 404

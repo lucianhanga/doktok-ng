@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import base64
 import shutil
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
 from doktok_contracts.ports import (
+    AuditLogRepository,
     CategoryRepository,
     DocumentRepository,
     EntityRepository,
@@ -19,16 +21,21 @@ from doktok_contracts.schemas import (
     Category,
     Document,
     DocumentContent,
+    DocumentContentMeta,
+    DocumentDetail,
     DocumentEntity,
+    DocumentEntitySummary,
     DocumentFeature,
     DocumentListPage,
     DocumentStatus,
+    EntityTypeCount,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from doktok_api.dependencies import (
     Tenant,
+    get_audit_repository,
     get_category_repository,
     get_document_repository,
     get_entity_repository,
@@ -43,6 +50,12 @@ Entities = Annotated[EntityRepository, Depends(get_entity_repository)]
 Features = Annotated[FeatureRepository, Depends(get_feature_repository)]
 Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
 Jobs = Annotated[IngestionJobRepository, Depends(get_job_repository)]
+Audit = Annotated[AuditLogRepository, Depends(get_audit_repository)]
+
+# Bytes of extracted text returned inline on the detail card; the full text is fetched lazily.
+_EXCERPT_CHARS = 4000
+# Highest-frequency entities surfaced on the card; the full list is fetched lazily.
+_TOP_ENTITIES = 12
 
 
 def _encode_cursor(anchor: tuple[datetime, str] | None) -> str | None:
@@ -89,6 +102,48 @@ def get_document(document_id: str, tenant: Tenant, repo: Repo) -> Document:
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
     return document
+
+
+@router.get("/{document_id}/detail", response_model=DocumentDetail)
+def get_document_detail(
+    document_id: str,
+    tenant: Tenant,
+    repo: Repo,
+    features: Features,
+    categories: Categories,
+    entities: Entities,
+    audit: Audit,
+) -> DocumentDetail:
+    """One aggregate for the detail card: document, processing, categories, an entity summary, a
+    content excerpt, and recent activity. The full text and full entity list are fetched lazily via
+    /content and /entities when their tab is opened."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+
+    all_entities = entities.list_for_document(tenant.tenant_id, document_id)
+    by_type = Counter(e.entity_type.value for e in all_entities)
+    entity_summary = DocumentEntitySummary(
+        total=len(all_entities),
+        by_type=[EntityTypeCount(entity_type=t, count=n) for t, n in by_type.most_common()],
+        top=sorted(all_entities, key=lambda e: e.frequency, reverse=True)[:_TOP_ENTITIES],
+    )
+
+    text = ""
+    if document.storage_path:
+        path = Path(document.storage_path) / "content.md"
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+    content = DocumentContentMeta(length=len(text), excerpt=text[:_EXCERPT_CHARS])
+
+    return DocumentDetail(
+        document=document,
+        features=features.list_for_document(tenant.tenant_id, document_id),
+        categories=categories.list_for_document(tenant.tenant_id, document_id),
+        entities=entity_summary,
+        content=content,
+        recent_activity=audit.list_events(tenant.tenant_id, document_id=document_id, limit=10),
+    )
 
 
 @router.get("/{document_id}/content", response_model=DocumentContent)

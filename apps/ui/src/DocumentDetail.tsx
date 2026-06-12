@@ -1,22 +1,27 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   documentFileUrl,
-  fetchDocument,
-  fetchDocumentActivity,
-  fetchDocumentCategories,
   fetchDocumentContent,
+  fetchDocumentDetail,
   fetchDocumentEntities,
-  fetchDocumentFeatures,
   reingestDocument,
   retryDocumentFeature,
-  type AuditEvent,
   type DocEntity,
-  type DocumentFeature,
-  type DokCategory,
-  type DokDocument,
+  type DocumentDetailData,
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
+
+type Tab = "content" | "entities" | "activity";
+
+const FEATURE_LABELS: Record<string, string> = {
+  extract: "Text",
+  chunk_embed: "RAG index",
+  doc_metadata: "Metadata",
+  doc_classify: "Categories",
+  entities: "Entities",
+  structured_records: "Records",
+};
 
 export function DocumentDetail({
   id,
@@ -27,81 +32,88 @@ export function DocumentDetail({
   onClose: () => void;
   onOpenDocument?: (id: string) => void;
 }) {
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [doc, setDoc] = useState<DokDocument | null>(null);
-  const [content, setContent] = useState("");
-  const [entities, setEntities] = useState<DocEntity[]>([]);
-  const [activity, setActivity] = useState<AuditEvent[]>([]);
-  const [features, setFeatures] = useState<DocumentFeature[]>([]);
-  const [categories, setCategories] = useState<DokCategory[]>([]);
+  const [data, setData] = useState<DocumentDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("content");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [fullContent, setFullContent] = useState<string | null>(null);
+  const [fullEntities, setFullEntities] = useState<DocEntity[] | null>(null);
 
-  function loadFeatures() {
-    fetchDocumentFeatures(id)
-      .then(setFeatures)
-      .catch(() => setFeatures([]));
-  }
+  const load = useCallback(
+    (signal?: AbortSignal) => {
+      fetchDocumentDetail(id, signal)
+        .then((d) => {
+          setData(d);
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          if (signal?.aborted) return;
+          setError(err instanceof Error ? err.message : "unknown error");
+        });
+    },
+    [id],
+  );
 
   useEffect(() => {
     const c = new AbortController();
-    Promise.all([
-      fetchDocument(id, c.signal),
-      fetchDocumentContent(id, c.signal),
-      fetchDocumentEntities(id, c.signal),
-      fetchDocumentActivity(id, c.signal),
-      fetchDocumentFeatures(id, c.signal),
-      fetchDocumentCategories(id, c.signal),
-    ])
-      .then(([d, co, e, a, f, cats]) => {
-        setDoc(d);
-        setContent(co);
-        setEntities(e);
-        setActivity(a);
-        setFeatures(f);
-        setCategories(cats);
-      })
-      .catch((err: unknown) => {
-        if (c.signal.aborted) return;
-        setError(err instanceof Error ? err.message : "unknown error");
-      });
+    load(c.signal);
     return () => c.abort();
-  }, [id]);
+  }, [load]);
 
   function retry(feature: string) {
     retryDocumentFeature(id, feature)
-      .then(loadFeatures)
+      .then(() => load())
       .catch(() => undefined);
   }
 
   function reingest() {
     reingestDocument(id)
       .then(onClose) // the failed record is removed; it reprocesses on the next worker run
-      .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : "could not re-ingest"),
-      );
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not re-ingest"));
   }
 
+  function showFullText() {
+    fetchDocumentContent(id)
+      .then(setFullContent)
+      .catch(() => undefined);
+  }
+
+  function showAllEntities() {
+    fetchDocumentEntities(id)
+      .then(setFullEntities)
+      .catch(() => undefined);
+  }
+
+  const doc = data?.document ?? null;
+  const title = doc?.title ?? doc?.original_filename ?? id.slice(0, 8);
+
   return (
-    <section aria-label="Document detail" className="panel doc-view">
-      <div className="result-head">
-        <button type="button" onClick={onClose}>
-          &larr; Back
+    <section aria-label="Document detail" className="panel doc-card">
+      <header className="doc-card-head">
+        <button type="button" className="link-button doc-back" onClick={onClose}>
+          &larr; Back to documents
         </button>
-        <h2>{doc?.title ?? doc?.original_filename ?? id.slice(0, 8)}</h2>
-        {doc && (
-          <div className="doc-actions">
-            <button type="button" className="active" onClick={() => setPreviewOpen(true)}>
-              Preview
-            </button>
-            <a href={documentFileUrl(id)} target="_blank" rel="noopener noreferrer">
-              Open in new tab ↗
-            </a>
-            <a href={documentFileUrl(id, { disposition: "attachment" })} download={doc.original_filename}>
-              Download
-            </a>
-          </div>
-        )}
-      </div>
+        <h2 title={title}>{title}</h2>
+        {doc && <span className={`badge status-pill status-${doc.status}`}>{doc.status}</span>}
+        <div className="doc-actions">
+          {doc && (
+            <>
+              <button type="button" onClick={() => setPreviewOpen(true)}>
+                Preview
+              </button>
+              <a href={documentFileUrl(id)} target="_blank" rel="noopener noreferrer">
+                Open ↗
+              </a>
+              <a
+                href={documentFileUrl(id, { disposition: "attachment" })}
+                download={doc.original_filename}
+              >
+                Download
+              </a>
+            </>
+          )}
+        </div>
+      </header>
 
       {doc?.status === "duplicate" && doc.duplicate_of && (
         <div className="banner-warning" role="status">
@@ -111,7 +123,6 @@ export function DocumentDetail({
           </button>
         </div>
       )}
-
       {doc?.status === "failed" && (
         <div className="banner-warning" role="status">
           <span>Ingestion failed for this document.</span>
@@ -120,134 +131,182 @@ export function DocumentDetail({
           </button>
         </div>
       )}
-
       {error && (
         <p role="alert" className="status-error">
           Could not load document: {error}
         </p>
       )}
+      {!data && !error && <p role="status">Loading document…</p>}
 
-      {doc && (
-        <dl className="status-ok">
-          <div>
-            <dt>File</dt>
-            <dd>{doc.original_filename}</dd>
-          </div>
-          <div>
-            <dt>Type</dt>
-            <dd>{doc.detected_mime ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Status</dt>
-            <dd>{doc.status}</dd>
-          </div>
-          <div>
-            <dt>Pages</dt>
-            <dd>{String(doc.metadata?.page_count ?? "-")}</dd>
-          </div>
-          <div>
-            <dt>Document date</dt>
-            <dd className={doc.document_date ? undefined : "muted"}>{doc.document_date ?? "n/a"}</dd>
-          </div>
-          <div>
-            <dt>Location</dt>
-            <dd className={doc.location ? undefined : "muted"}>{doc.location ?? "n/a"}</dd>
-          </div>
-          <div>
-            <dt>Ingested</dt>
-            <dd>{doc.ingested_at ? doc.ingested_at.slice(0, 10) : "-"}</dd>
-          </div>
-        </dl>
-      )}
+      {data && doc && (
+        <div className="doc-card-body">
+          <div className="doc-card-main">
+            {doc.summary && (
+              <section className="doc-summary">
+                <h3>Summary</h3>
+                <p>{doc.summary}</p>
+              </section>
+            )}
 
-      {doc?.summary && (
-        <div className="doc-section doc-summary">
-          <h3>Summary</h3>
-          <p>{doc.summary}</p>
-        </div>
-      )}
+            <nav className="tabs doc-tabs" aria-label="Document sections">
+              <button
+                type="button"
+                className={tab === "content" ? "active" : ""}
+                aria-pressed={tab === "content"}
+                onClick={() => setTab("content")}
+              >
+                Content
+              </button>
+              <button
+                type="button"
+                className={tab === "entities" ? "active" : ""}
+                aria-pressed={tab === "entities"}
+                onClick={() => setTab("entities")}
+              >
+                Entities ({data.entities.total})
+              </button>
+              <button
+                type="button"
+                className={tab === "activity" ? "active" : ""}
+                aria-pressed={tab === "activity"}
+                onClick={() => setTab("activity")}
+              >
+                Activity
+              </button>
+            </nav>
 
-      {categories.length > 0 && (
-        <div className="doc-section">
-          <h3>Categories</h3>
-          <span className="feature-chips">
-            {categories.map((c) => (
-              <span key={c.id} className="chip">
-                {c.name}
-              </span>
-            ))}
-          </span>
-        </div>
-      )}
+            {tab === "content" && (
+              <div className="doc-section">
+                {data.content.length === 0 ? (
+                  <p className="empty">No extracted text.</p>
+                ) : (
+                  <>
+                    <pre className="content" aria-label="Document content">
+                      {fullContent ?? data.content.excerpt}
+                    </pre>
+                    {fullContent === null && data.content.length > data.content.excerpt.length && (
+                      <button type="button" onClick={showFullText}>
+                        Show full text ({data.content.length.toLocaleString()} chars)
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
-      {features.length > 0 && (
-        <div className="doc-section">
-          <h3>Processing</h3>
-          <table className="jobs">
-            <thead>
-              <tr>
-                <th>Feature</th>
-                <th>Status</th>
-                <th>Attempts</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {features.map((f) => (
-                <tr key={f.feature}>
-                  <td>{f.feature}</td>
-                  <td>
-                    <span className={`badge status-${f.status}`}>{f.status}</span>
-                    {f.last_error && <div className="muted">{f.last_error}</div>}
-                  </td>
-                  <td>
-                    {f.attempts}/{f.max_attempts}
-                  </td>
-                  <td>
+            {tab === "entities" && (
+              <div className="doc-section">
+                {data.entities.total === 0 ? (
+                  <p className="empty">No entities extracted.</p>
+                ) : (
+                  <>
+                    <p className="entity-types muted">
+                      {data.entities.by_type.map((b) => (
+                        <span key={b.entity_type} className="chip">
+                          {b.entity_type} {b.count}
+                        </span>
+                      ))}
+                    </p>
+                    <ul className="entity-chips">
+                      {(fullEntities ?? data.entities.top).map((e, i) => (
+                        <li key={`${e.entity_type}:${e.normalized_value}:${i}`}>
+                          <span className="badge">{e.entity_type}</span> {e.normalized_value}
+                        </li>
+                      ))}
+                    </ul>
+                    {fullEntities === null && data.entities.total > data.entities.top.length && (
+                      <button type="button" onClick={showAllEntities}>
+                        Show all {data.entities.total} entities
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {tab === "activity" && (
+              <div className="doc-section">
+                {data.recent_activity.length === 0 ? (
+                  <p className="empty">No activity recorded.</p>
+                ) : (
+                  <ul className="timeline">
+                    {data.recent_activity.map((ev) => (
+                      <li key={ev.id}>
+                        <time className="muted" dateTime={ev.timestamp} title={ev.timestamp}>
+                          {new Date(ev.timestamp).toLocaleString()}
+                        </time>{" "}
+                        <span className="badge">{ev.event_type}</span>{" "}
+                        {String(ev.metadata?.summary ?? ev.metadata?.error_message ?? "")}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+
+          <aside className="doc-card-aside">
+            <dl className="doc-meta">
+              <div>
+                <dt>File</dt>
+                <dd title={doc.original_filename}>{doc.original_filename}</dd>
+              </div>
+              <div>
+                <dt>Type</dt>
+                <dd>{doc.detected_mime ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>Pages</dt>
+                <dd>{String(doc.metadata?.page_count ?? "-")}</dd>
+              </div>
+              <div>
+                <dt>Document date</dt>
+                <dd className={doc.document_date ? undefined : "muted"}>
+                  {doc.document_date ?? "n/a"}
+                </dd>
+              </div>
+              <div>
+                <dt>Location</dt>
+                <dd className={doc.location ? undefined : "muted"}>{doc.location ?? "n/a"}</dd>
+              </div>
+              <div>
+                <dt>Ingested</dt>
+                <dd>{doc.ingested_at ? doc.ingested_at.slice(0, 10) : "-"}</dd>
+              </div>
+            </dl>
+
+            {data.categories.length > 0 && (
+              <section className="doc-aside-section">
+                <h3>Categories</h3>
+                <span className="feature-chips">
+                  {data.categories.map((c) => (
+                    <span key={c.id} className="chip">
+                      {c.name}
+                    </span>
+                  ))}
+                </span>
+              </section>
+            )}
+
+            <section className="doc-aside-section">
+              <h3>Processing</h3>
+              <ul className="proc-list">
+                {data.features.map((f) => (
+                  <li key={f.feature}>
+                    <span className="proc-label">{FEATURE_LABELS[f.feature] ?? f.feature}</span>
+                    <span className={`badge status-${f.status}`} title={f.last_error ?? undefined}>
+                      {f.status}
+                    </span>
                     {f.status !== "done" && (
-                      <button type="button" onClick={() => retry(f.feature)}>
+                      <button type="button" className="link-button" onClick={() => retry(f.feature)}>
                         Retry
                       </button>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {entities.length > 0 && (
-        <div className="doc-section">
-          <h3>Entities</h3>
-          <ul className="entity-chips">
-            {entities.map((e, i) => (
-              <li key={`${e.entity_type}:${e.normalized_value}:${i}`}>
-                <span className="badge">{e.entity_type}</span> {e.normalized_value}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="doc-section">
-        <h3>Content</h3>
-        <pre className="content" aria-label="Document content">
-          {content || "(no extracted text)"}
-        </pre>
-      </div>
-
-      {activity.length > 0 && (
-        <div className="doc-section">
-          <h3>Activity</h3>
-          <ul className="timeline">
-            {activity.map((ev) => (
-              <li key={ev.id}>
-                <span className="badge">{ev.event_type}</span>{" "}
-                {String(ev.metadata?.summary ?? "")}
-              </li>
-            ))}
-          </ul>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </aside>
         </div>
       )}
 

@@ -403,3 +403,42 @@ class HealthStatus(BaseModel):
     service: str
     version: str
     environment: str
+
+
+class EntityTypeCount(BaseModel):
+    """How many entities of a given type a document has (for the detail card's entity rollup)."""
+
+    entity_type: str
+    count: int
+
+
+class DocumentEntitySummary(BaseModel):
+    """A compact entity rollup for the document card; the full list is fetched on demand."""
+
+    total: int = 0
+    by_type: list[EntityTypeCount] = Field(default_factory=list)
+    top: list[DocumentEntity] = Field(default_factory=list)
+
+
+class DocumentContentMeta(BaseModel):
+    """Extracted-text metadata: total length + a short excerpt (full text fetched on demand)."""
+
+    length: int = 0
+    excerpt: str = ""
+
+
+class DocumentDetail(BaseModel):
+    """One-round-trip aggregate for the document detail view's eager fold (review follow-up).
+
+    Bundles everything shown immediately (identity, summary, processing, categories, an entity
+    summary, a content excerpt, and recent activity) so the card needs one request instead of six.
+    The two unbounded payloads - the full extracted text and the full entity list - stay behind the
+    existing lazy endpoints and are only fetched when their tab is opened.
+    """
+
+    document: Document
+    features: list[DocumentFeature] = Field(default_factory=list)
+    categories: list[Category] = Field(default_factory=list)
+    entities: DocumentEntitySummary = Field(default_factory=DocumentEntitySummary)
+    content: DocumentContentMeta = Field(default_factory=DocumentContentMeta)
+    recent_activity: list[AuditEvent] = Field(default_factory=list)

@@ -39,14 +39,15 @@ The **UI** has an Overview dashboard, a document viewer (extracted text + entiti
 document), live auto-refresh, and cross-linking (search hit / entity / job → open the document).
 
 **M4 (Vector + full-text search).** On top of M3, every activated document is **chunked, embedded
-(Ollama `mxbai-embed-large` → pgvector) and full-text indexed** before it goes active. **Hybrid search**
+(Ollama `qwen3-embedding:0.6b` → pgvector) and full-text indexed** before it goes active. **Hybrid search**
 (semantic vector + Postgres FTS, fused with Reciprocal Rank Fusion) is exposed at `GET /api/v1/search`
 and a **Search** tab in the UI — tenant-scoped and token-protected. Earlier milestones below.
 
 **M3 (OCR extraction).** Files dropped into a tenant's ingest folder are detected, validated, and
 **extracted into active documents**. Born-digital `.txt`/`.md`/PDF use direct/PyMuPDF extraction;
-**scanned PDFs and images are OCR'd via a local Ollama vision model** (`DOKTOK_OCR_MODEL`, default
-`glm-ocr:latest`) and a derived `normalized/searchable.pdf` (images + invisible OCR text layer) becomes
+**scanned PDFs and images are OCR'd** by the configurable OCR engine (`DOKTOK_OCR_ENGINE`, default
+`paddleocr` — PP-OCRv5, deterministic and CPU-only; the legacy Ollama vision model `glm-ocr` remains
+selectable) and a derived `normalized/searchable.pdf` (images + invisible OCR text layer) becomes
 the canonical "system document" — with the original always kept (`original.<ext>`). Mixed PDFs keep
 embedded text and only OCR blank pages. Each document yields `manifest.json`, `content.md` (plain text
 for embeddings), `content.json`, and `pages/`, surfaced via the tenant-scoped `/api/v1/documents` API
@@ -70,13 +71,16 @@ the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
 ## Default models (Ollama, configurable)
 
 ```env
-DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b
-DOKTOK_EMBEDDING_MODEL=mxbai-embed-large:latest
+DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b          # RAG chat / reranker (23 GB MoE)
+DOKTOK_EMBEDDING_MODEL=qwen3-embedding:0.6b    # 1024-dim, no 512-token truncation
+DOKTOK_ENRICH_MODEL=qwen3:14b                  # dense; enrichment + OCR-quality judge + JSON repair
+DOKTOK_OCR_ENGINE=paddleocr                    # PP-OCRv5 (default); or "glm-ocr" (Ollama vision)
 DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-Both model names are configurable via environment variables. See ADR-0003 for the rationale and a
-documented embedding alternative (`bge-m3:latest`).
+All model names are configurable via environment variables. See ADR-0003 (model runtime) and
+ADR-0010 (OCR engine) for the rationale. PaddleOCR needs its optional extra installed on the worker
+host: `uv pip install paddleocr paddlepaddle`.
 
 For throughput tuning (parallel ingestion, `OLLAMA_NUM_PARALLEL`, and the memory cost of
 parallelism), see [docs/operations/performance-and-ollama.md](docs/operations/performance-and-ollama.md).

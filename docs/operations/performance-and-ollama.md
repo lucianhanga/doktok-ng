@@ -175,3 +175,18 @@ reboot** (re-run it or add a `launchd` startup job to persist).
 - Keep ingestion on the dense models (`DOKTOK_ENRICH_MODEL` / `DOKTOK_JUDGE_MODEL` = `qwen3:14b`) so it
   fits in ~16 GB and never needs the 23 GB qwen3.6.
 - Keep `DOKTOK_OLLAMA_TIMEOUT_SECONDS` generous so queued requests finish rather than fail.
+
+## Insights embedding map (M7.1)
+
+The Insights tab fits 2D/3D projections of a tenant's chunk embeddings (ADR-0016). This runs as a
+separate worker stream, triggered on demand by the recompute button (it is never automatic).
+
+- **Runtime deps:** `make projection-engine` installs `umap-learn` + `scikit-learn` + `numpy`. These
+  are an optional extra and are **not** in the lockfile, so `uv sync` removes them — re-run
+  `make projection-engine` (and `make ocr-paddle`) on the worker host after any sync.
+- **Cost:** UMAP is CPU-bound and scales with chunk count; it runs off the ingestion/reconcile
+  threads so it never stalls them. `DOKTOK_PROJECTION_MAX_POINTS` (default 20000) caps points per
+  projection (larger tenants are truncated and flagged in the UI). `DOKTOK_PROJECTION_ALGORITHM`
+  (`umap`|`pca`) and `DOKTOK_PROJECTION_VERSION` select the reducer and invalidate the cache.
+- **Triggering by hand:** `POST /api/v1/visualizations/embeddings/recompute` enqueues a recompute;
+  `GET .../status` reports progress; `GET .../embeddings?dim=2|3` reads the cached map.

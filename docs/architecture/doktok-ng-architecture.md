@@ -99,7 +99,9 @@ infrastructure.
 
 Initial tables (see brief §16): `documents`, `document_versions`, `ingestion_jobs`, `document_pages`,
 `document_chunks` (with `embedding vector` + `tsv tsvector`), `document_entities`, `document_artifacts`,
-`audit_events`.
+`audit_events`. Later milestones add `document_features` (ADR-0009), `categories` +
+`document_category_links` (M6.2), `extracted_records` (M6.3), and the Insights projection cache +
+queue (`embedding_projections`, `embedding_projection_points`, `projection_requests`; §18, M7.1).
 
 ## 7. Filesystem document lifecycle
 
@@ -283,9 +285,44 @@ knob. The OpenAI API key is **write-only** (set/cleared, never returned). Select
 an explicit, opt-in exception to the local-first / no-egress default (§12, ADR-0006); the defaults are
 Ollama-only. Adapters live in `providers/openai`. See ADR-0014.
 
-## 18. Roadmap
+## 18. Insights: embedding-space visualization (M7.1, ADR-0016)
+
+The **Insights** tab visualizes the RAG embedding space. Its first sub-tab, **Embedding Space**,
+projects every chunk embedding (1024-dim) down to 2D/3D and plots it colored by the chunk's document
+**primary category**, so clusters (topics), category separation, and outliers become visible.
+
+This introduces the system's **first tenant-aggregate background job** — distinct from the
+per-document `FeatureReconciler` (ADR-0009). A projection fits *all* of a tenant's chunk embeddings
+jointly (UMAP preferred, PCA fallback; 2D and 3D are independent fits), so it cannot be a per-document
+`FeatureProcessor`. The flow, with no message broker:
+
+- **Cache** (`embedding_projections` + `embedding_projection_points`, migration 0019): one cached
+  projection per `(tenant, dim)`, holding the points plus an `input_fingerprint` (chunk count +
+  newest row + algorithm + version). Points reference the projection header, not `document_chunks`,
+  so a snapshot survives re-embedding until an explicit recompute; staleness is detected by comparing
+  fingerprints, never by row mutation.
+- **Queue** (`projection_requests`, migration 0020): the recompute button enqueues one row per tenant
+  (`UNIQUE`, so repeated presses coalesce). The worker runs a **separate projection stream** that
+  claims a request (`FOR UPDATE SKIP LOCKED`), fits 2D + 3D, writes the cache, and clears the request.
+  UMAP is CPU-heavy, so this stream is independent of ingestion and reconciliation.
+- **Read API** (tenant-scoped): `GET /api/v1/visualizations/embeddings?dim=2|3` returns points
+  (`x,y,z?`, category, document, snippet) + a **server-owned** category→color legend + projection
+  meta (incl. `stale`); `GET .../status` reports per-dim cache state + whether a recompute is in
+  flight; `POST .../recompute` enqueues one. Color uses each document's primary category (the linked
+  category with the highest tenant-wide document count; documents are multi-label, ADR-0016 §3), so
+  the server owns the palette and the 2D view, 3D view, and legend always agree.
+- **UI**: the SVG scatter (2D direct, 3D rotatable) with legend show/hide, hover tooltip, click-to-
+  open-document, and all API-driven states (loading/empty/not-computed/stale/truncated/error). The
+  renderer is dependency-free SVG at current scale; the API contract is stable so a WebGL renderer
+  (deck.gl) can replace it for very large tenants without backend changes.
+
+The reducer adapter (`providers/projection`, `SklearnUmapReducer`) keeps `umap-learn`/`scikit-learn`/
+`numpy` as an optional, lazily-imported `engine` extra (like PaddleOCR), installed with
+`make projection-engine`. `uv sync` prunes it, so re-run that on a worker host after a sync.
+
+## 19. Roadmap
 
 See [../milestones/M0-M10.md](../milestones/M0-M10.md). Every milestone ships a runnable system; one
-milestone per pass. The blocking ingestion foundation (M0–M3), search (M4), entities (M5), and RAG
-chat (M6) are implemented; current work is M7 (ingestion dashboard + hardening) and the document
-enrichment/aggregation features above.
+milestone per pass. The blocking ingestion foundation (M0–M3), search (M4), entities (M5), RAG chat
+(M6), enrichment/aggregation (M6.1–M6.3), and the Insights embedding map (M7.1) are implemented;
+remaining work is M8 (read-only MCP), M9 (advanced document tools), and M10 (external integrations).

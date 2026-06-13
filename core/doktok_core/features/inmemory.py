@@ -191,6 +191,16 @@ class InMemoryFeatureRepository:
         rows.sort(key=lambda r: (r.document_id, r.feature))
         return rows[:limit]
 
+    def list_for_documents(self, tenant_id: str, document_ids: list[str]) -> list[DocumentFeature]:
+        wanted = set(document_ids)
+        rows = [
+            r.model_copy(deep=True)
+            for r in self.rows
+            if r.tenant_id == tenant_id and r.document_id in wanted
+        ]
+        rows.sort(key=lambda r: (r.document_id, r.feature))
+        return rows
+
     def reset(self, tenant_id: str, document_id: str, feature: str) -> bool:
         row = self._find(tenant_id, document_id, feature)
         if row is None:

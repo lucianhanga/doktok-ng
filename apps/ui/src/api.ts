@@ -283,9 +283,15 @@ export function fetchDocumentDetail(
   return getJson<DocumentDetailData>(`/api/v1/documents/${encodeURIComponent(id)}/detail`, signal);
 }
 
-/** All feature rows for the tenant (UI groups by document_id for the list badges). */
-export function fetchFeatures(signal?: AbortSignal): Promise<DocumentFeature[]> {
-  return getJson<DocumentFeature[]>("/api/v1/features", signal);
+/** Feature rows for the list badges, grouped by document_id. Scope to the documents on screen via
+ * `documentIds` - the tenant-wide ledger is row-capped and would drop the newest docs' badges. */
+export function fetchFeatures(
+  documentIds?: string[],
+  signal?: AbortSignal,
+): Promise<DocumentFeature[]> {
+  if (documentIds && documentIds.length === 0) return Promise.resolve([]);
+  const qs = documentIds ? `?document_ids=${encodeURIComponent(documentIds.join(","))}` : "";
+  return getJson<DocumentFeature[]>(`/api/v1/features${qs}`, signal);
 }
 
 export interface AiPurposeSettings {

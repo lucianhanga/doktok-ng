@@ -401,7 +401,12 @@ export function DocumentsPanel({
         next = page.next_cursor;
         cursor = next ?? undefined;
       } while (next && items.length < windowSize);
-      const features = await fetchFeatures(ctrl.signal);
+      // Scope badges to the loaded documents, not the whole tenant (whose ledger is row-capped and
+      // would silently drop the newest documents' badges once a tenant has many documents).
+      const features = await fetchFeatures(
+        items.map((d) => d.id),
+        ctrl.signal,
+      );
       setState({
         kind: "ok",
         docs: items,

@@ -7,7 +7,7 @@ from typing import Annotated
 from doktok_contracts.ports import FeatureRepository
 from doktok_contracts.schemas import DocumentFeature
 from doktok_core.features.catalog import FEATURE_CATALOG
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from doktok_api.dependencies import Tenant, get_feature_repository
@@ -39,6 +39,19 @@ def feature_catalog(tenant: Tenant) -> list[FeatureCatalogEntry]:
 
 
 @router.get("", response_model=list[DocumentFeature])
-def list_features(tenant: Tenant, repo: Repo) -> list[DocumentFeature]:
-    """All feature-ledger rows for the tenant (the UI groups them by document for badges)."""
+def list_features(
+    tenant: Tenant,
+    repo: Repo,
+    document_ids: Annotated[str | None, Query()] = None,
+) -> list[DocumentFeature]:
+    """Feature-ledger rows the UI groups by document for badges.
+
+    Pass ``document_ids`` (comma-separated) to scope the result to the documents currently on screen
+    - the badge view must cover exactly those, and an unscoped tenant query is row-capped, which can
+    drop the newest documents' badges once a tenant has many documents. Without it, returns the
+    (capped) tenant-wide ledger for backward compatibility.
+    """
+    if document_ids is not None:
+        ids = [d for d in (s.strip() for s in document_ids.split(",")) if d]
+        return repo.list_for_documents(tenant.tenant_id, ids)
     return repo.list_for_tenant(tenant.tenant_id)

@@ -41,7 +41,7 @@ class FakeFeatureRepository:
     def requeue_running(self, tenant_id: str) -> int:
         return 0
 
-    def list_for_tenant(self, tenant_id: str, *, limit: int = 2000) -> list[DocumentFeature]:
+    def _rows(self, tenant_id: str) -> list[DocumentFeature]:
         now = datetime.now(UTC)
         return [
             DocumentFeature(
@@ -56,13 +56,20 @@ class FakeFeatureRepository:
             DocumentFeature(
                 id="f2",
                 tenant_id=tenant_id,
-                document_id="d1",
+                document_id="d2",
                 feature="entities",
                 status=FeatureStatus.PENDING,
                 created_at=now,
                 updated_at=now,
             ),
         ]
+
+    def list_for_tenant(self, tenant_id: str, *, limit: int = 2000) -> list[DocumentFeature]:
+        return self._rows(tenant_id)
+
+    def list_for_documents(self, tenant_id, document_ids):  # type: ignore[no-untyped-def]
+        wanted = set(document_ids)
+        return [r for r in self._rows(tenant_id) if r.document_id in wanted]
 
 
 def _client() -> TestClient:
@@ -80,8 +87,27 @@ def test_lists_tenant_feature_rows() -> None:
     body = _client().get("/api/v1/features", headers={"Authorization": "Bearer tok-a"}).json()
     assert {(r["document_id"], r["feature"], r["status"]) for r in body} == {
         ("d1", "chunk_embed", "done"),
-        ("d1", "entities", "pending"),
+        ("d2", "entities", "pending"),
     }
+
+
+def test_scopes_to_requested_document_ids() -> None:
+    # The list view passes the visible document ids so badges cover exactly those (no row cap).
+    body = (
+        _client()
+        .get("/api/v1/features?document_ids=d1", headers={"Authorization": "Bearer tok-a"})
+        .json()
+    )
+    assert {r["document_id"] for r in body} == {"d1"}
+
+
+def test_empty_document_ids_returns_nothing() -> None:
+    body = (
+        _client()
+        .get("/api/v1/features?document_ids=", headers={"Authorization": "Bearer tok-a"})
+        .json()
+    )
+    assert body == []
 
 
 def test_catalog_requires_token() -> None:

@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "doktok-provider-projection"
 version = "0.0.0"
-description = "UMAP/PCA dimensionality-reduction adapter for the DimensionalityReducer port"
+description = "PCA/UMAP + HDBSCAN adapter for the EmbeddingProjector port"
 requires-python = ">=3.12"
 dependencies = ["doktok-contracts"]
 
 # Heavy numeric deps kept optional so CI / default installs stay light; imported lazily.
-# Enable on the worker host with: uv pip install umap-learn scikit-learn numpy
+# Enable on the worker host with: uv pip install umap-learn scikit-learn hdbscan numpy
 [project.optional-dependencies]
-engine = ["umap-learn>=0.5", "scikit-learn>=1.4", "numpy>=1.26"]
+engine = ["umap-learn>=0.5", "scikit-learn>=1.4", "hdbscan>=0.8", "numpy>=1.26"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["doktok_provider_projection"]

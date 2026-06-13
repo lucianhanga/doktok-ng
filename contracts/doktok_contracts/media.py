@@ -73,3 +73,16 @@ class ExtractedTransaction:
     amount: str | None  # e.g. "45.00"
     currency: str | None  # ISO 4217
     direction: str | None  # 'debit' | 'credit'
+
+
+@dataclass
+class ProjectionResult:
+    """Output of fitting the embedding map (M7.2): per-dimension coords + a cluster id per vector.
+
+    ``coords[d]`` holds one d-length coordinate per input vector (same order as the input).
+    ``clusters`` holds one HDBSCAN cluster id per input vector (-1 = noise); the same id is used for
+    every dimension so colors agree across 2D/3D.
+    """
+
+    coords: dict[int, list[list[float]]]
+    clusters: list[int]

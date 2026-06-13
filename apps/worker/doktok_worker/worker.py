@@ -232,6 +232,11 @@ class IngestionWorker:
         self, stop: threading.Event
     ) -> None:  # pragma: no cover - long-running loop
         # A separate stream: fitting UMAP is CPU-heavy and must not stall ingestion/reconciliation.
+        if self._projection_runner is not None:
+            try:
+                self._projection_runner.prewarm()  # warm UMAP/HDBSCAN JIT off the first recompute
+            except Exception:  # noqa: BLE001 - pre-warming must never take down the stream
+                logger.exception("projection pre-warm failed")
         while not stop.is_set():
             processed = 0
             try:

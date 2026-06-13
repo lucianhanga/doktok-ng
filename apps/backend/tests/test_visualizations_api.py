@@ -4,6 +4,7 @@ import os
 
 import pytest
 from doktok_api.main import create_app
+from doktok_contracts.media import ProjectionResult
 from doktok_contracts.ports import (
     CategoryRepository,
     ChunkRepository,
@@ -33,9 +34,13 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
-class FakeReducer:
-    def reduce(self, vectors: list[list[float]], dim: int) -> list[list[float]]:
-        return [[float(i)] * dim for i in range(len(vectors))]
+class FakeProjector:
+    def project(self, vectors, dims):  # type: ignore[no-untyped-def]
+        coords = {int(d): [[float(i)] * int(d) for i in range(len(vectors))] for d in dims}
+        return ProjectionResult(coords=coords, clusters=[i % 2 for i in range(len(vectors))])
+
+    def prewarm(self) -> None:
+        pass
 
 
 def _client(*, computed: bool = True) -> tuple[TestClient, InMemoryProjectionRequestRepository]:
@@ -59,7 +64,11 @@ def _client(*, computed: bool = True) -> tuple[TestClient, InMemoryProjectionReq
     projections = InMemoryEmbeddingProjectionRepository()
     requests = InMemoryProjectionRequestRepository()
     if computed:
-        ProjectionService(chunks, FakeReducer(), projections, algorithm="umap").recompute(TENANT)
+        # Match the API's projection_version (Settings default) so the cached map reads as fresh.
+        version = Settings(_env_file=None).projection_version  # type: ignore[call-arg]
+        ProjectionService(
+            chunks, FakeProjector(), projections, algorithm="umap", version=version
+        ).recompute(TENANT)
 
     registry = build_registry()
     registry.register(EmbeddingProjectionRepository, projections)  # type: ignore[type-abstract]

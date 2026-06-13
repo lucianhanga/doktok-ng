@@ -19,6 +19,7 @@ from doktok_contracts.media import (
     ExtractedTerm,
     ExtractedTransaction,
     OcrPageResult,
+    ProjectionResult,
     RenderedPage,
     TextChunk,
 )
@@ -318,11 +319,18 @@ class ChunkRepository(Protocol):
 
 
 @runtime_checkable
-class DimensionalityReducer(Protocol):
-    """Project high-dimensional embeddings down to ``dim`` (2 or 3) for visualization (M7.1)."""
+class EmbeddingProjector(Protocol):
+    """Fit the embedding map: PCA pre-reduce -> UMAP per dim + HDBSCAN clustering (M7.1/M7.2)."""
 
-    def reduce(self, vectors: list[list[float]], dim: int) -> list[list[float]]:
-        """Return one ``dim``-length coordinate per input vector, in the same order."""
+    def project(self, vectors: list[list[float]], dims: Sequence[int]) -> ProjectionResult:
+        """Return per-dimension coordinates + one cluster id per vector (same input order).
+
+        The cluster id is shared across dimensions, so 2D and 3D color the same chunk identically.
+        """
+        ...
+
+    def prewarm(self) -> None:
+        """Trigger UMAP/HDBSCAN JIT compilation up front so the first real fit is not slow."""
         ...
 
 

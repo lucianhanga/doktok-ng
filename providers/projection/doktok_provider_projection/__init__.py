@@ -1,7 +1,7 @@
-"""UMAP/PCA dimensionality-reduction adapter for the DimensionalityReducer port (M7.1)."""
+"""PCA->UMAP + HDBSCAN embedding-map projector for the EmbeddingProjector port (M7.1/M7.2)."""
 
-from doktok_provider_projection.reducer import SklearnUmapReducer
+from doktok_provider_projection.reducer import SklearnEmbeddingProjector
 
 __version__ = "0.0.0"
 
-__all__ = ["SklearnUmapReducer"]
+__all__ = ["SklearnEmbeddingProjector"]

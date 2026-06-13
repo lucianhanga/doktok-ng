@@ -20,6 +20,7 @@ def _projection(
             x=float(i),
             y=float(-i),
             z=float(i * 2) if dim == 3 else None,
+            cluster=(i % 3) - 1,  # spans -1 (noise), 0, 1
         )
         for i in range(n)
     ]
@@ -45,6 +46,8 @@ def test_upsert_then_get_round_trips_points(db: Database) -> None:
     assert got.algorithm == "umap" and got.n_points == 5 and got.input_fingerprint == "fp-1"
     assert len(got.points) == 5
     assert all(p.z is None for p in got.points)
+    # Cluster ids round-trip, including -1 (noise).
+    assert {p.cluster for p in got.points} == {-1, 0, 1}
     # 3D round-trips its z coordinate.
     repo.upsert(_projection(3, n=4, fingerprint="fp-3d"))
     got3 = repo.get(TENANT, 3)

@@ -566,6 +566,7 @@ class VizPoint(BaseModel):
     y: float
     z: float | None = None
     category: str
+    cluster: int | None = None
     snippet: str
 
 
@@ -638,6 +639,7 @@ class ProjectionPoint(BaseModel):
     x: float
     y: float
     z: float | None = None
+    cluster: int | None = None
 
 
 class EmbeddingProjection(BaseModel):

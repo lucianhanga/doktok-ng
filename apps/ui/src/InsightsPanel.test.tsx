@@ -20,8 +20,8 @@ function mapFixture(over: Partial<EmbeddingMap> = {}): EmbeddingMap {
     computed: true,
     recompute_pending: false,
     points: [
-      { chunk_id: "c0", document_id: "d0", x: 0, y: 0, z: 0, category: "Invoices", snippet: "alpha" },
-      { chunk_id: "c1", document_id: "d1", x: 1, y: 1, z: 1, category: "Uncategorized", snippet: "beta" },
+      { chunk_id: "c0", document_id: "d0", x: 0, y: 0, z: 0, category: "Invoices", cluster: 0, snippet: "alpha" },
+      { chunk_id: "c1", document_id: "d1", x: 1, y: 1, z: 1, category: "Uncategorized", cluster: -1, snippet: "beta" },
     ],
     legend: [
       { category: "Invoices", color: "#4e79a7" },
@@ -68,6 +68,25 @@ test("hiding a category via the legend removes its points", async () => {
   await waitFor(() => expect(container.querySelectorAll("circle").length).toBe(2));
   fireEvent.click(within(container).getByRole("button", { name: /Invoices/ }));
   await waitFor(() => expect(container.querySelectorAll("circle").length).toBe(1));
+});
+
+test("color-by-cluster recolors the legend to clusters and Noise", async () => {
+  stubFetch(mapFixture());
+  const { container } = render(<InsightsPanel />);
+
+  await waitFor(() => expect(container.querySelectorAll("circle").length).toBe(2));
+  // Category mode shows category names.
+  expect(within(container).getByRole("button", { name: /Invoices/ })).toBeInTheDocument();
+
+  fireEvent.click(within(container).getByRole("radio", { name: "Cluster" }));
+
+  // Cluster mode legend lists the cluster + Noise, not the categories.
+  await waitFor(() =>
+    expect(within(container).getByRole("button", { name: /Cluster 0/ })).toBeInTheDocument(),
+  );
+  expect(within(container).getByRole("button", { name: /Noise/ })).toBeInTheDocument();
+  expect(within(container).queryByRole("button", { name: /Invoices/ })).toBeNull();
+  expect(container.querySelectorAll("circle").length).toBe(2);
 });
 
 test("clicking a point opens its document", async () => {
@@ -121,8 +140,8 @@ test("recompute POSTs and shows a busy state", async () => {
 
 test("projectPoints maps 2D to screen coords and gives 3D depth", () => {
   const points: VizPoint[] = [
-    { chunk_id: "a", document_id: "d", x: 0, y: 0, z: 0, category: "c", snippet: "" },
-    { chunk_id: "b", document_id: "d", x: 10, y: 10, z: 10, category: "c", snippet: "" },
+    { chunk_id: "a", document_id: "d", x: 0, y: 0, z: 0, category: "c", cluster: 0, snippet: "" },
+    { chunk_id: "b", document_id: "d", x: 10, y: 10, z: 10, category: "c", cluster: 1, snippet: "" },
   ];
   const flat = projectPoints(points, 2, 0, 0);
   expect(flat).toHaveLength(2);

@@ -434,6 +434,9 @@ class ChatRequest(BaseModel):
     # Bounded so the rewrite prompt can't be flooded; the answerer keeps only the most recent turns.
     history: list[ChatTurn] = Field(default_factory=list, max_length=40)
     limit: int = Field(default=8, ge=1, le=20)
+    # Opt-in: ask the model to stream its reasoning/thinking (M6.4). Off by default - enabling it
+    # makes the answer noticeably slower (the model thinks before answering); streaming only.
+    reasoning: bool = False
 
 
 class RagAnswer(BaseModel):
@@ -444,6 +447,18 @@ class RagAnswer(BaseModel):
     grounded: bool
     # Standalone query a follow-up was rewritten to (multi-turn, ADR-0018); None = not rewritten.
     rewritten_query: str | None = None
+
+
+class ChatEvent(BaseModel):
+    """One event in a streamed chat turn (M6.4, ADR-0018 Phase 3). ``type`` is one of meta /
+    reasoning / token / sources / done / error; the relevant field(s) are set per type."""
+
+    type: str
+    delta: str = ""  # reasoning / token
+    rewritten_query: str | None = None  # meta
+    citations: list[Citation] = Field(default_factory=list)  # sources
+    grounded: bool = False  # done
+    message: str = ""  # error
 
 
 class DocumentContent(BaseModel):

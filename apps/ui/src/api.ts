@@ -464,6 +464,102 @@ export async function chat(
   return (await response.json()) as RagAnswer;
 }
 
+// ---- Streaming chat (M6.4, ADR-0018 Phase 3): Server-Sent Events over a fetch POST ----
+
+export interface ChatEvent {
+  type: string; // "meta" | "reasoning" | "token" | "sources" | "done" | "error"
+  delta?: string;
+  rewritten_query?: string | null;
+  citations?: Citation[];
+  grounded?: boolean;
+  message?: string;
+}
+
+/**
+ * Parse accumulated SSE text into complete `event:`/`data:` frames, returning the events and any
+ * trailing partial frame to carry into the next read. Pure (no I/O) so it is unit-testable.
+ */
+export function parseSse(buffer: string): { events: ChatEvent[]; rest: string } {
+  const blocks = buffer.split("\n\n");
+  const rest = blocks.pop() ?? "";
+  const events: ChatEvent[] = [];
+  for (const block of blocks) {
+    if (!block.trim()) continue;
+    let data = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("data:")) data += line.slice(5).trim();
+    }
+    if (!data) continue;
+    try {
+      events.push(JSON.parse(data) as ChatEvent);
+    } catch {
+      // ignore a malformed frame rather than tearing down the whole stream
+    }
+  }
+  return { events, rest };
+}
+
+export interface ChatStreamHandlers {
+  onMeta?: (rewrittenQuery: string | null) => void;
+  onReasoning?: (delta: string) => void;
+  onToken?: (delta: string) => void;
+  onSources?: (citations: Citation[]) => void;
+  onError?: (message: string) => void;
+}
+
+/** Stream a conversational answer, dispatching SSE events to handlers. Resolves when `done`. */
+export async function chatStream(
+  question: string,
+  history: ChatTurn[],
+  reasoning: boolean,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<{ grounded: boolean }> {
+  const response = await fetch("/api/v1/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, history, reasoning }),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw friendlyHttpError(response.status);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let grounded = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parsed = parseSse(buffer);
+    buffer = parsed.rest;
+    for (const event of parsed.events) {
+      switch (event.type) {
+        case "meta":
+          handlers.onMeta?.(event.rewritten_query ?? null);
+          break;
+        case "reasoning":
+          if (event.delta) handlers.onReasoning?.(event.delta);
+          break;
+        case "token":
+          if (event.delta) handlers.onToken?.(event.delta);
+          break;
+        case "sources":
+          handlers.onSources?.(event.citations ?? []);
+          break;
+        case "error":
+          handlers.onError?.(event.message ?? "the model failed while answering");
+          break;
+        case "done":
+          grounded = event.grounded ?? false;
+          break;
+      }
+    }
+  }
+  return { grounded };
+}
+
 // ---- Structured aggregation (M6.3): deterministic SUM/COUNT over extracted records ----
 
 export interface AggregationIntent {

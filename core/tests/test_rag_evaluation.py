@@ -29,6 +29,9 @@ class FakeAnswerer:
     def answer_thread(self, tenant_id, history, question, limit=8):  # type: ignore[no-untyped-def]
         return self.answer(tenant_id, question, limit)
 
+    def answer_thread_stream(self, tenant_id, history, question, limit=8, *, reasoning=False):  # type: ignore[no-untyped-def]
+        yield from ()  # not exercised by the eval harness
+
 
 def _answer(text: str, sources: list[str]) -> RagAnswer:
     return RagAnswer(

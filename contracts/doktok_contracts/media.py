@@ -86,3 +86,15 @@ class ProjectionResult:
 
     coords: dict[int, list[list[float]]]
     clusters: list[int]
+
+
+@dataclass
+class ChatChunk:
+    """One streamed piece of a chat response (M6.4): an answer token or a reasoning/thinking token.
+
+    ``kind`` is "answer" (user-visible content) or "reasoning" (the model's thinking, shown in a
+    collapsible panel). Models that don't separate reasoning only ever emit "answer" chunks.
+    """
+
+    kind: str  # "answer" | "reasoning"
+    text: str

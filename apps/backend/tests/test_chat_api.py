@@ -3,7 +3,7 @@ import os
 import pytest
 from doktok_api.main import create_app
 from doktok_contracts.ports import RagAnswerer
-from doktok_contracts.schemas import Citation, RagAnswer
+from doktok_contracts.schemas import ChatEvent, Citation, RagAnswer
 from doktok_core.config import Settings
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
@@ -34,6 +34,14 @@ class FakeRagAnswerer:
     def answer_thread(self, tenant_id, history, question, limit=8):  # type: ignore[no-untyped-def]
         self.seen_history = list(history)
         return self.answer(tenant_id, question, limit)
+
+    def answer_thread_stream(self, tenant_id, history, question, limit=8, *, reasoning=False):  # type: ignore[no-untyped-def]
+        self.seen_history = list(history)
+        ans = self.answer(tenant_id, question, limit)
+        yield ChatEvent(type="meta")
+        yield ChatEvent(type="token", delta=ans.answer)
+        yield ChatEvent(type="sources", citations=ans.citations)
+        yield ChatEvent(type="done", grounded=ans.grounded)
 
 
 class _SemanticChat:
@@ -89,6 +97,19 @@ def test_passes_conversation_history_for_followups() -> None:
     )
     assert resp.status_code == 200
     assert answerer.seen_history is not None and len(answerer.seen_history) == 2
+
+
+def test_stream_endpoint_emits_sse_events() -> None:
+    resp = _client(FakeRagAnswerer()).post(
+        "/api/v1/chat/stream",
+        json={"question": "what is the total?"},
+        headers={"Authorization": "Bearer tok-a"},
+    )
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+    body = resp.text
+    assert "event: token" in body and "The total is 42" in body
+    assert "event: sources" in body and "event: done" in body
 
 
 def test_rejects_empty_question() -> None:

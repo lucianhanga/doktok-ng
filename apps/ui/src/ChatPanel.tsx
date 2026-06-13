@@ -1,10 +1,37 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
-import { chat, documentThumbnailUrl, type ChatTurn, type Citation, type RagAnswer } from "./api";
+import {
+  chatStream,
+  documentThumbnailUrl,
+  type ChatTurn,
+  type Citation,
+  type RagAnswer,
+} from "./api";
 
 interface Exchange {
   question: string;
   answer: RagAnswer;
+  reasoning?: string;
+}
+
+/** The in-progress turn while tokens stream in. */
+interface Streaming {
+  question: string;
+  answer: string;
+  reasoning: string;
+  citations: Citation[];
+  rewrittenQuery: string | null;
+}
+
+/** A unified view of either a completed exchange or the streaming turn, for rendering. */
+interface TurnView {
+  question: string;
+  reasoning: string;
+  answer: string;
+  citations: Citation[];
+  rewrittenQuery: string | null;
+  grounded: boolean;
+  streaming: boolean;
 }
 
 type State =
@@ -97,28 +124,88 @@ function SourcesColumn({
   );
 }
 
-function AnswerBlock({ ex }: { ex: Exchange }) {
+/** Collapsible panel for the model's reasoning, shown only when reasoning text exists. */
+function ReasoningPanel({ text, streaming }: { text: string; streaming: boolean }) {
+  if (!text) return null;
+  return (
+    <details className="chat-reasoning">
+      <summary>Reasoning</summary>
+      <div className="chat-reasoning-body">
+        {text}
+        {streaming && <span className="chat-caret" aria-hidden="true" />}
+      </div>
+    </details>
+  );
+}
+
+function AnswerBlock({ turn }: { turn: TurnView }) {
+  // While streaming, the caret sits on the reasoning until answer tokens begin, then on the answer.
+  const reasoningStreaming = turn.streaming && turn.answer.length === 0;
   return (
     <div className="chat-answer-block">
-      <p className="chat-question">{ex.question}</p>
-      {ex.answer.rewritten_query && (
-        <p className="muted chat-rewritten">searched for: {ex.answer.rewritten_query}</p>
+      <p className="chat-question">{turn.question}</p>
+      {turn.rewrittenQuery && (
+        <p className="muted chat-rewritten">searched for: {turn.rewrittenQuery}</p>
       )}
-      {!ex.answer.grounded && (
+      <ReasoningPanel text={turn.reasoning} streaming={reasoningStreaming} />
+      {!turn.streaming && !turn.grounded && (
         <p role="status" className="banner-warning">
           This answer isn't grounded in your documents - no supporting sources were found, so treat
           it with caution.
         </p>
       )}
-      <p className={ex.answer.grounded ? "answer" : "answer empty"}>{ex.answer.answer}</p>
+      <p className={turn.grounded || turn.streaming ? "answer" : "answer empty"}>
+        {turn.answer}
+        {turn.streaming && turn.answer.length > 0 && (
+          <span className="chat-caret" aria-hidden="true" />
+        )}
+      </p>
     </div>
+  );
+}
+
+function InlineCitations({
+  citations,
+  onOpenDocument,
+}: {
+  citations: Citation[];
+  onOpenDocument?: (id: string) => void;
+}) {
+  return (
+    <ol className="citations">
+      {citations.map((c) => (
+        <li key={c.chunk_id}>
+          <button
+            type="button"
+            className="link-button citation-open"
+            onClick={() => onOpenDocument?.(c.document_id)}
+            disabled={!onOpenDocument}
+          >
+            [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
+            {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
+          </button>
+          <div className="snippet">{c.snippet}</div>
+        </li>
+      ))}
+    </ol>
   );
 }
 
 export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [question, setQuestion] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
+  const [streaming, setStreaming] = useState<Streaming | null>(null);
+  const [showReasoning, setShowReasoning] = useState(false);
   const [state, setState] = useState<State>({ kind: "idle" });
+  // Canonical accumulator (avoids stale closures across the many streaming callbacks).
+  const accRef = useRef<Streaming | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  function patch(fn: (s: Streaming) => Streaming) {
+    if (!accRef.current) return;
+    accRef.current = fn(accRef.current);
+    setStreaming(accRef.current);
+  }
 
   function ask(e: React.FormEvent) {
     e.preventDefault();
@@ -128,30 +215,108 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
       { role: "user" as const, content: ex.question },
       { role: "assistant" as const, content: ex.answer.answer },
     ]);
+    const init: Streaming = {
+      question: q,
+      answer: "",
+      reasoning: "",
+      citations: [],
+      rewrittenQuery: null,
+    };
+    accRef.current = init;
+    setStreaming(init);
     setState({ kind: "loading" });
     setQuestion("");
-    chat(q, history)
-      .then((answer) => {
-        setExchanges((prev) => [...prev, { question: q, answer }]);
-        setState({ kind: "ready" });
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    chatStream(
+      q,
+      history,
+      showReasoning,
+      {
+        onMeta: (rq) => patch((s) => ({ ...s, rewrittenQuery: rq })),
+        onReasoning: (d) => patch((s) => ({ ...s, reasoning: s.reasoning + d })),
+        onToken: (d) => patch((s) => ({ ...s, answer: s.answer + d })),
+        onSources: (c) => patch((s) => ({ ...s, citations: c })),
+        onError: (m) => setState({ kind: "error", message: m }),
+      },
+      controller.signal,
+    )
+      .then(({ grounded }) => {
+        finalize(grounded);
+        setState((prev) => (prev.kind === "error" ? prev : { kind: "ready" }));
       })
-      .catch((err: unknown) =>
-        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
-      );
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) {
+          finalize(false); // keep whatever streamed before Stop
+          setState({ kind: "ready" });
+          return;
+        }
+        accRef.current = null;
+        setStreaming(null);
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
+      });
+  }
+
+  function finalize(grounded: boolean) {
+    const s = accRef.current;
+    accRef.current = null;
+    setStreaming(null);
+    if (!s || !s.answer.trim()) return;
+    setExchanges((prev) => [
+      ...prev,
+      {
+        question: s.question,
+        reasoning: s.reasoning || undefined,
+        answer: {
+          answer: s.answer,
+          citations: s.citations,
+          grounded,
+          rewritten_query: s.rewrittenQuery,
+        },
+      },
+    ]);
+  }
+
+  function stop() {
+    abortRef.current?.abort();
   }
 
   function reset() {
+    abortRef.current?.abort();
+    accRef.current = null;
+    setStreaming(null);
     setExchanges([]);
     setState({ kind: "idle" });
   }
 
-  const lastIndex = exchanges.length - 1;
+  const turns: TurnView[] = exchanges.map((ex) => ({
+    question: ex.question,
+    reasoning: ex.reasoning ?? "",
+    answer: ex.answer.answer,
+    citations: ex.answer.citations,
+    rewrittenQuery: ex.answer.rewritten_query ?? null,
+    grounded: ex.answer.grounded,
+    streaming: false,
+  }));
+  if (streaming) {
+    turns.push({
+      question: streaming.question,
+      reasoning: streaming.reasoning,
+      answer: streaming.answer,
+      citations: streaming.citations,
+      rewrittenQuery: streaming.rewrittenQuery,
+      grounded: false,
+      streaming: true,
+    });
+  }
+  const lastIndex = turns.length - 1;
 
   return (
     <section aria-label="Chat" className="panel">
       <div className="result-head">
         <h2>Chat with your documents</h2>
-        {exchanges.length > 0 && (
+        {turns.length > 0 && (
           <button type="button" className="link-button" onClick={reset}>
             <span className="muted">New conversation</span>
           </button>
@@ -159,37 +324,21 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
       </div>
 
       <ol className="chat-transcript" aria-label="Conversation">
-        {exchanges.map((ex, i) => {
-          const cites = ex.answer.citations;
+        {turns.map((turn, i) => {
           // The latest turn shows its sources in a side column; older turns keep a compact list.
-          if (i === lastIndex && cites.length > 0) {
+          if (i === lastIndex && turn.citations.length > 0) {
             return (
               <li key={i} className="chat-exchange chat-turn-body">
-                <AnswerBlock ex={ex} />
-                <SourcesColumn citations={cites} onOpenDocument={onOpenDocument} />
+                <AnswerBlock turn={turn} />
+                <SourcesColumn citations={turn.citations} onOpenDocument={onOpenDocument} />
               </li>
             );
           }
           return (
             <li key={i} className="chat-exchange">
-              <AnswerBlock ex={ex} />
-              {cites.length > 0 && (
-                <ol className="citations">
-                  {cites.map((c) => (
-                    <li key={c.chunk_id}>
-                      <button
-                        type="button"
-                        className="link-button citation-open"
-                        onClick={() => onOpenDocument?.(c.document_id)}
-                        disabled={!onOpenDocument}
-                      >
-                        [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
-                        {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
-                      </button>
-                      <div className="snippet">{c.snippet}</div>
-                    </li>
-                  ))}
-                </ol>
+              <AnswerBlock turn={turn} />
+              {turn.citations.length > 0 && (
+                <InlineCitations citations={turn.citations} onOpenDocument={onOpenDocument} />
               )}
             </li>
           );
@@ -202,14 +351,29 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder={
-            exchanges.length ? "Ask a follow-up..." : "Ask a question about your documents..."
+            turns.length ? "Ask a follow-up..." : "Ask a question about your documents..."
           }
           aria-label="Question"
+          disabled={state.kind === "loading"}
         />
-        <button type="submit" disabled={state.kind === "loading"}>
-          {state.kind === "loading" ? "Thinking..." : "Ask"}
-        </button>
+        {state.kind === "loading" ? (
+          <button type="button" onClick={stop}>
+            Stop
+          </button>
+        ) : (
+          <button type="submit">Ask</button>
+        )}
       </form>
+
+      <label className="chat-reasoning-toggle">
+        <input
+          type="checkbox"
+          checked={showReasoning}
+          onChange={(e) => setShowReasoning(e.target.checked)}
+          disabled={state.kind === "loading"}
+        />
+        <span className="muted">Show reasoning</span>
+      </label>
 
       {state.kind === "error" && (
         <p role="alert" className="status-error">

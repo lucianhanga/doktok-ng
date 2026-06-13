@@ -9,9 +9,16 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
 
-from doktok_contracts.ports import ChatModelProvider, Reranker, Retriever
-from doktok_contracts.schemas import ChatTurn, Citation, RagAnswer, SearchHit
+from doktok_contracts.media import ChatChunk
+from doktok_contracts.ports import (
+    ChatModelProvider,
+    Reranker,
+    Retriever,
+    StreamingChatModelProvider,
+)
+from doktok_contracts.schemas import ChatEvent, ChatTurn, Citation, RagAnswer, SearchHit
 
 logger = logging.getLogger("doktok.rag")
 
@@ -123,21 +130,24 @@ class DefaultRagAnswerer:
             lines.append(f"{who}: {turn.content.strip()[:_MAX_HISTORY_CHARS]}")
         return "\n".join(lines)
 
-    def _answer(
-        self, tenant_id: str, question: str, limit: int, *, rewritten_query: str | None = None
-    ) -> RagAnswer:
-        if not question:
-            return RagAnswer(answer=REFUSAL, grounded=False, rewritten_query=rewritten_query)
+    def _prepare(
+        self, tenant_id: str, question: str, limit: int
+    ) -> tuple[list[SearchHit], dict[str, float], str] | None:
+        """Retrieve -> evidence floor -> rerank -> capture relevance -> pack -> build prompt.
 
-        # Retrieve wide, rerank, keep the best `limit`, then pack edges-best for the prompt.
+        Returns (packed_hits, relevance_by_chunk, prompt), or None to refuse (empty/no hits/too
+        weak). Shared by the one-shot and streaming answer paths.
+        """
+        if not question:
+            return None
         wide = self._retrieve_k if self._reranker is not None else limit
         hits = self._retriever.search(tenant_id, question, wide)
         if not hits:
-            return RagAnswer(answer=REFUSAL, grounded=False, rewritten_query=rewritten_query)
+            return None
         # Evidence floor: if even the strongest hit is weak, refuse rather than ask the model to
         # answer over thin context (deterministic; only active when min_score > 0).
         if self._min_score > 0 and max(hit.score for hit in hits) < self._min_score:
-            return RagAnswer(answer=REFUSAL, grounded=False, rewritten_query=rewritten_query)
+            return None
         if self._reranker is not None:
             hits = self._reranker.rerank(question, hits, top_k=limit)
         else:
@@ -148,10 +158,18 @@ class DefaultRagAnswerer:
         n = len(hits)
         relevance = {hit.chunk_id: (n - i) / n for i, hit in enumerate(hits)}
         hits = _pack_edges_best(hits)
-
         prompt = _PROMPT.format(
             refusal=REFUSAL, context=self._format_context(hits), question=question
         )
+        return hits, relevance, prompt
+
+    def _answer(
+        self, tenant_id: str, question: str, limit: int, *, rewritten_query: str | None = None
+    ) -> RagAnswer:
+        prepared = self._prepare(tenant_id, question, limit)
+        if prepared is None:
+            return RagAnswer(answer=REFUSAL, grounded=False, rewritten_query=rewritten_query)
+        hits, relevance, prompt = prepared
         try:
             answer = self._chat.complete(prompt).strip()
         except Exception:  # noqa: BLE001 - a model failure becomes a graceful refusal, not a 500
@@ -167,6 +185,62 @@ class DefaultRagAnswerer:
             grounded=True,
             rewritten_query=rewritten_query,
         )
+
+    def answer_thread_stream(
+        self,
+        tenant_id: str,
+        history: list[ChatTurn],
+        question: str,
+        limit: int = 8,
+        *,
+        reasoning: bool = False,
+    ) -> Iterator[ChatEvent]:
+        """Stream a conversational answer (ADR-0018 Phase 3): meta -> reasoning* -> token+ ->
+        sources -> done. Reuses the same retrieval/rerank/relevance as the one-shot path; reasoning
+        events appear only when ``reasoning`` is on and the model emits thinking."""
+        question = question.strip()
+        rewritten: str | None = None
+        if history:
+            standalone = self._rewrite(history, question)
+            rewritten = standalone if standalone != question else None
+            question = standalone
+        yield ChatEvent(type="meta", rewritten_query=rewritten)
+
+        prepared = self._prepare(tenant_id, question, limit)
+        if prepared is None:
+            yield ChatEvent(type="token", delta=REFUSAL)
+            yield ChatEvent(type="sources", citations=[])
+            yield ChatEvent(type="done", grounded=False)
+            return
+        hits, relevance, prompt = prepared
+
+        answer_parts: list[str] = []
+        try:
+            for chunk in self._stream(prompt, reasoning):
+                if chunk.kind == "reasoning":
+                    yield ChatEvent(type="reasoning", delta=chunk.text)
+                else:
+                    answer_parts.append(chunk.text)
+                    yield ChatEvent(type="token", delta=chunk.text)
+        except Exception:  # noqa: BLE001 - a mid-stream model failure degrades to a refusal
+            logger.warning("RAG streaming model failed", exc_info=True)
+            yield ChatEvent(type="error", message="the model failed while answering")
+            yield ChatEvent(type="done", grounded=False)
+            return
+
+        answer = "".join(answer_parts).strip()
+        grounded = bool(answer) and answer != REFUSAL
+        citations = self._citations(answer, hits, relevance) if grounded else []
+        yield ChatEvent(type="sources", citations=citations)
+        yield ChatEvent(type="done", grounded=grounded)
+
+    def _stream(self, prompt: str, reasoning: bool) -> Iterator[ChatChunk]:
+        """Stream from the chat model when it supports it; otherwise emit the full answer as one
+        chunk (graceful degradation for non-streaming providers)."""
+        if isinstance(self._chat, StreamingChatModelProvider):
+            yield from self._chat.stream_complete(prompt, think=reasoning)
+        else:
+            yield ChatChunk(kind="answer", text=self._chat.complete(prompt))
 
     def _citations(
         self, answer: str, hits: list[SearchHit], relevance: dict[str, float]

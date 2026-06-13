@@ -8,20 +8,40 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("asks a question and renders the grounded answer with sources", async () => {
+/** Build one SSE frame: a `data:` line carrying the event JSON, the way the backend emits it. */
+function frame(type: string, payload: Record<string, unknown> = {}): string {
+  return `data: ${JSON.stringify({ type, ...payload })}\n\n`;
+}
+
+/** A streaming `Response` whose body emits each SSE frame as a separate chunk. */
+function sseResponse(frames: string[]): Response {
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const f of frames) controller.enqueue(enc.encode(f));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+test("streams a grounded answer with sources", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          answer: "The total is 42 [1].",
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("token", { delta: "The total is 42 [1]." }),
+        frame("sources", {
           citations: [
             { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "invoice.txt", snippet: "total 42" },
           ],
-          grounded: true,
         }),
-        { status: 200 },
-      ),
+        frame("done", { grounded: true }),
+      ]),
     ),
   );
 
@@ -33,14 +53,38 @@ test("asks a question and renders the grounded answer with sources", async () =>
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
+test("concatenates multiple token chunks into one answer", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("token", { delta: "Hello " }),
+        frame("token", { delta: "world." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "greet me");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Hello world.")).toBeInTheDocument());
+});
+
 test("shows the refusal answer when not grounded", async () => {
   const refusal = "I could not find enough evidence in the indexed documents to answer that.";
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
-      new Response(JSON.stringify({ answer: refusal, citations: [], grounded: false }), {
-        status: 200,
-      }),
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("token", { delta: refusal }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: false }),
+      ]),
     ),
   );
 
@@ -49,28 +93,52 @@ test("shows the refusal answer when not grounded", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   await waitFor(() => expect(screen.getByText(refusal)).toBeInTheDocument());
-  // Ungrounded answers carry an explicit caution notice, not just faint italics.
   expect(screen.getByText(/isn't grounded in your documents/i)).toBeInTheDocument();
+});
+
+test("opts into reasoning and renders it in a collapsible panel", async () => {
+  const fetchMock = vi.fn<(url: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+    sseResponse([
+      frame("meta", { rewritten_query: null }),
+      frame("reasoning", { delta: "Let me check the invoice totals." }),
+      frame("token", { delta: "It is 42 [1]." }),
+      frame("sources", { citations: [] }),
+      frame("done", { grounded: true }),
+    ]),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<ChatPanel />);
+  await userEvent.click(screen.getByLabelText(/show reasoning/i));
+  await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("It is 42 [1].")).toBeInTheDocument());
+  // The reasoning lives behind a disclosure summary.
+  expect(screen.getByText("Reasoning")).toBeInTheDocument();
+  expect(screen.getByText(/Let me check the invoice totals\./)).toBeInTheDocument();
+  // The request asked the model to think.
+  const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+  expect(body.reasoning).toBe(true);
 });
 
 test("keeps a transcript and sends prior turns as history on a follow-up", async () => {
   const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
     if (body.history.length === 0) {
-      return new Response(
-        JSON.stringify({ answer: "It is 42 [1].", citations: [], grounded: true }),
-        { status: 200 },
-      );
+      return sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("token", { delta: "It is 42 [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
     }
-    return new Response(
-      JSON.stringify({
-        answer: "In March it was 10 [1].",
-        citations: [],
-        grounded: true,
-        rewritten_query: "spend in March 2026",
-      }),
-      { status: 200 },
-    );
+    return sseResponse([
+      frame("meta", { rewritten_query: "spend in March 2026" }),
+      frame("token", { delta: "In March it was 10 [1]." }),
+      frame("sources", { citations: [] }),
+      frame("done", { grounded: true }),
+    ]);
   });
   vi.stubGlobal("fetch", fetchMock);
 
@@ -83,7 +151,6 @@ test("keeps a transcript and sends prior turns as history on a follow-up", async
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText("In March it was 10 [1].")).toBeInTheDocument());
 
-  // Both turns stay in the transcript; the follow-up carried the prior turns as history.
   expect(screen.getByText("what is the total?")).toBeInTheDocument();
   expect(screen.getByText("what about March?")).toBeInTheDocument();
   expect(screen.getByText(/searched for: spend in March 2026/)).toBeInTheDocument();
@@ -97,17 +164,17 @@ test("shows the sources column with importance and opens a document", async () =
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          answer: "Total is 42 [1][2].",
-          grounded: true,
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("token", { delta: "Total is 42 [1][2]." }),
+        frame("sources", {
           citations: [
             { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "low.pdf", snippet: "weak", relevance: 0.25 },
             { index: 2, document_id: "d2", chunk_id: "c2", original_filename: "top.pdf", snippet: "strong", relevance: 1.0 },
           ],
         }),
-        { status: 200 },
-      ),
+        frame("done", { grounded: true }),
+      ]),
     ),
   );
 
@@ -116,11 +183,9 @@ test("shows the sources column with importance and opens a document", async () =
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText("Total is 42 [1][2].")).toBeInTheDocument());
 
-  // Sources column present with both cards + importance percentages.
   expect(screen.getByLabelText("Sources")).toBeInTheDocument();
-  expect(screen.getByText(/100% . #1/)).toBeInTheDocument(); // most relevant ranked first
+  expect(screen.getByText(/100% . #1/)).toBeInTheDocument();
   expect(screen.getByText(/25% . #2/)).toBeInTheDocument();
-  // Cards ordered by importance: top.pdf (#1) before low.pdf (#2).
   const meters = screen.getAllByRole("meter");
   expect(meters[0].getAttribute("aria-valuenow")).toBe("100");
 

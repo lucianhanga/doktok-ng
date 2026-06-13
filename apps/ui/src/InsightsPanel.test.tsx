@@ -171,6 +171,38 @@ test("recompute POSTs and shows a busy state", async () => {
   );
 });
 
+test("switches to the Word Cloud sub-tab", async () => {
+  const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+    const u = String(url);
+    if (u.includes("/entities")) {
+      return new Response(
+        JSON.stringify([
+          {
+            entity_type: "CUSTOM_TOKEN",
+            normalized_value: "rente",
+            document_count: 5,
+            occurrences: 9,
+          },
+        ]),
+        { status: 200 },
+      );
+    }
+    if (u.includes("/status")) {
+      return new Response(JSON.stringify({ recompute_pending: false, dims: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify(mapFixture()), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const { container } = render(<InsightsPanel />);
+
+  await waitFor(() => expect(container.querySelectorAll("circle").length).toBe(2));
+  fireEvent.click(within(container).getByRole("button", { name: "Word Cloud" }));
+
+  await waitFor(() => expect(within(container).getByText("rente")).toBeInTheDocument());
+  // Switched away from the scatter.
+  expect(container.querySelectorAll("circle").length).toBe(0);
+});
+
 test("projectPoints maps 2D to screen coords and gives 3D depth", () => {
   const points: VizPoint[] = [
     { chunk_id: "a", document_id: "d", x: 0, y: 0, z: 0, category: "c", cluster: 0, snippet: "" },

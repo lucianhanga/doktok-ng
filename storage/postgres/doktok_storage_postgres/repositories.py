@@ -1087,6 +1087,18 @@ class PostgresFeatureRepository:
             ).fetchall()
         return [_row_to_feature(row) for row in rows]
 
+    def list_for_documents(self, tenant_id: str, document_ids: list[str]) -> list[DocumentFeature]:
+        if not document_ids:
+            return []
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_FEATURE_COLUMNS} FROM document_features "
+                "WHERE tenant_id=%s AND document_id = ANY(%s) ORDER BY document_id, feature",
+                (tenant_id, list(document_ids)),
+            ).fetchall()
+        return [_row_to_feature(row) for row in rows]
+
     def reset(self, tenant_id: str, document_id: str, feature: str) -> bool:
         with self._db.connection() as conn:
             cur = conn.execute(

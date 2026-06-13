@@ -30,6 +30,7 @@ from doktok_contracts.schemas import (
     AuditEvent,
     Category,
     CategorySummary,
+    ChatTurn,
     Document,
     DocumentArtifact,
     DocumentChunk,
@@ -533,6 +534,14 @@ class Reranker(Protocol):
 @runtime_checkable
 class RagAnswerer(Protocol):
     def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer: ...
+
+    def answer_thread(
+        self, tenant_id: str, history: list[ChatTurn], question: str, limit: int = 8
+    ) -> RagAnswer:
+        """Answer a follow-up in a conversation (ADR-0018): rewrite (history + question) into a
+        standalone retrieval query, then answer it grounded + cited. ``history`` feeds only the
+        rewrite, never the answer prompt. Empty history == single-turn ``answer``."""
+        ...
 
 
 @runtime_checkable

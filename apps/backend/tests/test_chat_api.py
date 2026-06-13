@@ -21,6 +21,7 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 class FakeRagAnswerer:
     def __init__(self) -> None:
         self.seen: tuple[str, str, int] | None = None
+        self.seen_history: list[object] | None = None
 
     def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer:
         self.seen = (tenant_id, question, limit)
@@ -29,6 +30,10 @@ class FakeRagAnswerer:
             citations=[Citation(index=1, document_id="d1", chunk_id="c1", snippet="...42...")],
             grounded=True,
         )
+
+    def answer_thread(self, tenant_id, history, question, limit=8):  # type: ignore[no-untyped-def]
+        self.seen_history = list(history)
+        return self.answer(tenant_id, question, limit)
 
 
 class _SemanticChat:
@@ -67,6 +72,23 @@ def test_returns_grounded_answer_for_caller_tenant() -> None:
     assert body["answer"] == "The total is 42 [1]."
     assert body["citations"][0]["document_id"] == "d1"
     assert answerer.seen == ("tenant-a", "what is the total?", 5)
+
+
+def test_passes_conversation_history_for_followups() -> None:
+    answerer = FakeRagAnswerer()
+    resp = _client(answerer).post(
+        "/api/v1/chat",
+        json={
+            "question": "what about March?",
+            "history": [
+                {"role": "user", "content": "how much at Block House?"},
+                {"role": "assistant", "content": "EUR 120 [1]."},
+            ],
+        },
+        headers={"Authorization": "Bearer tok-a"},
+    )
+    assert resp.status_code == 200
+    assert answerer.seen_history is not None and len(answerer.seen_history) == 2
 
 
 def test_rejects_empty_question() -> None:

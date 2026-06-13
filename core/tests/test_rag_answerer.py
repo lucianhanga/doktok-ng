@@ -135,3 +135,66 @@ def test_document_bracket_markers_are_neutralized_in_context() -> None:
     assert chat.prompt is not None
     assert "clause (1) and (99)" in chat.prompt  # document brackets neutralized to parens
     assert "[99]" not in chat.prompt  # the forged high marker is gone
+
+
+class ScriptedChat:
+    """Returns the rewrite for the condense prompt, the answer otherwise (multi-turn, ADR-0018)."""
+
+    def __init__(self, rewrite: str, answer: str) -> None:
+        self._rewrite = rewrite
+        self._answer = answer
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self._rewrite if "Standalone query:" in prompt else self._answer
+
+
+def test_answer_thread_rewrites_followup_against_history() -> None:
+    from doktok_contracts.schemas import ChatTurn
+
+    retriever = FakeRetriever([_hit(1)])
+    chat = ScriptedChat(rewrite="Block House spend in March 2026", answer="EUR 120 [1].")
+    history = [
+        ChatTurn(role="user", content="how much did I spend at Block House?"),
+        ChatTurn(role="assistant", content="EUR 500 total [1]."),
+    ]
+
+    answer = DefaultRagAnswerer(retriever, chat).answer_thread(
+        "t1", history, "what about March?", 5
+    )
+
+    # Retrieval used the REWRITTEN standalone query, not the vague follow-up.
+    assert retriever.seen == ("t1", "Block House spend in March 2026", 5)
+    assert answer.rewritten_query == "Block House spend in March 2026"
+    assert answer.grounded is True
+
+
+def test_answer_thread_without_history_is_single_turn() -> None:
+    retriever = FakeRetriever([_hit(1)])
+    chat = ScriptedChat(rewrite="unused", answer="The answer is X [1].")
+
+    answer = DefaultRagAnswerer(retriever, chat).answer_thread("t1", [], "what is X?", 5)
+
+    assert retriever.seen == ("t1", "what is X?", 5)  # no rewrite
+    assert answer.rewritten_query is None
+    assert all("Standalone query:" not in p for p in chat.prompts)  # rewrite never called
+
+
+def test_answer_thread_rewrite_failure_falls_back_to_question() -> None:
+    from doktok_contracts.schemas import ChatTurn
+
+    class RewriteBoom:
+        def complete(self, prompt: str) -> str:
+            if "Standalone query:" in prompt:
+                raise RuntimeError("rewrite model down")
+            return "Answer from original [1]."
+
+    retriever = FakeRetriever([_hit(1)])
+    history = [ChatTurn(role="user", content="earlier question")]
+    answer = DefaultRagAnswerer(retriever, RewriteBoom()).answer_thread(
+        "t1", history, "the follow-up", 5
+    )
+    # Rewrite failed -> retrieval falls back to the original follow-up; still answers.
+    assert retriever.seen == ("t1", "the follow-up", 5)
+    assert answer.grounded is True

@@ -1055,10 +1055,9 @@ tr.row-selected {
   color: #fff;
 }
 .insights-stage {
-  position: relative;
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 1rem;
+  grid-template-columns: auto 1fr auto; /* canvas | point details | legend */
+  gap: 1.25rem;
   align-items: start;
 }
 .insights-canvas {
@@ -1108,25 +1107,27 @@ tr.row-selected {
   border-radius: 3px;
   flex: 0 0 auto;
 }
-.insights-tooltip {
-  position: absolute;
+/* Point details: an inspector panel in the empty space beside the plot (not overlaying points).
+ * Sticky so it stays in view while scrolling the legend; shows the last-hovered point. */
+.insights-details {
+  position: sticky;
   top: 0.5rem;
-  left: 0.5rem;
-  max-width: 320px;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  background: rgba(17, 24, 39, 0.92);
+  gap: 0.35rem;
+  min-width: 220px;
+  min-height: 90px;
+  background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--border, #2a3342);
-  border-radius: 8px;
-  padding: 0.5rem 0.7rem;
-  pointer-events: none;
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
 }
-.insights-tooltip .tip-cat {
+.insights-details .tip-cat {
   font-weight: 600;
 }
-.insights-tooltip .tip-snippet {
-  font-size: 0.85rem;
+.insights-details .tip-snippet {
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 .insights-meta {
   margin-top: 0.5rem;

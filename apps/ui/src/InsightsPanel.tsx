@@ -400,8 +400,8 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
               }}
               onMouseUp={() => (drag.current = null)}
               onMouseLeave={() => {
+                // Keep the last-hovered point in the details panel (it lives outside the canvas).
                 drag.current = null;
-                setHover(null);
               }}
             >
               {projected.map((pr) => {
@@ -428,20 +428,24 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
               })}
             </svg>
 
-            {hover && (
-              <div className="insights-tooltip" aria-hidden="true">
-                <span className="tip-cat" style={{ color: colorOf.get(keyOf(hover.point)) }}>
-                  {keyOf(hover.point)}
-                </span>
-                <span className="tip-snippet">{hover.point.snippet || "(no text)"}</span>
-                <span className="muted">
-                  {colorBy === "category"
-                    ? clusterKey(hover.point.cluster)
-                    : hover.point.category}{" "}
-                  &middot; click to open the document
-                </span>
-              </div>
-            )}
+            <div className="insights-details" aria-live="polite">
+              {hover ? (
+                <>
+                  <span className="tip-cat" style={{ color: colorOf.get(keyOf(hover.point)) }}>
+                    {keyOf(hover.point)}
+                  </span>
+                  <span className="tip-snippet">{hover.point.snippet || "(no text)"}</span>
+                  <span className="muted">
+                    {colorBy === "category"
+                      ? clusterKey(hover.point.cluster)
+                      : hover.point.category}{" "}
+                    &middot; click the point to open the document
+                  </span>
+                </>
+              ) : (
+                <span className="muted">Hover a point to see its document; click it to open.</span>
+              )}
+            </div>
 
             <ul className="insights-legend" aria-label={colorBy === "category" ? "Categories" : "Clusters"}>
               {legendEntries.map((entry) => {

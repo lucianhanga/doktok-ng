@@ -105,6 +105,23 @@ test("zoom in shrinks the viewBox, reset restores it", async () => {
   expect(width()).toBeCloseTo(initial, 5);
 });
 
+test("hovering a point fills the details panel (and it persists, outside the plot)", async () => {
+  stubFetch(mapFixture());
+  const { container } = render(<InsightsPanel />);
+
+  await waitFor(() => expect(container.querySelectorAll("circle").length).toBe(2));
+  // Before hovering, the side panel shows a placeholder.
+  expect(within(container).getByText(/Hover a point to see its document/)).toBeInTheDocument();
+
+  const circle = container.querySelectorAll("circle")[0];
+  fireEvent.mouseEnter(circle);
+  expect(within(container).getByText("alpha")).toBeInTheDocument(); // the chunk snippet
+
+  // Leaving the canvas keeps the last point shown (the panel lives outside the plot).
+  fireEvent.mouseLeave(container.querySelector("svg")!);
+  expect(within(container).getByText("alpha")).toBeInTheDocument();
+});
+
 test("clicking a point opens its document", async () => {
   stubFetch(mapFixture());
   const onOpen = vi.fn();

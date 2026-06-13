@@ -19,6 +19,7 @@ from doktok_contracts.ports import (
     DocumentRepository,
     EmbeddingProvider,
     EntityExtractor,
+    EntityNerExtractor,
     EntityRepository,
     FileStorage,
     LexicalTermExtractor,
@@ -40,6 +41,7 @@ from doktok_core.enrichment import (
 )
 from doktok_core.entities.language import detect_language, pg_config_for
 from doktok_core.entities.lexical import meaningful_terms
+from doktok_core.entities.ner import NER_ENTITY_TYPES, normalize_ner_name
 
 
 def _read_text(file_storage: FileStorage, storage_path: str, name: str) -> str:
@@ -55,6 +57,11 @@ def _pages(file_storage: FileStorage, storage_path: str) -> list[str]:
         return []
     data = json.loads(raw)
     return [str(page.get("text", "")) for page in data.get("pages", [])]
+
+
+# The entity types the rule-based EntitiesFeature owns: everything except the NER types.
+_NON_NER_TYPES: list[str] = [t.value for t in EntityType if t not in NER_ENTITY_TYPES]
+_NER_TYPES: list[str] = [t.value for t in NER_ENTITY_TYPES]
 
 
 class ChunkEmbedFeature:
@@ -140,7 +147,9 @@ class EntitiesFeature:
         if document is None or not document.storage_path:
             return
         content = _read_text(self._files, document.storage_path, "content.md")
-        self._repo.delete_for_document(tenant_id, document_id)
+        # Own every type EXCEPT the NER types (PERSON/ORG/GPE) - those belong to NerFeature, which
+        # writes to the same table; scoping the delete lets the two features re-run independently.
+        self._repo.delete_for_document_types(tenant_id, document_id, _NON_NER_TYPES)
         entities = self._structured(tenant_id, document_id, content)
         entities.extend(self._terms(tenant_id, document_id, content))
         if entities:
@@ -187,6 +196,67 @@ class EntitiesFeature:
             )
             for term in terms
         ]
+
+
+class NerFeature:
+    """Extract named entities (PERSON/ORG/GPE) via an LLM, stored as document entities (M7.4).
+
+    The rule-based ``EntitiesFeature`` cannot find people/organisations/places (they need NER), so
+    this fills them. It owns ONLY the NER entity types in the shared ``document_entities`` table and
+    replaces just those rows each run, so it backfills/retries independently of ``entities``.
+    """
+
+    name = "ner"
+    version = 1
+    dependencies = ("extract",)  # needs extracted content/artifacts
+
+    def __init__(
+        self,
+        document_repo: DocumentRepository,
+        file_storage: FileStorage,
+        ner_extractor: EntityNerExtractor,
+        entity_repo: EntityRepository,
+    ) -> None:
+        self._documents = document_repo
+        self._files = file_storage
+        self._ner = ner_extractor
+        self._repo = entity_repo
+
+    def process(self, tenant_id: str, document_id: str) -> None:
+        document = self._documents.get(tenant_id, document_id)
+        if document is None or not document.storage_path:
+            return
+        # Replace only the NER-owned types so the rule-based entities/keywords are left intact.
+        self._repo.delete_for_document_types(tenant_id, document_id, _NER_TYPES)
+        content = _read_text(self._files, document.storage_path, "content.md")
+        if not content.strip():
+            return
+        entities = self._aggregate(tenant_id, document_id, content)
+        if entities:
+            self._repo.add_entities(entities)
+
+    def _aggregate(self, tenant_id: str, document_id: str, text: str) -> list[DocumentEntity]:
+        # One row per (type, normalized name); frequency = how often the name occurs in the text so
+        # the word cloud can size people/orgs by prominence.
+        aggregated: dict[tuple[str, str], DocumentEntity] = {}
+        for occ in self._ner.extract(text):
+            normalized = normalize_ner_name(occ.normalized_value)
+            if not normalized:
+                continue
+            key = (occ.entity_type.value, normalized)
+            if key in aggregated:
+                continue
+            aggregated[key] = DocumentEntity(
+                id=uuid.uuid4().hex,
+                tenant_id=tenant_id,
+                document_id=document_id,
+                version_id="",
+                entity_text=occ.entity_text,
+                entity_type=occ.entity_type,
+                normalized_value=normalized,
+                frequency=max(1, text.count(occ.entity_text)),
+            )
+        return list(aggregated.values())
 
 
 class DocMetadataFeature:

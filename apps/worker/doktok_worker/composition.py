@@ -6,6 +6,7 @@ import logging
 
 from doktok_contracts.ports import (
     CategoryClassifier,
+    EntityNerExtractor,
     FeatureProcessor,
     MetadataExtractor,
     OcrExtractor,
@@ -19,6 +20,7 @@ from doktok_core.features.processors import (
     DocClassifyFeature,
     DocMetadataFeature,
     EntitiesFeature,
+    NerFeature,
     StructuredRecordsFeature,
     ThumbnailFeature,
 )
@@ -43,12 +45,14 @@ from doktok_provider_ollama import (
     OllamaCategoryClassifier,
     OllamaChatModelProvider,
     OllamaEmbeddingProvider,
+    OllamaEntityNerExtractor,
     OllamaMetadataExtractor,
     OllamaRecordExtractor,
     OllamaVisionOcr,
 )
 from doktok_provider_openai import (
     OpenAiCategoryClassifier,
+    OpenAiEntityNerExtractor,
     OpenAiMetadataExtractor,
     OpenAiRecordExtractor,
 )
@@ -182,6 +186,7 @@ def build_services(
     metadata_extractor: MetadataExtractor
     category_classifier: CategoryClassifier
     record_extractor: RecordExtractor
+    ner_extractor: EntityNerExtractor
     if use_openai_pipeline:
         logger.info(
             "pipeline extraction via OpenAI %s (egress enabled by AI settings)", pipeline.model
@@ -194,6 +199,9 @@ def build_services(
             pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
         )
         record_extractor = OpenAiRecordExtractor(
+            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
+        )
+        ner_extractor = OpenAiEntityNerExtractor(
             pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
         )
     else:
@@ -228,6 +236,15 @@ def build_services(
             think=p_think,
             keep_alive=settings.enrich_keep_alive,
         )
+        ner_extractor = OllamaEntityNerExtractor(
+            p_model,
+            settings.enrich_repair_model,
+            settings.ollama_base_url,
+            timeout=timeout,
+            num_ctx=p_ctx,
+            think=p_think,
+            keep_alive=settings.enrich_keep_alive,
+        )
     category_repo = PostgresCategoryRepository(db)
     record_repo = PostgresRecordRepository(db)
 
@@ -242,6 +259,7 @@ def build_services(
             entity_repo,
             lexical_terms_limit=settings.lexical_terms_limit,
         ),
+        NerFeature(document_repo, file_storage, ner_extractor, entity_repo),
         DocMetadataFeature(document_repo, file_storage, metadata_extractor),
         DocClassifyFeature(document_repo, file_storage, category_classifier, category_repo),
         StructuredRecordsFeature(document_repo, file_storage, record_extractor, record_repo),

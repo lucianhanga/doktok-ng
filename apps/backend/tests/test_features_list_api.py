@@ -123,6 +123,7 @@ def test_catalog_lists_reprocessable_features() -> None:
     assert names == {
         "chunk_embed",
         "entities",
+        "ner",
         "doc_metadata",
         "doc_classify",
         "structured_records",

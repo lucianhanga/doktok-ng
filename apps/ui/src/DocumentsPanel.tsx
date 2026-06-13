@@ -78,6 +78,7 @@ const FEATURE_LABELS: Record<string, string> = {
   doc_metadata: "meta",
   doc_classify: "tags",
   entities: "ents",
+  ner: "names",
   structured_records: "recs",
   thumbnail: "thumb",
 };
@@ -88,6 +89,7 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   doc_metadata: "Metadata — generates the title, document date, location and summary",
   doc_classify: "Categories — assigns multi-label categories",
   entities: "Entities & keywords extracted from the text",
+  ner: "People & orgs — named people, organisations and places (LLM-assisted NER)",
   structured_records: "Structured records — extracts transactions/line items for aggregation",
   thumbnail: "Thumbnail — first-page preview image for the document card and grid/list views",
 };

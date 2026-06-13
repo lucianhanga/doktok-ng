@@ -3,3 +3,4 @@
 - [Documents list paging](documents-list-paging.md) — load-more + filter-first, live-poll coexistence rule, needs-attention filter, count line, Overview deep-link
 - [Documents views + thumbnails](documents-views-thumbnails.md) — List/Thumbnails subtabs, shared toolbar, S/M/L size control, multi-select, token filter, sort, card anatomy
 - [Insights / Embedding Space viz](insights-embedding-viz.md) — design for new Insights tab: 2D/3D embedding scatter, backend UMAP/PCA, deck.gl, primary-category coloring
+- [Chat streaming + reasoning + sources](chat-streaming-reasoning-sources.md) — Phase 2 ChatPanel UX: streamed answer, native details reasoning, two-col source mini-cards with importance bars

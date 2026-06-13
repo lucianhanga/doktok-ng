@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { chat, type ChatTurn, type RagAnswer } from "./api";
+import { chat, documentThumbnailUrl, type ChatTurn, type Citation, type RagAnswer } from "./api";
 
 interface Exchange {
   question: string;
@@ -13,6 +13,108 @@ type State =
   | { kind: "ready" }
   | { kind: "error"; message: string };
 
+/** A compact source card: thumbnail + title + page + snippet + an importance bar. Clicking opens
+ * the document. Mirrors the document-card style but slim, for the chat sources column. */
+function SourceCard({
+  citation,
+  rank,
+  onOpen,
+}: {
+  citation: Citation;
+  rank: number;
+  onOpen?: (id: string) => void;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const label = citation.original_filename ?? citation.title ?? citation.document_id.slice(0, 8);
+  const pct = citation.relevance != null ? Math.round(citation.relevance * 100) : null;
+  return (
+    <li>
+      <button
+        type="button"
+        className="chat-source-card link-button"
+        onClick={() => onOpen?.(citation.document_id)}
+        disabled={!onOpen}
+        title={`Open ${label}`}
+      >
+        {imgFailed ? (
+          <span className="chat-source-thumb chat-source-thumb-fallback">DOC</span>
+        ) : (
+          <img
+            className="chat-source-thumb"
+            src={documentThumbnailUrl(citation.document_id)}
+            alt=""
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+          />
+        )}
+        <span className="chat-source-body">
+          <span className="chat-source-title">
+            [{citation.index}] {label}
+            {citation.page_start ? <span className="muted"> p.{citation.page_start}</span> : null}
+          </span>
+          {pct != null && (
+            <span className="importance">
+              <span
+                className="importance-bar"
+                role="meter"
+                aria-valuenow={pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`Relevance ${pct} percent, rank ${rank}`}
+              >
+                <span className="importance-fill" style={{ width: `${pct}%` }} />
+              </span>
+              <span className="importance-label muted">
+                {pct}% &middot; #{rank}
+              </span>
+            </span>
+          )}
+          {citation.snippet && <span className="snippet">{citation.snippet}</span>}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function SourcesColumn({
+  citations,
+  onOpenDocument,
+}: {
+  citations: Citation[];
+  onOpenDocument?: (id: string) => void;
+}) {
+  // Order by importance (most relevant first); rank follows that order.
+  const ranked = [...citations].sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0));
+  return (
+    <aside className="chat-sources" aria-label="Sources">
+      <h3 className="muted">Sources ({ranked.length})</h3>
+      <ol className="chat-source-list">
+        {ranked.map((c, i) => (
+          <SourceCard key={c.chunk_id} citation={c} rank={i + 1} onOpen={onOpenDocument} />
+        ))}
+      </ol>
+    </aside>
+  );
+}
+
+function AnswerBlock({ ex }: { ex: Exchange }) {
+  return (
+    <div className="chat-answer-block">
+      <p className="chat-question">{ex.question}</p>
+      {ex.answer.rewritten_query && (
+        <p className="muted chat-rewritten">searched for: {ex.answer.rewritten_query}</p>
+      )}
+      {!ex.answer.grounded && (
+        <p role="status" className="banner-warning">
+          This answer isn't grounded in your documents - no supporting sources were found, so treat
+          it with caution.
+        </p>
+      )}
+      <p className={ex.answer.grounded ? "answer" : "answer empty"}>{ex.answer.answer}</p>
+    </div>
+  );
+}
+
 export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [question, setQuestion] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
@@ -22,7 +124,6 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
     e.preventDefault();
     const q = question.trim();
     if (!q || state.kind === "loading") return;
-    // The conversation so far, as alternating turns, drives follow-up rewriting on the server.
     const history: ChatTurn[] = exchanges.flatMap((ex) => [
       { role: "user" as const, content: ex.question },
       { role: "assistant" as const, content: ex.answer.answer },
@@ -44,6 +145,8 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
     setState({ kind: "idle" });
   }
 
+  const lastIndex = exchanges.length - 1;
+
   return (
     <section aria-label="Chat" className="panel">
       <div className="result-head">
@@ -56,39 +159,41 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
       </div>
 
       <ol className="chat-transcript" aria-label="Conversation">
-        {exchanges.map((ex, i) => (
-          <li key={i} className="chat-exchange">
-            <p className="chat-question">{ex.question}</p>
-            {ex.answer.rewritten_query && (
-              <p className="muted chat-rewritten">searched for: {ex.answer.rewritten_query}</p>
-            )}
-            {!ex.answer.grounded && (
-              <p role="status" className="banner-warning">
-                This answer isn't grounded in your documents - no supporting sources were found, so
-                treat it with caution.
-              </p>
-            )}
-            <p className={ex.answer.grounded ? "answer" : "answer empty"}>{ex.answer.answer}</p>
-            {ex.answer.citations.length > 0 && (
-              <ol className="citations">
-                {ex.answer.citations.map((c) => (
-                  <li key={c.chunk_id}>
-                    <button
-                      type="button"
-                      className="link-button citation-open"
-                      onClick={() => onOpenDocument?.(c.document_id)}
-                      disabled={!onOpenDocument}
-                    >
-                      [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
-                      {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
-                    </button>
-                    <div className="snippet">{c.snippet}</div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </li>
-        ))}
+        {exchanges.map((ex, i) => {
+          const cites = ex.answer.citations;
+          // The latest turn shows its sources in a side column; older turns keep a compact list.
+          if (i === lastIndex && cites.length > 0) {
+            return (
+              <li key={i} className="chat-exchange chat-turn-body">
+                <AnswerBlock ex={ex} />
+                <SourcesColumn citations={cites} onOpenDocument={onOpenDocument} />
+              </li>
+            );
+          }
+          return (
+            <li key={i} className="chat-exchange">
+              <AnswerBlock ex={ex} />
+              {cites.length > 0 && (
+                <ol className="citations">
+                  {cites.map((c) => (
+                    <li key={c.chunk_id}>
+                      <button
+                        type="button"
+                        className="link-button citation-open"
+                        onClick={() => onOpenDocument?.(c.document_id)}
+                        disabled={!onOpenDocument}
+                      >
+                        [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
+                        {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
+                      </button>
+                      <div className="snippet">{c.snippet}</div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       <form onSubmit={ask} className="search-form">

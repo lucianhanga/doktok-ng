@@ -198,3 +198,17 @@ def test_answer_thread_rewrite_failure_falls_back_to_question() -> None:
     # Rewrite failed -> retrieval falls back to the original follow-up; still answers.
     assert retriever.seen == ("t1", "the follow-up", 5)
     assert answer.grounded is True
+
+
+def test_citations_carry_normalized_relevance() -> None:
+    # No reranker: relevance follows retrieval order, normalized so the top hit = 1.0 (M6.4).
+    # Keyed by chunk_id (it reflects the relevance order, surviving the edges-best repack).
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3), _hit(4)])
+    chat = FakeChat("Answer with no markers.")  # no [n] -> all hits returned as sources
+    answer = DefaultRagAnswerer(retriever, chat).answer("t1", "q", 4)
+
+    by_chunk = {c.chunk_id: c.relevance for c in answer.citations}
+    assert by_chunk["c1"] == 1.0  # first retrieved -> most relevant
+    assert by_chunk["c4"] == 0.25  # last of 4 -> (4-3)/4
+    values = sorted((v for v in by_chunk.values() if v is not None), reverse=True)
+    assert values == [1.0, 0.75, 0.5, 0.25]

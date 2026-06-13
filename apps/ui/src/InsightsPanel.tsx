@@ -11,6 +11,21 @@ import { useInterval } from "./hooks";
 
 const VIEW = 620; // SVG viewport (square)
 const PAD = 28;
+const NOISE = "Noise";
+// Client palette for cluster coloring (category colors come from the server). Cluster ids are
+// consistent across 2D/3D (same id per chunk), so coloring by id agrees across dimensions.
+const CLUSTER_PALETTE = [
+  "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
+  "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac",
+  "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+  "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+];
+
+type ColorBy = "category" | "cluster";
+
+function clusterKey(cluster: number | null): string {
+  return cluster == null || cluster < 0 ? NOISE : `Cluster ${cluster}`;
+}
 
 type State =
   | { kind: "loading" }
@@ -28,6 +43,22 @@ function readDim(): 2 | 3 {
 function persistDim(dim: 2 | 3): void {
   try {
     localStorage.setItem("doktok.insights.dim", String(dim));
+  } catch {
+    /* ignore */
+  }
+}
+
+function readColorBy(): ColorBy {
+  try {
+    return localStorage.getItem("doktok.insights.colorBy") === "cluster" ? "cluster" : "category";
+  } catch {
+    return "category";
+  }
+}
+
+function persistColorBy(value: ColorBy): void {
+  try {
+    localStorage.setItem("doktok.insights.colorBy", value);
   } catch {
     /* ignore */
   }
@@ -85,6 +116,7 @@ export function projectPoints(
 
 export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [dim, setDim] = useState<2 | 3>(readDim);
+  const [colorBy, setColorBy] = useState<ColorBy>(readColorBy);
   const [state, setState] = useState<State>({ kind: "loading" });
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [pointSize, setPointSize] = useState(4);
@@ -136,25 +168,51 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
     setDim(next);
   }
 
-  function toggleCategory(category: string) {
+  function changeColorBy(next: ColorBy) {
+    persistColorBy(next);
+    setHidden(new Set()); // legend keys differ between modes
+    setHover(null);
+    setColorBy(next);
+  }
+
+  function toggleGroup(key: string) {
     setHidden((prev) => {
       const next = new Set(prev);
-      if (next.has(category)) next.delete(category);
-      else next.add(category);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
 
   const map = state.kind === "ready" ? state.map : null;
-  const colorFor = useMemo(() => {
+  const keyOf = (p: VizPoint): string => (colorBy === "category" ? p.category : clusterKey(p.cluster));
+
+  // The legend + color map for the active mode: server palette for categories, client palette by
+  // cluster id for clusters (Noise always last, neutral gray).
+  const legendEntries = useMemo<{ key: string; color: string }[]>(() => {
+    if (!map) return [];
+    if (colorBy === "category") return map.legend.map((e) => ({ key: e.category, color: e.color }));
+    const present = new Set(map.points.map((p) => clusterKey(p.cluster)));
+    const clusters = [...present]
+      .filter((k) => k !== NOISE)
+      .sort((a, b) => Number(a.slice(8)) - Number(b.slice(8)));
+    const entries = clusters.map((key, i) => ({
+      key,
+      color: CLUSTER_PALETTE[i % CLUSTER_PALETTE.length],
+    }));
+    if (present.has(NOISE)) entries.push({ key: NOISE, color: "#9ca3af" });
+    return entries;
+  }, [map, colorBy]);
+
+  const colorOf = useMemo(() => {
     const m = new Map<string, string>();
-    map?.legend.forEach((e) => m.set(e.category, e.color));
+    legendEntries.forEach((e) => m.set(e.key, e.color));
     return m;
-  }, [map]);
+  }, [legendEntries]);
 
   const visible = useMemo(
-    () => (map ? map.points.filter((p) => !hidden.has(p.category)) : []),
-    [map, hidden],
+    () => (map ? map.points.filter((p) => !hidden.has(keyOf(p))) : []),
+    [map, hidden, colorBy],
   );
   const projected = useMemo(
     () => projectPoints(visible, dim, yaw, pitch).sort((a, b) => a.depth - b.depth),
@@ -175,8 +233,9 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
       </nav>
 
       <p className="muted">
-        Each point is a document chunk placed by its embedding, colored by its document&rsquo;s
-        category. Clusters are topics; outliers stand alone.
+        Each point is a document chunk placed by its embedding. Color by document{" "}
+        <strong>category</strong>, or by the discovered <strong>cluster</strong> (topics found in the
+        embedding space; unclustered points are noise).
       </p>
 
       <div className="insights-controls">
@@ -191,6 +250,20 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
               onClick={() => changeDim(d)}
             >
               {d}D
+            </button>
+          ))}
+        </div>
+        <div role="radiogroup" aria-label="Color by" className="seg">
+          {(["category", "cluster"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={colorBy === mode}
+              className={colorBy === mode ? "active" : ""}
+              onClick={() => changeColorBy(mode)}
+            >
+              {mode === "category" ? "Category" : "Cluster"}
             </button>
           ))}
         </div>
@@ -276,7 +349,7 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
                     cx={pr.sx}
                     cy={pr.sy}
                     r={Math.max(1.5, r)}
-                    fill={colorFor.get(pr.point.category) ?? "#9ca3af"}
+                    fill={colorOf.get(keyOf(pr.point)) ?? "#9ca3af"}
                     fillOpacity={0.78}
                     stroke="#1f2937"
                     strokeWidth={0.4}
@@ -284,7 +357,7 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
                     onClick={() => onOpenDocument?.(pr.point.document_id)}
                     style={{ cursor: onOpenDocument ? "pointer" : "default" }}
                   >
-                    <title>{`${pr.point.category} - ${pr.point.snippet}`}</title>
+                    <title>{`${keyOf(pr.point)} - ${pr.point.snippet}`}</title>
                   </circle>
                 );
               })}
@@ -292,27 +365,32 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
 
             {hover && (
               <div className="insights-tooltip" aria-hidden="true">
-                <span className="tip-cat" style={{ color: colorFor.get(hover.point.category) }}>
-                  {hover.point.category}
+                <span className="tip-cat" style={{ color: colorOf.get(keyOf(hover.point)) }}>
+                  {keyOf(hover.point)}
                 </span>
                 <span className="tip-snippet">{hover.point.snippet || "(no text)"}</span>
-                <span className="muted">Click the point to open the document</span>
+                <span className="muted">
+                  {colorBy === "category"
+                    ? clusterKey(hover.point.cluster)
+                    : hover.point.category}{" "}
+                  &middot; click to open the document
+                </span>
               </div>
             )}
 
-            <ul className="insights-legend" aria-label="Categories">
-              {map.legend.map((entry) => {
-                const off = hidden.has(entry.category);
+            <ul className="insights-legend" aria-label={colorBy === "category" ? "Categories" : "Clusters"}>
+              {legendEntries.map((entry) => {
+                const off = hidden.has(entry.key);
                 return (
-                  <li key={entry.category}>
+                  <li key={entry.key}>
                     <button
                       type="button"
                       className={off ? "legend-off" : ""}
                       aria-pressed={!off}
-                      onClick={() => toggleCategory(entry.category)}
+                      onClick={() => toggleGroup(entry.key)}
                     >
                       <span className="legend-swatch" style={{ background: entry.color }} />
-                      {entry.category}
+                      {entry.key}
                     </button>
                   </li>
                 );

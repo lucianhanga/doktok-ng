@@ -522,6 +522,7 @@ export interface VizPoint {
   y: number;
   z: number | null;
   category: string;
+  cluster: number | null;
   snippet: string;
 }
 

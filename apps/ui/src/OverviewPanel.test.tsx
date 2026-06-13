@@ -50,8 +50,8 @@ test("renders counts and recent activity", async () => {
   expect(screen.getByText("Waiting")).toBeInTheDocument();
   expect(screen.getByText("9")).toBeInTheDocument(); // waiting in ingest
   expect(screen.getByText("Processing")).toBeInTheDocument();
-  expect(screen.getByText("Pending features")).toBeInTheDocument();
-  expect(screen.getByText("5")).toBeInTheDocument(); // documents with pending features
+  expect(screen.getByText("Needs attention")).toBeInTheDocument();
+  expect(screen.getByText("5")).toBeInTheDocument(); // documents with a failed feature
   expect(screen.queryByText("Jobs by status")).not.toBeInTheDocument();
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
 });

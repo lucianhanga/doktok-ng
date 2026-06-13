@@ -96,9 +96,9 @@ export function OverviewPanel({
               className="link-button"
               onClick={onShowPendingFeatures}
               disabled={!onShowPendingFeatures || !pendingFeatures}
-              title="Show documents with a failed or unfinished feature"
+              title="Show documents with a failed feature (not ones still processing)"
             >
-              <span className="muted">Pending features</span> <strong>{pendingFeatures}</strong>
+              <span className="muted">Needs attention</span> <strong>{pendingFeatures}</strong>
             </button>
           </li>
         </ul>

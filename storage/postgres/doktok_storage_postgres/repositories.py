@@ -363,6 +363,13 @@ class PostgresDocumentRepository:
                 (title, document_date, location, summary, document_id, tenant_id),
             )
 
+    def set_unidentifiable(self, tenant_id: str, document_id: str, *, value: bool | None) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE documents SET unidentifiable=%s WHERE id=%s AND tenant_id=%s",
+                (value, document_id, tenant_id),
+            )
+
     def activate(
         self,
         tenant_id: str,

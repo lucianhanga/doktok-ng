@@ -34,6 +34,7 @@ from doktok_core.documents.artifacts import THUMBNAIL_REL
 from doktok_core.enrichment import (
     MAX_CATEGORIES_PER_DOCUMENT,
     MAX_CATEGORIES_PER_TENANT,
+    detect_unidentifiable,
     normalize_category,
     normalize_metadata,
 )
@@ -192,7 +193,7 @@ class DocMetadataFeature:
     """Generate title/date/location/summary via the LLM and store them on the document (M6.2)."""
 
     name = "doc_metadata"
-    version = 1
+    version = 2  # bumped for the unidentifiable marker (ADR-0017) -> reconciler re-assesses corpus
     dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
@@ -212,6 +213,11 @@ class DocMetadataFeature:
         content = _read_text(self._files, document.storage_path, "content.md")
         if not content.strip():
             return
+        # Flag unidentifiable docs from the extracted text deterministically (ADR-0017), before the
+        # LLM step, so a meaningless scan is marked even if the model still hallucinates a title.
+        self._documents.set_unidentifiable(
+            tenant_id, document_id, value=detect_unidentifiable(content)
+        )
         meta = normalize_metadata(self._extractor.extract(content))
         self._documents.set_metadata(
             tenant_id,
@@ -232,8 +238,10 @@ class DocClassifyFeature:
     """
 
     name = "doc_classify"
-    version = 1
-    dependencies = ("extract",)  # needs extracted content/artifacts
+    version = 2  # bumped to honour the unidentifiable marker (ADR-0017)
+    # Runs after doc_metadata so the unidentifiable marker is set first: an unidentifiable document
+    # gets no categories (it stops the spurious-category pollution at the source).
+    dependencies = ("extract", "doc_metadata")
 
     def __init__(
         self,
@@ -250,6 +258,11 @@ class DocClassifyFeature:
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
         if document is None or not document.storage_path:
+            return
+        # An unidentifiable document gets no categories - and we clear any it accrued before, so
+        # re-running this version strips the spurious labels such docs collected previously.
+        if document.unidentifiable:
+            self._categories.set_document_categories(tenant_id, document_id, [])
             return
         content = _read_text(self._files, document.storage_path, "content.md")
         if not content.strip():

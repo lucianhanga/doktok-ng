@@ -138,6 +138,7 @@ class InMemoryDocumentRepository:
         status: DocumentStatus | None,
         category: str | None,
         needs_attention: bool,
+        unidentifiable: bool | None,
         tokens: tuple[str, ...],
         token_type: EntityType | None,
         token_match: TokenMatch,
@@ -149,6 +150,12 @@ class InMemoryDocumentRepository:
             and (status is None or d.status == status)
             and (not needs_attention or d.id in self.attention_ids)
             and (category is None or category in self.categories_by_doc.get(d.id, set()))
+            # True = only flagged; False = exclude flagged (NULL 'unassessed' stays shown) - matches
+            # the Postgres `IS NOT TRUE` semantics.
+            and (
+                unidentifiable is None
+                or (d.unidentifiable is True if unidentifiable else d.unidentifiable is not True)
+            )
             and self._matches_tokens(d, tokens, token_type, token_match)
         ]
 
@@ -161,6 +168,7 @@ class InMemoryDocumentRepository:
         status: DocumentStatus | None = None,
         category: str | None = None,
         needs_attention: bool = False,
+        unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
         direction: SortDir = SortDir.DESC,
         tokens: tuple[str, ...] = (),
@@ -172,6 +180,7 @@ class InMemoryDocumentRepository:
             status=status,
             category=category,
             needs_attention=needs_attention,
+            unidentifiable=unidentifiable,
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,
@@ -221,6 +230,7 @@ class InMemoryDocumentRepository:
         status: DocumentStatus | None = None,
         category: str | None = None,
         needs_attention: bool = False,
+        unidentifiable: bool | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
@@ -233,6 +243,7 @@ class InMemoryDocumentRepository:
                 status=status,
                 category=category,
                 needs_attention=needs_attention,
+                unidentifiable=unidentifiable,
                 tokens=tokens,
                 token_type=token_type,
                 token_match=token_match,

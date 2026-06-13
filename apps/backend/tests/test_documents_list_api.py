@@ -34,6 +34,7 @@ def _doc(
     title: str | None = None,
     document_date: date | None = None,
     created_at: datetime | None = None,
+    unidentifiable: bool | None = None,
 ) -> Document:
     return Document(
         id=doc_id,
@@ -45,6 +46,7 @@ def _doc(
         status=DocumentStatus.ACTIVE,
         storage_path=f"/docs.active/{doc_id}",
         created_at=created_at or datetime.now(UTC),
+        unidentifiable=unidentifiable,
     )
 
 
@@ -61,6 +63,25 @@ def _repo(*docs: Document) -> InMemoryDocumentRepository:
     for d in docs:
         repo.add(d)
     return repo
+
+
+def test_unidentifiable_filter() -> None:
+    flagged = _doc("u", title="Unidentifiable Document", unidentifiable=True)
+    fine = _doc("a", title="Invoice", unidentifiable=False)
+    unassessed = _doc("n", title="Old doc", unidentifiable=None)
+    client = _client(_repo(flagged, fine, unassessed))
+
+    only = client.get("/api/v1/documents?unidentifiable=true", headers=AUTH).json()
+    assert [d["id"] for d in only["items"]] == ["u"]  # only the flagged one
+
+    exclude = client.get("/api/v1/documents?unidentifiable=false", headers=AUTH).json()
+    # excludes only the confirmed-unidentifiable; the unassessed (NULL) doc is still shown.
+    assert {d["id"] for d in exclude["items"]} == {"a", "n"}
+
+    no_filter = client.get("/api/v1/documents", headers=AUTH).json()
+    assert {d["id"] for d in no_filter["items"]} == {"u", "a", "n"}
+    # The flag is surfaced on the document payload for the badge.
+    assert next(d for d in no_filter["items"] if d["id"] == "u")["unidentifiable"] is True
 
 
 def test_sort_by_created_date_desc_nulls_last() -> None:

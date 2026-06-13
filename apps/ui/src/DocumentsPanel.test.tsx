@@ -56,6 +56,26 @@ test("renders documents", async () => {
   expect(screen.getByText("application/pdf")).toBeInTheDocument();
 });
 
+test("shows the unidentifiable badge and filters by it", async () => {
+  const fetchMock = mockDocs([
+    doc({ id: "u", original_filename: "junk.jpg", unidentifiable: true }),
+  ]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("junk.jpg")).toBeInTheDocument());
+  // The neutral badge is shown for flagged documents.
+  expect(screen.getByText("unidentifiable", { selector: ".badge-unidentifiable" })).toBeInTheDocument();
+
+  // Ticking the filter sends unidentifiable=true on the next documents query.
+  fireEvent.click(screen.getByLabelText("Unidentifiable"));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(
+        ([u]) => String(u).includes("/api/v1/documents") && String(u).includes("unidentifiable=true"),
+      ),
+    ).toBe(true),
+  );
+});
+
 test("shows per-feature processing chips per document", async () => {
   mockDocs(
     [doc({ id: "a", original_filename: "report.pdf" })],

@@ -60,7 +60,7 @@ def from_vector_literal(raw: str | None) -> list[float]:
 _DOC_COLUMNS = (
     "id, tenant_id, current_version_id, sha256, original_filename, detected_mime, "
     "title, status, storage_path, created_at, activated_at, duplicate_of, metadata, "
-    "ingested_at, document_date, location, summary"
+    "ingested_at, document_date, location, summary, unidentifiable"
 )
 _DOC_COLUMNS_D = ", ".join(f"d.{c}" for c in _DOC_COLUMNS.split(", "))
 
@@ -84,6 +84,7 @@ def _row_to_document(row: dict[str, Any]) -> Document:
         document_date=row["document_date"],
         location=row["location"],
         summary=row["summary"],
+        unidentifiable=row["unidentifiable"],
     )
 
 
@@ -240,19 +241,22 @@ def _doc_filter_sql(
     status: DocumentStatus | None,
     category: str | None,
     needs_attention: bool,
+    unidentifiable: bool | None,
     tokens: tuple[str, ...],
     token_type: EntityType | None,
     token_match: TokenMatch,
 ) -> tuple[str, dict[str, Any]]:
-    """Build the shared document-filter WHERE clause (status + category + needs-attention + tokens)
-    and its parameters. Used by both ``list_documents`` (adds keyset + order) and
-    ``list_document_ids``. All values are parameterized; tokens go in as a single ``text[]``."""
+    """Build the shared document-filter WHERE clause (status + category + needs-attention +
+    unidentifiable + tokens) and its parameters. Used by both ``list_documents`` (adds keyset +
+    order) and ``list_document_ids``. All values are parameterized; tokens go in as a single
+    ``text[]``."""
     distinct_tokens = tuple(dict.fromkeys(tokens))  # dedupe, keep order
     params: dict[str, Any] = {
         "tenant": tenant_id,
         "status": status.value if status else None,
         "category": category,
         "needs_attention": needs_attention,
+        "unidentifiable": unidentifiable,
         "tokens": list(distinct_tokens),
         "token_type": token_type.value if token_type else None,
         "token_count": len(distinct_tokens),
@@ -266,7 +270,11 @@ def _doc_filter_sql(
         "  AND c.name = %(category)s AND c.status = 'active')) "
         "AND (NOT %(needs_attention)s OR EXISTS ("
         "  SELECT 1 FROM document_features f "
-        "  WHERE f.tenant_id = d.tenant_id AND f.document_id = d.id AND f.status <> 'done'))"
+        "  WHERE f.tenant_id = d.tenant_id AND f.document_id = d.id AND f.status <> 'done')) "
+        # unidentifiable: True = only flagged; False = exclude flagged (NULL 'unassessed' stays).
+        "AND (%(unidentifiable)s::boolean IS NULL "
+        "  OR (%(unidentifiable)s::boolean IS TRUE AND d.unidentifiable IS TRUE) "
+        "  OR (%(unidentifiable)s::boolean IS FALSE AND d.unidentifiable IS NOT TRUE))"
     )
     if distinct_tokens:
         # Tenant-scoped EXISTS over document_entities; ALL counts distinct matches == requested.
@@ -297,9 +305,9 @@ class PostgresDocumentRepository:
     def add(self, document: Document) -> None:
         try:
             with self._db.connection() as conn:
+                placeholders = ", ".join(["%s"] * len(_DOC_COLUMNS.split(", ")))
                 conn.execute(
-                    f"INSERT INTO documents ({_DOC_COLUMNS}) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    f"INSERT INTO documents ({_DOC_COLUMNS}) VALUES ({placeholders})",
                     (
                         document.id,
                         document.tenant_id,
@@ -318,6 +326,7 @@ class PostgresDocumentRepository:
                         document.document_date,
                         document.location,
                         document.summary,
+                        document.unidentifiable,
                     ),
                 )
         except pg_errors.UniqueViolation as exc:
@@ -395,6 +404,7 @@ class PostgresDocumentRepository:
         status: DocumentStatus | None = None,
         category: str | None = None,
         needs_attention: bool = False,
+        unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
         direction: SortDir = SortDir.DESC,
         tokens: tuple[str, ...] = (),
@@ -406,6 +416,7 @@ class PostgresDocumentRepository:
             status=status,
             category=category,
             needs_attention=needs_attention,
+            unidentifiable=unidentifiable,
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,
@@ -462,6 +473,7 @@ class PostgresDocumentRepository:
         status: DocumentStatus | None = None,
         category: str | None = None,
         needs_attention: bool = False,
+        unidentifiable: bool | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
@@ -472,6 +484,7 @@ class PostgresDocumentRepository:
             status=status,
             category=category,
             needs_attention=needs_attention,
+            unidentifiable=unidentifiable,
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,

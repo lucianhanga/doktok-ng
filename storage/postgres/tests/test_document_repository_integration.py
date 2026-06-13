@@ -100,6 +100,29 @@ def test_keyset_pagination_orders_and_pages_without_overlap(db: Database) -> Non
     assert anchor2 is None  # last page
 
 
+def test_unidentifiable_round_trips_and_filters(db: Database) -> None:
+    repo = PostgresDocumentRepository(db)
+    flagged = _doc("u-doc", TEST_TENANT_A)
+    flagged.unidentifiable = True
+    fine = _doc("a-doc", TEST_TENANT_A)
+    fine.unidentifiable = False
+    unassessed = _doc("n-doc", TEST_TENANT_A)  # unidentifiable stays NULL
+    for d in (flagged, fine, unassessed):
+        d.sha256 = (d.id + "z" * 64)[:64]  # distinct content hash (active-sha uniqueness)
+        repo.add(d)
+
+    # Round-trips through the explicit column list.
+    assert repo.get(TEST_TENANT_A, "u-doc").unidentifiable is True  # type: ignore[union-attr]
+    assert repo.get(TEST_TENANT_A, "n-doc").unidentifiable is None  # type: ignore[union-attr]
+
+    only, total, _ = repo.list_documents(TEST_TENANT_A, unidentifiable=True)
+    assert {d.id for d in only} == {"u-doc"} and total == 1
+    excl, _, _ = repo.list_documents(TEST_TENANT_A, unidentifiable=False)
+    assert {d.id for d in excl} == {"a-doc", "n-doc"}  # NULL 'unassessed' stays shown
+    ids, _, _ = repo.list_document_ids(TEST_TENANT_A, unidentifiable=True)
+    assert ids == ["u-doc"]
+
+
 def test_needs_attention_filter_uses_feature_ledger(db: Database) -> None:
     repo = PostgresDocumentRepository(db)
     feats = PostgresFeatureRepository(db)

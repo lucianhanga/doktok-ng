@@ -152,6 +152,11 @@ function DocumentCard({
           />
         </span>
         <span className={`badge status-${doc.status} doc-card-status`}>{doc.status}</span>
+        {doc.unidentifiable && (
+          <span className="badge badge-unidentifiable doc-card-unidentifiable" title="Unidentifiable: extraction succeeded but the content is not meaningful">
+            unidentifiable
+          </span>
+        )}
         {imgFailed ? (
           <div
             className="doc-card-thumb doc-thumb-fallback"
@@ -358,6 +363,7 @@ export function DocumentsPanel({
   const [category, setCategory] = useState("");
   const [status, setStatus] = useState("");
   const [needsAttention, setNeedsAttention] = useState(initialNeedsAttention);
+  const [unidentifiable, setUnidentifiable] = useState(false);
   const [view, setView] = useState<View>("list");
   const [sort, setSort] = useState<DocumentSort>("acquired");
   const [dir, setDir] = useState<SortDir>("desc");
@@ -378,6 +384,7 @@ export function DocumentsPanel({
       category: category || undefined,
       status: status || undefined,
       needsAttention: needsAttention || undefined,
+      unidentifiable: unidentifiable || undefined,
       sort,
       dir,
       tokens,
@@ -418,7 +425,7 @@ export function DocumentsPanel({
       if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
       setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
     });
-  }, [category, status, needsAttention, sort, dir, tokens, tokenMatch, windowSize]);
+  }, [category, status, needsAttention, unidentifiable, sort, dir, tokens, tokenMatch, windowSize]);
 
   useEffect(load, [load]);
   useInterval(load, 4000);
@@ -427,7 +434,7 @@ export function DocumentsPanel({
   useEffect(() => {
     setWindowSize(PAGE_SIZE);
     lastToggled.current = null;
-  }, [category, status, needsAttention, sort, dir, tokens, tokenMatch]);
+  }, [category, status, needsAttention, unidentifiable, sort, dir, tokens, tokenMatch]);
 
   useEffect(() => persistThumbSize(thumbSize), [thumbSize]);
 
@@ -453,7 +460,7 @@ export function DocumentsPanel({
   const docs = state.kind === "ok" ? state.docs : [];
   const total = state.kind === "ok" ? state.total : 0;
   const hasMore = state.kind === "ok" && state.hasMore;
-  const isFiltered = Boolean(category || status || needsAttention || tokens.length);
+  const isFiltered = Boolean(category || status || needsAttention || unidentifiable || tokens.length);
 
   function toggle(id: string, shiftKey: boolean) {
     setSelected((prev) => {
@@ -562,6 +569,14 @@ export function DocumentsPanel({
             onChange={(e) => setNeedsAttention(e.target.checked)}
           />{" "}
           Needs attention
+        </label>
+        <label title="Documents the system could not identify (extraction succeeded but the content is not meaningful)">
+          <input
+            type="checkbox"
+            checked={unidentifiable}
+            onChange={(e) => setUnidentifiable(e.target.checked)}
+          />{" "}
+          Unidentifiable
         </label>
         <SortControl sort={sort} dir={dir} onSort={setSort} onDir={setDir} />
         {view === "thumbnails" && <ThumbSizeControl size={thumbSize} onChange={setThumbSize} />}
@@ -739,6 +754,14 @@ export function DocumentsPanel({
                 </td>
                 <td>
                   <span className={`badge status-${doc.status}`}>{doc.status}</span>
+                  {doc.unidentifiable && (
+                    <span
+                      className="badge badge-unidentifiable"
+                      title="Unidentifiable: extraction succeeded but the content is not meaningful"
+                    >
+                      unidentifiable
+                    </span>
+                  )}
                 </td>
                 <td className="cell-processing">
                   <FeatureChips features={state.features.get(doc.id) ?? []} />

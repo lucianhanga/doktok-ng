@@ -98,7 +98,14 @@ def build_services(
     # `reconcile_concurrency` reconciler workers, each holding a connection only briefly.
     db = Database(
         settings.database_url,
-        max_size=max(6, settings.ingest_concurrency + settings.reconcile_concurrency + 2),
+        # Size for the widest reconcile fan-out we might choose below (OpenAI pipeline raises it),
+        # so the pool never starves regardless of provider. Idle connections cost little.
+        max_size=max(
+            6,
+            settings.ingest_concurrency
+            + max(settings.reconcile_concurrency, settings.openai_reconcile_concurrency)
+            + 2,
+        ),
     )
     migrate(db)
 
@@ -262,11 +269,23 @@ def build_services(
         )
     stage_ledger = [(p.name, p.version) for p in processors]
 
+    # Fan the reconciler wider when the pipeline is remote (OpenAI): its enrichment features are
+    # network-bound and the API parallelizes well, whereas the local Ollama path thrashes a single
+    # GPU under high concurrency.
+    reconcile_concurrency = (
+        settings.openai_reconcile_concurrency
+        if use_openai_pipeline
+        else settings.reconcile_concurrency
+    )
+    if use_openai_pipeline:
+        logger.info(
+            "pipeline on OpenAI: reconciler fans out to %d in parallel", reconcile_concurrency
+        )
     reconciler = FeatureReconciler(
         feature_repo,
         processors,
         tenant_ids(settings),
-        concurrency=settings.reconcile_concurrency,
+        concurrency=reconcile_concurrency,
     )
 
     # Insights embedding map (ADR-0016, M7.1): a tenant-aggregate projection job, drained from the

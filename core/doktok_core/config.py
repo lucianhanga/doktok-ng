@@ -131,7 +131,13 @@ class Settings(BaseSettings):
     staged_ingestion: bool = False
     # How many feature-reconciler runs proceed in parallel (backfills drain faster). The reconciler
     # claims distinct rows with SKIP LOCKED, so this is safe; bound it by Ollama/DB capacity.
+    # Kept low by default because the enrichment features hit the LOCAL Ollama model (a single GPU
+    # thrashes under high parallelism).
     reconcile_concurrency: int = 2
+    # When the pipeline runs on OpenAI (remote), the enrichment features are network-bound and the
+    # remote API handles high concurrency, so the reconciler can fan out much wider. Used in place
+    # of reconcile_concurrency whenever the pipeline provider is OpenAI.
+    openai_reconcile_concurrency: int = 10
     # A job left in a non-terminal state (extracting/indexing/...) longer than this was abandoned by
     # a killed worker; the worker re-queues it (file back to ingest) so it never lingers invisibly.
     # Keep it above the slowest legitimate single-document extraction. Set to 0 to disable recovery.

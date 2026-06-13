@@ -1062,6 +1062,7 @@ tr.row-selected {
   align-items: start;
 }
 .insights-canvas {
+  cursor: grab;
   width: 100%;
   max-width: 640px;
   aspect-ratio: 1 / 1;

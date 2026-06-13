@@ -89,6 +89,22 @@ test("color-by-cluster recolors the legend to clusters and Noise", async () => {
   expect(container.querySelectorAll("circle").length).toBe(2);
 });
 
+test("zoom in shrinks the viewBox, reset restores it", async () => {
+  stubFetch(mapFixture());
+  const { container } = render(<InsightsPanel />);
+
+  await waitFor(() => expect(container.querySelectorAll("circle").length).toBe(2));
+  const svg = container.querySelector("svg")!;
+  const width = () => Number(svg.getAttribute("viewBox")!.split(" ")[2]);
+  const initial = width();
+
+  fireEvent.click(within(container).getByRole("button", { name: "Zoom in" }));
+  expect(width()).toBeLessThan(initial); // zoomed in => smaller viewBox
+
+  fireEvent.click(within(container).getByRole("button", { name: "Reset view" }));
+  expect(width()).toBeCloseTo(initial, 5);
+});
+
 test("clicking a point opens its document", async () => {
   stubFetch(mapFixture());
   const onOpen = vi.fn();

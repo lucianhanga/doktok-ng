@@ -124,7 +124,48 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
   const [busy, setBusy] = useState(false); // a recompute is queued/running
   const [yaw, setYaw] = useState(0.6);
   const [pitch, setPitch] = useState(0.4);
+  const [zoom, setZoom] = useState(1);
+  const [center, setCenter] = useState({ x: VIEW / 2, y: VIEW / 2 });
   const drag = useRef<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  const vb = VIEW / zoom;
+  const viewBox = `${center.x - vb / 2} ${center.y - vb / 2} ${vb} ${vb}`;
+
+  // Zoom keeping the content point under (px,py) [0..1 of the viewport] fixed.
+  function zoomAt(px: number, py: number, factor: number) {
+    const z1 = Math.min(12, Math.max(0.4, zoom * factor));
+    if (z1 === zoom) return;
+    const vb0 = VIEW / zoom;
+    const vb1 = VIEW / z1;
+    const cx = center.x - vb0 / 2 + px * vb0;
+    const cy = center.y - vb0 / 2 + py * vb0;
+    setCenter({ x: cx - px * vb1 + vb1 / 2, y: cy - py * vb1 + vb1 / 2 });
+    setZoom(z1);
+  }
+
+  function resetView() {
+    setZoom(1);
+    setCenter({ x: VIEW / 2, y: VIEW / 2 });
+    setYaw(0.6);
+    setPitch(0.4);
+  }
+
+  // Scroll-to-zoom (centered on the cursor). A native non-passive listener so we can preventDefault
+  // the page scroll; rebinds when the canvas mounts or the view changes (the closure reads them).
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const px = (e.clientX - rect.left) / rect.width;
+      const py = (e.clientY - rect.top) / rect.height;
+      zoomAt(px, py, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  });
 
   function load(targetDim: 2 | 3) {
     setState({ kind: "loading" });
@@ -235,7 +276,8 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
       <p className="muted">
         Each point is a document chunk placed by its embedding. Color by document{" "}
         <strong>category</strong>, or by the discovered <strong>cluster</strong> (topics found in the
-        embedding space; unclustered points are noise).
+        embedding space; unclustered points are noise). Scroll to zoom; drag to{" "}
+        {dim === 3 ? "orbit" : "pan"}.
       </p>
 
       <div className="insights-controls">
@@ -278,6 +320,17 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
             onChange={(e) => setPointSize(Number(e.target.value))}
           />
         </label>
+        <div className="seg" aria-label="Zoom">
+          <button type="button" aria-label="Zoom out" onClick={() => zoomAt(0.5, 0.5, 1 / 1.3)}>
+            &minus;
+          </button>
+          <button type="button" aria-label="Zoom in" onClick={() => zoomAt(0.5, 0.5, 1.3)}>
+            +
+          </button>
+        </div>
+        <button type="button" onClick={resetView} disabled={zoom === 1 && yaw === 0.6}>
+          Reset view
+        </button>
         <button type="button" onClick={recompute} disabled={busy}>
           {busy ? "Computing…" : "Recompute"}
         </button>
@@ -321,19 +374,29 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
 
           <div className="insights-stage">
             <svg
+              ref={svgRef}
               className="insights-canvas"
-              viewBox={`0 0 ${VIEW} ${VIEW}`}
+              viewBox={viewBox}
               role="img"
-              aria-label={`Embedding map, ${dim}D, ${visible.length} points`}
-              onMouseDown={(e) => {
-                if (dim === 3) drag.current = { x: e.clientX, y: e.clientY };
-              }}
+              aria-label={`Embedding map, ${dim}D, ${visible.length} points, zoom ${zoom.toFixed(1)}x`}
+              onMouseDown={(e) => (drag.current = { x: e.clientX, y: e.clientY })}
               onMouseMove={(e) => {
-                if (dim === 3 && drag.current) {
-                  setYaw((y) => y + (e.clientX - drag.current!.x) * 0.01);
-                  setPitch((p) => p + (e.clientY - drag.current!.y) * 0.01);
-                  drag.current = { x: e.clientX, y: e.clientY };
+                if (!drag.current) return;
+                const dx = e.clientX - drag.current.x;
+                const dy = e.clientY - drag.current.y;
+                if (dim === 3) {
+                  // 3D: drag orbits the cloud.
+                  setYaw((y) => y + dx * 0.01);
+                  setPitch((p) => p + dy * 0.01);
+                } else {
+                  // 2D: drag pans (shift the viewBox by the dragged distance in content units).
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setCenter((c) => ({
+                    x: c.x - (dx / rect.width) * vb,
+                    y: c.y - (dy / rect.height) * vb,
+                  }));
                 }
+                drag.current = { x: e.clientX, y: e.clientY };
               }}
               onMouseUp={() => (drag.current = null)}
               onMouseLeave={() => {
@@ -342,17 +405,19 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
               }}
             >
               {projected.map((pr) => {
-                const r = pointSize * (dim === 3 ? 1 + pr.depth * 0.25 : 1);
+                // Divide by zoom so points stay a constant screen size as the cloud spreads.
+                const r = (pointSize * (dim === 3 ? 1 + pr.depth * 0.25 : 1)) / zoom;
                 return (
                   <circle
                     key={pr.point.chunk_id}
                     cx={pr.sx}
                     cy={pr.sy}
-                    r={Math.max(1.5, r)}
+                    r={Math.max(1.5 / zoom, r)}
                     fill={colorOf.get(keyOf(pr.point)) ?? "#9ca3af"}
                     fillOpacity={0.78}
                     stroke="#1f2937"
                     strokeWidth={0.4}
+                    vectorEffect="non-scaling-stroke"
                     onMouseEnter={() => setHover(pr)}
                     onClick={() => onOpenDocument?.(pr.point.document_id)}
                     style={{ cursor: onOpenDocument ? "pointer" : "default" }}

@@ -690,6 +690,18 @@ class PostgresEntityRepository:
                 (tenant_id, document_id),
             )
 
+    def delete_for_document_types(
+        self, tenant_id: str, document_id: str, entity_types: list[str]
+    ) -> None:
+        if not entity_types:
+            return
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM document_entities WHERE tenant_id=%s AND document_id=%s "
+                "AND entity_type = ANY(%s)",
+                (tenant_id, document_id, entity_types),
+            )
+
     def list_distinct(
         self,
         tenant_id: str,

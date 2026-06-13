@@ -25,6 +25,20 @@ class InMemoryEntityRepository:
             if not (e.tenant_id == tenant_id and e.document_id == document_id)
         ]
 
+    def delete_for_document_types(
+        self, tenant_id: str, document_id: str, entity_types: list[str]
+    ) -> None:
+        types = set(entity_types)
+        self.entities = [
+            e
+            for e in self.entities
+            if not (
+                e.tenant_id == tenant_id
+                and e.document_id == document_id
+                and e.entity_type.value in types
+            )
+        ]
+
     def list_distinct(
         self,
         tenant_id: str,

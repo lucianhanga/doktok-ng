@@ -18,6 +18,7 @@ from doktok_core.features.processors import (
     DocClassifyFeature,
     DocMetadataFeature,
     EntitiesFeature,
+    NerFeature,
     StructuredRecordsFeature,
     ThumbnailFeature,
 )
@@ -45,6 +46,12 @@ FEATURE_CATALOG: list[FeatureSpec] = [
         EntitiesFeature.version,
         "Entities & keywords",
         "Extracts structured entities (IBAN, dates, money, ...) and meaningful keyword tokens.",
+    ),
+    FeatureSpec(
+        NerFeature.name,
+        NerFeature.version,
+        "People & orgs",
+        "Recognises named people, organisations and places (LLM-assisted NER).",
     ),
     FeatureSpec(
         DocMetadataFeature.name,

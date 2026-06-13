@@ -483,6 +483,17 @@ class EntityExtractor(Protocol):
 
 
 @runtime_checkable
+class EntityNerExtractor(Protocol):
+    """Named-entity recognition for PERSON / ORG / GPE (LLM-assisted, M7.4).
+
+    Separate port from ``EntityExtractor`` so the rule-based and NER adapters compose independently;
+    both return ``ExtractedEntity`` occurrences (NER emits only the PERSON/ORG/GPE types).
+    """
+
+    def extract(self, text: str) -> list[ExtractedEntity]: ...
+
+
+@runtime_checkable
 class LexicalTermExtractor(Protocol):
     """Extract significant lexemes (stopwords removed) from text, language-aware (M5.7)."""
 
@@ -495,6 +506,9 @@ class LexicalTermExtractor(Protocol):
 class EntityRepository(Protocol):
     def add_entities(self, entities: list[DocumentEntity]) -> None: ...
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
+    def delete_for_document_types(
+        self, tenant_id: str, document_id: str, entity_types: list[str]
+    ) -> None: ...
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]: ...
     def list_distinct(
         self,

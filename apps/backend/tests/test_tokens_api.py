@@ -26,6 +26,7 @@ class FakeEntityRepository:
 
     def add_entities(self, entities: list) -> None: ...  # type: ignore[type-arg]
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
+    def delete_for_document_types(self, tenant_id, document_id, entity_types) -> None: ...  # type: ignore[no-untyped-def]
     def list_for_document(self, tenant_id: str, document_id: str) -> list:  # type: ignore[type-arg]
         return []
 

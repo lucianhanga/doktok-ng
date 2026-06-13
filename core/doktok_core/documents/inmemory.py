@@ -82,6 +82,11 @@ class InMemoryDocumentRepository:
         doc.location = location
         doc.summary = summary
 
+    def set_unidentifiable(self, tenant_id: str, document_id: str, *, value: bool | None) -> None:
+        doc = self._docs.get(document_id)
+        if doc is not None and doc.tenant_id == tenant_id:
+            doc.unidentifiable = value
+
     def activate(
         self,
         tenant_id: str,

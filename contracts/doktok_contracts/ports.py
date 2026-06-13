@@ -130,6 +130,11 @@ class DocumentRepository(Protocol):
         """Persist enrichment fields (M6.2). Idempotent overwrite."""
         ...
 
+    def set_unidentifiable(self, tenant_id: str, document_id: str, *, value: bool | None) -> None:
+        """Set the unidentifiable marker (M7.3, ADR-0017). True/False = assessed; None = unassessed.
+        Idempotent overwrite, separate from set_metadata so detection can write it independently."""
+        ...
+
     def activate(
         self,
         tenant_id: str,

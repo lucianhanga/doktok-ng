@@ -59,3 +59,57 @@ test("Ingestion tab shows the jobs view", async () => {
     expect(screen.getByText(/No ingestion jobs yet/i)).toBeInTheDocument(),
   );
 });
+
+test("keeps the chat conversation when opening a cited document and going back", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/chat")) {
+        return new Response(
+          JSON.stringify({
+            answer: "The total is 42 [1].",
+            citations: [
+              { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "inv.pdf", snippet: "total 42" },
+            ],
+            grounded: true,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/v1/documents/d1/detail")) {
+        return new Response(
+          JSON.stringify({
+            document: {
+              id: "d1", original_filename: "inv.pdf", detected_mime: "text/plain",
+              title: "inv", status: "active", created_at: "2026-06-10T00:00:00Z", metadata: {},
+            },
+            features: [], categories: [],
+            entities: { total: 0, by_type: [], top: [] },
+            content: { length: 0, excerpt: "" },
+            recent_activity: [],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/health")) return new Response(JSON.stringify(HEALTH), { status: 200 });
+      if (url.includes("/api/v1/stats"))
+        return new Response(JSON.stringify({ documents: 0, jobs: {}, entities: 0 }), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: "Chat" }));
+  await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("The total is 42 [1].")).toBeInTheDocument());
+
+  // Open the cited document, then go back.
+  await userEvent.click(screen.getByRole("button", { name: /inv\.pdf/ }));
+  await waitFor(() => expect(screen.getByText(/Back to documents/)).toBeInTheDocument());
+  await userEvent.click(screen.getByText(/Back to documents/));
+
+  // The conversation survived opening the document (the panel was hidden, not unmounted).
+  expect(screen.getByText("The total is 42 [1].")).toBeInTheDocument();
+});

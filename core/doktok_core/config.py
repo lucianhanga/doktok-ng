@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     # of `ingest_concurrency` independent predictors, so this also sets how many pages OCR in
     # parallel - raise it to use more cores (bound by CPU count and Ollama/DB capacity).
     ingest_concurrency: int = 4
+    # How many PDF pages OCR concurrently WITHIN a single document, and the size of the PaddleOCR
+    # predictor pool. Decoupled from ingest_concurrency so a multi-page scan can use many CPU cores
+    # at once (PaddleOCR is CPU-bound). Tune up toward the core count, watching CPU/RAM headroom.
+    ocr_concurrency: int = 4
     # Staged ingestion (ADR-0015): when on, intake creates a `processing` document + seeds the
     # stage ledger and the `extract` stage does OCR/extraction + activation, instead of the inline
     # pipeline. Default off while the staged path is built and proven; flip once it ships.

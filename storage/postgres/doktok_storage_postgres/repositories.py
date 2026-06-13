@@ -962,7 +962,11 @@ class PostgresFeatureRepository:
                     "SELECT gen_random_uuid()::text, d.tenant_id, d.id, %s, %s, 'pending' "
                     "FROM documents d WHERE d.tenant_id=%s AND d.status='active' "
                     "AND NOT EXISTS (SELECT 1 FROM document_features f "
-                    "WHERE f.tenant_id=d.tenant_id AND f.document_id=d.id AND f.feature=%s)",
+                    "WHERE f.tenant_id=d.tenant_id AND f.document_id=d.id AND f.feature=%s) "
+                    # NOT EXISTS narrows the work, but the ingestion pipeline can insert the same
+                    # (doc, feature) inline between the check and this INSERT (separate thread), so
+                    # guard the race instead of aborting the whole reconcile pass.
+                    "ON CONFLICT (tenant_id, document_id, feature) DO NOTHING",
                     (name, version, tenant_id, name),
                 )
                 affected += cur.rowcount
@@ -986,7 +990,10 @@ class PostgresFeatureRepository:
                 "SELECT gen_random_uuid()::text, d.tenant_id, d.id, 'extract', 1, 'done', now() "
                 "FROM documents d WHERE d.tenant_id=%s AND d.status='active' "
                 "AND NOT EXISTS (SELECT 1 FROM document_features f "
-                "WHERE f.tenant_id=d.tenant_id AND f.document_id=d.id AND f.feature='extract')",
+                "WHERE f.tenant_id=d.tenant_id AND f.document_id=d.id AND f.feature='extract') "
+                # Guard the same intake-vs-reconciler insert race as above (the pipeline writes the
+                # inline 'extract' marker at activation on another thread).
+                "ON CONFLICT (tenant_id, document_id, feature) DO NOTHING",
                 (tenant_id,),
             )
             affected += cur.rowcount

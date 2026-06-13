@@ -8,6 +8,9 @@ import {
   type VizPoint,
 } from "./api";
 import { useInterval } from "./hooks";
+import { WordCloudPanel } from "./WordCloudPanel";
+
+type InsightsView = "embedding" | "wordcloud";
 
 const VIEW = 620; // SVG viewport (square)
 const PAD = 28;
@@ -115,6 +118,7 @@ export function projectPoints(
 }
 
 export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
+  const [view, setView] = useState<InsightsView>("embedding");
   const [dim, setDim] = useState<2 | 3>(readDim);
   const [colorBy, setColorBy] = useState<ColorBy>(readColorBy);
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -180,8 +184,8 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
   }
 
   useEffect(() => {
-    load(dim);
-  }, [dim]);
+    if (view === "embedding") load(dim);
+  }, [dim, view]);
 
   // While a recompute is in flight, poll status; reload the map once it lands.
   useInterval(
@@ -264,15 +268,34 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
     <section aria-label="Insights" className="panel insights">
       <div className="result-head">
         <h2>Insights</h2>
-        {busy && <span role="status" className="muted">Computing projection&hellip;</span>}
+        {view === "embedding" && busy && (
+          <span role="status" className="muted">Computing projection&hellip;</span>
+        )}
       </div>
 
       <nav className="tabs insights-subtabs" aria-label="Insights views">
-        <button type="button" className="active" aria-pressed={true}>
-          Embedding Space
-        </button>
+        {(
+          [
+            ["embedding", "Embedding Space"],
+            ["wordcloud", "Word Cloud"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={view === id ? "active" : ""}
+            aria-pressed={view === id}
+            onClick={() => setView(id)}
+          >
+            {label}
+          </button>
+        ))}
       </nav>
 
+      {view === "wordcloud" && <WordCloudPanel />}
+
+      {view === "embedding" && (
+        <>
       <p className="muted">
         Each point is a document chunk placed by its embedding. Color by document{" "}
         <strong>category</strong>, or by the discovered <strong>cluster</strong> (topics found in the
@@ -428,6 +451,7 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
               })}
             </svg>
 
+            <div className="insights-sidebar">
             <div className="insights-details" aria-live="polite">
               {hover ? (
                 <>
@@ -465,6 +489,7 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
                 );
               })}
             </ul>
+            </div>
           </div>
           {map.meta && (
             <p className="muted insights-meta">
@@ -473,6 +498,8 @@ export function InsightsPanel({ onOpenDocument }: { onOpenDocument?: (id: string
               {new Date(map.meta.computed_at).toLocaleString()}
             </p>
           )}
+        </>
+      )}
         </>
       )}
     </section>

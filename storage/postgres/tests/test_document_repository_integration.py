@@ -123,15 +123,21 @@ def test_unidentifiable_round_trips_and_filters(db: Database) -> None:
     assert ids == ["u-doc"]
 
 
-def test_needs_attention_filter_uses_feature_ledger(db: Database) -> None:
+def test_needs_attention_filter_flags_failed_not_in_progress(db: Database) -> None:
     repo = PostgresDocumentRepository(db)
     feats = PostgresFeatureRepository(db)
     base = datetime(2024, 2, 1, tzinfo=UTC)
-    for i in range(2):
+    for i in range(3):
         repo.add(_page_doc(f"a{i}", when=base + timedelta(minutes=i)))
-    feats.ensure_for_active(TEST_TENANT_PAGE, [("doc_metadata", 1)])  # pending for a0, a1
-    feats.record_done(TEST_TENANT_PAGE, "a0", "doc_metadata", 1)  # a0 now done; a1 still pending
+    feats.ensure_for_active(TEST_TENANT_PAGE, [("doc_metadata", 1)])  # pending for a0, a1, a2
+    feats.record_done(TEST_TENANT_PAGE, "a0", "doc_metadata", 1)  # a0 done
+    # a1 -> FAILED (a real problem); a2 stays pending (still processing).
+    now = datetime.now(UTC)
+    claimed = feats.claim_next(TEST_TENANT_PAGE, now=now, reclaim_before=now - timedelta(hours=1))
+    assert claimed is not None and claimed.document_id == "a1"  # oldest pending
+    feats.mark_failed(claimed.id, error="boom", next_attempt_at=now + timedelta(hours=1))
 
     items, total, _ = repo.list_documents(TEST_TENANT_PAGE, needs_attention=True)
     ids = {d.id for d in items}
-    assert "a1" in ids and "a0" not in ids and total == len(ids)
+    # Only the FAILED document; the done one and the still-pending (in-processing) one are excluded.
+    assert ids == {"a1"} and total == 1

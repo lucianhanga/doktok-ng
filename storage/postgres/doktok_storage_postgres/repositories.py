@@ -268,9 +268,12 @@ def _doc_filter_sql(
         "  SELECT 1 FROM document_category_links l JOIN categories c ON c.id = l.category_id "
         "  WHERE l.document_id = d.id AND l.tenant_id = d.tenant_id "
         "  AND c.name = %(category)s AND c.status = 'active')) "
+        # 'Needs attention' = a real problem: a FAILED feature (red badge). Pending/running features
+        # are still processing (not a problem), and a not-yet-created feature is seeded pending then
+        # finishes or fails - so 'failed' is the steady-state actionable signal.
         "AND (NOT %(needs_attention)s OR EXISTS ("
         "  SELECT 1 FROM document_features f "
-        "  WHERE f.tenant_id = d.tenant_id AND f.document_id = d.id AND f.status <> 'done')) "
+        "  WHERE f.tenant_id = d.tenant_id AND f.document_id = d.id AND f.status = 'failed')) "
         # unidentifiable: True = only flagged; False = exclude flagged (NULL 'unassessed' stays).
         "AND (%(unidentifiable)s::boolean IS NULL "
         "  OR (%(unidentifiable)s::boolean IS TRUE AND d.unidentifiable IS TRUE) "
@@ -869,10 +872,11 @@ class PostgresStatsRepository:
                 "FROM document_entities WHERE tenant_id=%s",
                 tenant_id,
             )
+            # Documents needing attention = those with a FAILED feature (not merely in-progress).
             pending_feature_docs = self._scalar(
                 cur,
                 "SELECT COUNT(DISTINCT document_id) AS n FROM document_features "
-                "WHERE tenant_id=%s AND status <> 'done'",
+                "WHERE tenant_id=%s AND status = 'failed'",
                 tenant_id,
             )
         return StatsSummary(

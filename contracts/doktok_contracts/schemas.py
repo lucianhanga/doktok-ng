@@ -446,7 +446,7 @@ class StatsSummary(BaseModel):
     entities: int
     pending_ingest: int = 0  # files waiting in the ingest folder (no job yet)
     documents_pending_features: int = (
-        0  # documents with >=1 feature not done (pending/running/failed)
+        0  # documents needing attention: >=1 FAILED feature (not merely in-progress) - M7.3
     )
 
 

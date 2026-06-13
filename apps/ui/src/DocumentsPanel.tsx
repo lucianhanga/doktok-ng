@@ -562,7 +562,7 @@ export function DocumentsPanel({
             </select>
           </label>
         )}
-        <label>
+        <label title="Documents with a failed feature (red badge) - not ones still processing">
           <input
             type="checkbox"
             checked={needsAttention}

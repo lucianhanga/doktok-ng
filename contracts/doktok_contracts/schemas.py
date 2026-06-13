@@ -416,10 +416,20 @@ class CategorySummary(BaseModel):
     document_count: int
 
 
+class ChatTurn(BaseModel):
+    """One prior message in a chat conversation (ADR-0018). Used to rewrite follow-ups."""
+
+    role: str  # "user" | "assistant"
+    content: str = Field(max_length=8000)
+
+
 class ChatRequest(BaseModel):
     # Bound the free-text question: a non-empty, sanely-sized prompt (a multi-MB body would be a
     # cheap resource-exhaustion vector and can overflow the model context).
     question: str = Field(min_length=1, max_length=4000)
+    # Prior conversation turns (multi-turn, ADR-0018); empty = single-turn (current behaviour).
+    # Bounded so the rewrite prompt can't be flooded; the answerer keeps only the most recent turns.
+    history: list[ChatTurn] = Field(default_factory=list, max_length=40)
     limit: int = Field(default=8, ge=1, le=20)
 
 
@@ -429,6 +439,8 @@ class RagAnswer(BaseModel):
     answer: str
     citations: list[Citation] = Field(default_factory=list)
     grounded: bool
+    # Standalone query a follow-up was rewritten to (multi-turn, ADR-0018); None = not rewritten.
+    rewritten_query: str | None = None
 
 
 class DocumentContent(BaseModel):

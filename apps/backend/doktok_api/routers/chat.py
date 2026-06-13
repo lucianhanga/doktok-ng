@@ -56,4 +56,6 @@ def chat(
     structured = _try_aggregation(question, http_request, tenant.tenant_id)
     if structured is not None:
         return structured
-    return answerer.answer(tenant.tenant_id, question, limit)
+    # Multi-turn (ADR-0018): rewrite the follow-up against the conversation, then answer grounded.
+    # Empty history degrades to single-turn answering.
+    return answerer.answer_thread(tenant.tenant_id, request.history, question, limit)

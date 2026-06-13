@@ -415,6 +415,12 @@ export interface RagAnswer {
   answer: string;
   citations: Citation[];
   grounded: boolean;
+  rewritten_query?: string | null;
+}
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface TokenSuggestion {
@@ -440,11 +446,15 @@ export function searchByTokens(tokens: string[], signal?: AbortSignal): Promise<
   return getJson<DokDocument[]>(`/api/v1/tokens/search?${params.toString()}`, signal);
 }
 
-export async function chat(question: string, signal?: AbortSignal): Promise<RagAnswer> {
+export async function chat(
+  question: string,
+  history: ChatTurn[] = [],
+  signal?: AbortSignal,
+): Promise<RagAnswer> {
   const response = await fetch("/api/v1/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, history }),
     signal,
   });
   if (!response.ok) {

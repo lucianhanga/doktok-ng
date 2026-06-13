@@ -26,6 +26,9 @@ class FakeAnswerer:
     def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer:  # noqa: ARG002
         return self._by_question.get(question, RagAnswer(answer="idk", grounded=False))
 
+    def answer_thread(self, tenant_id, history, question, limit=8):  # type: ignore[no-untyped-def]
+        return self.answer(tenant_id, question, limit)
+
 
 def _answer(text: str, sources: list[str]) -> RagAnswer:
     return RagAnswer(

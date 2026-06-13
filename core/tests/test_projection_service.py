@@ -1,7 +1,10 @@
-"""ProjectionService + ProjectionRunner with in-memory adapters (ADR-0016, M7.1)."""
+"""ProjectionService + ProjectionRunner with in-memory adapters (ADR-0016, M7.1/M7.2)."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from doktok_contracts.media import ProjectionResult
 from doktok_contracts.schemas import DocumentChunk
 from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.visualizations.inmemory import (
@@ -13,11 +16,15 @@ from doktok_core.visualizations.service import ProjectionRunner, ProjectionServi
 TENANT = "t1"
 
 
-class FakeReducer:
-    """Deterministic stand-in: maps each vector to ``[i, i, ...]`` so coords are predictable."""
+class FakeProjector:
+    """Deterministic stand-in: coords ``[i, i, ...]`` and an alternating cluster id per vector."""
 
-    def reduce(self, vectors: list[list[float]], dim: int) -> list[list[float]]:
-        return [[float(i)] * dim for i in range(len(vectors))]
+    def project(self, vectors: list[list[float]], dims: Sequence[int]) -> ProjectionResult:
+        coords = {int(d): [[float(i)] * int(d) for i in range(len(vectors))] for d in dims}
+        return ProjectionResult(coords=coords, clusters=[i % 2 for i in range(len(vectors))])
+
+    def prewarm(self) -> None:
+        pass
 
 
 def _chunk_repo(tenant: str, n: int) -> InMemoryChunkRepository:
@@ -41,7 +48,7 @@ def _service(
     projections: InMemoryEmbeddingProjectionRepository,
     **kw: int,
 ) -> ProjectionService:
-    return ProjectionService(chunks, FakeReducer(), projections, algorithm="umap", **kw)
+    return ProjectionService(chunks, FakeProjector(), projections, algorithm="umap", **kw)
 
 
 def test_recompute_writes_2d_and_3d_projections() -> None:
@@ -58,6 +65,11 @@ def test_recompute_writes_2d_and_3d_projections() -> None:
     # Points keep their chunk/document identity and are ordered by chunk id.
     assert p2.points[0].chunk_id == f"{TENANT}-c000"
     assert {pt.document_id for pt in p2.points} == {"d0", "d1"}
+    # Cluster ids are assigned and shared across dims (same chunk -> same cluster in 2D and 3D).
+    by_chunk_2d = {pt.chunk_id: pt.cluster for pt in p2.points}
+    by_chunk_3d = {pt.chunk_id: pt.cluster for pt in p3.points}
+    assert all(c is not None for c in by_chunk_2d.values())
+    assert by_chunk_2d == by_chunk_3d
 
 
 def test_recompute_truncates_past_the_cap_and_flags_it() -> None:

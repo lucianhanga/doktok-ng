@@ -54,8 +54,8 @@ enrich-eval: ## Run the document-enrichment eval against real Ollama (needs `mak
 ocr-paddle: ## Install the PaddleOCR runtime (the DOKTOK_OCR_ENGINE=paddleocr extra)
 	uv pip install paddleocr paddlepaddle pillow numpy
 
-projection-engine: ## Install the embedding-projection runtime (UMAP/PCA for the Insights tab)
-	uv pip install umap-learn scikit-learn numpy
+projection-engine: ## Install the embedding-projection runtime (PCA/UMAP/HDBSCAN for the Insights tab)
+	uv pip install umap-learn scikit-learn hdbscan numpy
 
 db: ## Start local Postgres + pgvector (docker compose)
 	docker compose up -d

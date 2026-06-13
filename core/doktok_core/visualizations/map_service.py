@@ -101,6 +101,7 @@ class EmbeddingMapService:
                 y=p.y,
                 z=p.z,
                 category=primary.get(p.document_id, UNCATEGORIZED),
+                cluster=p.cluster,
                 snippet=_snippet(texts.get(p.chunk_id, ""), self._snippet_chars),
             )
             for p in projection.points

@@ -53,7 +53,7 @@ from doktok_provider_openai import (
     OpenAiRecordExtractor,
 )
 from doktok_provider_paddleocr import PaddleOcr
-from doktok_provider_projection import SklearnUmapReducer
+from doktok_provider_projection import SklearnEmbeddingProjector
 from doktok_storage_filesystem import (
     LocalFileStorage,
     QuarantineService,
@@ -275,7 +275,12 @@ def build_services(
         PostgresProjectionRequestRepository(db),
         ProjectionService(
             chunk_repo,
-            SklearnUmapReducer(algorithm=settings.projection_algorithm),
+            SklearnEmbeddingProjector(
+                algorithm=settings.projection_algorithm,
+                n_neighbors=settings.projection_n_neighbors,
+                min_cluster_size=settings.projection_min_cluster_size,
+                pca_components=settings.projection_pca_components,
+            ),
             PostgresEmbeddingProjectionRepository(db),
             algorithm=settings.projection_algorithm,
             version=settings.projection_version,

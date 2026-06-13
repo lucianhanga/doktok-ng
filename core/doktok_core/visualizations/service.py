@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 
 from doktok_contracts.ports import (
     ChunkRepository,
-    DimensionalityReducer,
     EmbeddingProjectionRepository,
+    EmbeddingProjector,
     ProjectionRequestRepository,
 )
 from doktok_contracts.schemas import EmbeddingProjection, ProjectionPoint
@@ -31,7 +31,7 @@ class ProjectionService:
     def __init__(
         self,
         chunk_repo: ChunkRepository,
-        reducer: DimensionalityReducer,
+        projector: EmbeddingProjector,
         projection_repo: EmbeddingProjectionRepository,
         *,
         algorithm: str,
@@ -39,11 +39,14 @@ class ProjectionService:
         max_points: int = 20000,
     ) -> None:
         self._chunks = chunk_repo
-        self._reducer = reducer
+        self._projector = projector
         self._projections = projection_repo
         self._algorithm = algorithm
         self._version = version
         self._max_points = max(1, max_points)
+
+    def prewarm(self) -> None:
+        self._projector.prewarm()
 
     def is_stale(self, tenant_id: str, dim: int) -> bool:
         """Whether the cached projection for (tenant, dim) is missing or out of date."""
@@ -55,8 +58,8 @@ class ProjectionService:
     def recompute(self, tenant_id: str) -> int:
         """Fit and cache every dimension for one tenant. Returns the number of points projected.
 
-        Reads the tenant's chunk embeddings once (capped at ``max_points``), then fits each target
-        dimension independently (2D is not the 3D layout with a dropped axis).
+        Reads the tenant's chunk embeddings once (capped at ``max_points``), then fits all target
+        dimensions in one pass: PCA pre-reduce, cluster once (shared across dims), UMAP per dim.
         """
         rows = self._chunks.read_embeddings(tenant_id, self._max_points + 1)
         truncated = len(rows) > self._max_points
@@ -64,9 +67,10 @@ class ProjectionService:
         fingerprint = self._current_fingerprint(tenant_id)
         computed_at = datetime.now(UTC)
         vectors = [embedding for _, _, embedding in rows]
+        result = self._projector.project(vectors, _DIMS)
 
         for dim in _DIMS:
-            coords = self._reducer.reduce(vectors, dim) if vectors else []
+            coords = result.coords.get(dim, [])
             points = [
                 ProjectionPoint(
                     chunk_id=rows[i][0],
@@ -74,6 +78,7 @@ class ProjectionService:
                     x=float(coord[0]),
                     y=float(coord[1]),
                     z=float(coord[2]) if dim == 3 else None,
+                    cluster=result.clusters[i] if i < len(result.clusters) else None,
                 )
                 for i, coord in enumerate(coords)
             ]
@@ -104,6 +109,9 @@ class ProjectionRunner:
     def __init__(self, requests: ProjectionRequestRepository, service: ProjectionService) -> None:
         self._requests = requests
         self._service = service
+
+    def prewarm(self) -> None:
+        self._service.prewarm()
 
     def run_pending(self) -> int:
         """Process every queued recompute request. Returns the number of tenants recomputed."""

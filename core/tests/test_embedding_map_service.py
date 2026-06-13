@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from doktok_contracts.media import ProjectionResult
 from doktok_contracts.schemas import DocumentChunk
 from doktok_core.categories.inmemory import InMemoryCategoryRepository
 from doktok_core.indexing.inmemory import InMemoryChunkRepository
@@ -15,9 +16,13 @@ from doktok_core.visualizations.service import ProjectionService
 TENANT = "t1"
 
 
-class FakeReducer:
-    def reduce(self, vectors: list[list[float]], dim: int) -> list[list[float]]:
-        return [[float(i)] * dim for i in range(len(vectors))]
+class FakeProjector:
+    def project(self, vectors, dims):  # type: ignore[no-untyped-def]
+        coords = {int(d): [[float(i)] * int(d) for i in range(len(vectors))] for d in dims}
+        return ProjectionResult(coords=coords, clusters=[i % 2 for i in range(len(vectors))])
+
+    def prewarm(self) -> None:
+        pass
 
 
 def _fixture() -> tuple[
@@ -50,7 +55,7 @@ def _fixture() -> tuple[
 
     projections = InMemoryEmbeddingProjectionRepository()
     requests = InMemoryProjectionRequestRepository()
-    ProjectionService(chunks, FakeReducer(), projections, algorithm="umap").recompute(TENANT)
+    ProjectionService(chunks, FakeProjector(), projections, algorithm="umap").recompute(TENANT)
     return projections, chunks, categories, requests
 
 

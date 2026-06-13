@@ -142,7 +142,13 @@ class Settings(BaseSettings):
     # truncated); bump `projection_version` to invalidate every cached projection.
     projection_algorithm: str = "umap"
     projection_max_points: int = 20000
-    projection_version: int = 1
+    # PCA pre-reduces 1024D -> projection_pca_components before UMAP (denoises + speeds UMAP, M7.2);
+    # HDBSCAN groups the PCA space into clusters (min_cluster_size); n_neighbors tunes UMAP.
+    projection_pca_components: int = 50
+    projection_min_cluster_size: int = 8
+    projection_n_neighbors: int = 15
+    # Bump to invalidate every cached projection (the UI then shows them stale, offers Recompute).
+    projection_version: int = 2
 
     @model_validator(mode="after")
     def _enforce_no_egress(self) -> Settings:

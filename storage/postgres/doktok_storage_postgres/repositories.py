@@ -1475,7 +1475,7 @@ class PostgresEmbeddingProjectionRepository:
                 conn.cursor() as cur,
                 cur.copy(
                     "COPY embedding_projection_points "
-                    "(projection_id, tenant_id, chunk_id, document_id, x, y, z) FROM STDIN"
+                    "(projection_id, tenant_id, chunk_id, document_id, x, y, z, cluster) FROM STDIN"
                 ) as copy,
             ):
                 for p in projection.points:
@@ -1488,6 +1488,7 @@ class PostgresEmbeddingProjectionRepository:
                             p.x,
                             p.y,
                             p.z,
+                            p.cluster,
                         )
                     )
 
@@ -1501,12 +1502,13 @@ class PostgresEmbeddingProjectionRepository:
             if header is None:
                 return None
             rows = conn.execute(
-                "SELECT chunk_id, document_id, x, y, z FROM embedding_projection_points "
+                "SELECT chunk_id, document_id, x, y, z, cluster FROM embedding_projection_points "
                 "WHERE projection_id=%s",
                 (header[0],),
             ).fetchall()
         points = [
-            ProjectionPoint(chunk_id=r[0], document_id=r[1], x=r[2], y=r[3], z=r[4]) for r in rows
+            ProjectionPoint(chunk_id=r[0], document_id=r[1], x=r[2], y=r[3], z=r[4], cluster=r[5])
+            for r in rows
         ]
         return self._row_to_projection(tenant_id, dim, header, points)
 

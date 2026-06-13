@@ -130,7 +130,12 @@ def build_services(
     ocr_extractor: OcrExtractor
     if settings.ocr_engine == "paddleocr":
         # One predictor per ingestion slot so pages OCR in parallel (PaddleOCR is CPU-bound).
-        ocr_extractor = PaddleOcr(lang=settings.ocr_lang, pool_size=settings.ingest_concurrency)
+        # Pool one predictor per concurrent OCR slot: enough for both parallel documents
+        # (ingest_concurrency) and parallel pages within a document (ocr_concurrency).
+        ocr_extractor = PaddleOcr(
+            lang=settings.ocr_lang,
+            pool_size=max(settings.ingest_concurrency, settings.ocr_concurrency),
+        )
     else:
         ocr_extractor = OllamaVisionOcr(
             settings.ocr_model,
@@ -261,6 +266,7 @@ def build_services(
             ocr_min_text_quality=settings.ocr_min_text_quality,
             chat_model=chat_model,
             max_pages=settings.max_pages,
+            ocr_concurrency=settings.ocr_concurrency,
         )
 
     if settings.staged_ingestion:
@@ -331,6 +337,7 @@ def build_services(
                 ocr_image_coverage=settings.ocr_image_coverage,
                 ocr_min_text_quality=settings.ocr_min_text_quality,
                 max_pages=settings.max_pages,
+                ocr_concurrency=settings.ocr_concurrency,
                 chat_model=chat_model,
                 audit_log=audit_log,
                 chunker=chunker,

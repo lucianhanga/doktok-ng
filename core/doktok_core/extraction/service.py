@@ -17,6 +17,7 @@ layer), produced for fully OCR'd input. If OCR is needed but unavailable, raises
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -61,11 +62,6 @@ def _pdf_markdown(pages: list[str]) -> str:
     return "\n\n".join(f"## Page {i}\n\n{page.strip()}" for i, page in enumerate(pages, start=1))
 
 
-def _average(values: list[float | None]) -> float | None:
-    nums = [v for v in values if v is not None]
-    return sum(nums) / len(nums) if nums else None
-
-
 def extract_document(
     mime: str,
     path: str,
@@ -80,6 +76,7 @@ def extract_document(
     ocr_min_text_quality: float = 0.0,
     chat_model: ChatModelProvider | None = None,
     max_pages: int = 0,
+    ocr_concurrency: int = 1,
 ) -> tuple[ExtractionResult, bytes | None]:
     if mime in (MIME_TEXT, MIME_MARKDOWN):
         text = text_extractor.extract(path)
@@ -98,6 +95,7 @@ def extract_document(
             ocr_min_text_quality,
             chat_model,
             max_pages,
+            ocr_concurrency,
         )
 
     if mime.startswith("image/"):
@@ -123,6 +121,7 @@ def _extract_pdf(
     ocr_min_text_quality: float,
     chat_model: ChatModelProvider | None,
     max_pages: int = 0,
+    ocr_concurrency: int = 1,
 ) -> tuple[ExtractionResult, bytes | None]:
     pages = pdf_extractor.extract_pages(path)
     # Resource guard: reject oversized PDFs before the expensive per-page render/OCR loop.
@@ -141,33 +140,44 @@ def _extract_pdf(
 
     images: list[bytes] | None = None
     used_ocr = [False] * len(pages)
-    confidences: list[float | None] = []
 
-    for i, embedded in enumerate(pages):
-        image_page = _cov(i) >= ocr_image_coverage
-        has_text = bool(embedded.strip())
+    # Pass 1: decide which pages need OCR (skipping born-digital + clean-embedded pages), without
+    # doing the expensive OCR yet. pages[i] still holds the original embedded text here.
+    def _needs_ocr(i: int, embedded: str) -> bool:
+        if not embedded.strip():
+            return True  # blank page -> must OCR
+        if _cov(i) < ocr_image_coverage:
+            return False  # born-digital text page
+        # Scan-candidate with embedded text: OCR unless that text is already clearly clean.
+        return not (ocr_min_text_quality > 0 and text_quality(embedded) >= ocr_min_text_quality)
 
-        # Born-digital text page: keep embedded text, no OCR.
-        if has_text and not image_page:
-            continue
-        # Full-page image whose embedded text is already clearly clean: trust it (fast path).
-        if has_text and ocr_min_text_quality > 0 and text_quality(embedded) >= ocr_min_text_quality:
-            continue
+    to_ocr = [i for i, embedded in enumerate(pages) if _needs_ocr(i, embedded)]
 
-        if images is None:
-            images = renderer.render_pages(path)
-        ocr_text = ocr.ocr_image(images[i]).text if i < len(images) else ""
+    if to_ocr:
+        images = renderer.render_pages(path)
 
-        if not has_text:
-            pages[i] = ocr_text  # nothing to compare against
-            used_ocr[i] = True
+        # Pass 2: OCR the pages that need it - in parallel across the predictor pool (PaddleOCR is
+        # CPU-bound and thread-safe per predictor), so a multi-page scan uses many cores at once.
+        def _ocr_page(i: int) -> str:
+            return ocr.ocr_image(images[i]).text if images and i < len(images) else ""
+
+        if ocr_concurrency > 1 and len(to_ocr) > 1:
+            with ThreadPoolExecutor(max_workers=min(ocr_concurrency, len(to_ocr))) as pool:
+                ocr_texts = dict(zip(to_ocr, pool.map(_ocr_page, to_ocr), strict=True))
         else:
-            # Ambiguous: let the LLM (or heuristic) decide embedded vs OCR.
-            chosen, picked_ocr = choose_text(embedded, ocr_text, chat_model=chat_model)
-            pages[i] = chosen
-            used_ocr[i] = picked_ocr
-        if used_ocr[i]:
-            confidences.append(None)
+            ocr_texts = {i: _ocr_page(i) for i in to_ocr}
+
+        # Pass 3: assign the result (sequential; the embedded-vs-OCR decision may call the LLM).
+        for i in to_ocr:
+            embedded = pages[i]
+            ocr_text = ocr_texts[i]
+            if not embedded.strip():
+                pages[i] = ocr_text  # nothing to compare against
+                used_ocr[i] = True
+            else:
+                chosen, picked_ocr = choose_text(embedded, ocr_text, chat_model=chat_model)
+                pages[i] = chosen
+                used_ocr[i] = picked_ocr
 
     any_ocr = any(used_ocr)
     if not any_ocr:
@@ -177,9 +187,9 @@ def _extract_pdf(
     else:
         method = "pdf_mixed"
 
-    result = ExtractionResult(
-        _pdf_markdown(pages), pages, method, len(pages), _average(confidences)
-    )
+    # PaddleOCR per-page confidence is not threaded back through this path, so the PDF-level
+    # confidence stays unset (as before).
+    result = ExtractionResult(_pdf_markdown(pages), pages, method, len(pages), None)
     normalized = None
     if all(used_ocr) and images is not None and builder is not None:
         normalized = builder.build(

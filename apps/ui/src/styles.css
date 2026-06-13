@@ -978,6 +978,18 @@ tr.row-selected {
   top: 0.3rem;
   right: 0.3rem;
 }
+/* Unidentifiable marker (M7.3): neutral amber, distinct from red failure badges. */
+.badge-unidentifiable {
+  background: rgba(180, 140, 60, 0.28);
+  border: 1px solid rgba(180, 140, 60, 0.55);
+  margin-left: 0.35rem;
+}
+.doc-card-unidentifiable {
+  position: absolute;
+  top: 0.3rem;
+  left: 0.3rem;
+  margin-left: 0;
+}
 .doc-card-badges {
   position: absolute;
   left: 0;

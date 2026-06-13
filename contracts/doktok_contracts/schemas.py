@@ -101,6 +101,9 @@ class Document(BaseModel):
     document_date: date | None = None
     location: str | None = None
     summary: str | None = None
+    # Enrichment abstain marker (M7.3, ADR-0017): True = the document is unidentifiable (extraction
+    # succeeded but the content is not meaningful), False = identifiable, None = not yet assessed.
+    unidentifiable: bool | None = None
     # For DocumentStatus.DUPLICATE: the id of the already-ingested document this duplicates.
     duplicate_of: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

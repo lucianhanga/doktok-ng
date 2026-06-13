@@ -49,6 +49,7 @@ export interface DokDocument {
   document_date?: string | null;
   location?: string | null;
   summary?: string | null;
+  unidentifiable?: boolean | null;
   duplicate_of?: string | null;
   metadata: Record<string, unknown>;
 }
@@ -86,6 +87,7 @@ export interface DocumentQuery {
   status?: string;
   cursor?: string;
   needsAttention?: boolean;
+  unidentifiable?: boolean;
   limit?: number;
   sort?: DocumentSort;
   dir?: SortDir;
@@ -102,6 +104,7 @@ export async function fetchDocuments(
   if (opts?.status) params.set("status", opts.status);
   if (opts?.cursor) params.set("cursor", opts.cursor);
   if (opts?.needsAttention) params.set("needs_attention", "true");
+  if (opts?.unidentifiable) params.set("unidentifiable", "true");
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.sort) params.set("sort", opts.sort);
   if (opts?.dir) params.set("dir", opts.dir);

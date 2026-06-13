@@ -142,6 +142,11 @@ class DefaultRagAnswerer:
             hits = self._reranker.rerank(question, hits, top_k=limit)
         else:
             hits = hits[:limit]
+        # Capture each source's importance from the FINAL relevance order (best first) before
+        # _pack_edges_best scrambles the list. Normalized rank: best = 1.0, keyed by chunk_id so it
+        # survives the reordering. (M6.4)
+        n = len(hits)
+        relevance = {hit.chunk_id: (n - i) / n for i, hit in enumerate(hits)}
         hits = _pack_edges_best(hits)
 
         prompt = _PROMPT.format(
@@ -158,18 +163,20 @@ class DefaultRagAnswerer:
 
         return RagAnswer(
             answer=answer,
-            citations=self._citations(answer, hits),
+            citations=self._citations(answer, hits, relevance),
             grounded=True,
             rewritten_query=rewritten_query,
         )
 
-    def _citations(self, answer: str, hits: list[SearchHit]) -> list[Citation]:
+    def _citations(
+        self, answer: str, hits: list[SearchHit], relevance: dict[str, float]
+    ) -> list[Citation]:
         # Guardrail: only cite excerpts the answer actually referenced with a valid [n] index.
         referenced = sorted(
             {n for n in (int(m) for m in _CITATION_RE.findall(answer)) if 1 <= n <= len(hits)}
         )
         indices = referenced if referenced else list(range(1, len(hits) + 1))
-        return [self._citation(n, hits[n - 1]) for n in indices]
+        return [self._citation(n, hits[n - 1], relevance) for n in indices]
 
     def _format_context(self, hits: list[SearchHit]) -> str:
         parts = []
@@ -183,7 +190,7 @@ class DefaultRagAnswerer:
             parts.append(f"[{i}] ({source}{page}): {body}")
         return "\n\n".join(parts)
 
-    def _citation(self, index: int, hit: SearchHit) -> Citation:
+    def _citation(self, index: int, hit: SearchHit, relevance: dict[str, float]) -> Citation:
         return Citation(
             index=index,
             document_id=hit.document_id,
@@ -193,4 +200,5 @@ class DefaultRagAnswerer:
             page_start=hit.page_start,
             page_end=hit.page_end,
             snippet=hit.snippet,
+            relevance=relevance.get(hit.chunk_id),
         )

@@ -91,3 +91,39 @@ test("keeps a transcript and sends prior turns as history on a follow-up", async
   expect(lastBody.history).toHaveLength(2); // user + assistant from turn 1
   expect(lastBody.history[0]).toEqual({ role: "user", content: "what is the total?" });
 });
+
+test("shows the sources column with importance and opens a document", async () => {
+  const onOpen = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          answer: "Total is 42 [1][2].",
+          grounded: true,
+          citations: [
+            { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "low.pdf", snippet: "weak", relevance: 0.25 },
+            { index: 2, document_id: "d2", chunk_id: "c2", original_filename: "top.pdf", snippet: "strong", relevance: 1.0 },
+          ],
+        }),
+        { status: 200 },
+      ),
+    ),
+  );
+
+  render(<ChatPanel onOpenDocument={onOpen} />);
+  await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("Total is 42 [1][2].")).toBeInTheDocument());
+
+  // Sources column present with both cards + importance percentages.
+  expect(screen.getByLabelText("Sources")).toBeInTheDocument();
+  expect(screen.getByText(/100% . #1/)).toBeInTheDocument(); // most relevant ranked first
+  expect(screen.getByText(/25% . #2/)).toBeInTheDocument();
+  // Cards ordered by importance: top.pdf (#1) before low.pdf (#2).
+  const meters = screen.getAllByRole("meter");
+  expect(meters[0].getAttribute("aria-valuenow")).toBe("100");
+
+  await userEvent.click(screen.getByRole("button", { name: /top\.pdf/ }));
+  expect(onOpen).toHaveBeenCalledWith("d2");
+});

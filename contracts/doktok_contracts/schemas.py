@@ -310,6 +310,9 @@ class Citation(BaseModel):
     page_start: int | None = None
     page_end: int | None = None
     snippet: str
+    # Importance of this source (M6.4): 0..1, 1.0 = most relevant, from the reranker's final order
+    # (normalized rank). None = unscored. The UI shows it as a bar/percent per source.
+    relevance: float | None = None
 
 
 class FeatureStatus(StrEnum):

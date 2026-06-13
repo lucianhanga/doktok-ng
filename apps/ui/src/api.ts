@@ -409,6 +409,7 @@ export interface Citation {
   page_start?: number | null;
   page_end?: number | null;
   snippet: string;
+  relevance?: number | null;
 }
 
 export interface RagAnswer {

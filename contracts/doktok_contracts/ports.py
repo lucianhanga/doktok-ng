@@ -9,11 +9,12 @@ See brief section 9 for the full list.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from doktok_contracts.media import (
+    ChatChunk,
     ExtractedEntity,
     ExtractedMetadata,
     ExtractedTerm,
@@ -30,6 +31,7 @@ from doktok_contracts.schemas import (
     AuditEvent,
     Category,
     CategorySummary,
+    ChatEvent,
     ChatTurn,
     Document,
     DocumentArtifact,
@@ -386,6 +388,16 @@ class ChatModelProvider(Protocol):
 
 
 @runtime_checkable
+class StreamingChatModelProvider(Protocol):
+    """A chat model that can stream its response (M6.4). Optional capability: the answerer checks
+    for it and falls back to ``ChatModelProvider.complete`` when a provider doesn't support it."""
+
+    def stream_complete(self, prompt: str, *, think: bool = False) -> Iterator[ChatChunk]:
+        """Yield answer (and, if ``think``, reasoning) chunks as the model generates them."""
+        ...
+
+
+@runtime_checkable
 class MetadataExtractor(Protocol):
     """Extract enrichment fields (title/date/location/summary) from document text (M6.2).
 
@@ -541,6 +553,19 @@ class RagAnswerer(Protocol):
         """Answer a follow-up in a conversation (ADR-0018): rewrite (history + question) into a
         standalone retrieval query, then answer it grounded + cited. ``history`` feeds only the
         rewrite, never the answer prompt. Empty history == single-turn ``answer``."""
+        ...
+
+    def answer_thread_stream(
+        self,
+        tenant_id: str,
+        history: list[ChatTurn],
+        question: str,
+        limit: int = 8,
+        *,
+        reasoning: bool = False,
+    ) -> Iterator[ChatEvent]:
+        """Streaming variant of ``answer_thread`` (M6.4): yields meta / reasoning / token / sources
+        / done events. ``reasoning`` opts into the model's thinking stream."""
         ...
 
 

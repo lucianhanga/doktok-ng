@@ -3,13 +3,16 @@ aggregation questions ("how much did I spend at X") answered from structured rec
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Iterator
 from typing import Annotated
 
 from doktok_contracts.ports import RagAnswerer
-from doktok_contracts.schemas import ChatRequest, RagAnswer
+from doktok_contracts.schemas import ChatEvent, ChatRequest, RagAnswer
 from doktok_core.aggregation import aggregation_answer, looks_like_aggregation, route_to_intent
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 
 from doktok_api.dependencies import (
     Tenant,
@@ -59,3 +62,37 @@ def chat(
     # Multi-turn (ADR-0018): rewrite the follow-up against the conversation, then answer grounded.
     # Empty history degrades to single-turn answering.
     return answerer.answer_thread(tenant.tenant_id, request.history, question, limit)
+
+
+def _sse(event: ChatEvent) -> str:
+    return f"event: {event.type}\ndata: {json.dumps(event.model_dump())}\n\n"
+
+
+@router.post("/stream")
+def chat_stream(
+    request: ChatRequest, http_request: Request, tenant: Tenant, answerer: Answerer
+) -> StreamingResponse:
+    """Streaming chat (M6.4, ADR-0018 Phase 3): SSE of meta/reasoning/token/sources/done. Mirrors
+    the JSON endpoint, including the aggregation shortcut (emitted as a one-shot stream)."""
+    question = request.question
+    limit = max(1, min(request.limit, 20))
+    tenant_id = tenant.tenant_id
+
+    def events() -> Iterator[str]:
+        structured = _try_aggregation(question, http_request, tenant_id)
+        if structured is not None:
+            yield _sse(ChatEvent(type="meta"))
+            yield _sse(ChatEvent(type="token", delta=structured.answer))
+            yield _sse(ChatEvent(type="sources", citations=structured.citations))
+            yield _sse(ChatEvent(type="done", grounded=structured.grounded))
+            return
+        for event in answerer.answer_thread_stream(
+            tenant_id, request.history, question, limit, reasoning=request.reasoning
+        ):
+            yield _sse(event)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

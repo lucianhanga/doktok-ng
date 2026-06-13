@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
+from doktok_contracts.media import ChatChunk
+
 from doktok_provider_openai.client import openai_chat
 
 
@@ -33,3 +37,9 @@ class OpenAiChatModelProvider:
             timeout=self._timeout,
             reasoning_effort=self._reasoning_effort,
         ).strip()
+
+    def stream_complete(self, prompt: str, *, think: bool = False) -> Iterator[ChatChunk]:
+        # No token streaming for OpenAI here (and chat-completions exposes no reasoning); emit the
+        # full answer as a single chunk so the streaming UI still works (degrades gracefully).
+        _ = think
+        yield ChatChunk(kind="answer", text=self.complete(prompt))

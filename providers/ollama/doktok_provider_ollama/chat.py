@@ -6,7 +6,11 @@ judge (M5.x) and RAG answering (M6).
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
+
 import httpx
+from doktok_contracts.media import ChatChunk
 
 
 class OllamaChatModelProvider:
@@ -53,3 +57,35 @@ class OllamaChatModelProvider:
         response = httpx.post(f"{self._base_url}/api/generate", json=payload, timeout=self._timeout)
         response.raise_for_status()
         return str(response.json().get("response", "")).strip()
+
+    def stream_complete(self, prompt: str, *, think: bool = False) -> Iterator[ChatChunk]:
+        """Stream the answer via /api/chat (NDJSON). Reasoning tokens (when ``think``) arrive in the
+        message's ``thinking`` field, answer tokens in ``content`` - yielded as distinct chunks."""
+        options: dict[str, object] = {"temperature": 0}
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
+        if self._num_predict is not None:
+            options["num_predict"] = self._num_predict
+        payload: dict[str, object] = {
+            "model": self._model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,
+            "think": think,
+            "options": options,
+        }
+        if self._keep_alive is not None:
+            payload["keep_alive"] = self._keep_alive
+        with httpx.stream(
+            "POST", f"{self._base_url}/api/chat", json=payload, timeout=self._timeout
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                message = json.loads(line).get("message") or {}
+                reasoning = message.get("thinking")
+                if reasoning:
+                    yield ChatChunk(kind="reasoning", text=reasoning)
+                content = message.get("content")
+                if content:
+                    yield ChatChunk(kind="answer", text=content)

@@ -65,17 +65,29 @@ test("keeps the chat conversation when opening a cited document and going back",
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/v1/chat")) {
-        return new Response(
-          JSON.stringify({
-            answer: "The total is 42 [1].",
+      if (url.includes("/api/v1/chat/stream")) {
+        const frames = [
+          `data: ${JSON.stringify({ type: "meta", rewritten_query: null })}\n\n`,
+          `data: ${JSON.stringify({ type: "token", delta: "The total is 42 [1]." })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "sources",
             citations: [
               { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "inv.pdf", snippet: "total 42" },
             ],
-            grounded: true,
-          }),
-          { status: 200 },
-        );
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "done", grounded: true })}\n\n`,
+        ];
+        const stream = new ReadableStream({
+          start(controller) {
+            const enc = new TextEncoder();
+            for (const f of frames) controller.enqueue(enc.encode(f));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
       }
       if (url.includes("/api/v1/documents/d1/detail")) {
         return new Response(

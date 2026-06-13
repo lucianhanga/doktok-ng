@@ -132,30 +132,32 @@ export default function App() {
         </nav>
       </header>
 
-      {openDoc ? (
+      {openDoc && (
         <DocumentDetail id={openDoc} onClose={() => setOpenDoc(null)} onOpenDocument={setOpenDoc} />
-      ) : (
-        <>
-          {view === "overview" && <OverviewPanel onShowPendingFeatures={showPendingFeatures} />}
-          {view === "documents" && (
-            <DocumentsPanel
-              key={`docs-${docsNeedsAttention}`}
-              onOpenDocument={setOpenDoc}
-              initialNeedsAttention={docsNeedsAttention}
-            />
-          )}
-          {view === "search" && <SearchPanel onOpenDocument={setOpenDoc} />}
-          {view === "tokensearch" && <TokenSearchPanel onOpenDocument={setOpenDoc} />}
-          {view === "chat" && <ChatPanel onOpenDocument={setOpenDoc} />}
-          {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
-          {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
-          {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}
-          {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
-          {view === "activity" && <ActivityPanel />}
-          {view === "status" && <HealthPanel />}
-          {view === "settings" && <SettingsPanel />}
-        </>
       )}
+      {/* Keep the active panel MOUNTED (just hidden) while a document is open, so its in-progress
+          state - e.g. a chat conversation or document-list filters - survives opening a document and
+          coming back. Unmounting it (the old ternary) reset that state to empty. */}
+      <div hidden={openDoc !== null}>
+        {view === "overview" && <OverviewPanel onShowPendingFeatures={showPendingFeatures} />}
+        {view === "documents" && (
+          <DocumentsPanel
+            key={`docs-${docsNeedsAttention}`}
+            onOpenDocument={setOpenDoc}
+            initialNeedsAttention={docsNeedsAttention}
+          />
+        )}
+        {view === "search" && <SearchPanel onOpenDocument={setOpenDoc} />}
+        {view === "tokensearch" && <TokenSearchPanel onOpenDocument={setOpenDoc} />}
+        {view === "chat" && <ChatPanel onOpenDocument={setOpenDoc} />}
+        {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
+        {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
+        {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}
+        {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
+        {view === "activity" && <ActivityPanel />}
+        {view === "status" && <HealthPanel />}
+        {view === "settings" && <SettingsPanel />}
+      </div>
     </main>
   );
 }

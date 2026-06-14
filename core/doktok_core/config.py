@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     ocr_num_ctx: int = 8192
     ocr_num_predict: int = 8192
     ocr_keep_alive: str = "5m"  # OCR runs in bursts; do not pin it resident like the chat model
+    # DPI the PDF pages are rasterized at before OCR (and for the searchable-PDF image layer).
+    # Measured: 200->120 saves only ~5% (OCR is recognition-bound, not pixel-bound) and can slightly
+    # lower confidence, so 200 is the quality-safe default; lower only if you must save RAM.
+    ocr_dpi: int = 200
+    # Math-library threads PER PaddleOCR worker process. Each worker is ~1 core already, so 1 keeps
+    # `ocr_concurrency` workers from oversubscribing: real parallelism comes from the process pool.
+    # Rule of thumb: ocr_concurrency * ocr_cpu_threads <= physical cores.
+    ocr_cpu_threads: int = 1
     ollama_base_url: str = "http://localhost:11434"
     # HTTP timeout (seconds) for each Ollama call. Generous because requests queue at Ollama under
     # parallel ingestion (raise OLLAMA_NUM_PARALLEL to run them concurrently instead of queuing).

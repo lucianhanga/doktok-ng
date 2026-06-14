@@ -30,11 +30,31 @@ logger = logging.getLogger("doktok.ocr.paddle")
 _WORKER_ENGINE: Any = None
 
 
-def _worker_init(lang: str, det_model: str, rec_model: str) -> None:
+def _cap_cpu_threads(n: int) -> None:
+    """Pin this worker process to ``n`` math-library threads. Must run BEFORE paddle/numpy import,
+    so the BLAS/OMP backends read it - this is the reliable, cross-version way to cap CPU on
+    Apple Silicon (no MKL-DNN) where PaddleOCR exposes no effective cpu_threads kwarg. Keeping each
+    pool worker at 1 thread means parallelism comes from the process pool, not oversubscription.
+    """
+    import os
+
+    n = max(1, n)
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",  # Apple Accelerate
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ[var] = str(n)
+
+
+def _worker_init(lang: str, det_model: str, rec_model: str, cpu_threads: int) -> None:
     global _WORKER_ENGINE
+    _cap_cpu_threads(cpu_threads)
     from paddleocr import PaddleOCR
 
-    logger.info("PaddleOCR worker loading models (lang=%s)", lang)
+    logger.info("PaddleOCR worker models (lang=%s, cpu_threads=%d)", lang, cpu_threads)
     # Skip the doc-orientation + unwarping models: rendered PDF pages are upright and flat, and
     # those models roughly triple per-page latency.
     _WORKER_ENGINE = PaddleOCR(
@@ -85,6 +105,7 @@ class PaddleOcr:
         rec_model: str = "latin_PP-OCRv5_mobile_rec",
         engine: Any = None,
         pool_size: int = 1,
+        cpu_threads: int = 1,
     ) -> None:
         # ``lang='german'`` selects the Latin recognizer (German/English/most European scripts). The
         # mobile det+rec models are ~40% faster than the medium defaults at ~0.98 confidence.
@@ -94,6 +115,8 @@ class PaddleOcr:
         # An injected predictor (tests) runs IN-PROCESS - no subprocess pool is started.
         self._engine = engine
         self._pool_size = max(1, pool_size)
+        # Threads per worker process; with one core per worker, real parallelism is the pool size.
+        self._cpu_threads = max(1, cpu_threads)
         self._pool: ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # guards lazy pool creation
 
@@ -121,7 +144,12 @@ class PaddleOcr:
                     self._pool = ProcessPoolExecutor(
                         max_workers=self._pool_size,
                         initializer=_worker_init,
-                        initargs=(self._lang, self._det_model, self._rec_model),
+                        initargs=(
+                            self._lang,
+                            self._det_model,
+                            self._rec_model,
+                            self._cpu_threads,
+                        ),
                     )
         return self._pool
 

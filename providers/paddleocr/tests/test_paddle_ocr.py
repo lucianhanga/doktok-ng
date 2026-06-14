@@ -156,4 +156,4 @@ def test_executor_built_lazily_with_pool_size(monkeypatch: pytest.MonkeyPatch) -
     first = ocr._executor()
     assert ocr._executor() is first  # built once, then reused
     assert captured["max_workers"] == 6
-    assert captured["initargs"] == ("german", "PP-OCRv5_mobile_det", "latin_PP-OCRv5_mobile_rec")
+    assert captured["initargs"] == ("german", "PP-OCRv5_mobile_det", "latin_PP-OCRv5_mobile_rec", 1)

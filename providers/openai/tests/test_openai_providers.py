@@ -5,8 +5,10 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import httpx
+from doktok_contracts.schemas import EntityType
 from doktok_provider_openai import (
     OpenAiChatModelProvider,
+    OpenAiEntityNerExtractor,
     OpenAiMetadataExtractor,
     OpenAiRecordExtractor,
 )
@@ -54,3 +56,30 @@ def test_record_extraction() -> None:
     with patch("doktok_provider_openai.client.httpx.post", return_value=_resp(content)):
         rows = OpenAiRecordExtractor("gpt-4o-mini", "k").extract("statement")
     assert len(rows) == 1 and rows[0].merchant == "Block House" and rows[0].amount == "42.50"
+
+
+def test_ner_caps_output_and_extracts_types() -> None:
+    content = '{"people":["Bob"],"organizations":["IBM"],"places":["Berlin"]}'
+    with patch("doktok_provider_openai.client.httpx.post", return_value=_resp(content)) as post:
+        out = OpenAiEntityNerExtractor("gpt-4o-mini", "k").extract("text")
+    pairs = {(e.entity_type, e.entity_text) for e in out}
+    assert pairs == {
+        (EntityType.PERSON, "Bob"),
+        (EntityType.ORG, "IBM"),
+        (EntityType.GPE, "Berlin"),
+    }
+    # The schema bounds each array so dense documents can't overrun the output and truncate.
+    schema = post.call_args.kwargs["json"]["response_format"]["json_schema"]["schema"]
+    assert schema["properties"]["people"]["maxItems"] == 60
+
+
+def test_ner_repairs_truncated_json() -> None:
+    broken = '{"people":["Angela Merkel","Olaf Sc'  # truncated mid-name
+    good = '{"people":["Angela Merkel"],"organizations":[],"places":[]}'
+    with patch(
+        "doktok_provider_openai.client.httpx.post",
+        side_effect=[_resp(broken), _resp(good)],
+    ) as post:
+        out = OpenAiEntityNerExtractor("gpt-4o-mini", "k").extract("text")
+    assert [(e.entity_type, e.entity_text) for e in out] == [(EntityType.PERSON, "Angela Merkel")]
+    assert post.call_count == 2  # second call is the repair pass

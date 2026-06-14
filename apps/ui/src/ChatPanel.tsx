@@ -1,8 +1,13 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   chatStream,
+  createChatThread,
+  deleteChatThread,
   documentThumbnailUrl,
+  getThreadMessages,
+  listChatThreads,
+  type ChatThread,
   type ChatTurn,
   type Citation,
   type QueryFilters,
@@ -206,15 +211,80 @@ function InlineCitations({
   );
 }
 
+/** The saved-conversations sidebar (M6.4 #248): resume or delete past threads, or start a new one. */
+function ThreadList({
+  threads,
+  activeId,
+  disabled,
+  onResume,
+  onDelete,
+  onNew,
+}: {
+  threads: ChatThread[];
+  activeId: string | null;
+  disabled: boolean;
+  onResume: (id: string) => void;
+  onDelete: (id: string) => void;
+  onNew: () => void;
+}) {
+  return (
+    <aside className="chat-threads" aria-label="Conversations">
+      <button type="button" className="chat-thread-new" onClick={onNew} disabled={disabled}>
+        + New conversation
+      </button>
+      <ol className="chat-thread-list">
+        {threads.map((t) => (
+          <li key={t.id} className={t.id === activeId ? "active" : undefined}>
+            <button
+              type="button"
+              className="chat-thread-item link-button"
+              onClick={() => onResume(t.id)}
+              disabled={disabled}
+              title={t.title || "Untitled conversation"}
+            >
+              <span className="chat-thread-title">{t.title || "Untitled conversation"}</span>
+              <span className="muted chat-thread-meta">{t.message_count}</span>
+            </button>
+            <button
+              type="button"
+              className="chat-thread-delete link-button"
+              aria-label={`Delete conversation ${t.title || "Untitled"}`}
+              onClick={() => onDelete(t.id)}
+              disabled={disabled}
+            >
+              &times;
+            </button>
+          </li>
+        ))}
+        {threads.length === 0 && (
+          <li className="muted chat-thread-empty">No saved conversations yet.</li>
+        )}
+      </ol>
+    </aside>
+  );
+}
+
 export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const [question, setQuestion] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(false);
   const [state, setState] = useState<State>({ kind: "idle" });
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [threadId, setThreadId] = useState<string | null>(null);
   // Canonical accumulator (avoids stale closures across the many streaming callbacks).
   const accRef = useRef<Streaming | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Latest thread id for the streaming callbacks (state is captured stale in the closure).
+  const threadRef = useRef<string | null>(null);
+
+  function refreshThreads() {
+    listChatThreads()
+      .then(setThreads)
+      .catch(() => undefined); // the thread list is a convenience; never break chat on its failure
+  }
+
+  useEffect(refreshThreads, []);
 
   function patch(fn: (s: Streaming) => Streaming) {
     if (!accRef.current) return;
@@ -226,10 +296,6 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
     e.preventDefault();
     const q = question.trim();
     if (!q || state.kind === "loading") return;
-    const history: ChatTurn[] = exchanges.flatMap((ex) => [
-      { role: "user" as const, content: ex.question },
-      { role: "assistant" as const, content: ex.answer.answer },
-    ]);
     const init: Streaming = {
       question: q,
       answer: "",
@@ -245,22 +311,44 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
     const controller = new AbortController();
     abortRef.current = controller;
 
-    chatStream(
-      q,
-      history,
-      showReasoning,
-      {
-        onMeta: (rq, flt) => patch((s) => ({ ...s, rewrittenQuery: rq, filters: flt })),
-        onReasoning: (d) => patch((s) => ({ ...s, reasoning: s.reasoning + d })),
-        onToken: (d) => patch((s) => ({ ...s, answer: s.answer + d })),
-        onSources: (c) => patch((s) => ({ ...s, citations: c })),
-        onError: (m) => setState({ kind: "error", message: m }),
-      },
-      controller.signal,
-    )
+    void (async () => {
+      // Persist conversations server-side: create a thread on the first turn, then reuse it. The
+      // server loads history from the thread, so the client-sent history is empty when threaded.
+      let tid = threadRef.current;
+      if (!tid) {
+        try {
+          tid = (await createChatThread()).id;
+        } catch {
+          tid = null; // persistence unavailable -> fall back to stateless client-held history
+        }
+        threadRef.current = tid;
+        setThreadId(tid);
+      }
+      const history: ChatTurn[] = tid
+        ? []
+        : exchanges.flatMap((ex) => [
+            { role: "user" as const, content: ex.question },
+            { role: "assistant" as const, content: ex.answer.answer },
+          ]);
+      return chatStream(
+        q,
+        history,
+        showReasoning,
+        {
+          onMeta: (rq, flt) => patch((s) => ({ ...s, rewrittenQuery: rq, filters: flt })),
+          onReasoning: (d) => patch((s) => ({ ...s, reasoning: s.reasoning + d })),
+          onToken: (d) => patch((s) => ({ ...s, answer: s.answer + d })),
+          onSources: (c) => patch((s) => ({ ...s, citations: c })),
+          onError: (m) => setState({ kind: "error", message: m }),
+        },
+        controller.signal,
+        tid,
+      );
+    })()
       .then(({ grounded }) => {
         finalize(grounded);
         setState((prev) => (prev.kind === "error" ? prev : { kind: "ready" }));
+        refreshThreads(); // surface the new/updated thread (title seeded from the first message)
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) {
@@ -305,6 +393,43 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
     setStreaming(null);
     setExchanges([]);
     setState({ kind: "idle" });
+    threadRef.current = null;
+    setThreadId(null);
+  }
+
+  function resume(id: string) {
+    if (state.kind === "loading") return;
+    abortRef.current?.abort();
+    accRef.current = null;
+    setStreaming(null);
+    setState({ kind: "loading" });
+    getThreadMessages(id)
+      .then((messages) => {
+        // Pair consecutive user -> assistant messages back into exchanges. Citations/reasoning are
+        // ephemeral (not persisted), so a resumed turn shows the text without its sources.
+        const restored: Exchange[] = [];
+        for (let i = 0; i < messages.length; i++) {
+          if (messages[i].role !== "user") continue;
+          const reply = messages[i + 1]?.role === "assistant" ? messages[i + 1] : null;
+          restored.push({
+            question: messages[i].content,
+            answer: { answer: reply?.content ?? "", citations: [], grounded: true },
+          });
+          if (reply) i++;
+        }
+        setExchanges(restored);
+        threadRef.current = id;
+        setThreadId(id);
+        setState({ kind: "ready" });
+      })
+      .catch((err: unknown) =>
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
+      );
+  }
+
+  function removeThread(id: string) {
+    void deleteChatThread(id).then(refreshThreads);
+    if (id === threadRef.current) reset();
   }
 
   const turns: TurnView[] = exchanges.map((ex) => ({
@@ -332,17 +457,26 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
   const lastIndex = turns.length - 1;
 
   return (
-    <section aria-label="Chat" className="panel">
-      <div className="result-head">
-        <h2>Chat with your documents</h2>
-        {turns.length > 0 && (
-          <button type="button" className="link-button" onClick={reset}>
-            <span className="muted">New conversation</span>
-          </button>
-        )}
-      </div>
+    <section aria-label="Chat" className="panel chat-layout">
+      <ThreadList
+        threads={threads}
+        activeId={threadId}
+        disabled={state.kind === "loading"}
+        onResume={resume}
+        onDelete={removeThread}
+        onNew={reset}
+      />
+      <div className="chat-main">
+        <div className="result-head">
+          <h2>Chat with your documents</h2>
+          {turns.length > 0 && (
+            <button type="button" className="link-button" onClick={reset}>
+              <span className="muted">New conversation</span>
+            </button>
+          )}
+        </div>
 
-      <ol className="chat-transcript" aria-label="Conversation">
+        <ol className="chat-transcript" aria-label="Conversation">
         {turns.map((turn, i) => {
           // The latest turn shows its sources in a side column; older turns keep a compact list.
           if (i === lastIndex && turn.citations.length > 0) {
@@ -394,11 +528,12 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
         <span className="muted">Show reasoning</span>
       </label>
 
-      {state.kind === "error" && (
-        <p role="alert" className="status-error">
-          Chat failed: {state.message}
-        </p>
-      )}
+        {state.kind === "error" && (
+          <p role="alert" className="status-error">
+            Chat failed: {state.message}
+          </p>
+        )}
+      </div>
     </section>
   );
 }

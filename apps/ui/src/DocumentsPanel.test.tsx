@@ -166,6 +166,35 @@ test("preselects the failing feature when selecting documents that need attentio
   ).toBeInTheDocument();
 });
 
+test("clicking a feature badge re-queues that feature for that document", async () => {
+  const fetchMock = mockDocs(
+    [doc({ id: "a1", status: "active", original_filename: "stmt.pdf" })],
+    [
+      {
+        document_id: "a1",
+        feature: "ner",
+        status: "failed",
+        feature_version: 1,
+        attempts: 3,
+        max_attempts: 3,
+      },
+    ],
+    [{ name: "ner", version: 1, label: "People & orgs", description: "..." }],
+  );
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("stmt.pdf")).toBeInTheDocument());
+
+  // The badge is a button (short label "names"); clicking posts the retry for that doc + feature.
+  fireEvent.click(screen.getByRole("button", { name: /names/ }));
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/documents/a1/features/ner/retry",
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
+});
+
 test("shows an error when the request fails", async () => {
   vi.stubGlobal(
     "fetch",

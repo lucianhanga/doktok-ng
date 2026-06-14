@@ -513,6 +513,21 @@ table.jobs td {
   border: 1px solid rgba(127, 127, 127, 0.35);
   white-space: nowrap;
 }
+/* Clickable badges (per-document one-click reprocess). */
+.feature-chips .chip-button {
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+.feature-chips .chip-button:hover:not(:disabled) {
+  filter: brightness(1.15);
+  border-color: currentColor;
+}
+.feature-chips .chip-button:focus-visible {
+  outline: 2px solid var(--accent, #6ea8fe);
+  outline-offset: 1px;
+}
 
 .feature-chips .feat-done {
   background: rgba(46, 160, 67, 0.18);

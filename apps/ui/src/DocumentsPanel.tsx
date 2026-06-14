@@ -100,19 +100,42 @@ function featureTooltip(f: DocumentFeature): string {
   return `${desc}\nstatus: ${f.status}`;
 }
 
-function FeatureChips({ features }: { features: DocumentFeature[] }) {
+function FeatureChips({
+  features,
+  onReprocess,
+}: {
+  features: DocumentFeature[];
+  onReprocess?: (feature: string) => void;
+}) {
   if (features.length === 0) return <span className="muted">-</span>;
+  const sorted = features.slice().sort((a, b) => a.feature.localeCompare(b.feature));
   return (
     <span className="feature-chips">
-      {features
-        .slice()
-        .sort((a, b) => a.feature.localeCompare(b.feature))
-        .map((f) => (
-          <span key={f.feature} className={`chip feat-${f.status}`} title={featureTooltip(f)}>
-            {FEATURE_LABELS[f.feature] ?? f.feature}{" "}
-            {f.status === "done" ? "✓" : f.status === "failed" ? "✗" : "…"}
-          </span>
-        ))}
+      {sorted.map((f) => {
+        const label = FEATURE_LABELS[f.feature] ?? f.feature;
+        const glyph = f.status === "done" ? "✓" : f.status === "failed" ? "✗" : "…";
+        if (!onReprocess) {
+          return (
+            <span key={f.feature} className={`chip feat-${f.status}`} title={featureTooltip(f)}>
+              {label} {glyph}
+            </span>
+          );
+        }
+        return (
+          <button
+            key={f.feature}
+            type="button"
+            className={`chip chip-button feat-${f.status}`}
+            title={`${featureTooltip(f)}\n(click to reprocess)`}
+            onClick={(e) => {
+              e.stopPropagation(); // don't open the document; just reprocess this feature
+              onReprocess(f.feature);
+            }}
+          >
+            {label} {glyph}
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -133,12 +156,14 @@ function DocumentCard({
   selected,
   onToggle,
   onOpen,
+  onReprocessFeature,
 }: {
   doc: DokDocument;
   features: DocumentFeature[];
   selected: boolean;
   onToggle: (id: string, shiftKey: boolean) => void;
   onOpen?: (id: string) => void;
+  onReprocessFeature?: (documentId: string, feature: string, filename: string) => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   return (
@@ -182,7 +207,14 @@ function DocumentCard({
         )}
         {features.length > 0 && (
           <div className="doc-card-badges">
-            <FeatureChips features={features} />
+            <FeatureChips
+              features={features}
+              onReprocess={
+                onReprocessFeature
+                  ? (feat) => onReprocessFeature(doc.id, feat, doc.original_filename)
+                  : undefined
+              }
+            />
           </div>
         )}
       </div>
@@ -515,6 +547,23 @@ export function DocumentsPanel({
     reprocessAutoPicked.current = false;
   }
 
+  // Click a single document's badge to re-queue just that feature for that document.
+  function reprocessOne(documentId: string, feature: string, filename: string) {
+    const label = catalog.find((c) => c.name === feature)?.label ?? feature;
+    if (!window.confirm(`Reprocess "${label}" for ${filename}?`)) return;
+    setBusy(true);
+    setNotice("");
+    void retryDocumentFeature(documentId, feature)
+      .then(() => setNotice(`Reprocess ${label}: scheduled for ${filename}.`))
+      .catch((err: unknown) =>
+        setNotice(`Reprocess ${label} failed: ${err instanceof Error ? err.message : "error"}`),
+      )
+      .finally(() => {
+        setBusy(false);
+        load();
+      });
+  }
+
   // How many of the selected documents have each feature in a failed (red badge) state. Drives the
   // reprocess dropdown: failing features sort to the top, get a count, and the single common case
   // (one red badge across the selection) is pre-picked so reprocessing is one click.
@@ -820,7 +869,12 @@ export function DocumentsPanel({
                   )}
                 </td>
                 <td className="cell-processing">
-                  <FeatureChips features={state.features.get(doc.id) ?? []} />
+                  <FeatureChips
+                    features={state.features.get(doc.id) ?? []}
+                    onReprocess={(feat) =>
+                      reprocessOne(doc.id, feat, doc.original_filename)
+                    }
+                  />
                 </td>
               </tr>
             ))}
@@ -850,6 +904,7 @@ export function DocumentsPanel({
                 selected={selected.has(doc.id)}
                 onToggle={toggle}
                 onOpen={onOpenDocument}
+                onReprocessFeature={reprocessOne}
               />
             ))}
           </div>

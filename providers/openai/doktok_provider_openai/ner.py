@@ -16,9 +16,9 @@ _MAX_PER_TYPE = 60
 _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "people": {"type": "array", "items": {"type": "string"}},
-        "organizations": {"type": "array", "items": {"type": "string"}},
-        "places": {"type": "array", "items": {"type": "string"}},
+        "people": {"type": "array", "items": {"type": "string"}, "maxItems": _MAX_PER_TYPE},
+        "organizations": {"type": "array", "items": {"type": "string"}, "maxItems": _MAX_PER_TYPE},
+        "places": {"type": "array", "items": {"type": "string"}, "maxItems": _MAX_PER_TYPE},
     },
     "required": ["people", "organizations", "places"],
 }
@@ -73,8 +73,28 @@ class OpenAiEntityNerExtractor:
         )
         groups = _groups(content)
         if groups is None:
-            raise RuntimeError("NER returned invalid JSON")
+            # Non-strict JSON mode can still return malformed/truncated output on dense documents;
+            # a second pass repairs it (mirrors the Ollama adapter's repair fallback).
+            groups = _groups(self._repair(content))
+        if groups is None:
+            raise RuntimeError("NER returned invalid JSON after repair")
         return _entities(groups)
+
+    def _repair(self, broken: str) -> str:
+        prompt = (
+            'The text below should be JSON like {"people": [...], "organizations": [...], '
+            '"places": [...]} but may be malformed or truncated. Return ONLY corrected JSON, '
+            "dropping any incomplete trailing entry.\n\nText:\n" + broken
+        )
+        return openai_chat(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            model=self._model,
+            system="Output only valid JSON.",
+            user=prompt,
+            timeout=self._timeout,
+            reasoning_effort=self._reasoning_effort,
+        )
 
 
 def _groups(content: str) -> dict[str, list[str]] | None:

@@ -97,6 +97,22 @@ class PaddleOcr:
         self._pool: ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # guards lazy pool creation
 
+    def reconfigure(self, pool_size: int) -> None:
+        """Resize the worker pool live (M7.6 settings). Shuts the current pool down so the next
+        ``ocr_image`` rebuilds it at the new size. Call only when no OCR is in flight (the worker
+        does this between ingest scans). No-op if the size is unchanged or an engine is injected."""
+        target = max(1, pool_size)
+        with self._lock:
+            if self._engine is not None or target == self._pool_size:
+                self._pool_size = target
+                return
+            old = self._pool
+            self._pool = None
+            self._pool_size = target
+        if old is not None:
+            old.shutdown(wait=True)  # safe between scans: no page is being OCR'd
+            logger.info("PaddleOCR pool resized to %d workers", target)
+
     def _executor(self) -> ProcessPoolExecutor:
         if self._pool is None:
             with self._lock:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from doktok_contracts.ports import (
     CategoryClassifier,
@@ -93,7 +94,13 @@ def tenant_ids(settings: Settings) -> list[str]:
 
 def build_services(
     settings: Settings,
-) -> tuple[list[IngestionServices], FeatureReconciler, ProjectionRunner, Database]:
+) -> tuple[
+    list[IngestionServices],
+    FeatureReconciler,
+    ProjectionRunner,
+    Database,
+    Callable[[], None] | None,
+]:
     """Build per-tenant ingestion services, the feature reconciler, and a shared database handle.
 
     Ensures each tenant's lifecycle folders exist and runs migrations once.
@@ -117,6 +124,10 @@ def build_services(
     app_settings = PostgresAppSettingsRepository(db)
     pipeline = app_settings.get_ai_settings().pipeline
     openai_key = app_settings.get_openai_api_key()
+    # OCR parallelism comes from the Settings DB (live-reloaded by the worker), env is the fallback
+    # default. The pool needs at least one predictor per parallel document (ingest_concurrency).
+    ocr_concurrency = app_settings.get_ocr_settings().ocr_concurrency
+    ocr_pool_size = max(settings.ingest_concurrency, ocr_concurrency)
     use_openai_pipeline = pipeline.provider == "openai" and bool(openai_key)
     if pipeline.provider == "openai" and not openai_key:
         logger.warning("pipeline set to OpenAI but no API key configured; using Ollama defaults")
@@ -136,10 +147,7 @@ def build_services(
         # One predictor per ingestion slot so pages OCR in parallel (PaddleOCR is CPU-bound).
         # Pool one predictor per concurrent OCR slot: enough for both parallel documents
         # (ingest_concurrency) and parallel pages within a document (ocr_concurrency).
-        ocr_extractor = PaddleOcr(
-            lang=settings.ocr_lang,
-            pool_size=max(settings.ingest_concurrency, settings.ocr_concurrency),
-        )
+        ocr_extractor = PaddleOcr(lang=settings.ocr_lang, pool_size=ocr_pool_size)
     else:
         ocr_extractor = OllamaVisionOcr(
             settings.ocr_model,
@@ -149,6 +157,19 @@ def build_services(
             num_predict=settings.ocr_num_predict,
             keep_alive=settings.ocr_keep_alive,
         )
+    # Live-reload OCR parallelism from Settings (M7.6): the worker calls this between ingest scans
+    # (no OCR in flight) to resize the PaddleOCR pool without a restart. Paddle-only; the Ollama OCR
+    # path has no predictor pool to resize.
+    ocr_reload: Callable[[], None] | None = None
+    if isinstance(ocr_extractor, PaddleOcr):
+        paddle = ocr_extractor
+
+        def ocr_reload() -> None:  # noqa: F811 - single definition, guarded by the isinstance
+            target = max(
+                settings.ingest_concurrency, app_settings.get_ocr_settings().ocr_concurrency
+            )
+            paddle.reconfigure(target)
+
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
     thumbnailer = PyMuPdfThumbnailer()
@@ -284,7 +305,7 @@ def build_services(
             ocr_min_text_quality=settings.ocr_min_text_quality,
             chat_model=chat_model,
             max_pages=settings.max_pages,
-            ocr_concurrency=settings.ocr_concurrency,
+            ocr_concurrency=ocr_concurrency,
         )
 
     if settings.staged_ingestion:
@@ -355,7 +376,7 @@ def build_services(
                 ocr_image_coverage=settings.ocr_image_coverage,
                 ocr_min_text_quality=settings.ocr_min_text_quality,
                 max_pages=settings.max_pages,
-                ocr_concurrency=settings.ocr_concurrency,
+                ocr_concurrency=ocr_concurrency,
                 chat_model=chat_model,
                 audit_log=audit_log,
                 chunker=chunker,
@@ -370,4 +391,4 @@ def build_services(
                 stage_ledger=stage_ledger,
             )
         )
-    return services, reconciler, projection_runner, db
+    return services, reconciler, projection_runner, db, ocr_reload

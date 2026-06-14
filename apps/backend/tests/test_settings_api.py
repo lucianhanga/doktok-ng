@@ -76,3 +76,57 @@ def test_get_defaults_and_update_roundtrip() -> None:
 
     again = client.get("/api/v1/settings/ai", headers=AUTH).json()
     assert again["pipeline"]["num_ctx"] == 16384 and again["openai_api_key_set"] is True
+
+
+def test_ocr_settings_default_and_update() -> None:
+    client = _client()
+    assert client.get("/api/v1/settings/ocr", headers=AUTH).json()["ocr_concurrency"] == 4
+    resp = client.put("/api/v1/settings/ocr", json={"ocr_concurrency": 6}, headers=AUTH)
+    assert resp.status_code == 200 and resp.json()["ocr_concurrency"] == 6
+    assert client.get("/api/v1/settings/ocr", headers=AUTH).json()["ocr_concurrency"] == 6
+
+
+def test_ocr_concurrency_is_bounded() -> None:
+    client = _client()
+    assert (
+        client.put("/api/v1/settings/ocr", json={"ocr_concurrency": 0}, headers=AUTH).status_code
+        == 422
+    )
+    assert (
+        client.put("/api/v1/settings/ocr", json={"ocr_concurrency": 99}, headers=AUTH).status_code
+        == 422
+    )
+
+
+def test_saving_ai_settings_clears_cached_providers() -> None:
+    # Apply-on-save: PUT /ai drops the cached chat model + answerer so the next chat request
+    # rebuilds them with the new selection (no backend restart).
+    from doktok_contracts.ports import ChatModelProvider, RagAnswerer
+
+    registry = build_registry()
+    registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
+    registry.register(ChatModelProvider, object())
+    registry.register(RagAnswerer, object())
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+
+    client.put(
+        "/api/v1/settings/ai",
+        json={
+            "pipeline": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 16384,
+                "reasoning": "off",
+            },
+            "rag": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 32768,
+                "reasoning": "low",
+            },
+        },
+        headers=AUTH,
+    )
+    assert registry.is_registered(ChatModelProvider) is False
+    assert registry.is_registered(RagAnswerer) is False

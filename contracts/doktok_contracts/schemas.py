@@ -592,6 +592,16 @@ class AiSettings(BaseModel):
     rag: AiPurposeSettings = Field(default_factory=_default_rag)
 
 
+class OcrSettings(BaseModel):
+    """OCR processing settings (Settings tab > OCR, M7.6).
+
+    ``ocr_concurrency`` is the number of OCR pages processed in parallel and sizes the PaddleOCR
+    worker-process pool. The worker live-reloads it (no restart) between ingest scans.
+    """
+
+    ocr_concurrency: int = Field(default=4, ge=1, le=32)
+
+
 class AiSettingsResponse(AiSettings):
     """AI settings as returned to the UI - never the OpenAI key, only whether one is set."""
 

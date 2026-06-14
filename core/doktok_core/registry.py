@@ -36,6 +36,11 @@ class Registry:
     def is_registered(self, port: type) -> bool:
         return port in self._bindings
 
+    def unregister(self, port: type) -> None:
+        """Drop a binding so the next ``resolve`` rebuilds it (e.g. after a settings change). No-op
+        if the port was never bound."""
+        self._bindings.pop(port, None)
+
 
 def build_registry() -> Registry:
     """Composition root. M0: returns an empty registry (no adapters bound yet)."""

@@ -142,7 +142,7 @@ test("shows the refusal answer when not grounded", async () => {
   expect(screen.getByText(/isn't grounded in your documents/i)).toBeInTheDocument();
 });
 
-test("opts into reasoning and renders it in a collapsible panel", async () => {
+test("requests reasoning by default and renders it in a collapsible panel", async () => {
   let streamInit: RequestInit | undefined;
   vi.stubGlobal(
     "fetch",
@@ -159,7 +159,8 @@ test("opts into reasoning and renders it in a collapsible panel", async () => {
   );
 
   render(<ChatPanel />);
-  await userEvent.click(screen.getByLabelText(/show reasoning/i));
+  // "Show reasoning" is checked by default, so no click is needed to opt in.
+  expect(screen.getByLabelText(/show reasoning/i)).toBeChecked();
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 

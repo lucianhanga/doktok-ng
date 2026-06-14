@@ -13,6 +13,7 @@ import {
   type QueryFilters,
   type RagAnswer,
 } from "./api";
+import { Markdown } from "./Markdown";
 
 interface Exchange {
   question: string;
@@ -148,7 +149,7 @@ function ReasoningPanel({ text, streaming }: { text: string; streaming: boolean 
     <details className="chat-reasoning">
       <summary>Reasoning</summary>
       <div className="chat-reasoning-body">
-        {text}
+        <Markdown>{text}</Markdown>
         {streaming && <span className="chat-caret" aria-hidden="true" />}
       </div>
     </details>
@@ -174,12 +175,12 @@ function AnswerBlock({ turn }: { turn: TurnView }) {
           it with caution.
         </p>
       )}
-      <p className={turn.grounded || turn.streaming ? "answer" : "answer empty"}>
-        {turn.answer}
+      <div className={turn.grounded || turn.streaming ? "answer" : "answer empty"}>
+        <Markdown>{turn.answer}</Markdown>
         {turn.streaming && turn.answer.length > 0 && (
           <span className="chat-caret" aria-hidden="true" />
         )}
-      </p>
+      </div>
     </div>
   );
 }
@@ -276,7 +277,7 @@ export function ChatPanel({
   const [question, setQuestion] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
-  const [showReasoning, setShowReasoning] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(true);
   const [state, setState] = useState<State>({ kind: "idle" });
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);

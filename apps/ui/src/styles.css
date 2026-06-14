@@ -286,13 +286,74 @@ table.jobs td {
 }
 
 .chat-answer .answer {
-  white-space: pre-wrap;
   line-height: 1.5;
 }
 
 .chat-answer .answer.empty {
   opacity: 0.7;
   font-style: italic;
+}
+
+/* Markdown rendering for chat answers + reasoning (react-markdown output). Tightened block spacing
+   so a one-line answer does not get large default margins, while lists/tables/code stay readable. */
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p {
+  margin: 0 0 0.6rem;
+}
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.6rem;
+  padding-left: 1.4rem;
+}
+.markdown li {
+  margin: 0.15rem 0;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 0.8rem 0 0.4rem;
+  line-height: 1.3;
+}
+.markdown code {
+  background: rgba(127, 127, 127, 0.15);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.markdown pre {
+  background: rgba(127, 127, 127, 0.12);
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown pre code {
+  background: none;
+  padding: 0;
+}
+.markdown table {
+  border-collapse: collapse;
+  margin: 0 0 0.6rem;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  padding: 0.3rem 0.5rem;
+}
+.markdown blockquote {
+  margin: 0 0 0.6rem;
+  padding-left: 0.8rem;
+  border-left: 3px solid rgba(127, 127, 127, 0.3);
+  opacity: 0.9;
+}
+.markdown a {
+  color: inherit;
+  text-decoration: underline;
 }
 
 .citations {
@@ -1356,7 +1417,6 @@ tr.row-selected {
   padding: 0.4rem 0.6rem 0.6rem;
   font-size: 0.85rem;
   color: var(--muted, #8b97a8);
-  white-space: pre-wrap;
   border-top: 1px solid var(--border, #2a3342);
 }
 .chat-reasoning-toggle {

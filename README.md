@@ -148,6 +148,38 @@ make run-ui
 make check
 ```
 
+## Running locally / starting after a reboot
+
+DokTok NG runs as **manual foreground processes, each in its own terminal** - there is no daemon and
+no aggregate start command. After a machine reboot (or a fresh shell), start things in this order:
+
+```bash
+# 1. Start Docker Desktop (the db container does NOT auto-start with it).
+# 2. Start PostgreSQL 17 + pgvector
+make db
+# 3. Make sure Ollama is running (menu-bar app or `ollama serve`).
+
+# 4. Terminal A - FastAPI backend (http://localhost:8000)
+make run-backend
+# 5. Terminal B - ingestion worker (auto-resumes its backlog)
+make run-worker
+# 6. Terminal C - UI dev server (http://localhost:5173)
+make run-ui
+```
+
+Stop a foreground process with `Ctrl+C`; stop the database with `make db-down` (keeps the data).
+
+**What persists vs. what you restart.** Across a reboot, **state persists; processes do not.** The
+Postgres data (documents, embeddings, entities, chat threads, categories, audit log, and settings)
+lives in the named Docker volume `doktok-pgdata`, and your files live under `storage/files/`; both
+survive a reboot. What does **not** auto-start is Docker Desktop, the `doktok-db` container (no
+`restart:` policy), Ollama, and the backend/worker/UI - you restart those with the commands above.
+The **worker auto-resumes**: on startup it re-queues jobs a prior worker abandoned mid-pipeline and
+rescans each tenant's `ingest/` folder, so ingestion continues where it left off.
+
+Full detail - persistence model, worker auto-resume, prerequisites, and troubleshooting - is in
+[docs/operations/running.md](docs/operations/running.md).
+
 ## Authentication and multi-tenancy
 
 DokTok NG is multi-tenant and the API is token-protected (ADR-0007, ADR-0008). HTTP routes are

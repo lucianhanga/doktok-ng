@@ -12,16 +12,20 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from doktok_contracts.ports import RagAnswerer, Retriever
+from doktok_contracts.schemas import ChatTurn
 
 
 @dataclass
 class RagCase:
     id: str
     question: str
-    kind: str  # "factoid" | "aggregation" | "refusal" (informational, for per-kind reporting)
+    kind: str  # "factoid" | "aggregation" | "refusal" | "conversation" (per-kind reporting)
     expected_sources: list[str] = field(default_factory=list)  # filenames expected retrieved/cited
     expected_contains: list[str] = field(default_factory=list)  # substrings the answer must contain
     should_refuse: bool = False
+    # Prior conversation turns (multi-turn, M6.4). When set, the case is answered via
+    # ``answer_thread`` so the follow-up ``question`` is rewritten against this history.
+    history: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -51,13 +55,23 @@ def _sources(filenames: Sequence[str | None]) -> set[str]:
 def evaluate_case(
     case: RagCase, *, retriever: Retriever, answerer: RagAnswerer, tenant_id: str, k: int
 ) -> CaseResult:
-    hits = retriever.search(tenant_id, case.question, k)
+    # Multi-turn cases go through answer_thread so the follow-up is rewritten against the history;
+    # single-turn cases keep the plain answer path (unchanged behaviour).
+    if case.history:
+        turns = [ChatTurn(role=t["role"], content=t["content"]) for t in case.history]
+        answer = answerer.answer_thread(tenant_id, turns, case.question, k)
+    else:
+        answer = answerer.answer(tenant_id, case.question, k)
+
+    # Measure retrieval recall against the query the answerer actually used (the rewrite for a
+    # follow-up), so recall is meaningful for conversation cases - not the bare pronoun-y follow-up.
+    retrieval_query = answer.rewritten_query or case.question
+    hits = retriever.search(tenant_id, retrieval_query, k)
     retrieved_sources = _sources([h.original_filename or h.title for h in hits])
     retrieved = (
         bool(set(case.expected_sources) & retrieved_sources) if case.expected_sources else False
     )
 
-    answer = answerer.answer(tenant_id, case.question, k)
     text = answer.answer.lower()
     answer_correct = all(s.lower() in text for s in case.expected_contains)
     cited_sources = _sources([c.original_filename or c.title for c in answer.citations])

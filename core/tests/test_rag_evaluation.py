@@ -20,14 +20,26 @@ class FakeRetriever:
 
 
 class FakeAnswerer:
-    def __init__(self, by_question: dict[str, RagAnswer]) -> None:
+    def __init__(
+        self, by_question: dict[str, RagAnswer], *, rewrites: dict[str, str] | None = None
+    ) -> None:
         self._by_question = by_question
+        self._rewrites = rewrites or {}
+        self.threaded: list[
+            tuple[int, str]
+        ] = []  # (history length, question) seen via answer_thread
 
     def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer:  # noqa: ARG002
         return self._by_question.get(question, RagAnswer(answer="idk", grounded=False))
 
     def answer_thread(self, tenant_id, history, question, limit=8):  # type: ignore[no-untyped-def]
-        return self.answer(tenant_id, question, limit)
+        self.threaded.append((len(history), question))
+        # A follow-up resolves to a standalone query; answer that, reporting the rewrite.
+        standalone = self._rewrites.get(question, question)
+        answer = self.answer(tenant_id, standalone, limit)
+        return answer.model_copy(
+            update={"rewritten_query": standalone if standalone != question else None}
+        )
 
     def answer_thread_stream(self, tenant_id, history, question, limit=8, *, reasoning=False):  # type: ignore[no-untyped-def]
         yield from ()  # not exercised by the eval harness
@@ -79,6 +91,35 @@ def test_scores_pass_fail_and_aggregates() -> None:
     by_kind = summary["by_kind"]
     assert isinstance(by_kind, dict)
     assert by_kind["aggregation"] == {"total": 1, "passed": 0}
+
+
+def test_conversation_case_uses_answer_thread_and_rewrite_for_retrieval() -> None:
+    # The bare follow-up ("Who is it billed to?") retrieves nothing; the rewrite does. The eval must
+    # go through answer_thread and measure recall against the rewritten query.
+    retriever = FakeRetriever(
+        {"Who issued invoice INV-1?": ["invoice.txt"], "Who is it billed to?": []}
+    )
+    answerer = FakeAnswerer(
+        {"Who issued invoice INV-1?": _answer("Billed to Acme [1].", ["invoice.txt"])},
+        rewrites={"Who is it billed to?": "Who issued invoice INV-1?"},
+    )
+    case = RagCase(
+        "followup",
+        "Who is it billed to?",
+        "conversation",
+        expected_sources=["invoice.txt"],
+        expected_contains=["Acme"],
+        history=[
+            {"role": "user", "content": "What is the total on invoice INV-1?"},
+            {"role": "assistant", "content": "199 EUR [1]."},
+        ],
+    )
+    report = evaluate([case], retriever=retriever, answerer=answerer, tenant_id="t1")
+
+    assert answerer.threaded == [(2, "Who is it billed to?")]  # routed through answer_thread
+    result = report.results[0]
+    assert result.passed is True  # rewrite -> right source retrieved + cited + text matches
+    assert result.retrieved is True and result.citation_correct is True
 
 
 def test_missing_citation_fails_even_if_text_matches() -> None:

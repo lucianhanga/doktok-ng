@@ -58,26 +58,74 @@ def test_ocr_image_uses_injected_engine() -> None:
     assert result.confidence is not None and abs(result.confidence - 0.97) < 1e-6
 
 
-def test_engine_pool_grows_to_pool_size_then_reuses(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Up to pool_size independent predictors are built for concurrent pages, then reused - no
-    # global lock serializing all OCR. (Uses fake predictors so no paddle/numpy is needed.)
-    import itertools
+def test_run_ocr_assembles_from_engine() -> None:
+    import io
 
-    built = itertools.count()
-    monkeypatch.setattr(PaddleOcr, "_build_engine", lambda self: f"engine-{next(built)}")
+    image_mod = pytest.importorskip("PIL.Image")
+    pytest.importorskip("numpy")
+    from doktok_provider_paddleocr.ocr import _run_ocr
 
-    ocr = PaddleOcr(pool_size=2)
-    e1 = ocr._acquire()
-    e2 = ocr._acquire()  # first is still in flight -> a second predictor is built
-    assert {e1, e2} == {"engine-0", "engine-1"}
+    class FakeEngine:
+        def predict(self, image: object) -> list[dict[str, object]]:
+            return [{"rec_texts": ["hi"], "rec_scores": [0.8], "rec_boxes": [[0, 0, 5, 5]]}]
 
-    ocr._pool.put(e1)  # page finished
-    assert ocr._acquire() == e1  # idle predictor reused
-    assert ocr._created == 2  # never exceeds pool_size
+    buffer = io.BytesIO()
+    image_mod.new("RGB", (4, 4), "white").save(buffer, format="PNG")
+    text, confidence = _run_ocr(FakeEngine(), buffer.getvalue())
+    assert text == "hi" and confidence is not None and abs(confidence - 0.8) < 1e-6
 
 
-def test_injected_engine_is_the_only_predictor() -> None:
-    ocr = PaddleOcr(engine="fake-engine")
-    assert ocr._acquire() == "fake-engine"
-    ocr._pool.put("fake-engine")
-    assert ocr._acquire() == "fake-engine"  # pinned to the one injected predictor
+def test_no_engine_dispatches_to_worker_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without an injected engine, ocr_image submits to the process pool. Here we stub the executor
+    # with an inline one and a fake worker engine, so no real subprocess/paddle is needed.
+    import doktok_provider_paddleocr.ocr as ocr_mod
+
+    class _Future:
+        def __init__(self, value: object) -> None:
+            self._value = value
+
+        def result(self) -> object:
+            return self._value
+
+    class _InlineExecutor:
+        def submit(self, fn: object, *args: object) -> _Future:
+            return _Future(fn(*args))  # type: ignore[operator]
+
+    class FakeEngine:
+        def predict(self, image: object) -> list[dict[str, object]]:
+            return [{"rec_texts": ["X"], "rec_scores": [0.9], "rec_boxes": [[0, 0, 5, 5]]}]
+
+    pytest.importorskip("PIL.Image")
+    pytest.importorskip("numpy")
+    import io
+
+    monkeypatch.setattr(ocr_mod, "_WORKER_ENGINE", FakeEngine())
+    monkeypatch.setattr(PaddleOcr, "_executor", lambda self: _InlineExecutor())
+
+    buffer = io.BytesIO()
+    __import__("PIL.Image")
+    from PIL import Image
+
+    Image.new("RGB", (4, 4), "white").save(buffer, format="PNG")
+    result = PaddleOcr(pool_size=4).ocr_image(buffer.getvalue())
+    assert result.text == "X" and result.confidence is not None
+
+
+def test_executor_built_lazily_with_pool_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    import doktok_provider_paddleocr.ocr as ocr_mod
+
+    captured: dict[str, object] = {}
+
+    class _FakePool:
+        def __init__(
+            self, *, max_workers: int, initializer: object, initargs: tuple[object, ...]
+        ) -> None:
+            captured["max_workers"] = max_workers
+            captured["initargs"] = initargs
+
+    monkeypatch.setattr(ocr_mod, "ProcessPoolExecutor", _FakePool)
+    ocr = PaddleOcr(pool_size=6)
+    first = ocr._executor()
+    assert ocr._executor() is first  # built once, then reused
+    assert captured["max_workers"] == 6
+    assert captured["initargs"] == ("german", "PP-OCRv5_mobile_det", "latin_PP-OCRv5_mobile_rec")

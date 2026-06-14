@@ -6,26 +6,76 @@ The output is kept shape-compatible with the previous OCR adapter: a single ``Oc
 the page text (lines joined in reading order) and a confidence (PaddleOCR's mean per-line score), so
 nothing downstream in the pipeline changes.
 
-The heavy ``paddleocr``/``paddlepaddle`` runtime is imported lazily. A single predictor is not
-thread-safe, so instead of serializing all OCR behind one lock we keep a small pool of independent
-predictors (``pool_size``) and run them concurrently - one per page in flight.
+PARALLELISM (M7.5): PaddleOCR CPU inference is single-threaded per ``predict`` AND holds the Python
+GIL, so a thread pool of predictors collapses to ~1 core. To actually use the machine we run a pool
+of ``pool_size`` worker PROCESSES (``ProcessPoolExecutor``), each owning one predictor built once in
+an initializer; ``ocr_image`` dispatches a page to the pool and blocks for the result. Heavy work
+runs in child interpreters (own GIL), so up to ``pool_size`` pages OCR truly in parallel. The
+``paddleocr``/``paddlepaddle`` runtime is imported lazily, only inside the worker processes.
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import queue
 import threading
+from concurrent.futures import ProcessPoolExecutor
 from typing import Any
 
 from doktok_contracts.media import OcrPageResult
 
 logger = logging.getLogger("doktok.ocr.paddle")
 
+# Per-worker-process predictor, built once by the pool initializer (spawn -> fresh interpreter).
+_WORKER_ENGINE: Any = None
+
+
+def _worker_init(lang: str, det_model: str, rec_model: str) -> None:
+    global _WORKER_ENGINE
+    from paddleocr import PaddleOCR
+
+    logger.info("PaddleOCR worker loading models (lang=%s)", lang)
+    # Skip the doc-orientation + unwarping models: rendered PDF pages are upright and flat, and
+    # those models roughly triple per-page latency.
+    _WORKER_ENGINE = PaddleOCR(
+        lang=lang,
+        text_detection_model_name=det_model,
+        text_recognition_model_name=rec_model,
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
+
+
+def _worker_ocr(image_png: bytes) -> tuple[str, float | None]:
+    return _run_ocr(_WORKER_ENGINE, image_png)
+
+
+def _run_ocr(engine: Any, image_png: bytes) -> tuple[str, float | None]:
+    """Decode the PNG, run the predictor, and assemble the page text + mean confidence.
+
+    Pure given an ``engine`` (so it runs identically in-process for tests and in a worker process).
+    """
+    import numpy as np
+    from PIL import Image
+
+    rgb = np.array(Image.open(io.BytesIO(image_png)).convert("RGB"))
+    bgr = rgb[:, :, ::-1]  # PaddleOCR expects OpenCV (BGR) order
+    results = engine.predict(bgr)
+
+    texts: list[str] = []
+    scores: list[float] = []
+    for item in results or []:
+        page_text, page_scores = assemble_text(item)
+        if page_text:
+            texts.append(page_text)
+        scores.extend(page_scores)
+    confidence = sum(scores) / len(scores) if scores else None
+    return "\n".join(texts), confidence
+
 
 class PaddleOcr:
-    """``OcrExtractor`` backed by PaddleOCR."""
+    """``OcrExtractor`` backed by PaddleOCR, parallelised across worker processes."""
 
     def __init__(
         self,
@@ -41,67 +91,32 @@ class PaddleOcr:
         self._lang = lang
         self._det_model = det_model
         self._rec_model = rec_model
-        # A pool of independent PaddleOCR predictors so up to ``pool_size`` pages OCR concurrently.
-        # A single predictor is not thread-safe (hence the previous global lock), but separate
-        # predictors are - so we keep one per concurrent slot instead of serializing all OCR.
-        self._pool: queue.Queue[Any] = queue.Queue()
-        self._created = 0
-        self._build_lock = threading.Lock()  # serialize the (heavy) model load, not inference
-        if engine is not None:
-            self._pool.put(engine)  # injected predictor (tests): the pool holds exactly this one
-            self._created = 1
-            self._pool_size = 1
-        else:
-            self._pool_size = max(1, pool_size)
+        # An injected predictor (tests) runs IN-PROCESS - no subprocess pool is started.
+        self._engine = engine
+        self._pool_size = max(1, pool_size)
+        self._pool: ProcessPoolExecutor | None = None
+        self._lock = threading.Lock()  # guards lazy pool creation
 
-    def _build_engine(self) -> Any:
-        from paddleocr import PaddleOCR
-
-        logger.info("loading PaddleOCR (lang=%s); first run downloads the models", self._lang)
-        # Skip the heavy document-orientation + unwarping preprocessing models: rendered PDF pages
-        # are already upright and flat, and those models roughly triple per-page latency.
-        return PaddleOCR(
-            lang=self._lang,
-            text_detection_model_name=self._det_model,
-            text_recognition_model_name=self._rec_model,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-        )
-
-    def _acquire(self) -> Any:
-        try:
-            return self._pool.get_nowait()  # an idle predictor is available
-        except queue.Empty:
-            pass
-        with self._build_lock:
-            if self._created < self._pool_size:
-                engine = self._build_engine()
-                self._created += 1
-                return engine
-        return self._pool.get()  # at capacity and all busy: wait for one to free
+    def _executor(self) -> ProcessPoolExecutor:
+        if self._pool is None:
+            with self._lock:
+                if self._pool is None:
+                    logger.info("starting PaddleOCR process pool (workers=%d)", self._pool_size)
+                    self._pool = ProcessPoolExecutor(
+                        max_workers=self._pool_size,
+                        initializer=_worker_init,
+                        initargs=(self._lang, self._det_model, self._rec_model),
+                    )
+        return self._pool
 
     def ocr_image(self, image_png: bytes) -> OcrPageResult:
-        import numpy as np
-        from PIL import Image
-
-        rgb = np.array(Image.open(io.BytesIO(image_png)).convert("RGB"))
-        bgr = rgb[:, :, ::-1]  # PaddleOCR expects OpenCV (BGR) order
-        engine = self._acquire()
-        try:
-            results = engine.predict(bgr)
-        finally:
-            self._pool.put(engine)  # return the predictor for the next page
-
-        texts: list[str] = []
-        scores: list[float] = []
-        for item in results or []:
-            page_text, page_scores = assemble_text(item)
-            if page_text:
-                texts.append(page_text)
-            scores.extend(page_scores)
-        confidence = sum(scores) / len(scores) if scores else None
-        return OcrPageResult(text="\n".join(texts), confidence=confidence)
+        if self._engine is not None:
+            text, confidence = _run_ocr(self._engine, image_png)  # in-process (tests)
+        else:
+            # Dispatch to a worker process; many caller threads submitting here drive real
+            # cross-page parallelism across ``pool_size`` cores.
+            text, confidence = self._executor().submit(_worker_ocr, image_png).result()
+        return OcrPageResult(text=text, confidence=confidence)
 
 
 def _as_list(value: Any) -> list[Any]:

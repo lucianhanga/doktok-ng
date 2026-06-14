@@ -347,6 +347,28 @@ export async function putAiSettings(
   return (await response.json()) as AiSettings;
 }
 
+// ---- OCR settings (M7.6): parallel OCR processes; worker live-reloads it ----
+
+export interface OcrSettings {
+  ocr_concurrency: number;
+}
+
+export function fetchOcrSettings(signal?: AbortSignal): Promise<OcrSettings> {
+  return getJson<OcrSettings>("/api/v1/settings/ocr", signal);
+}
+
+export async function putOcrSettings(body: OcrSettings): Promise<OcrSettings> {
+  const response = await fetch("/api/v1/settings/ocr", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as OcrSettings;
+}
+
 export interface FeatureCatalogEntry {
   name: string;
   version: number;

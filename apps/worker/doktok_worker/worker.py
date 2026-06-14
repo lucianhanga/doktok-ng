@@ -45,6 +45,8 @@ class IngestionWorker:
         recover_interval: float = 60.0,
         projection_runner: ProjectionRunner | None = None,
         projection_interval: float = 5.0,
+        ocr_reload: Callable[[], None] | None = None,
+        ocr_reload_interval: float = 15.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         # One IngestionServices per tenant (each carries that tenant's layout + tenant_id).
@@ -58,6 +60,9 @@ class IngestionWorker:
         self._recover_interval = recover_interval
         self._projection_runner = projection_runner
         self._projection_interval = projection_interval
+        # Live OCR-pool resize from Settings (M7.6): invoked between ingest scans.
+        self._ocr_reload = ocr_reload
+        self._ocr_reload_interval = ocr_reload_interval
         self._clock = clock
 
     def run_projections(self) -> int:
@@ -187,6 +192,7 @@ class IngestionWorker:
         # Recover anything a prior worker abandoned mid-pipeline before processing the live queue.
         self._safe_recover()
         last_recover = self._clock()
+        last_ocr_reload = 0.0
         while not stop.is_set():
             try:
                 self.run_once()
@@ -195,6 +201,11 @@ class IngestionWorker:
             if self._clock() - last_recover >= self._recover_interval:
                 self._safe_recover()
                 last_recover = self._clock()
+            # Apply a Settings change to OCR parallelism here: run_once has returned, so no page is
+            # being OCR'd and the pool can be safely resized. Throttled to keep the DB read cheap.
+            if self._clock() - last_ocr_reload >= self._ocr_reload_interval:
+                self._safe_ocr_reload()
+                last_ocr_reload = self._clock()
             stop.wait(self._poll_interval)
 
     def _safe_recover(self) -> None:  # pragma: no cover - long-running loop helper
@@ -202,6 +213,14 @@ class IngestionWorker:
             self.recover_stale()
         except Exception:  # noqa: BLE001 - recovery must never take down the ingestion stream
             logger.exception("stale-job recovery failed")
+
+    def _safe_ocr_reload(self) -> None:  # pragma: no cover - long-running loop helper
+        if self._ocr_reload is None:
+            return
+        try:
+            self._ocr_reload()
+        except Exception:  # noqa: BLE001 - an OCR-resize failure must not stop ingestion
+            logger.exception("OCR pool reload failed")
 
     def _recover_features(self) -> None:  # pragma: no cover - long-running loop helper
         if self._reconciler is None:

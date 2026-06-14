@@ -30,10 +30,15 @@ function mockApi() {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
+      const method = init?.method ?? "GET";
       if (url.endsWith("/catalog")) return new Response(JSON.stringify(CATALOG), { status: 200 });
-      if (url.endsWith("/settings/ai") && (init?.method ?? "GET") === "GET")
+      if (url.endsWith("/settings/ai") && method === "GET")
         return new Response(JSON.stringify(AI), { status: 200 });
-      // PUT echoes back the body with the key masked.
+      if (url.endsWith("/settings/ocr") && method === "GET")
+        return new Response(JSON.stringify({ ocr_concurrency: 4 }), { status: 200 });
+      if (url.endsWith("/settings/ocr") && method === "PUT")
+        return new Response(init?.body as string, { status: 200 }); // echo
+      // PUT /settings/ai echoes back the body with the key masked.
       const sent = init?.body ? JSON.parse(init.body as string) : {};
       return new Response(
         JSON.stringify({ pipeline: sent.pipeline, rag: sent.rag, openai_api_key_set: false }),
@@ -63,8 +68,25 @@ test("changing a model and saving PUTs the new selection", async () => {
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-  await waitFor(() => expect(screen.getByText(/Restart the backend and worker/i)).toBeInTheDocument());
-  const put = calls.find((c) => c.method === "PUT");
+  await waitFor(() => expect(screen.getByText(/Chat\/RAG model applied now/i)).toBeInTheDocument());
+  const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
   expect(put).toBeTruthy();
   expect(JSON.parse(put!.body!).pipeline.model).toBe("qwen3.6:35b-a3b");
+});
+
+test("changing parallel OCR processes saves the OCR setting", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Parallel OCR processes")).toBeInTheDocument(),
+  );
+
+  fireEvent.change(screen.getByLabelText("Parallel OCR processes"), { target: { value: "6" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() => {
+    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ocr"));
+    expect(put).toBeTruthy();
+    expect(JSON.parse(put!.body!).ocr_concurrency).toBe(6);
+  });
 });

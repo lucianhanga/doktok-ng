@@ -33,6 +33,7 @@ from doktok_contracts.schemas import (
     IngestionJob,
     JobStatus,
     ListAnchor,
+    OcrSettings,
     ProjectionPoint,
     ProjectionRequest,
     SortDir,
@@ -1492,6 +1493,13 @@ class PostgresAppSettingsRepository:
 
     def set_openai_api_key(self, key: str) -> None:
         self._set("openai_api_key", key)
+
+    def get_ocr_settings(self) -> OcrSettings:
+        raw = self._get("ocr_settings")
+        return OcrSettings.model_validate(raw) if raw else OcrSettings()
+
+    def set_ocr_settings(self, settings: OcrSettings) -> None:
+        self._set("ocr_settings", settings.model_dump())
 
 
 _PROJECTION_HEADER_COLS = "algorithm, version, input_fingerprint, n_points, truncated, computed_at"

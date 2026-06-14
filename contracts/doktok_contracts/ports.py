@@ -49,6 +49,7 @@ from doktok_contracts.schemas import (
     ExtractedRecord,
     IngestionJob,
     ListAnchor,
+    OcrSettings,
     ProjectionRequest,
     QueryFilters,
     RagAnswer,
@@ -203,6 +204,8 @@ class AppSettingsRepository(Protocol):
     def set_ai_settings(self, settings: AiSettings) -> None: ...
     def get_openai_api_key(self) -> str: ...
     def set_openai_api_key(self, key: str) -> None: ...
+    def get_ocr_settings(self) -> OcrSettings: ...
+    def set_ocr_settings(self, settings: OcrSettings) -> None: ...
 
 
 @runtime_checkable

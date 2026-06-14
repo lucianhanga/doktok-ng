@@ -111,6 +111,34 @@ def test_no_engine_dispatches_to_worker_pool(monkeypatch: pytest.MonkeyPatch) ->
     assert result.text == "X" and result.confidence is not None
 
 
+def test_reconfigure_resizes_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    import doktok_provider_paddleocr.ocr as ocr_mod
+
+    shutdowns: list[bool] = []
+
+    class _FakePool:
+        def __init__(self, **kwargs: object) -> None: ...
+
+        def shutdown(self, wait: bool) -> None:
+            shutdowns.append(wait)
+
+    monkeypatch.setattr(ocr_mod, "ProcessPoolExecutor", _FakePool)
+    ocr = PaddleOcr(pool_size=4)
+    ocr._executor()  # build the pool at size 4
+    ocr.reconfigure(8)  # resize -> the old pool is shut down, next use rebuilds at 8
+
+    assert shutdowns == [True]
+    assert ocr._pool is None and ocr._pool_size == 8
+    ocr.reconfigure(8)  # same size -> no-op
+    assert shutdowns == [True]
+
+
+def test_reconfigure_with_injected_engine_is_noop() -> None:
+    ocr = PaddleOcr(engine="fake-engine")
+    ocr.reconfigure(8)
+    assert ocr._pool_size == 8  # size recorded, but there is no pool to tear down
+
+
 def test_executor_built_lazily_with_pool_size(monkeypatch: pytest.MonkeyPatch) -> None:
     import doktok_provider_paddleocr.ocr as ocr_mod
 

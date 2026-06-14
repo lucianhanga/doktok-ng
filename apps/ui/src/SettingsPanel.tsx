@@ -3,11 +3,14 @@ import { useEffect, useState } from "react";
 import {
   fetchAiSettings,
   fetchModelCatalog,
+  fetchOcrSettings,
   putAiSettings,
+  putOcrSettings,
   type AiPurposeSettings,
   type AiSettings,
   type ModelCatalog,
   type ModelOption,
+  type OcrSettings,
 } from "./api";
 
 function ctxLabel(n: number): string {
@@ -97,6 +100,7 @@ function PurposeEditor({
 export function SettingsPanel() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
+  const [ocr, setOcr] = useState<OcrSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
@@ -104,10 +108,15 @@ export function SettingsPanel() {
 
   useEffect(() => {
     const c = new AbortController();
-    Promise.all([fetchModelCatalog(c.signal), fetchAiSettings(c.signal)])
-      .then(([cat, s]) => {
+    Promise.all([
+      fetchModelCatalog(c.signal),
+      fetchAiSettings(c.signal),
+      fetchOcrSettings(c.signal),
+    ])
+      .then(([cat, s, o]) => {
         setCatalog(cat);
         setAi(s);
+        setOcr(o);
       })
       .catch((err: unknown) => {
         if (c.signal.aborted) return;
@@ -117,15 +126,21 @@ export function SettingsPanel() {
   }, []);
 
   function save() {
-    if (!ai) return;
+    if (!ai || !ocr) return;
     setSaving(true);
     setNotice("");
-    // Send the key only if the user typed one (empty leaves the stored key unchanged).
-    putAiSettings({ pipeline: ai.pipeline, rag: ai.rag, openai_api_key: openaiKey || null })
-      .then((saved) => {
-        setAi(saved);
+    setError(null);
+    // Persist AI + OCR together. The AI model applies immediately for chat/RAG; OCR parallelism is
+    // live-reloaded by the worker within ~15s. Send the OpenAI key only if the user typed one.
+    Promise.all([
+      putAiSettings({ pipeline: ai.pipeline, rag: ai.rag, openai_api_key: openaiKey || null }),
+      putOcrSettings(ocr),
+    ])
+      .then(([savedAi, savedOcr]) => {
+        setAi(savedAi);
+        setOcr(savedOcr);
         setOpenaiKey("");
-        setNotice("Saved. Restart the backend and worker to apply the new models.");
+        setNotice("Saved. Chat/RAG model applied now; OCR parallelism applies within ~15s.");
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not save"))
       .finally(() => setSaving(false));
@@ -139,14 +154,14 @@ export function SettingsPanel() {
           {error}
         </p>
       )}
-      {!catalog || !ai ? (
+      {!catalog || !ai || !ocr ? (
         <p role="status">Loading settings…</p>
       ) : (
         <div className="settings-section">
           <h3>AI models</h3>
           <p className="muted">
-            Choose the local (or remote) model used for each AI purpose. Changes are saved
-            immediately but take effect after the backend and worker are restarted.
+            Choose the local (or remote) model used for each AI purpose. The chat/RAG model applies
+            immediately on Save; the pipeline model applies on the next worker reconcile.
           </p>
           <PurposeEditor
             title="Data pipeline"
@@ -181,6 +196,31 @@ export function SettingsPanel() {
                   value={openaiKey}
                   onChange={(e) => setOpenaiKey(e.target.value)}
                   placeholder={ai.openai_api_key_set ? "configured - type to replace" : "Enter key"}
+                />
+              </label>
+            </div>
+          </div>
+
+          <h3>OCR</h3>
+          <p className="muted">
+            How many document pages are OCR'd in parallel (the size of the PaddleOCR worker-process
+            pool). Higher uses more CPU cores; the worker applies a change live, within ~15 seconds.
+          </p>
+          <div className="settings-purpose">
+            <div className="settings-row">
+              <label>
+                Parallel OCR processes{" "}
+                <input
+                  type="number"
+                  aria-label="Parallel OCR processes"
+                  min={1}
+                  max={32}
+                  value={ocr.ocr_concurrency}
+                  onChange={(e) =>
+                    setOcr({
+                      ocr_concurrency: Math.max(1, Math.min(32, Number(e.target.value) || 1)),
+                    })
+                  }
                 />
               </label>
             </div>

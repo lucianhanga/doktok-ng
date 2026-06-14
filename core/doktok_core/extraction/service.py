@@ -77,6 +77,7 @@ def extract_document(
     chat_model: ChatModelProvider | None = None,
     max_pages: int = 0,
     ocr_concurrency: int = 1,
+    ocr_dpi: int = 200,
 ) -> tuple[ExtractionResult, bytes | None]:
     if mime in (MIME_TEXT, MIME_MARKDOWN):
         text = text_extractor.extract(path)
@@ -96,6 +97,7 @@ def extract_document(
             chat_model,
             max_pages,
             ocr_concurrency,
+            ocr_dpi,
         )
 
     if mime.startswith("image/"):
@@ -122,6 +124,7 @@ def _extract_pdf(
     chat_model: ChatModelProvider | None,
     max_pages: int = 0,
     ocr_concurrency: int = 1,
+    ocr_dpi: int = 200,
 ) -> tuple[ExtractionResult, bytes | None]:
     pages = pdf_extractor.extract_pages(path)
     # Resource guard: reject oversized PDFs before the expensive per-page render/OCR loop.
@@ -154,7 +157,7 @@ def _extract_pdf(
     to_ocr = [i for i, embedded in enumerate(pages) if _needs_ocr(i, embedded)]
 
     if to_ocr:
-        images = renderer.render_pages(path)
+        images = renderer.render_pages(path, dpi=ocr_dpi)
 
         # Pass 2: OCR the pages that need it - in parallel across the predictor pool (PaddleOCR is
         # CPU-bound and thread-safe per predictor), so a multi-page scan uses many cores at once.

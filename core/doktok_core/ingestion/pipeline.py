@@ -121,6 +121,8 @@ class IngestionServices:
     max_pages: int = 0
     # How many pages OCR concurrently within one PDF (PaddleOCR is CPU-bound; >1 uses more cores).
     ocr_concurrency: int = 1
+    # DPI the PDF pages are rasterized at for OCR + the searchable-PDF image layer.
+    ocr_dpi: int = 200
     # LLM judge that decides embedded-vs-OCR text for ambiguous pages (M5.x).
     chat_model: ChatModelProvider | None = None
     # Activity/audit trail (M3.6). When absent, no audit events are recorded.
@@ -441,6 +443,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             chat_model=services.chat_model,
             max_pages=services.max_pages,
             ocr_concurrency=services.ocr_concurrency,
+            ocr_dpi=services.ocr_dpi,
         )
     except NeedsOcrError as exc:
         return _fail(services, job, code="needs_ocr", message=str(exc))

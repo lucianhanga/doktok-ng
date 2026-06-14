@@ -264,7 +264,15 @@ function ThreadList({
   );
 }
 
-export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
+export function ChatPanel({
+  onOpenDocument,
+  active = true,
+  onBackgroundDone,
+}: {
+  onOpenDocument?: (id: string) => void;
+  active?: boolean; // false when the Chat tab is not the visible one
+  onBackgroundDone?: () => void; // called when a streamed answer finishes while inactive (off-tab)
+}) {
   const [question, setQuestion] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
@@ -277,6 +285,11 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
   const abortRef = useRef<AbortController | null>(null);
   // Latest thread id for the streaming callbacks (state is captured stale in the closure).
   const threadRef = useRef<string | null>(null);
+  // Latest `active` for the async completion handler (props are captured stale in the closure).
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   function refreshThreads() {
     listChatThreads()
@@ -349,6 +362,7 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
         finalize(grounded);
         setState((prev) => (prev.kind === "error" ? prev : { kind: "ready" }));
         refreshThreads(); // surface the new/updated thread (title seeded from the first message)
+        if (!activeRef.current) onBackgroundDone?.(); // finished while on another tab -> unread
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) {

@@ -66,6 +66,16 @@ body {
   cursor: pointer;
   font: inherit;
 }
+/* Unread dot on the Chat tab when a backgrounded answer finished off-tab (M6.4). */
+.tabs button .tab-unread {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent, #6ea8fe);
+  vertical-align: middle;
+}
 
 .tabs button.active {
   background: rgba(127, 127, 127, 0.18);

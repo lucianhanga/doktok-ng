@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   deleteDocument,
@@ -512,7 +512,47 @@ export function DocumentsPanel({
     // Resetting the feature re-queues it; the worker's reconciler re-derives it from stored content.
     void runBulk((id) => retryDocumentFeature(id, feature), `Reprocess ${spec.label}`);
     setReprocessFeature("");
+    reprocessAutoPicked.current = false;
   }
+
+  // How many of the selected documents have each feature in a failed (red badge) state. Drives the
+  // reprocess dropdown: failing features sort to the top, get a count, and the single common case
+  // (one red badge across the selection) is pre-picked so reprocessing is one click.
+  const featuresNeedingAttention = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (state.kind !== "ok") return counts;
+    for (const id of selected) {
+      for (const f of state.features.get(id) ?? []) {
+        if (f.status === "failed") counts.set(f.feature, (counts.get(f.feature) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [selected, state]);
+
+  const reprocessOptions = useMemo(
+    () =>
+      [...catalog].sort(
+        (a, b) =>
+          (featuresNeedingAttention.has(a.name) ? 0 : 1) -
+          (featuresNeedingAttention.has(b.name) ? 0 : 1),
+      ),
+    [catalog, featuresNeedingAttention],
+  );
+
+  // Pre-select the failing feature when exactly one needs attention. Tracked so we only auto-fill
+  // (or clear our own pick) and never override a manual choice.
+  const reprocessAutoPicked = useRef(false);
+  useEffect(() => {
+    const failing = [...featuresNeedingAttention.keys()];
+    if (failing.length === 1 && (reprocessFeature === "" || reprocessAutoPicked.current)) {
+      setReprocessFeature(failing[0]);
+      reprocessAutoPicked.current = true;
+    } else if (failing.length !== 1 && reprocessAutoPicked.current) {
+      setReprocessFeature("");
+      reprocessAutoPicked.current = false;
+    }
+    // Reacts to the selection's failing features, not to our own setReprocessFeature.
+  }, [featuresNeedingAttention]);
 
   return (
     <section aria-label="Documents" className="panel">
@@ -627,16 +667,24 @@ export function DocumentsPanel({
             <span className="bulk-reprocess">
               <select
                 aria-label="Feature to reprocess"
+                className={featuresNeedingAttention.size > 0 ? "has-attention" : undefined}
                 value={reprocessFeature}
                 disabled={busy}
-                onChange={(e) => setReprocessFeature(e.target.value)}
+                onChange={(e) => {
+                  reprocessAutoPicked.current = false;
+                  setReprocessFeature(e.target.value);
+                }}
               >
                 <option value="">Reprocess feature...</option>
-                {catalog.map((c) => (
-                  <option key={c.name} value={c.name} title={c.description}>
-                    {c.label}
-                  </option>
-                ))}
+                {reprocessOptions.map((c) => {
+                  const failing = featuresNeedingAttention.get(c.name);
+                  return (
+                    <option key={c.name} value={c.name} title={c.description}>
+                      {c.label}
+                      {failing ? ` - needs attention (${failing})` : ""}
+                    </option>
+                  );
+                })}
               </select>
               <button
                 type="button"
@@ -645,6 +693,12 @@ export function DocumentsPanel({
               >
                 Reprocess
               </button>
+              {featuresNeedingAttention.size > 0 && (
+                <span className="muted bulk-attention-hint">
+                  {featuresNeedingAttention.size} feature
+                  {featuresNeedingAttention.size === 1 ? "" : "s"} need attention in the selection
+                </span>
+              )}
             </span>
           )}
           <button type="button" disabled={busy} onClick={() => setSelected(new Set())}>

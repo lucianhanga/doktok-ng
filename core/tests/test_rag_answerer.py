@@ -229,6 +229,30 @@ def test_answer_thread_rewrite_failure_falls_back_to_question() -> None:
     assert answer.grounded is True
 
 
+def test_time_question_answers_directly_without_retrieval() -> None:
+    # A current-time question is a deterministic capability: answered in code, no retrieval, no
+    # model call - and crucially not refused for "no document evidence" (M6.5).
+    retriever = FakeRetriever([_hit(1)])
+    chat = FakeChat("should not be called")
+    answer = DefaultRagAnswerer(retriever, chat).answer_thread("t1", [], "what time is it?", 5)
+
+    assert answer.grounded is True and "It is" in answer.answer
+    assert retriever.seen is None  # retrieval skipped
+    assert chat.prompt is None  # no model call at all (not even understanding)
+
+
+def test_time_question_streams_directly() -> None:
+    retriever = FakeRetriever([_hit(1)])
+    events = list(
+        DefaultRagAnswerer(retriever, FakeChat("nope")).answer_thread_stream(
+            "t1", [], "what time is it", 5
+        )
+    )
+    assert [e.type for e in events] == ["meta", "token", "sources", "done"]
+    assert "It is" in events[1].delta and events[-1].grounded is True
+    assert retriever.seen is None
+
+
 def test_citations_carry_normalized_relevance() -> None:
     # No reranker: relevance follows retrieval order, normalized so the top hit = 1.0 (M6.4).
     # Keyed by chunk_id (it reflects the relevance order, surviving the edges-best repack).

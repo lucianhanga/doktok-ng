@@ -28,10 +28,32 @@ function sseResponse(frames: string[]): Response {
   });
 }
 
+/** Route the chat-thread endpoints to JSON (so persistence works), delegating /chat/stream to
+ * `streamFor`. ChatPanel creates a thread on the first turn, then streams with its id. */
+function stubChat(streamFor: (init?: RequestInit) => Response) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.endsWith("/api/v1/chat/threads") && init?.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          id: "thr-1",
+          title: "",
+          created_at: "2026-06-14T00:00:00Z",
+          updated_at: "2026-06-14T00:00:00Z",
+          message_count: 0,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/api/v1/chat/threads")) return new Response("[]", { status: 200 });
+    return streamFor(init);
+  });
+}
+
 test("streams a grounded answer with sources", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
+    stubChat(() =>
       sseResponse([
         frame("meta", { rewritten_query: null }),
         frame("token", { delta: "The total is 42 [1]." }),
@@ -56,7 +78,7 @@ test("streams a grounded answer with sources", async () => {
 test("shows inferred retrieval filters from the meta event", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
+    stubChat(() =>
       sseResponse([
         frame("meta", {
           rewritten_query: "late fees",
@@ -80,7 +102,7 @@ test("shows inferred retrieval filters from the meta event", async () => {
 test("concatenates multiple token chunks into one answer", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
+    stubChat(() =>
       sseResponse([
         frame("meta", { rewritten_query: null }),
         frame("token", { delta: "Hello " }),
@@ -102,7 +124,7 @@ test("shows the refusal answer when not grounded", async () => {
   const refusal = "I could not find enough evidence in the indexed documents to answer that.";
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
+    stubChat(() =>
       sseResponse([
         frame("meta", { rewritten_query: null }),
         frame("token", { delta: refusal }),
@@ -121,16 +143,20 @@ test("shows the refusal answer when not grounded", async () => {
 });
 
 test("opts into reasoning and renders it in a collapsible panel", async () => {
-  const fetchMock = vi.fn<(url: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
-    sseResponse([
-      frame("meta", { rewritten_query: null }),
-      frame("reasoning", { delta: "Let me check the invoice totals." }),
-      frame("token", { delta: "It is 42 [1]." }),
-      frame("sources", { citations: [] }),
-      frame("done", { grounded: true }),
-    ]),
+  let streamInit: RequestInit | undefined;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      streamInit = init;
+      return sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("reasoning", { delta: "Let me check the invoice totals." }),
+        frame("token", { delta: "It is 42 [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
   );
-  vi.stubGlobal("fetch", fetchMock);
 
   render(<ChatPanel />);
   await userEvent.click(screen.getByLabelText(/show reasoning/i));
@@ -141,30 +167,33 @@ test("opts into reasoning and renders it in a collapsible panel", async () => {
   // The reasoning lives behind a disclosure summary.
   expect(screen.getByText("Reasoning")).toBeInTheDocument();
   expect(screen.getByText(/Let me check the invoice totals\./)).toBeInTheDocument();
-  // The request asked the model to think.
-  const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-  expect(body.reasoning).toBe(true);
+  // The stream request asked the model to think.
+  expect(JSON.parse(String(streamInit?.body)).reasoning).toBe(true);
 });
 
-test("keeps a transcript and sends prior turns as history on a follow-up", async () => {
-  const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.history.length === 0) {
-      return sseResponse([
-        frame("meta", { rewritten_query: null }),
-        frame("token", { delta: "It is 42 [1]." }),
-        frame("sources", { citations: [] }),
-        frame("done", { grounded: true }),
-      ]);
-    }
-    return sseResponse([
-      frame("meta", { rewritten_query: "spend in March 2026" }),
-      frame("token", { delta: "In March it was 10 [1]." }),
-      frame("sources", { citations: [] }),
-      frame("done", { grounded: true }),
-    ]);
-  });
-  vi.stubGlobal("fetch", fetchMock);
+test("keeps a transcript and threads follow-ups via thread_id", async () => {
+  let turn = 0;
+  let lastStreamInit: RequestInit | undefined;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      lastStreamInit = init;
+      turn += 1;
+      return turn === 1
+        ? sseResponse([
+            frame("meta", { rewritten_query: null }),
+            frame("token", { delta: "It is 42 [1]." }),
+            frame("sources", { citations: [] }),
+            frame("done", { grounded: true }),
+          ])
+        : sseResponse([
+            frame("meta", { rewritten_query: "spend in March 2026" }),
+            frame("token", { delta: "In March it was 10 [1]." }),
+            frame("sources", { citations: [] }),
+            frame("done", { grounded: true }),
+          ]);
+    }),
+  );
 
   render(<ChatPanel />);
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
@@ -178,16 +207,17 @@ test("keeps a transcript and sends prior turns as history on a follow-up", async
   expect(screen.getByText("what is the total?")).toBeInTheDocument();
   expect(screen.getByText("what about March?")).toBeInTheDocument();
   expect(screen.getByText(/searched for: spend in March 2026/)).toBeInTheDocument();
-  const lastBody = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
-  expect(lastBody.history).toHaveLength(2); // user + assistant from turn 1
-  expect(lastBody.history[0]).toEqual({ role: "user", content: "what is the total?" });
+  // The follow-up is continued server-side via the thread; the client no longer resends history.
+  const lastBody = JSON.parse(String(lastStreamInit?.body));
+  expect(lastBody.thread_id).toBe("thr-1");
+  expect(lastBody.history).toEqual([]);
 });
 
 test("shows the sources column with importance and opens a document", async () => {
   const onOpen = vi.fn();
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
+    stubChat(() =>
       sseResponse([
         frame("meta", { rewritten_query: null }),
         frame("token", { delta: "Total is 42 [1][2]." }),
@@ -215,4 +245,43 @@ test("shows the sources column with importance and opens a document", async () =
 
   await userEvent.click(screen.getByRole("button", { name: /top\.pdf/ }));
   expect(onOpen).toHaveBeenCalledWith("d2");
+});
+
+test("lists saved conversations and resumes one into the transcript", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/chat/threads/t-old/messages")) {
+        return new Response(
+          JSON.stringify([
+            { id: "m1", role: "user", content: "prior question", created_at: "2026-06-14T00:00:00Z" },
+            { id: "m2", role: "assistant", content: "prior answer [1].", created_at: "2026-06-14T00:00:01Z" },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/v1/chat/threads")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "t-old",
+              title: "prior question",
+              created_at: "2026-06-14T00:00:00Z",
+              updated_at: "2026-06-14T00:00:01Z",
+              message_count: 2,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    }),
+  );
+
+  render(<ChatPanel />);
+  // The saved thread shows in the sidebar; clicking it restores the conversation.
+  await waitFor(() => expect(screen.getByText("prior question")).toBeInTheDocument());
+  await userEvent.click(screen.getByText("prior question"));
+  await waitFor(() => expect(screen.getByText("prior answer [1].")).toBeInTheDocument());
 });

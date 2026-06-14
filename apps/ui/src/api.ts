@@ -522,11 +522,13 @@ export async function chatStream(
   reasoning: boolean,
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
+  threadId?: string | null,
 ): Promise<{ grounded: boolean }> {
   const response = await fetch("/api/v1/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, history, reasoning }),
+    // With a thread_id the server loads history from the DB and persists this turn.
+    body: JSON.stringify({ question, history, reasoning, thread_id: threadId ?? null }),
     signal,
   });
   if (!response.ok || !response.body) {
@@ -566,6 +568,42 @@ export async function chatStream(
     }
   }
   return { grounded };
+}
+
+// ---- Chat threads (M6.4 #248): server-side conversation persistence ----
+
+export interface ChatThread {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export function listChatThreads(signal?: AbortSignal): Promise<ChatThread[]> {
+  return getJson<ChatThread[]>("/api/v1/chat/threads", signal);
+}
+
+export async function createChatThread(): Promise<ChatThread> {
+  const response = await fetch("/api/v1/chat/threads", { method: "POST" });
+  if (!response.ok) throw friendlyHttpError(response.status);
+  return (await response.json()) as ChatThread;
+}
+
+export function getThreadMessages(threadId: string, signal?: AbortSignal): Promise<ChatMessage[]> {
+  return getJson<ChatMessage[]>(`/api/v1/chat/threads/${threadId}/messages`, signal);
+}
+
+export async function deleteChatThread(threadId: string): Promise<void> {
+  const response = await fetch(`/api/v1/chat/threads/${threadId}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) throw friendlyHttpError(response.status);
 }
 
 // ---- Structured aggregation (M6.3): deterministic SUM/COUNT over extracted records ----

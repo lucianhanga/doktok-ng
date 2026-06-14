@@ -99,10 +99,13 @@ export default function App() {
   const [view, setView] = useState<View>("overview");
   const [openDoc, setOpenDoc] = useState<string | null>(null);
   const [docsNeedsAttention, setDocsNeedsAttention] = useState(false);
+  // Unread badge on the Chat tab: set when a backgrounded answer finishes off-tab, cleared on visit.
+  const [chatUnread, setChatUnread] = useState(false);
 
   function go(next: View) {
     setOpenDoc(null);
     setDocsNeedsAttention(false);
+    if (next === "chat") setChatUnread(false);
     setView(next);
   }
 
@@ -127,6 +130,9 @@ export default function App() {
               onClick={() => go(tab.id)}
             >
               {tab.label}
+              {tab.id === "chat" && chatUnread && view !== "chat" && (
+                <span className="tab-unread" aria-label="new answer" title="New answer ready" />
+              )}
             </button>
           ))}
         </nav>
@@ -149,7 +155,16 @@ export default function App() {
         )}
         {view === "search" && <SearchPanel onOpenDocument={setOpenDoc} />}
         {view === "tokensearch" && <TokenSearchPanel onOpenDocument={setOpenDoc} />}
-        {view === "chat" && <ChatPanel onOpenDocument={setOpenDoc} />}
+        {/* Chat stays MOUNTED across tab switches (hidden when inactive) so a streamed answer keeps
+            running in the background and the transcript survives; an answer that finishes off-tab
+            marks the Chat tab unread. */}
+        <div hidden={view !== "chat"}>
+          <ChatPanel
+            onOpenDocument={setOpenDoc}
+            active={view === "chat" && !openDoc}
+            onBackgroundDone={() => setChatUnread(true)}
+          />
+        </div>
         {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
         {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
         {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}

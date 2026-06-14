@@ -247,6 +247,28 @@ test("shows the sources column with importance and opens a document", async () =
   expect(onOpen).toHaveBeenCalledWith("d2");
 });
 
+test("flags unread when an answer finishes while the panel is inactive (off-tab)", async () => {
+  const onBackgroundDone = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("token", { delta: "answer while away." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel active={false} onBackgroundDone={onBackgroundDone} />);
+  await userEvent.type(screen.getByLabelText("Question"), "a question");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("answer while away.")).toBeInTheDocument());
+  expect(onBackgroundDone).toHaveBeenCalled(); // finished while inactive -> the tab goes unread
+});
+
 test("lists saved conversations and resumes one into the transcript", async () => {
   vi.stubGlobal(
     "fetch",

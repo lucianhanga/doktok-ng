@@ -1,5 +1,9 @@
 """Chat endpoint (brief section 18). Semantic RAG by default, with a deterministic shortcut for
-aggregation questions ("how much did I spend at X") answered from structured records (M6.3 #158)."""
+aggregation questions ("how much did I spend at X") answered from structured records (M6.3 #158).
+
+Conversations can be persisted server-side (M6.4 #248): pass a ``thread_id`` and the history is
+loaded from the DB and the turn is saved; without one, chat stays stateless (client-held history).
+"""
 
 from __future__ import annotations
 
@@ -8,15 +12,23 @@ import logging
 from collections.abc import Iterator
 from typing import Annotated
 
-from doktok_contracts.ports import RagAnswerer
-from doktok_contracts.schemas import ChatEvent, ChatRequest, RagAnswer
+from doktok_contracts.ports import ChatThreadRepository, RagAnswerer
+from doktok_contracts.schemas import (
+    ChatEvent,
+    ChatMessage,
+    ChatRequest,
+    ChatThread,
+    ChatTurn,
+    RagAnswer,
+)
 from doktok_core.aggregation import aggregation_answer, looks_like_aggregation, route_to_intent
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from doktok_api.dependencies import (
     Tenant,
     get_chat_model,
+    get_chat_thread_repository,
     get_document_repository,
     get_rag_answerer,
     get_record_repository,
@@ -27,6 +39,7 @@ logger = logging.getLogger("doktok.api.chat")
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 Answerer = Annotated[RagAnswerer, Depends(get_rag_answerer)]
+Threads = Annotated[ChatThreadRepository, Depends(get_chat_thread_repository)]
 
 
 def _try_aggregation(question: str, http_request: Request, tenant_id: str) -> RagAnswer | None:
@@ -50,18 +63,73 @@ def _try_aggregation(question: str, http_request: Request, tenant_id: str) -> Ra
         return None
 
 
+def _load_thread(threads: Threads, tenant_id: str, thread_id: str, question: str) -> list[ChatTurn]:
+    """Validate the thread, load its history as turns, and persist the new user message.
+
+    Raises 404 if the thread does not belong to the tenant. The returned history is the prior turns
+    (the just-appended user message is not included - that is this turn's ``question``).
+    """
+    if not threads.thread_exists(tenant_id, thread_id):
+        raise HTTPException(status_code=404, detail="thread not found")
+    history = [
+        ChatTurn(role=m.role, content=m.content) for m in threads.get_messages(tenant_id, thread_id)
+    ]
+    threads.append_message(tenant_id, thread_id, "user", question)
+    return history
+
+
+# ---- Thread management (M6.4 #248) ----
+
+
+@router.post("/threads", response_model=ChatThread)
+def create_thread(tenant: Tenant, threads: Threads) -> ChatThread:
+    return threads.create_thread(tenant.tenant_id)
+
+
+@router.get("/threads", response_model=list[ChatThread])
+def list_threads(tenant: Tenant, threads: Threads) -> list[ChatThread]:
+    return threads.list_threads(tenant.tenant_id)
+
+
+@router.get("/threads/{thread_id}/messages", response_model=list[ChatMessage])
+def thread_messages(thread_id: str, tenant: Tenant, threads: Threads) -> list[ChatMessage]:
+    if not threads.thread_exists(tenant.tenant_id, thread_id):
+        raise HTTPException(status_code=404, detail="thread not found")
+    return threads.get_messages(tenant.tenant_id, thread_id)
+
+
+@router.delete("/threads/{thread_id}", status_code=204)
+def delete_thread(thread_id: str, tenant: Tenant, threads: Threads) -> None:
+    threads.delete_thread(tenant.tenant_id, thread_id)
+
+
+# ---- Chat ----
+
+
 @router.post("", response_model=RagAnswer)
 def chat(
-    request: ChatRequest, http_request: Request, tenant: Tenant, answerer: Answerer
+    request: ChatRequest,
+    http_request: Request,
+    tenant: Tenant,
+    answerer: Answerer,
+    threads: Threads,
 ) -> RagAnswer:
     question = request.question
     limit = max(1, min(request.limit, 20))
-    structured = _try_aggregation(question, http_request, tenant.tenant_id)
-    if structured is not None:
-        return structured
-    # Multi-turn (ADR-0018): rewrite the follow-up against the conversation, then answer grounded.
-    # Empty history degrades to single-turn answering.
-    return answerer.answer_thread(tenant.tenant_id, request.history, question, limit)
+    tenant_id = tenant.tenant_id
+    history = request.history
+    if request.thread_id:
+        history = _load_thread(threads, tenant_id, request.thread_id, question)
+
+    structured = _try_aggregation(question, http_request, tenant_id)
+    answer = (
+        structured
+        if structured is not None
+        else answerer.answer_thread(tenant_id, history, question, limit)
+    )
+    if request.thread_id:
+        threads.append_message(tenant_id, request.thread_id, "assistant", answer.answer)
+    return answer
 
 
 def _sse(event: ChatEvent) -> str:
@@ -70,26 +138,41 @@ def _sse(event: ChatEvent) -> str:
 
 @router.post("/stream")
 def chat_stream(
-    request: ChatRequest, http_request: Request, tenant: Tenant, answerer: Answerer
+    request: ChatRequest,
+    http_request: Request,
+    tenant: Tenant,
+    answerer: Answerer,
+    threads: Threads,
 ) -> StreamingResponse:
     """Streaming chat (M6.4, ADR-0018 Phase 3): SSE of meta/reasoning/token/sources/done. Mirrors
-    the JSON endpoint, including the aggregation shortcut (emitted as a one-shot stream)."""
+    the JSON endpoint, including the aggregation shortcut and optional thread persistence."""
     question = request.question
     limit = max(1, min(request.limit, 20))
     tenant_id = tenant.tenant_id
+    # Validate + persist the user turn synchronously so a bad thread_id 404s before streaming.
+    history = request.history
+    if request.thread_id:
+        history = _load_thread(threads, tenant_id, request.thread_id, question)
 
     def events() -> Iterator[str]:
+        parts: list[str] = []
         structured = _try_aggregation(question, http_request, tenant_id)
         if structured is not None:
             yield _sse(ChatEvent(type="meta"))
             yield _sse(ChatEvent(type="token", delta=structured.answer))
             yield _sse(ChatEvent(type="sources", citations=structured.citations))
             yield _sse(ChatEvent(type="done", grounded=structured.grounded))
-            return
-        for event in answerer.answer_thread_stream(
-            tenant_id, request.history, question, limit, reasoning=request.reasoning
-        ):
-            yield _sse(event)
+            parts.append(structured.answer)
+        else:
+            for event in answerer.answer_thread_stream(
+                tenant_id, history, question, limit, reasoning=request.reasoning
+            ):
+                if event.type == "token":
+                    parts.append(event.delta)
+                yield _sse(event)
+        answer_text = "".join(parts).strip()
+        if request.thread_id and answer_text:
+            threads.append_message(tenant_id, request.thread_id, "assistant", answer_text)
 
     return StreamingResponse(
         events(),

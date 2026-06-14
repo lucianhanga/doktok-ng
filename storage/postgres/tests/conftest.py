@@ -37,6 +37,8 @@ def _clean_test_tenants(database: Database) -> None:
         conn.execute("DELETE FROM categories WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM embedding_projections WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM projection_requests WHERE tenant_id LIKE 'test%'")
+        conn.execute("DELETE FROM chat_messages WHERE tenant_id LIKE 'test%'")
+        conn.execute("DELETE FROM chat_threads WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM ingestion_jobs WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM documents WHERE tenant_id LIKE 'test%'")
 

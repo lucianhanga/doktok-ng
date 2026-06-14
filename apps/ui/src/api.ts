@@ -412,11 +412,18 @@ export interface Citation {
   relevance?: number | null;
 }
 
+export interface QueryFilters {
+  category?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+}
+
 export interface RagAnswer {
   answer: string;
   citations: Citation[];
   grounded: boolean;
   rewritten_query?: string | null;
+  filters?: QueryFilters | null;
 }
 
 export interface ChatTurn {
@@ -470,6 +477,7 @@ export interface ChatEvent {
   type: string; // "meta" | "reasoning" | "token" | "sources" | "done" | "error"
   delta?: string;
   rewritten_query?: string | null;
+  filters?: QueryFilters | null;
   citations?: Citation[];
   grounded?: boolean;
   message?: string;
@@ -500,7 +508,7 @@ export function parseSse(buffer: string): { events: ChatEvent[]; rest: string } 
 }
 
 export interface ChatStreamHandlers {
-  onMeta?: (rewrittenQuery: string | null) => void;
+  onMeta?: (rewrittenQuery: string | null, filters: QueryFilters | null) => void;
   onReasoning?: (delta: string) => void;
   onToken?: (delta: string) => void;
   onSources?: (citations: Citation[]) => void;
@@ -537,7 +545,7 @@ export async function chatStream(
     for (const event of parsed.events) {
       switch (event.type) {
         case "meta":
-          handlers.onMeta?.(event.rewritten_query ?? null);
+          handlers.onMeta?.(event.rewritten_query ?? null, event.filters ?? null);
           break;
         case "reasoning":
           if (event.delta) handlers.onReasoning?.(event.delta);

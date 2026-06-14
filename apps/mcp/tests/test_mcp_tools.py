@@ -25,7 +25,7 @@ class FakeRetriever:
         self._hits = hits
         self.seen: tuple[str, str, int] | None = None
 
-    def search(self, tenant_id: str, query: str, limit: int = 10) -> list[SearchHit]:
+    def search(self, tenant_id, query, limit=10, *, filters=None):  # type: ignore[no-untyped-def]
         self.seen = (tenant_id, query, limit)
         return self._hits
 

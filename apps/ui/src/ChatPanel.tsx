@@ -5,6 +5,7 @@ import {
   documentThumbnailUrl,
   type ChatTurn,
   type Citation,
+  type QueryFilters,
   type RagAnswer,
 } from "./api";
 
@@ -21,6 +22,7 @@ interface Streaming {
   reasoning: string;
   citations: Citation[];
   rewrittenQuery: string | null;
+  filters: QueryFilters | null;
 }
 
 /** A unified view of either a completed exchange or the streaming turn, for rendering. */
@@ -30,8 +32,18 @@ interface TurnView {
   answer: string;
   citations: Citation[];
   rewrittenQuery: string | null;
+  filters: QueryFilters | null;
   grounded: boolean;
   streaming: boolean;
+}
+
+/** Render the inferred retrieval filters (category / date range) as a short readable phrase. */
+function describeFilters(f: QueryFilters | null): string | null {
+  if (!f) return null;
+  const parts: string[] = [];
+  if (f.category) parts.push(f.category);
+  if (f.date_from || f.date_to) parts.push(`${f.date_from ?? "…"} → ${f.date_to ?? "…"}`);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 type State =
@@ -147,6 +159,9 @@ function AnswerBlock({ turn }: { turn: TurnView }) {
       {turn.rewrittenQuery && (
         <p className="muted chat-rewritten">searched for: {turn.rewrittenQuery}</p>
       )}
+      {describeFilters(turn.filters) && (
+        <p className="muted chat-rewritten">filtered to: {describeFilters(turn.filters)}</p>
+      )}
       <ReasoningPanel text={turn.reasoning} streaming={reasoningStreaming} />
       {!turn.streaming && !turn.grounded && (
         <p role="status" className="banner-warning">
@@ -221,6 +236,7 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
       reasoning: "",
       citations: [],
       rewrittenQuery: null,
+      filters: null,
     };
     accRef.current = init;
     setStreaming(init);
@@ -234,7 +250,7 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
       history,
       showReasoning,
       {
-        onMeta: (rq) => patch((s) => ({ ...s, rewrittenQuery: rq })),
+        onMeta: (rq, flt) => patch((s) => ({ ...s, rewrittenQuery: rq, filters: flt })),
         onReasoning: (d) => patch((s) => ({ ...s, reasoning: s.reasoning + d })),
         onToken: (d) => patch((s) => ({ ...s, answer: s.answer + d })),
         onSources: (c) => patch((s) => ({ ...s, citations: c })),
@@ -273,6 +289,7 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
           citations: s.citations,
           grounded,
           rewritten_query: s.rewrittenQuery,
+          filters: s.filters,
         },
       },
     ]);
@@ -296,6 +313,7 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
     answer: ex.answer.answer,
     citations: ex.answer.citations,
     rewrittenQuery: ex.answer.rewritten_query ?? null,
+    filters: ex.answer.filters ?? null,
     grounded: ex.answer.grounded,
     streaming: false,
   }));
@@ -306,6 +324,7 @@ export function ChatPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
       answer: streaming.answer,
       citations: streaming.citations,
       rewrittenQuery: streaming.rewrittenQuery,
+      filters: streaming.filters,
       grounded: false,
       streaming: true,
     });

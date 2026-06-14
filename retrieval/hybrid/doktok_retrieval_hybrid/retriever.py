@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from doktok_contracts.ports import EmbeddingProvider
-from doktok_contracts.schemas import SearchHit
+from doktok_contracts.schemas import QueryFilters, SearchHit
 from doktok_storage_postgres import Database
 from doktok_storage_postgres.repositories import to_vector_literal
 from psycopg.rows import dict_row
@@ -28,17 +28,51 @@ def _snippet(text: str) -> str:
     return text[:_SNIPPET_CHARS] + ("..." if len(text) > _SNIPPET_CHARS else "")
 
 
+def _filter_sql(filters: QueryFilters | None) -> tuple[str, tuple[object, ...]]:
+    """Extra ``AND`` clauses + params scoping retrieval by the inferred filters (M6.4 Phase 2).
+
+    Date bounds compare against ``documents.document_date``; category is an EXISTS over the
+    document's category links (matched case-insensitively by name). Returns ("", ()) for no filter.
+    """
+    if filters is None:
+        return "", ()
+    clauses: list[str] = []
+    params: list[object] = []
+    if filters.date_from is not None:
+        clauses.append("AND d.document_date >= %s")
+        params.append(filters.date_from)
+    if filters.date_to is not None:
+        clauses.append("AND d.document_date <= %s")
+        params.append(filters.date_to)
+    if filters.category:
+        clauses.append(
+            "AND EXISTS (SELECT 1 FROM document_category_links l "
+            "JOIN categories cat ON cat.id = l.category_id AND cat.tenant_id = d.tenant_id "
+            "WHERE l.document_id = d.id AND cat.name ILIKE %s)"
+        )
+        params.append(filters.category)
+    return (" " + " ".join(clauses) if clauses else ""), tuple(params)
+
+
 class HybridPostgresRetriever:
     def __init__(self, db: Database, embedding_provider: EmbeddingProvider) -> None:
         self._db = db
         self._embeddings = embedding_provider
 
-    def search(self, tenant_id: str, query: str, limit: int = 10) -> list[SearchHit]:
+    def search(
+        self,
+        tenant_id: str,
+        query: str,
+        limit: int = 10,
+        *,
+        filters: QueryFilters | None = None,
+    ) -> list[SearchHit]:
         query = query.strip()
         if not query:
             return []
         candidates = max(limit * 4, 20)
         query_vec = to_vector_literal(self._embeddings.embed([query])[0])
+        flt, fparams = _filter_sql(filters)
 
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
@@ -46,9 +80,9 @@ class HybridPostgresRetriever:
                 f"{_SELECT}, (c.embedding <=> %s::vector) AS distance "
                 "FROM document_chunks c "
                 "JOIN documents d ON d.id = c.document_id AND d.tenant_id = c.tenant_id "
-                "WHERE c.tenant_id = %s AND c.embedding IS NOT NULL "
-                "ORDER BY c.embedding <=> %s::vector LIMIT %s",
-                (query_vec, tenant_id, query_vec, candidates),
+                "WHERE c.tenant_id = %s AND c.embedding IS NOT NULL"
+                f"{flt} ORDER BY c.embedding <=> %s::vector LIMIT %s",
+                (query_vec, tenant_id, *fparams, query_vec, candidates),
             ).fetchall()
             # 'simple' matches the chunk tsv config (migration 0014): language-agnostic, so German
             # query terms recall German chunks (English stemming did not). Keep both sides aligned.
@@ -56,9 +90,9 @@ class HybridPostgresRetriever:
                 f"{_SELECT}, ts_rank(c.tsv, plainto_tsquery('simple', %s)) AS rank "
                 "FROM document_chunks c "
                 "JOIN documents d ON d.id = c.document_id AND d.tenant_id = c.tenant_id "
-                "WHERE c.tenant_id = %s AND c.tsv @@ plainto_tsquery('simple', %s) "
-                "ORDER BY rank DESC LIMIT %s",
-                (query, tenant_id, query, candidates),
+                "WHERE c.tenant_id = %s AND c.tsv @@ plainto_tsquery('simple', %s)"
+                f"{flt} ORDER BY rank DESC LIMIT %s",
+                (query, tenant_id, query, *fparams, candidates),
             ).fetchall()
 
         return _fuse(vector_rows, text_rows, limit)

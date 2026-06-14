@@ -53,6 +53,30 @@ test("streams a grounded answer with sources", async () => {
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
+test("shows inferred retrieval filters from the meta event", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      sseResponse([
+        frame("meta", {
+          rewritten_query: "late fees",
+          filters: { category: "invoice", date_from: "2023-01-01", date_to: "2023-12-31" },
+        }),
+        frame("token", { delta: "Late fees are 2% [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "what about late fees in 2023?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Late fees are 2% [1].")).toBeInTheDocument());
+  expect(screen.getByText(/filtered to: invoice . 2023-01-01/)).toBeInTheDocument();
+});
+
 test("concatenates multiple token chunks into one answer", async () => {
   vi.stubGlobal(
     "fetch",

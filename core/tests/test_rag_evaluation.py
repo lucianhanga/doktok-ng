@@ -10,7 +10,7 @@ class FakeRetriever:
     def __init__(self, by_question: dict[str, list[str]]) -> None:
         self._by_question = by_question  # question -> list of source filenames retrieved
 
-    def search(self, tenant_id: str, query: str, limit: int = 10) -> list[SearchHit]:  # noqa: ARG002
+    def search(self, tenant_id, query, limit=10, *, filters=None):  # type: ignore[no-untyped-def]  # noqa: ARG002
         return [
             SearchHit(
                 document_id=fn, chunk_id=f"{fn}-c", original_filename=fn, snippet="", score=1.0

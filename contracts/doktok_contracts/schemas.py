@@ -439,6 +439,21 @@ class ChatRequest(BaseModel):
     reasoning: bool = False
 
 
+class QueryFilters(BaseModel):
+    """Retrieval filters inferred from a chat question (M6.4 Phase 2, ADR-0018).
+
+    Scope the hybrid retriever to a document category and/or document-date range, e.g. "what did the
+    2023 invoices say about late fees" -> category="invoice", date range across 2023.
+    """
+
+    category: str | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+
+    def is_empty(self) -> bool:
+        return self.category is None and self.date_from is None and self.date_to is None
+
+
 class RagAnswer(BaseModel):
     """A grounded answer with citations (brief section 18)."""
 
@@ -447,6 +462,8 @@ class RagAnswer(BaseModel):
     grounded: bool
     # Standalone query a follow-up was rewritten to (multi-turn, ADR-0018); None = not rewritten.
     rewritten_query: str | None = None
+    # Filters inferred from the question + applied to retrieval (M6.4 Phase 2); None = none applied.
+    filters: QueryFilters | None = None
 
 
 class ChatEvent(BaseModel):
@@ -456,6 +473,7 @@ class ChatEvent(BaseModel):
     type: str
     delta: str = ""  # reasoning / token
     rewritten_query: str | None = None  # meta
+    filters: QueryFilters | None = None  # meta (inferred retrieval filters, M6.4 Phase 2)
     citations: list[Citation] = Field(default_factory=list)  # sources
     grounded: bool = False  # done
     message: str = ""  # error

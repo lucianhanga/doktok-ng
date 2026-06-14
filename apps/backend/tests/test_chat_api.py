@@ -8,7 +8,7 @@ from doktok_core.config import Settings
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
-TOKENS = {"tok-a": "tenant-a"}
+TOKENS = {"tok-a": "tenant-a", "tok-b": "tenant-b"}
 
 
 @pytest.fixture(autouse=True)
@@ -53,11 +53,13 @@ class _SemanticChat:
 
 
 def _client(answerer: FakeRagAnswerer) -> TestClient:
-    from doktok_contracts.ports import ChatModelProvider
+    from doktok_contracts.ports import ChatModelProvider, ChatThreadRepository
+    from doktok_core.chat.inmemory import InMemoryChatThreadRepository
 
     registry = build_registry()
     registry.register(RagAnswerer, answerer)  # type: ignore[type-abstract]
     registry.register(ChatModelProvider, _SemanticChat())  # type: ignore[type-abstract]
+    registry.register(ChatThreadRepository, InMemoryChatThreadRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -65,6 +67,55 @@ def _client(answerer: FakeRagAnswerer) -> TestClient:
 def test_requires_token() -> None:
     resp = _client(FakeRagAnswerer()).post("/api/v1/chat", json={"question": "hi"})
     assert resp.status_code == 401
+
+
+def test_thread_persists_turns_and_loads_history() -> None:
+    answerer = FakeRagAnswerer()
+    client = _client(answerer)
+    h = {"Authorization": "Bearer tok-a"}
+
+    thread_id = client.post("/api/v1/chat/threads", headers=h).json()["id"]
+    first = client.post(
+        "/api/v1/chat", json={"question": "what is the total?", "thread_id": thread_id}, headers=h
+    )
+    assert first.status_code == 200
+
+    # Both the user question and the assistant answer were persisted to the thread.
+    messages = client.get(f"/api/v1/chat/threads/{thread_id}/messages", headers=h).json()
+    assert [m["role"] for m in messages] == ["user", "assistant"]
+    assert messages[0]["content"] == "what is the total?"
+    assert messages[1]["content"] == "The total is 42 [1]."
+
+    # A follow-up loads the prior history server-side (not from the request body).
+    client.post(
+        "/api/v1/chat", json={"question": "and in March?", "thread_id": thread_id}, headers=h
+    )
+    assert answerer.seen_history is not None and len(answerer.seen_history) == 2
+
+    # The thread is listed with its title seeded from the first message.
+    threads = client.get("/api/v1/chat/threads", headers=h).json()
+    assert threads[0]["id"] == thread_id and threads[0]["title"] == "what is the total?"
+
+
+def test_chat_with_unknown_thread_is_404() -> None:
+    resp = _client(FakeRagAnswerer()).post(
+        "/api/v1/chat",
+        json={"question": "hi", "thread_id": "does-not-exist"},
+        headers={"Authorization": "Bearer tok-a"},
+    )
+    assert resp.status_code == 404
+
+
+def test_threads_are_tenant_isolated() -> None:
+    client = _client(FakeRagAnswerer())
+    a_thread = client.post(
+        "/api/v1/chat/threads", headers={"Authorization": "Bearer tok-a"}
+    ).json()["id"]
+    # Tenant-b cannot see or read tenant-a's thread.
+    b_headers = {"Authorization": "Bearer tok-b"}
+    assert client.get("/api/v1/chat/threads", headers=b_headers).json() == []
+    cross = client.get(f"/api/v1/chat/threads/{a_thread}/messages", headers=b_headers)
+    assert cross.status_code == 404
 
 
 def test_returns_grounded_answer_for_caller_tenant() -> None:
@@ -173,7 +224,13 @@ class FakeRecordRepository:
 
 
 def test_aggregation_question_answered_from_records_not_rag() -> None:
-    from doktok_contracts.ports import ChatModelProvider, DocumentRepository, RecordRepository
+    from doktok_contracts.ports import (
+        ChatModelProvider,
+        ChatThreadRepository,
+        DocumentRepository,
+        RecordRepository,
+    )
+    from doktok_core.chat.inmemory import InMemoryChatThreadRepository
     from doktok_core.documents.inmemory import InMemoryDocumentRepository
 
     answerer = FakeRagAnswerer()
@@ -182,6 +239,7 @@ def test_aggregation_question_answered_from_records_not_rag() -> None:
     registry.register(ChatModelProvider, FakeChatModel())  # type: ignore[type-abstract]
     registry.register(RecordRepository, FakeRecordRepository())
     registry.register(DocumentRepository, InMemoryDocumentRepository())  # type: ignore[type-abstract]
+    registry.register(ChatThreadRepository, InMemoryChatThreadRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 

@@ -32,6 +32,8 @@ from doktok_contracts.schemas import (
     Category,
     CategorySummary,
     ChatEvent,
+    ChatMessage,
+    ChatThread,
     ChatTurn,
     Document,
     DocumentArtifact,
@@ -589,6 +591,20 @@ class RagAnswerer(Protocol):
         """Streaming variant of ``answer_thread`` (M6.4): yields meta / reasoning / token / sources
         / done events. ``reasoning`` opts into the model's thinking stream."""
         ...
+
+
+@runtime_checkable
+class ChatThreadRepository(Protocol):
+    """Server-side persistence of chat conversations (M6.4 #248). Tenant-scoped."""
+
+    def create_thread(self, tenant_id: str, title: str = "") -> ChatThread: ...
+    def list_threads(self, tenant_id: str, *, limit: int = 50) -> list[ChatThread]: ...
+    def get_messages(self, tenant_id: str, thread_id: str) -> list[ChatMessage]: ...
+    def append_message(
+        self, tenant_id: str, thread_id: str, role: str, content: str
+    ) -> ChatMessage: ...
+    def thread_exists(self, tenant_id: str, thread_id: str) -> bool: ...
+    def delete_thread(self, tenant_id: str, thread_id: str) -> None: ...
 
 
 @runtime_checkable

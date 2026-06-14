@@ -16,6 +16,7 @@ from doktok_contracts.ports import (
     AuditLogRepository,
     CategoryRepository,
     ChatModelProvider,
+    ChatThreadRepository,
     ChunkRepository,
     DocumentRepository,
     EmbeddingProjectionRepository,
@@ -276,6 +277,18 @@ def get_chunk_repository(request: Request) -> ChunkRepository:
 
     repository = PostgresChunkRepository(_get_database(request))
     registry.register(ChunkRepository, repository)
+    return repository
+
+
+def get_chat_thread_repository(request: Request) -> ChatThreadRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(ChatThreadRepository):
+        return cast(ChatThreadRepository, registry.resolve(ChatThreadRepository))
+
+    from doktok_storage_postgres import PostgresChatThreadRepository
+
+    repository = PostgresChatThreadRepository(_get_database(request))
+    registry.register(ChatThreadRepository, repository)
     return repository
 
 

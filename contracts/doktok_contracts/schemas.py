@@ -433,10 +433,32 @@ class ChatRequest(BaseModel):
     # Prior conversation turns (multi-turn, ADR-0018); empty = single-turn (current behaviour).
     # Bounded so the rewrite prompt can't be flooded; the answerer keeps only the most recent turns.
     history: list[ChatTurn] = Field(default_factory=list, max_length=40)
+    # Server-side thread (M6.4 #248): when set, history is loaded from the DB and this turn is
+    # persisted to the thread; `history` above is ignored. None = stateless (client-held history).
+    thread_id: str | None = None
     limit: int = Field(default=8, ge=1, le=20)
     # Opt-in: ask the model to stream its reasoning/thinking (M6.4). Off by default - enabling it
     # makes the answer noticeably slower (the model thinks before answering); streaming only.
     reasoning: bool = False
+
+
+class ChatMessage(BaseModel):
+    """One persisted message in a chat thread (M6.4 #248)."""
+
+    id: str
+    role: str  # "user" | "assistant"
+    content: str
+    created_at: datetime
+
+
+class ChatThread(BaseModel):
+    """A persisted conversation (M6.4 #248). ``title`` is derived from the first user message."""
+
+    id: str
+    title: str = ""
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
 
 
 class QueryFilters(BaseModel):

@@ -17,6 +17,8 @@ from doktok_contracts.schemas import (
     AuditEvent,
     Category,
     CategorySummary,
+    ChatMessage,
+    ChatThread,
     Document,
     DocumentChunk,
     DocumentEntity,
@@ -1637,3 +1639,99 @@ class PostgresProjectionRequestRepository:
     def complete(self, request_id: str) -> None:
         with self._db.connection() as conn:
             conn.execute("DELETE FROM projection_requests WHERE id=%s", (request_id,))
+
+
+class PostgresChatThreadRepository:
+    """``ChatThreadRepository`` over PostgreSQL. Tenant-scoped; messages cascade with the thread."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def create_thread(self, tenant_id: str, title: str = "") -> ChatThread:
+        thread_id = uuid.uuid4().hex
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "INSERT INTO chat_threads (id, tenant_id, title) VALUES (%s, %s, %s) "
+                "RETURNING id, title, created_at, updated_at",
+                (thread_id, tenant_id, title),
+            ).fetchone()
+        assert row is not None
+        return ChatThread(
+            id=row["id"],
+            title=row["title"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            message_count=0,
+        )
+
+    def list_threads(self, tenant_id: str, *, limit: int = 50) -> list[ChatThread]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT t.id, t.title, t.created_at, t.updated_at, "
+                "(SELECT count(*) FROM chat_messages m WHERE m.thread_id = t.id) AS message_count "
+                "FROM chat_threads t WHERE t.tenant_id=%s ORDER BY t.updated_at DESC LIMIT %s",
+                (tenant_id, limit),
+            ).fetchall()
+        return [
+            ChatThread(
+                id=r["id"],
+                title=r["title"],
+                created_at=r["created_at"],
+                updated_at=r["updated_at"],
+                message_count=r["message_count"],
+            )
+            for r in rows
+        ]
+
+    def get_messages(self, tenant_id: str, thread_id: str) -> list[ChatMessage]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, role, content, created_at FROM chat_messages "
+                "WHERE tenant_id=%s AND thread_id=%s ORDER BY created_at, id",
+                (tenant_id, thread_id),
+            ).fetchall()
+        return [
+            ChatMessage(
+                id=r["id"], role=r["role"], content=r["content"], created_at=r["created_at"]
+            )
+            for r in rows
+        ]
+
+    def append_message(
+        self, tenant_id: str, thread_id: str, role: str, content: str
+    ) -> ChatMessage:
+        message_id = uuid.uuid4().hex
+        with self._db.connection() as conn, conn.transaction():
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "INSERT INTO chat_messages (id, thread_id, tenant_id, role, content) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id, role, content, created_at",
+                (message_id, thread_id, tenant_id, role, content),
+            ).fetchone()
+            # Bump the thread's activity time; if it has no title yet, seed it from this message.
+            conn.execute(
+                "UPDATE chat_threads SET updated_at = now(), "
+                "title = CASE WHEN title = '' THEN left(%s, 80) ELSE title END "
+                "WHERE id=%s AND tenant_id=%s",
+                (content, thread_id, tenant_id),
+            )
+        assert row is not None
+        return ChatMessage(
+            id=row["id"], role=row["role"], content=row["content"], created_at=row["created_at"]
+        )
+
+    def thread_exists(self, tenant_id: str, thread_id: str) -> bool:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM chat_threads WHERE id=%s AND tenant_id=%s", (thread_id, tenant_id)
+            ).fetchone()
+        return row is not None
+
+    def delete_thread(self, tenant_id: str, thread_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM chat_threads WHERE id=%s AND tenant_id=%s", (thread_id, tenant_id)
+            )

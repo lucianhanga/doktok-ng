@@ -20,16 +20,22 @@ class OllamaEmbeddingProvider:
         *,
         timeout: float = 600.0,
         keep_alive: str | None = None,
+        num_ctx: int | None = None,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._keep_alive = keep_alive
+        # Cap the context to the chunk size: the model's large default (e.g. 32k) otherwise
+        # allocates a needless KV cache. Chunks fit well inside this, so embeddings are unchanged.
+        self._num_ctx = num_ctx
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         payload: dict[str, object] = {"model": self._model, "input": texts}
+        if self._num_ctx is not None:
+            payload["options"] = {"num_ctx": self._num_ctx}
         if self._keep_alive is not None:
             # Pin the embedding model resident so it is not evicted and then unable to reload while
             # the large chat model is pinned (which would hang the call and stall the reconciler).

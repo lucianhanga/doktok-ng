@@ -346,7 +346,8 @@ export function ChatPanel({
       return chatStream(
         q,
         history,
-        showReasoning,
+        // Checked = force reasoning on (override); unchecked = follow the configured setting.
+        showReasoning || undefined,
         {
           onMeta: (rq, flt) => patch((s) => ({ ...s, rewrittenQuery: rq, filters: flt })),
           onReasoning: (d) => patch((s) => ({ ...s, reasoning: s.reasoning + d })),

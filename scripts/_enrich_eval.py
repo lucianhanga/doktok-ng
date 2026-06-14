@@ -91,7 +91,8 @@ def main() -> int:
         file_storage,
         OllamaMetadataExtractor(
             settings.enrich_model,
-            settings.enrich_repair_model,
+            # JSON-repair reuses the same configured model (MoE-safe per the provider).
+            settings.enrich_model,
             settings.ollama_base_url,
             think=settings.enrich_think,
         ),
@@ -102,7 +103,8 @@ def main() -> int:
         file_storage,
         OllamaCategoryClassifier(
             settings.enrich_model,
-            settings.enrich_repair_model,
+            # JSON-repair reuses the same configured model (MoE-safe per the provider).
+            settings.enrich_model,
             settings.ollama_base_url,
             think=settings.enrich_think,
         ),

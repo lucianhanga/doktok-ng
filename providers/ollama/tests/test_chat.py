@@ -46,3 +46,44 @@ def test_num_ctx_omitted_when_not_set(monkeypatch: Any) -> None:
     captured = _capture(monkeypatch)
     OllamaChatModelProvider("qwen", "http://localhost:11434").complete("hello")
     assert "num_ctx" not in captured["json"]["options"]
+
+
+class _FakeStream:
+    def __init__(self, captured: dict[str, Any], json: dict[str, Any]) -> None:
+        captured["json"] = json
+
+    def __enter__(self) -> _FakeStream:
+        return self
+
+    def __exit__(self, *args: Any) -> None: ...
+
+    def raise_for_status(self) -> None: ...
+
+    def iter_lines(self) -> list[str]:
+        return ['{"message": {"content": "ok"}}']
+
+
+def _capture_stream(monkeypatch: Any) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def fake_stream(method: str, url: str, *, json: dict[str, Any], timeout: float) -> _FakeStream:
+        return _FakeStream(captured, json)
+
+    monkeypatch.setattr("doktok_provider_ollama.chat.httpx.stream", fake_stream)
+    return captured
+
+
+def test_stream_uses_configured_think_when_no_override(monkeypatch: Any) -> None:
+    # think=None (default) must fall back to the settings-derived self._think, not hardcode False.
+    captured = _capture_stream(monkeypatch)
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434", think=True)
+    list(provider.stream_complete("hello"))
+    assert captured["json"]["think"] is True
+
+
+def test_stream_think_override_wins(monkeypatch: Any) -> None:
+    # An explicit per-call think overrides the configured default (the 'Show reasoning' toggle).
+    captured = _capture_stream(monkeypatch)
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434", think=False)
+    list(provider.stream_complete("hello", think=True))
+    assert captured["json"]["think"] is True

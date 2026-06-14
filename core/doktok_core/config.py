@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     default_model: str = "qwen3.6:35b-a3b"
     # qwen3-embedding (1024-dim) handles >512-token chunks; mxbai-embed-large truncates at 512.
     embedding_model: str = "qwen3-embedding:0.6b"
+    # Embedding input is one ~300-token chunk at a time (chunker caps at 1200 chars), so the model's
+    # 32k default context just wastes a huge KV cache. 1024 gives ample headroom over a chunk while
+    # keeping the (already truncation-free) embeddings byte-identical - no re-index needed.
+    embedding_num_ctx: int = 1024
     # Keep the (tiny ~1 GB) embedding model pinned as long as the chat/enrich models, so it is not
     # evicted first and then unable to reload while the 24 GB chat model is pinned - which hangs
     # chunk_embed and stalls the single-threaded reconciler. "-1" pins it forever.
@@ -65,18 +69,18 @@ class Settings(BaseSettings):
     # model to free the chat slot) and a tight output cap (it only emits a short JSON array).
     rerank_model: str = ""  # empty => use default_model
     rerank_num_predict: int = 64
-    # Enrichment (M6.2): primary extraction model (structured JSON; thinking on, never think=false
-    # with format) and a small dense fallback used only to repair invalid JSON into the schema.
-    # Dense default: think=false + structured `format` works reliably on qwen3:14b and is far faster
-    # than the qwen3.6 MoE for extraction (when kept warm). Switch to qwen3.6:35b-a3b +
-    # DOKTOK_ENRICH_THINK=true for higher quality/language fidelity at the cost of latency.
+    # Enrichment (M6.2): extraction model (structured JSON; thinking on, never think=false with
+    # format). The JSON-repair fallback now reuses this same configured model (MoE-safe per the
+    # provider), so no separate repair model is configured here. Dense default: think=false +
+    # structured `format` works reliably on qwen3:14b and is far faster than the qwen3.6 MoE for
+    # extraction (when kept warm). Switch to qwen3.6:35b-a3b + DOKTOK_ENRICH_THINK=true for higher
+    # quality/language fidelity at the cost of latency.
     # OCR-quality judge (embedded-text vs OCR). Defaults to the dense enrichment model so ingestion
     # never needs the 23 GB qwen3.6 (which would evict qwen3:14b on a ~48 GB box). Small context: it
     # only compares a page of text. RAG chat still uses DOKTOK_DEFAULT_MODEL.
     judge_model: str = "qwen3:14b"
     judge_num_ctx: int = 8192
     enrich_model: str = "qwen3:14b"
-    enrich_repair_model: str = "qwen3:14b"
     # The enrichment providers feed the document head (up to ~12-16k chars) to the model. 4096
     # tokens was too small for German text (~3 chars/token => ~4-5k tokens), so llama.cpp silently
     # left-truncated the head - exactly the title/date region being extracted. 8192 fits the head
@@ -120,14 +124,14 @@ class Settings(BaseSettings):
     max_file_mb: int = 200
     max_pages: int = 500
     file_stability_seconds: int = 3
-    # How many stable files the worker processes in parallel (1 = sequential). Throughput gains
-    # depend on Ollama parallelism (OLLAMA_NUM_PARALLEL). PaddleOCR is CPU-bound and now runs a pool
-    # of `ingest_concurrency` independent predictors, so this also sets how many pages OCR in
-    # parallel - raise it to use more cores (bound by CPU count and Ollama/DB capacity).
+    # How many stable files the worker pulls through intake/extraction in parallel (1 = sequential).
+    # This only orchestrates document flow; it does NOT size the OCR pool. OCR pages from all the
+    # in-flight documents share the PaddleOCR pool sized by `ocr_concurrency` below, so OCR
+    # parallelism is bounded by that, not by this. Throughput also depends on OLLAMA_NUM_PARALLEL.
     ingest_concurrency: int = 4
-    # How many PDF pages OCR concurrently WITHIN a single document, and the size of the PaddleOCR
-    # predictor pool. Decoupled from ingest_concurrency so a multi-page scan can use many CPU cores
-    # at once (PaddleOCR is CPU-bound). Tune up toward the core count, watching CPU/RAM headroom.
+    # Size of the PaddleOCR predictor pool = how many pages are OCR'd in parallel across the WHOLE
+    # worker (PaddleOCR is CPU-bound, ~1 core per process). Live-reloaded from Settings between
+    # ingest scans (no restart). Tune toward the core count, watching CPU/RAM headroom.
     ocr_concurrency: int = 4
     # Staged ingestion (ADR-0015): when on, intake creates a `processing` document + seeds the
     # stage ledger and the `extract` stage does OCR/extraction + activation, instead of the inline

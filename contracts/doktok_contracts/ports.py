@@ -398,8 +398,10 @@ class StreamingChatModelProvider(Protocol):
     """A chat model that can stream its response (M6.4). Optional capability: the answerer checks
     for it and falls back to ``ChatModelProvider.complete`` when a provider doesn't support it."""
 
-    def stream_complete(self, prompt: str, *, think: bool = False) -> Iterator[ChatChunk]:
-        """Yield answer (and, if ``think``, reasoning) chunks as the model generates them."""
+    def stream_complete(self, prompt: str, *, think: bool | None = None) -> Iterator[ChatChunk]:
+        """Yield answer (and, if reasoning is on, reasoning) chunks as the model generates them.
+        ``think=None`` uses the provider's configured reasoning (from settings); True/False
+        overrides it for this call."""
         ...
 
 
@@ -589,10 +591,11 @@ class RagAnswerer(Protocol):
         question: str,
         limit: int = 8,
         *,
-        reasoning: bool = False,
+        reasoning: bool | None = None,
     ) -> Iterator[ChatEvent]:
         """Streaming variant of ``answer_thread`` (M6.4): yields meta / reasoning / token / sources
-        / done events. ``reasoning`` opts into the model's thinking stream."""
+        / done events. ``reasoning=None`` follows the configured model reasoning (settings);
+        True/False overrides it for this turn."""
         ...
 
 

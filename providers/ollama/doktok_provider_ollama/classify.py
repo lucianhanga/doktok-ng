@@ -1,8 +1,8 @@
 """Multi-label category classification via local Ollama (M6.2).
 
-Same structured-output discipline as metadata extraction: primary model with ``format`` and thinking
-left on; small dense repair model for invalid JSON. Returns up to 5 raw labels; core resolves them
-against the bounded vocabulary and enforces the caps.
+Same structured-output discipline as metadata extraction: model with ``format`` and thinking left
+on; a MoE-safe repair pass (on the same configured model) for invalid JSON. Returns up to 5 raw
+labels; core resolves them against the bounded vocabulary and enforces the caps.
 """
 
 from __future__ import annotations
@@ -75,7 +75,10 @@ class OllamaCategoryClassifier:
             'The text below should be JSON like {"categories": ["..."]} but may be malformed. '
             "Return ONLY corrected JSON.\n\nText:\n" + broken
         )
-        return self._chat(self._repair_model, "Output only valid JSON.", prompt, think=False)
+        # think=false + format is broken on the MoE arch; disable thinking only for a dense repair
+        # model, otherwise keep it on (None) to stay format-safe on an a3b model.
+        repair_think = None if "a3b" in self._repair_model else False
+        return self._chat(self._repair_model, "Output only valid JSON.", prompt, think=repair_think)
 
     def _chat(self, model: str, system: str, user: str, *, think: bool | None) -> str:
         payload: dict[str, Any] = {

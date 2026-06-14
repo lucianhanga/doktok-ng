@@ -8,6 +8,7 @@ so the health endpoint and tests that inject in-memory repositories never touch 
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -36,6 +37,8 @@ from fastapi import Depends, Header, HTTPException, Request, status
 if TYPE_CHECKING:
     from doktok_core.visualizations.map_service import EmbeddingMapService
     from doktok_storage_postgres import Database
+
+logger = logging.getLogger("doktok.api")
 
 _BEARER_PREFIX = "Bearer "
 
@@ -155,6 +158,7 @@ def get_retriever(request: Request) -> Retriever:
             settings.ollama_base_url,
             timeout=settings.rag_timeout_seconds,
             keep_alive=settings.embedding_keep_alive,
+            num_ctx=settings.embedding_num_ctx,
         ),
     )
     registry.register(Retriever, retriever)
@@ -181,6 +185,13 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
     else:
         from doktok_provider_ollama import OllamaChatModelProvider
 
+        if rag.provider == "openai":
+            logger.warning(
+                "Document interrogation is set to OpenAI %s but no API key is configured; "
+                "falling back to the local default model %s",
+                rag.model,
+                settings.default_model,
+            )
         model = rag.model if rag.provider == "ollama" else settings.default_model
         model_provider = OllamaChatModelProvider(
             model,

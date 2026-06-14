@@ -38,7 +38,7 @@ class OpenAiChatModelProvider:
             reasoning_effort=self._reasoning_effort,
         ).strip()
 
-    def stream_complete(self, prompt: str, *, think: bool = False) -> Iterator[ChatChunk]:
+    def stream_complete(self, prompt: str, *, think: bool | None = None) -> Iterator[ChatChunk]:
         # No token streaming for OpenAI here (and chat-completions exposes no reasoning); emit the
         # full answer as a single chunk so the streaming UI still works (degrades gracefully).
         _ = think

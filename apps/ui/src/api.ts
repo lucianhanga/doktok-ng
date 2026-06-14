@@ -308,6 +308,9 @@ export interface AiSettings {
   pipeline: AiPurposeSettings;
   rag: AiPurposeSettings;
   openai_api_key_set?: boolean;
+  // Read-only: the embedding model + context that indexes the corpus (not user-selectable).
+  embedding_model?: string;
+  embedding_num_ctx?: number;
 }
 
 export interface ModelOption {
@@ -541,7 +544,8 @@ export interface ChatStreamHandlers {
 export async function chatStream(
   question: string,
   history: ChatTurn[],
-  reasoning: boolean,
+  // undefined = follow the configured Document-interrogation reasoning (Settings); true forces it on.
+  reasoning: boolean | undefined,
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
   threadId?: string | null,
@@ -550,6 +554,7 @@ export async function chatStream(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     // With a thread_id the server loads history from the DB and persists this turn.
+    // `reasoning` is omitted when undefined so the server falls back to the configured setting.
     body: JSON.stringify({ question, history, reasoning, thread_id: threadId ?? null }),
     signal,
   });

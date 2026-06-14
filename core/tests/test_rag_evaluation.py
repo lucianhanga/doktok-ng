@@ -41,7 +41,7 @@ class FakeAnswerer:
             update={"rewritten_query": standalone if standalone != question else None}
         )
 
-    def answer_thread_stream(self, tenant_id, history, question, limit=8, *, reasoning=False):  # type: ignore[no-untyped-def]
+    def answer_thread_stream(self, tenant_id, history, question, limit=8, *, reasoning=None):  # type: ignore[no-untyped-def]
         yield from ()  # not exercised by the eval harness
 
 

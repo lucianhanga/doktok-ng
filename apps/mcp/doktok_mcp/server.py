@@ -57,7 +57,10 @@ def build_server(settings: Settings) -> FastMCP:
     tenant = resolve_tenant(settings.mcp_tenant, _tenants(settings))
     db = Database(settings.mcp_database_url or settings.database_url)
     embeddings = OllamaEmbeddingProvider(
-        settings.embedding_model, settings.ollama_base_url, timeout=settings.rag_timeout_seconds
+        settings.embedding_model,
+        settings.ollama_base_url,
+        timeout=settings.rag_timeout_seconds,
+        num_ctx=settings.embedding_num_ctx,
     )
     retriever = HybridPostgresRetriever(db, embeddings)
     documents = PostgresDocumentRepository(db)

@@ -105,7 +105,8 @@ KV cache added by parallelism, at the default ~4096-token context:
 - Chat model: roughly ~0.3-0.5 GB per parallel slot (estimated from typical Qwen3-MoE attention
   dimensions; grows proportionally if you raise the context window).
 - OCR model: smaller (~0.1 GB/slot) plus a vision buffer per concurrent image.
-- Embedding model: negligible (512-token context).
+- Embedding model: negligible (context capped at `DOKTOK_EMBEDDING_NUM_CTX`, default 1024, instead of
+  the model's 32k default — chunks are ~300 tokens, so this frees KV-cache without changing embeddings).
 
 So, with all three models resident:
 

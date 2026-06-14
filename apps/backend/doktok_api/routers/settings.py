@@ -27,8 +27,14 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 Repo = Annotated[AppSettingsRepository, Depends(get_app_settings_repository)]
 
 
-def _response(repo: AppSettingsRepository, ai: AiSettings) -> AiSettingsResponse:
-    return AiSettingsResponse(**ai.model_dump(), openai_api_key_set=bool(repo.get_openai_api_key()))
+def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> AiSettingsResponse:
+    settings = request.app.state.settings
+    return AiSettingsResponse(
+        **ai.model_dump(),
+        openai_api_key_set=bool(repo.get_openai_api_key()),
+        embedding_model=settings.embedding_model,
+        embedding_num_ctx=settings.embedding_num_ctx,
+    )
 
 
 @router.get("/ai/catalog", response_model=ModelCatalog)
@@ -39,10 +45,10 @@ def ai_model_catalog(tenant: Tenant) -> ModelCatalog:
 
 
 @router.get("/ai", response_model=AiSettingsResponse)
-def get_ai_settings(tenant: Tenant, repo: Repo) -> AiSettingsResponse:
+def get_ai_settings(request: Request, tenant: Tenant, repo: Repo) -> AiSettingsResponse:
     """Current AI model selection (the OpenAI key is never returned, only whether it is set)."""
     _ = tenant
-    return _response(repo, repo.get_ai_settings())
+    return _response(repo, repo.get_ai_settings(), request)
 
 
 @router.put("/ai", response_model=AiSettingsResponse)
@@ -63,7 +69,7 @@ def put_ai_settings(
     registry = request.app.state.registry
     registry.unregister(ChatModelProvider)
     registry.unregister(RagAnswerer)
-    return _response(repo, ai)
+    return _response(repo, ai, request)
 
 
 @router.get("/ocr", response_model=OcrSettings)

@@ -1,10 +1,12 @@
 """Document metadata extraction via local Ollama (M6.2 enrichment).
 
-Primary model (e.g. qwen3.6:35b-a3b) is called with a strict JSON ``format`` schema and **thinking
-left on** - never ``think=false`` with ``format`` (a confirmed Ollama bug on the MoE arch silently
-drops the schema). The model's reasoning lands in ``message.thinking``; we read only
-``message.content``. If that isn't valid JSON, a small dense repair model (e.g. qwen3:14b, which
-does handle ``think=false`` + ``format``) reformats it into the schema. All fields checked in core.
+The extraction model is called with a strict JSON ``format`` schema and **thinking left on** - never
+``think=false`` with ``format`` (a confirmed Ollama bug on the MoE arch silently drops the schema).
+The model's reasoning lands in ``message.thinking``; we read only ``message.content``. If that isn't
+valid JSON, a repair pass reformats it into the schema. The repair model is the same configured
+pipeline model (no separate model is loaded), and the repair call is MoE-safe: it disables thinking
+only for dense models and keeps it on for ``a3b`` MoE models to stay ``format``-safe. All fields
+checked in core.
 """
 
 from __future__ import annotations
@@ -93,8 +95,10 @@ class OllamaMetadataExtractor:
             "The text below is meant to be JSON matching the schema but may be malformed or "
             "wrapped in prose. Return ONLY corrected JSON for the schema.\n\nText:\n" + broken
         )
-        # The repair model is dense, so think=false + format is safe and fast.
-        return self._chat(self._repair_model, "Output only valid JSON.", prompt, think=False)
+        # think=false + format is broken on the MoE arch, so disable thinking only for a dense
+        # repair model; on an a3b model keep thinking on (None) to stay format-safe.
+        repair_think = None if "a3b" in self._repair_model else False
+        return self._chat(self._repair_model, "Output only valid JSON.", prompt, think=repair_think)
 
     def _chat(self, model: str, system: str, user: str, *, think: bool | None) -> str:
         payload: dict[str, Any] = {

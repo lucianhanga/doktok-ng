@@ -35,7 +35,7 @@ class FakeRagAnswerer:
         self.seen_history = list(history)
         return self.answer(tenant_id, question, limit)
 
-    def answer_thread_stream(self, tenant_id, history, question, limit=8, *, reasoning=False):  # type: ignore[no-untyped-def]
+    def answer_thread_stream(self, tenant_id, history, question, limit=8, *, reasoning=None):  # type: ignore[no-untyped-def]
         self.seen_history = list(history)
         ans = self.answer(tenant_id, question, limit)
         yield ChatEvent(type="meta")

@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from doktok_contracts.schemas import Document, DocumentChunk, DocumentStatus
+from doktok_contracts.schemas import (
+    Document,
+    DocumentChunk,
+    DocumentStatus,
+    QueryFilters,
+)
 from doktok_retrieval_hybrid import HybridPostgresRetriever
 from doktok_storage_postgres import (
     Database,
+    PostgresCategoryRepository,
     PostgresChunkRepository,
     PostgresDocumentRepository,
 )
@@ -92,3 +98,81 @@ def test_semantic_only_query_still_matches(db: Database) -> None:
 
     assert hits and hits[0].chunk_id == "c1"
     assert hits[0].text_score is None
+
+
+def _doc(doc_id: str, document_date: date) -> Document:
+    return Document(
+        id=doc_id,
+        tenant_id=TENANT,
+        sha256=(doc_id * 64)[:64],
+        original_filename=f"{doc_id}.pdf",
+        detected_mime="application/pdf",
+        title=doc_id,
+        status=DocumentStatus.ACTIVE,
+        storage_path=f"/docs.active/{doc_id}",
+        document_date=document_date,
+        created_at=datetime.now(UTC),
+        activated_at=datetime.now(UTC),
+    )
+
+
+def _doc_chunk(chunk_id: str, doc_id: str, text: str) -> DocumentChunk:
+    return DocumentChunk(
+        id=chunk_id,
+        tenant_id=TENANT,
+        document_id=doc_id,
+        version_id="",
+        page_start=1,
+        page_end=1,
+        heading_path=[],
+        text=text,
+        token_count=10,
+    )
+
+
+def test_date_filter_scopes_to_the_range(db: Database) -> None:
+    docs = PostgresDocumentRepository(db)
+    docs.add(_doc("old", date(2023, 6, 1)))
+    docs.add(_doc("new", date(2024, 6, 1)))
+    PostgresChunkRepository(db).add_chunks(
+        [
+            _doc_chunk("oc", "old", "invoice total due"),
+            _doc_chunk("nc", "new", "invoice total due"),
+        ],
+        [_unit_vector(0), _unit_vector(0)],
+    )
+    retriever = HybridPostgresRetriever(db, FakeEmbedder(_unit_vector(0)))
+
+    # No filter: both documents' chunks are eligible.
+    assert {h.document_id for h in retriever.search(TENANT, "invoice", limit=5)} == {"old", "new"}
+    # 2023 range: only the 2023 document survives.
+    filtered = retriever.search(
+        TENANT,
+        "invoice",
+        limit=5,
+        filters=QueryFilters(date_from=date(2023, 1, 1), date_to=date(2023, 12, 31)),
+    )
+    assert {h.document_id for h in filtered} == {"old"}
+
+
+def test_category_filter_scopes_to_the_category(db: Database) -> None:
+    docs = PostgresDocumentRepository(db)
+    docs.add(_doc("inv", date(2024, 1, 1)))
+    docs.add(_doc("ctr", date(2024, 1, 1)))
+    PostgresChunkRepository(db).add_chunks(
+        [
+            _doc_chunk("ic", "inv", "invoice total due"),
+            _doc_chunk("cc", "ctr", "invoice total due"),
+        ],
+        [_unit_vector(0), _unit_vector(0)],
+    )
+    cats = PostgresCategoryRepository(db)
+    invoice = cats.create(TENANT, "Invoice", "invoice")
+    assert invoice is not None
+    cats.set_document_categories(TENANT, "inv", [invoice.id])
+    retriever = HybridPostgresRetriever(db, FakeEmbedder(_unit_vector(0)))
+
+    filtered = retriever.search(
+        TENANT, "invoice", limit=5, filters=QueryFilters(category="invoice")
+    )
+    assert {h.document_id for h in filtered} == {"inv"}

@@ -1,4 +1,4 @@
-from doktok_contracts.schemas import SearchHit
+from doktok_contracts.schemas import QueryFilters, SearchHit
 from doktok_core.rag.answerer import REFUSAL, DefaultRagAnswerer
 
 
@@ -6,9 +6,11 @@ class FakeRetriever:
     def __init__(self, hits: list[SearchHit]) -> None:
         self._hits = hits
         self.seen: tuple[str, str, int] | None = None
+        self.seen_filters: QueryFilters | None = None
 
-    def search(self, tenant_id: str, query: str, limit: int = 10) -> list[SearchHit]:
+    def search(self, tenant_id, query, limit=10, *, filters=None):  # type: ignore[no-untyped-def]
         self.seen = (tenant_id, query, limit)
+        self.seen_filters = filters
         return self._hits
 
 
@@ -138,23 +140,28 @@ def test_document_bracket_markers_are_neutralized_in_context() -> None:
 
 
 class ScriptedChat:
-    """Returns the rewrite for the condense prompt, the answer otherwise (multi-turn, ADR-0018)."""
+    """Returns JSON for the understanding prompt, the answer otherwise (multi-turn, ADR-0018 P2)."""
 
-    def __init__(self, rewrite: str, answer: str) -> None:
-        self._rewrite = rewrite
+    def __init__(self, understanding: str, answer: str) -> None:
+        self._understanding = understanding
         self._answer = answer
         self.prompts: list[str] = []
 
     def complete(self, prompt: str) -> str:
         self.prompts.append(prompt)
-        return self._rewrite if "Standalone query:" in prompt else self._answer
+        # The understanding call asks for a JSON object (ends with "JSON:"); else it answers.
+        return self._understanding if "JSON:" in prompt else self._answer
 
 
 def test_answer_thread_rewrites_followup_against_history() -> None:
     from doktok_contracts.schemas import ChatTurn
 
     retriever = FakeRetriever([_hit(1)])
-    chat = ScriptedChat(rewrite="Block House spend in March 2026", answer="EUR 120 [1].")
+    chat = ScriptedChat(
+        understanding='{"query": "Block House spend in March 2026", "category": null, '
+        '"date_from": null, "date_to": null}',
+        answer="EUR 120 [1].",
+    )
     history = [
         ChatTurn(role="user", content="how much did I spend at Block House?"),
         ChatTurn(role="assistant", content="EUR 500 total [1]."),
@@ -170,15 +177,37 @@ def test_answer_thread_rewrites_followup_against_history() -> None:
     assert answer.grounded is True
 
 
-def test_answer_thread_without_history_is_single_turn() -> None:
+def test_answer_thread_infers_category_and_date_filters() -> None:
+    from doktok_contracts.schemas import ChatTurn
+
     retriever = FakeRetriever([_hit(1)])
-    chat = ScriptedChat(rewrite="unused", answer="The answer is X [1].")
+    chat = ScriptedChat(
+        understanding='{"query": "late fees", "category": "invoice", '
+        '"date_from": "2023-01-01", "date_to": "2023-12-31"}',
+        answer="Late fees are 2% [1].",
+    )
+    history = [ChatTurn(role="user", content="anything about my invoices?")]
+    answer = DefaultRagAnswerer(retriever, chat).answer_thread(
+        "t1", history, "what about late fees in 2023?", 5
+    )
+
+    # The inferred filters are passed to the retriever and surfaced on the answer.
+    assert retriever.seen_filters is not None
+    assert retriever.seen_filters.category == "invoice"
+    assert str(retriever.seen_filters.date_from) == "2023-01-01"
+    assert answer.filters is not None and answer.filters.category == "invoice"
+
+
+def test_answer_thread_without_history_still_answers() -> None:
+    retriever = FakeRetriever([_hit(1)])
+    # The understanding call returns no usable JSON -> falls back to the original question.
+    chat = ScriptedChat(understanding="not json", answer="The answer is X [1].")
 
     answer = DefaultRagAnswerer(retriever, chat).answer_thread("t1", [], "what is X?", 5)
 
-    assert retriever.seen == ("t1", "what is X?", 5)  # no rewrite
+    assert retriever.seen == ("t1", "what is X?", 5)  # fell back to the original question
     assert answer.rewritten_query is None
-    assert all("Standalone query:" not in p for p in chat.prompts)  # rewrite never called
+    assert answer.filters is None
 
 
 def test_answer_thread_rewrite_failure_falls_back_to_question() -> None:

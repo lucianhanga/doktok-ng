@@ -48,6 +48,7 @@ from doktok_contracts.schemas import (
     IngestionJob,
     ListAnchor,
     ProjectionRequest,
+    QueryFilters,
     RagAnswer,
     SearchHit,
     SecurityDecision,
@@ -547,7 +548,14 @@ class EntityRepository(Protocol):
 
 @runtime_checkable
 class Retriever(Protocol):
-    def search(self, tenant_id: str, query: str, limit: int = 10) -> list[SearchHit]: ...
+    def search(
+        self,
+        tenant_id: str,
+        query: str,
+        limit: int = 10,
+        *,
+        filters: QueryFilters | None = None,
+    ) -> list[SearchHit]: ...
 
 
 @runtime_checkable

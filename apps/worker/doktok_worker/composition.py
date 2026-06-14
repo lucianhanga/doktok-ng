@@ -125,9 +125,9 @@ def build_services(
     pipeline = app_settings.get_ai_settings().pipeline
     openai_key = app_settings.get_openai_api_key()
     # OCR parallelism comes from the Settings DB (live-reloaded by the worker), env is the fallback
-    # default. The pool needs at least one predictor per parallel document (ingest_concurrency).
+    # default. This is the number of OCR worker processes directly - if more documents ingest at
+    # once than this, their pages just share the pool (the process pool queues the extra work).
     ocr_concurrency = app_settings.get_ocr_settings().ocr_concurrency
-    ocr_pool_size = max(settings.ingest_concurrency, ocr_concurrency)
     use_openai_pipeline = pipeline.provider == "openai" and bool(openai_key)
     if pipeline.provider == "openai" and not openai_key:
         logger.warning("pipeline set to OpenAI but no API key configured; using Ollama defaults")
@@ -144,10 +144,9 @@ def build_services(
     timeout = settings.ollama_timeout_seconds
     ocr_extractor: OcrExtractor
     if settings.ocr_engine == "paddleocr":
-        # One predictor per ingestion slot so pages OCR in parallel (PaddleOCR is CPU-bound).
-        # Pool one predictor per concurrent OCR slot: enough for both parallel documents
-        # (ingest_concurrency) and parallel pages within a document (ocr_concurrency).
-        ocr_extractor = PaddleOcr(lang=settings.ocr_lang, pool_size=ocr_pool_size)
+        # `ocr_concurrency` independent predictors = the number of pages OCR'd in parallel across
+        # the whole worker (PaddleOCR is CPU-bound, ~1 core each). Set directly by the OCR setting.
+        ocr_extractor = PaddleOcr(lang=settings.ocr_lang, pool_size=ocr_concurrency)
     else:
         ocr_extractor = OllamaVisionOcr(
             settings.ocr_model,
@@ -165,10 +164,7 @@ def build_services(
         paddle = ocr_extractor
 
         def ocr_reload() -> None:  # noqa: F811 - single definition, guarded by the isinstance
-            target = max(
-                settings.ingest_concurrency, app_settings.get_ocr_settings().ocr_concurrency
-            )
-            paddle.reconfigure(target)
+            paddle.reconfigure(app_settings.get_ocr_settings().ocr_concurrency)
 
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()

@@ -176,3 +176,30 @@ def test_category_filter_scopes_to_the_category(db: Database) -> None:
         TENANT, "invoice", limit=5, filters=QueryFilters(category="invoice")
     )
     assert {h.document_id for h in filtered} == {"inv"}
+
+
+def test_unknown_inferred_category_does_not_exclude_everything(db: Database) -> None:
+    # The understand step can infer a category that does not exist in the corpus (e.g. an English
+    # label over a German/Romanian corpus). That must be a no-op, not a filter that excludes every
+    # document and forces a false refusal.
+    docs = PostgresDocumentRepository(db)
+    docs.add(_doc("inv", date(2024, 1, 1)))
+    docs.add(_doc("ctr", date(2024, 1, 1)))
+    PostgresChunkRepository(db).add_chunks(
+        [
+            _doc_chunk("ic", "inv", "invoice total due"),
+            _doc_chunk("cc", "ctr", "invoice total due"),
+        ],
+        [_unit_vector(0), _unit_vector(0)],
+    )
+    cats = PostgresCategoryRepository(db)
+    invoice = cats.create(TENANT, "Invoice", "invoice")
+    assert invoice is not None
+    cats.set_document_categories(TENANT, "inv", [invoice.id])
+    retriever = HybridPostgresRetriever(db, FakeEmbedder(_unit_vector(0)))
+
+    # "identity card" is not a category in this tenant -> the filter is ignored, both docs returned.
+    filtered = retriever.search(
+        TENANT, "invoice", limit=5, filters=QueryFilters(category="identity card")
+    )
+    assert {h.document_id for h in filtered} == {"inv", "ctr"}

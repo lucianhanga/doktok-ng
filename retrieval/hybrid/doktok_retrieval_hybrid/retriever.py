@@ -32,7 +32,10 @@ def _filter_sql(filters: QueryFilters | None) -> tuple[str, tuple[object, ...]]:
     """Extra ``AND`` clauses + params scoping retrieval by the inferred filters (M6.4 Phase 2).
 
     Date bounds compare against ``documents.document_date``; category is an EXISTS over the
-    document's category links (matched case-insensitively by name). Returns ("", ()) for no filter.
+    document's category links (matched case-insensitively by name). The category clause is
+    SELF-VALIDATING: if no category in the tenant matches the inferred name (e.g. the understand
+    step inferred an English/hallucinated label that does not exist in a German corpus), the filter
+    is a no-op rather than excluding every document. Returns ("", ()) for no filter.
     """
     if filters is None:
         return "", ()
@@ -45,11 +48,16 @@ def _filter_sql(filters: QueryFilters | None) -> tuple[str, tuple[object, ...]]:
         clauses.append("AND d.document_date <= %s")
         params.append(filters.date_to)
     if filters.category:
+        # Apply the category filter only when that category actually exists for the tenant; an
+        # unknown inferred category must NOT silently exclude the whole corpus (false refusals).
         clauses.append(
-            "AND EXISTS (SELECT 1 FROM document_category_links l "
+            "AND (NOT EXISTS (SELECT 1 FROM categories cval "
+            "WHERE cval.tenant_id = d.tenant_id AND cval.name ILIKE %s) "
+            "OR EXISTS (SELECT 1 FROM document_category_links l "
             "JOIN categories cat ON cat.id = l.category_id AND cat.tenant_id = d.tenant_id "
-            "WHERE l.document_id = d.id AND cat.name ILIKE %s)"
+            "WHERE l.document_id = d.id AND cat.name ILIKE %s))"
         )
+        params.append(filters.category)
         params.append(filters.category)
     return (" " + " ".join(clauses) if clauses else ""), tuple(params)
 

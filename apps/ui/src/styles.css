@@ -557,6 +557,14 @@ table.jobs td {
   align-items: center;
   gap: 0.35rem;
 }
+/* Reprocess dropdown when the selection has failing features: draw attention to the pre-pick. */
+.bulk-reprocess select.has-attention {
+  border-color: var(--danger, #d9534f);
+  box-shadow: 0 0 0 1px var(--danger, #d9534f);
+}
+.bulk-attention-hint {
+  font-size: 0.8rem;
+}
 
 tr.row-selected {
   background: rgba(46, 120, 200, 0.12);

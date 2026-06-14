@@ -135,6 +135,37 @@ test("reprocess dropdown re-queues the chosen feature for selected documents", a
   );
 });
 
+test("preselects the failing feature when selecting documents that need attention", async () => {
+  mockDocs(
+    [doc({ id: "a1", status: "active", original_filename: "stmt.pdf" })],
+    [
+      {
+        document_id: "a1",
+        feature: "ner",
+        status: "failed",
+        feature_version: 1,
+        attempts: 3,
+        max_attempts: 3,
+      },
+    ],
+    [
+      { name: "entities", version: 3, label: "Entities & keywords", description: "..." },
+      { name: "ner", version: 1, label: "People & orgs", description: "..." },
+    ],
+  );
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("stmt.pdf")).toBeInTheDocument());
+  fireEvent.click(screen.getByLabelText("Select stmt.pdf"));
+
+  const select = screen.getByLabelText("Feature to reprocess") as HTMLSelectElement;
+  // The single failing feature is pre-selected, annotated with a count, and a hint is shown.
+  await waitFor(() => expect(select.value).toBe("ner"));
+  expect(screen.getByText(/1 feature need attention in the selection/i)).toBeInTheDocument();
+  expect(
+    screen.getByRole("option", { name: /People & orgs - needs attention \(1\)/ }),
+  ).toBeInTheDocument();
+});
+
 test("shows an error when the request fails", async () => {
   vi.stubGlobal(
     "fetch",

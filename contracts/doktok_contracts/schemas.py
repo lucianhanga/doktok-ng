@@ -437,9 +437,10 @@ class ChatRequest(BaseModel):
     # persisted to the thread; `history` above is ignored. None = stateless (client-held history).
     thread_id: str | None = None
     limit: int = Field(default=8, ge=1, le=20)
-    # Opt-in: ask the model to stream its reasoning/thinking (M6.4). Off by default - enabling it
-    # makes the answer noticeably slower (the model thinks before answering); streaming only.
-    reasoning: bool = False
+    # Per-request reasoning override (streaming only). None = follow the configured `rag.reasoning`
+    # (Settings > AI > Document interrogation); True/False explicitly overrides it for this turn.
+    # Enabling reasoning makes the answer noticeably slower (the model thinks before answering).
+    reasoning: bool | None = None
 
 
 class ChatMessage(BaseModel):
@@ -606,6 +607,10 @@ class AiSettingsResponse(AiSettings):
     """AI settings as returned to the UI - never the OpenAI key, only whether one is set."""
 
     openai_api_key_set: bool = False
+    # Read-only: the embedding model + its context, shown so the user can see what indexes their
+    # corpus. Not user-selectable - changing it would need a vector-dimension migration + re-index.
+    embedding_model: str = ""
+    embedding_num_ctx: int = 0
 
 
 class AiSettingsUpdate(AiSettings):

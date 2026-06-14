@@ -46,3 +46,15 @@ def test_empty_input_skips_the_call(monkeypatch: Any) -> None:
     captured = _capture(monkeypatch)
     assert OllamaEmbeddingProvider("m", "http://localhost:11434").embed([]) == []
     assert captured == {}  # no HTTP call for an empty batch
+
+
+def test_num_ctx_is_sent_as_option_when_set(monkeypatch: Any) -> None:
+    captured = _capture(monkeypatch)
+    OllamaEmbeddingProvider("m", "http://localhost:11434", num_ctx=1024).embed(["x"])
+    assert captured["json"]["options"]["num_ctx"] == 1024
+
+
+def test_num_ctx_omitted_by_default(monkeypatch: Any) -> None:
+    captured = _capture(monkeypatch)
+    OllamaEmbeddingProvider("m", "http://localhost:11434").embed(["x"])
+    assert "options" not in captured["json"]

@@ -58,9 +58,13 @@ class OllamaChatModelProvider:
         response.raise_for_status()
         return str(response.json().get("response", "")).strip()
 
-    def stream_complete(self, prompt: str, *, think: bool = False) -> Iterator[ChatChunk]:
-        """Stream the answer via /api/chat (NDJSON). Reasoning tokens (when ``think``) arrive in the
-        message's ``thinking`` field, answer tokens in ``content`` - yielded as distinct chunks."""
+    def stream_complete(self, prompt: str, *, think: bool | None = None) -> Iterator[ChatChunk]:
+        """Stream the answer via /api/chat (NDJSON). Reasoning tokens (when reasoning is on) arrive
+        in the message's ``thinking`` field, answer tokens in ``content`` - yielded as distinct
+        chunks.
+        ``think=None`` uses the configured reasoning (``self._think``, from settings); True/False
+        overrides it for this call (e.g. the chat 'Show reasoning' toggle)."""
+        effective_think = self._think if think is None else think
         options: dict[str, object] = {"temperature": 0}
         if self._num_ctx is not None:
             options["num_ctx"] = self._num_ctx
@@ -70,7 +74,7 @@ class OllamaChatModelProvider:
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": True,
-            "think": think,
+            "think": effective_think,
             "options": options,
         }
         if self._keep_alive is not None:

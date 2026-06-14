@@ -1,8 +1,8 @@
 """LLM-assisted named-entity recognition via local Ollama (M7.4).
 
-Same structured-output discipline as category classification: primary model with ``format`` and
-thinking left on; small dense repair model for invalid JSON. Returns PERSON/ORG/GPE occurrences;
-the document text is treated as untrusted data, never instructions.
+Same structured-output discipline as category classification: model with ``format`` and thinking
+left on; a MoE-safe repair pass (on the same configured model) for invalid JSON. Returns
+PERSON/ORG/GPE occurrences; the document text is treated as untrusted data, never instructions.
 """
 
 from __future__ import annotations
@@ -87,7 +87,10 @@ class OllamaEntityNerExtractor:
             'The text below should be JSON like {"people": [...], "organizations": [...], '
             '"places": [...]} but may be malformed. Return ONLY corrected JSON.\n\nText:\n' + broken
         )
-        return self._chat(self._repair_model, "Output only valid JSON.", prompt, think=False)
+        # think=false + format is broken on the MoE arch; disable thinking only for a dense repair
+        # model, otherwise keep it on (None) to stay format-safe on an a3b model.
+        repair_think = None if "a3b" in self._repair_model else False
+        return self._chat(self._repair_model, "Output only valid JSON.", prompt, think=repair_think)
 
     def _chat(self, model: str, system: str, user: str, *, think: bool | None) -> str:
         payload: dict[str, Any] = {

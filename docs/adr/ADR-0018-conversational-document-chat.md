@@ -36,7 +36,8 @@ evals prove a real multi-hop failure class.
   authoritative and residency stays simple.
 - **Structured outputs where they make sense**: the Phase-2 query-understanding call returns a typed
   object (`standalone_query` + `route` + `filters`) via Ollama `format` with `think` enabled (the MoE
-  bug is `think=false`+`format`) and the existing `qwen3:14b` JSON-repair fallback. The streamed
+  bug is `think=false`+`format`) and the JSON-repair fallback (which reuses the configured pipeline
+  model). The streamed
   grounded **answer stays plain text** with `[n]` markers validated post-hoc - structured there would
   block streaming and trip the MoE bug. So: schema-bound for machine-readable steps, free text for the
   human-readable answer.

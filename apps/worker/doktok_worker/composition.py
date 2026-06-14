@@ -176,6 +176,7 @@ def build_services(
         settings.ollama_base_url,
         timeout=timeout,
         keep_alive=settings.embedding_keep_alive,
+        num_ctx=settings.embedding_num_ctx,
     )
     chunk_repo = PostgresChunkRepository(db)
     entity_extractor = RegexEntityExtractor()
@@ -193,12 +194,16 @@ def build_services(
         else (pipeline.model if pipeline.provider == "ollama" else settings.enrich_model)
     )
     judge_num_ctx = settings.judge_num_ctx if use_openai_pipeline else pipeline.num_ctx
+    # The judge is a plain completion (no structured `format`), so reasoning follows the configured
+    # pipeline density directly. structured=False keeps think off when the user set reasoning 'off'.
+    judge_think = ollama_think_for(pipeline.reasoning, judge_model, structured=False)
     chat_model = OllamaChatModelProvider(
         judge_model,
         settings.ollama_base_url,
         timeout=timeout,
         num_ctx=judge_num_ctx,
         keep_alive=settings.enrich_keep_alive,
+        think=judge_think,
     )
     metadata_extractor: MetadataExtractor
     category_classifier: CategoryClassifier
@@ -226,9 +231,12 @@ def build_services(
         p_model = pipeline.model if pipeline.provider == "ollama" else settings.enrich_model
         p_ctx = pipeline.num_ctx if pipeline.provider == "ollama" else settings.enrich_num_ctx
         p_think = ollama_think_for(pipeline.reasoning, p_model, structured=True)
+        # JSON-repair runs on the SAME configured model (no surprise second LLM): keeps a single
+        # model resident, and the repair call is MoE-safe (it chooses think per the repair model).
+        p_repair = p_model
         metadata_extractor = OllamaMetadataExtractor(
             p_model,
-            settings.enrich_repair_model,
+            p_repair,
             settings.ollama_base_url,
             timeout=timeout,
             num_ctx=p_ctx,
@@ -237,7 +245,7 @@ def build_services(
         )
         category_classifier = OllamaCategoryClassifier(
             p_model,
-            settings.enrich_repair_model,
+            p_repair,
             settings.ollama_base_url,
             timeout=timeout,
             num_ctx=p_ctx,
@@ -246,7 +254,7 @@ def build_services(
         )
         record_extractor = OllamaRecordExtractor(
             p_model,
-            settings.enrich_repair_model,
+            p_repair,
             settings.ollama_base_url,
             timeout=timeout,
             num_ctx=p_ctx,
@@ -255,7 +263,7 @@ def build_services(
         )
         ner_extractor = OllamaEntityNerExtractor(
             p_model,
-            settings.enrich_repair_model,
+            p_repair,
             settings.ollama_base_url,
             timeout=timeout,
             num_ctx=p_ctx,

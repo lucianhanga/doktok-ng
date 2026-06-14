@@ -79,6 +79,7 @@ the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
 ```env
 DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b          # RAG chat / reranker (23 GB MoE)
 DOKTOK_EMBEDDING_MODEL=qwen3-embedding:0.6b    # 1024-dim, no 512-token truncation
+DOKTOK_EMBEDDING_NUM_CTX=1024                  # cap embedding context (chunks ~300 tok) to free KV-cache
 DOKTOK_ENRICH_MODEL=qwen3:14b                  # dense; enrichment + OCR-quality judge + JSON repair
 DOKTOK_OCR_ENGINE=paddleocr                    # PP-OCRv5 (default); or "glm-ocr" (Ollama vision)
 DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
@@ -87,6 +88,12 @@ DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 All model names are configurable via environment variables. See ADR-0003 (model runtime) and
 ADR-0010 (OCR engine) for the rationale. PaddleOCR needs its optional extra installed on the worker
 host: `uv pip install paddleocr paddlepaddle`.
+
+The OCR-quality judge and the Ollama JSON-repair fallback both reuse the **configured pipeline
+model** (no separate repair model). Pipeline and RAG reasoning each follow the reasoning density set
+in Settings; the chat **Show reasoning** toggle can override the RAG reasoning per message.
+`DOKTOK_EMBEDDING_NUM_CTX` caps the per-call embedding context (chunks are ~300 tokens, the model's
+own default is 32k), which frees GPU KV-cache without changing the embeddings.
 
 For throughput tuning (parallel ingestion, `OLLAMA_NUM_PARALLEL`, and the memory cost of
 parallelism), see [docs/operations/performance-and-ollama.md](docs/operations/performance-and-ollama.md).
@@ -100,6 +107,11 @@ a catalog of local Ollama models and remote OpenAI models, each with a reasoning
 applied on the next backend/worker restart. The OpenAI API key is **write-only** (set or cleared via
 the API, never read back). Selecting an OpenAI model is an explicit, opt-in exception to the
 local-first / no-egress default (ADR-0006, ADR-0014); the Ollama-only defaults keep everything local.
+
+The Settings AI section also shows a **read-only "Embedding (index)"** display (the embedding model
+and its context window). The embedding model is intentionally **not** user-selectable: changing it
+would change the vector dimension and require a schema migration plus a full re-index of every
+document.
 
 ## Documents list and views
 

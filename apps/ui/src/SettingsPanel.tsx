@@ -180,6 +180,35 @@ export function SettingsPanel() {
             onChange={(rag) => setAi({ ...ai, rag })}
           />
           <div className="settings-purpose">
+            <h4>Embedding (index)</h4>
+            <p className="muted">
+              The model that embeds your documents for semantic search. Read-only: changing it would
+              require re-indexing the whole corpus.
+            </p>
+            <div className="settings-row">
+              <label>
+                Model{" "}
+                <input
+                  type="text"
+                  aria-label="Embedding model"
+                  value={ai.embedding_model ?? ""}
+                  readOnly
+                  disabled
+                />
+              </label>
+              <label>
+                Context{" "}
+                <input
+                  type="text"
+                  aria-label="Embedding context"
+                  value={ai.embedding_num_ctx ? ctxLabel(ai.embedding_num_ctx) : ""}
+                  readOnly
+                  disabled
+                />
+              </label>
+            </div>
+          </div>
+          <div className="settings-purpose">
             <h4>OpenAI</h4>
             <p className="muted">
               Required only if you pick an OpenAI model above. Selecting OpenAI sends document text to

@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Settings-driven reasoning, end to end**: document interrogation (RAG chat) now honors
+  `rag.reasoning` from Settings by default instead of being driven solely by the chat **Show
+  reasoning** toggle (the toggle still overrides the setting per message). Root cause was
+  `OllamaChatModelProvider.stream_complete` hardcoding `think=false`. The OCR-quality judge now
+  applies the configured pipeline reasoning as well.
+- **`DOKTOK_EMBEDDING_NUM_CTX` (default 1024)**: caps the per-call embedding context instead of using
+  the model's 32k default. Chunks are ~300 tokens, so embeddings are unchanged; the cap frees GPU
+  KV-cache. Wired into the worker, backend, and MCP paths.
+- **Settings shows a read-only "Embedding (index)" display** (model + context). The embedding model
+  is intentionally not user-selectable: changing it would alter the vector dimension and require a
+  schema migration plus a full re-index.
+
+### Changed
+- **Ollama JSON-repair reuses the configured pipeline model**: the structured-output repair step now
+  calls the same configured pipeline model instead of a separate repair model, so the pipeline model
+  choice stays authoritative.
+
+### Removed
+- **`DOKTOK_ENRICH_REPAIR_MODEL` / `enrich_repair_model`**: the dedicated JSON-repair model config is
+  gone now that repair reuses the configured pipeline model.
+
+### Added
 - **Stage dependencies in the feature ledger (ADR-0009)**: processors now declare `dependencies`,
   and `claim_next` only claims a stage once every prerequisite has a `done` row on the same
   document (gated in the SQL via the dependency edge set, and mirrored in the in-memory oracle). The

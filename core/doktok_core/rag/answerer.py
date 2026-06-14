@@ -256,11 +256,12 @@ class DefaultRagAnswerer:
         question: str,
         limit: int = 8,
         *,
-        reasoning: bool = False,
+        reasoning: bool | None = None,
     ) -> Iterator[ChatEvent]:
         """Stream a conversational answer (ADR-0018 Phase 3): meta -> reasoning* -> token+ ->
         sources -> done. Reuses the same retrieval/rerank/relevance as the one-shot path; reasoning
-        events appear only when ``reasoning`` is on and the model emits thinking."""
+        events appear only when reasoning is on and the model emits thinking. ``reasoning=None``
+        follows the chat model's configured reasoning (Settings); True/False overrides it."""
         question = question.strip()
         # Deterministic capability on the raw question (zero model calls) - e.g. current time.
         direct = match_capability(question)
@@ -312,9 +313,10 @@ class DefaultRagAnswerer:
         yield ChatEvent(type="sources", citations=citations)
         yield ChatEvent(type="done", grounded=grounded)
 
-    def _stream(self, prompt: str, reasoning: bool) -> Iterator[ChatChunk]:
+    def _stream(self, prompt: str, reasoning: bool | None) -> Iterator[ChatChunk]:
         """Stream from the chat model when it supports it; otherwise emit the full answer as one
-        chunk (graceful degradation for non-streaming providers)."""
+        chunk (graceful degradation for non-streaming providers). ``reasoning=None`` lets the
+        provider use its configured (settings-derived) reasoning."""
         if isinstance(self._chat, StreamingChatModelProvider):
             yield from self._chat.stream_complete(prompt, think=reasoning)
         else:

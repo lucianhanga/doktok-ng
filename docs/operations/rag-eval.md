@@ -20,7 +20,10 @@ expected text, and cited an expected source.
 - `core/doktok_core/rag/evaluation.py` — pure metric logic (`evaluate(cases, retriever, answerer)`),
   unit-tested in CI with fakes (no models).
 - `eval/corpus/` + `eval/golden.json` — a tiny golden corpus and Q/A set. Cases are tagged by `kind`
-  (`factoid`, `aggregation`, `refusal`) so the report breaks down by type.
+  (`factoid`, `aggregation`, `refusal`, `conversation`) so the report breaks down by type. A
+  `conversation` case carries a `history` (prior turns); it is answered via `answer_thread` so the
+  follow-up `question` is rewritten against that history, and retrieval recall is measured against
+  the rewritten query (M6.4 multi-turn).
 - `scripts/_rag_eval.py` (`make rag-eval`) — the **local** runner: ingests the corpus into a throwaway
   `eval` tenant, indexes it with the real embedding model, runs the golden set against the real hybrid
   retriever + RAG answerer, and prints a per-case + aggregate report. Needs a running Ollama and DB

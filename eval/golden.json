@@ -25,5 +25,27 @@
     "question": "What is the capital of France?",
     "kind": "refusal",
     "should_refuse": true
+  },
+  {
+    "id": "leave-carryover-followup",
+    "question": "And how long can unused leave be carried over?",
+    "kind": "conversation",
+    "history": [
+      {"role": "user", "content": "How many days of annual leave do full-time employees get?"},
+      {"role": "assistant", "content": "Full-time employees get 28 days of annual leave [1]."}
+    ],
+    "expected_sources": ["handbook.md"],
+    "expected_contains": ["3 months"]
+  },
+  {
+    "id": "invoice-billed-to-followup",
+    "question": "Who is it billed to?",
+    "kind": "conversation",
+    "history": [
+      {"role": "user", "content": "What is the total due on invoice INV-2026-001?"},
+      {"role": "assistant", "content": "The total due is 199 EUR [1]."}
+    ],
+    "expected_sources": ["invoice.txt"],
+    "expected_contains": ["Acme"]
   }
 ]

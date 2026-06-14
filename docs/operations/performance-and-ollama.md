@@ -23,9 +23,12 @@ them and runs them one by one. Before the timeout was raised this caused jobs to
 `internal_error` ("timed out"); now they wait instead, but you get little speedup on model-bound
 work (scanned/OCR documents). To make the model calls actually overlap, raise `OLLAMA_NUM_PARALLEL`.
 
-DokTok uses **three** models (chat `DOKTOK_DEFAULT_MODEL`, embeddings `DOKTOK_EMBEDDING_MODEL`, OCR
-`DOKTOK_OCR_MODEL`). Keep `OLLAMA_MAX_LOADED_MODELS >= 3` so the pipeline does not unload/reload a
-model every time it switches between OCR, embedding, and chat steps.
+By default DokTok uses **two** Ollama models - chat `DOKTOK_DEFAULT_MODEL` and embeddings
+`DOKTOK_EMBEDDING_MODEL` - because the default OCR engine is **PaddleOCR** (`DOKTOK_OCR_ENGINE=paddleocr`),
+which runs locally on CPU and loads **no** Ollama model. If you switch to the legacy vision-OCR engine
+(`DOKTOK_OCR_ENGINE=ollama`, model `DOKTOK_OCR_MODEL`, e.g. `glm-ocr:latest`) that adds a third Ollama
+model. Keep `OLLAMA_MAX_LOADED_MODELS` at least equal to the number of Ollama models in use (2 by
+default, 3 with Ollama OCR) so the pipeline does not unload/reload a model every time it switches steps.
 
 Rule of thumb: set `OLLAMA_NUM_PARALLEL` to roughly `DOKTOK_INGEST_CONCURRENCY`, bounded by memory.
 
@@ -90,9 +93,12 @@ Weights (resident, independent of parallelism):
 | Model | Params | Quant | Weights |
 |---|---|---|---|
 | `qwen3.6:35b-a3b` (chat/RAG) | 36B MoE (3B active) | Q4_K_M | ~23 GB |
-| `glm-ocr:latest` (OCR, vision) | 1.1B | F16 | ~2.2 GB |
 | `qwen3-embedding:0.6b` (embeddings) | 0.6B | F16 | ~0.7 GB |
-| **All three loaded** | | | **~26 GB** |
+| **Both loaded (default)** | | | **~24 GB** |
+| `glm-ocr:latest` (OCR, vision) - only with `DOKTOK_OCR_ENGINE=ollama` | 1.1B | F16 | ~2.2 GB |
+
+The default OCR engine is PaddleOCR (CPU), which loads no Ollama model; the OCR row applies only if
+you switch to the Ollama vision-OCR engine.
 
 KV cache added by parallelism, at the default ~4096-token context:
 
@@ -147,7 +153,8 @@ The whole **ingestion path runs on one dense model** so it stays well under the 
 
 | Ingestion role | Model | ~Resident |
 |---|---|---|
-| OCR | `glm-ocr` (`DOKTOK_OCR_NUM_CTX=8192`) | ~3 GB |
+| OCR (default) | PaddleOCR (CPU, local) | ~0 GB GPU/Ollama |
+| OCR (`DOKTOK_OCR_ENGINE=ollama`) | `glm-ocr` (`DOKTOK_OCR_NUM_CTX=8192`) | ~3 GB |
 | OCR-quality judge | `qwen3:14b` (`DOKTOK_JUDGE_MODEL`) | shared with enrichment |
 | Enrichment (metadata + classify) | `qwen3:14b` (`DOKTOK_ENRICH_MODEL`, 4k ctx) | ~12 GB |
 | Embeddings | `qwen3-embedding:0.6b` | ~0.7 GB |

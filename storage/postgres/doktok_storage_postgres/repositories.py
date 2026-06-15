@@ -1693,13 +1693,14 @@ class PostgresChatThreadRepository:
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
                 "INSERT INTO chat_threads (id, tenant_id, title) VALUES (%s, %s, %s) "
-                "RETURNING id, title, created_at, updated_at",
+                "RETURNING id, title, title_source, created_at, updated_at",
                 (thread_id, tenant_id, title),
             ).fetchone()
         assert row is not None
         return ChatThread(
             id=row["id"],
             title=row["title"],
+            title_source=row["title_source"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             message_count=0,
@@ -1709,7 +1710,7 @@ class PostgresChatThreadRepository:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT t.id, t.title, t.created_at, t.updated_at, "
+                "SELECT t.id, t.title, t.title_source, t.created_at, t.updated_at, "
                 "(SELECT count(*) FROM chat_messages m WHERE m.thread_id = t.id) AS message_count "
                 "FROM chat_threads t WHERE t.tenant_id=%s ORDER BY t.updated_at DESC LIMIT %s",
                 (tenant_id, limit),
@@ -1718,6 +1719,7 @@ class PostgresChatThreadRepository:
             ChatThread(
                 id=r["id"],
                 title=r["title"],
+                title_source=r["title_source"],
                 created_at=r["created_at"],
                 updated_at=r["updated_at"],
                 message_count=r["message_count"],
@@ -1766,10 +1768,12 @@ class PostgresChatThreadRepository:
                 "RETURNING id, role, content, created_at, reasoning, citations",
                 (message_id, thread_id, tenant_id, role, content, reasoning, citation_json),
             ).fetchone()
-            # Bump the thread's activity time; if it has no title yet, seed it from this message.
+            # Bump the thread's activity time; seed the title from this message only while it is
+            # still auto (a manual rename sets title_source='manual' and is never overwritten).
             conn.execute(
                 "UPDATE chat_threads SET updated_at = now(), "
-                "title = CASE WHEN title = '' THEN left(%s, 80) ELSE title END "
+                "title = CASE WHEN title_source = 'auto' AND title = '' "
+                "THEN left(%s, 80) ELSE title END "
                 "WHERE id=%s AND tenant_id=%s",
                 (content, thread_id, tenant_id),
             )
@@ -1795,3 +1799,25 @@ class PostgresChatThreadRepository:
             conn.execute(
                 "DELETE FROM chat_threads WHERE id=%s AND tenant_id=%s", (thread_id, tenant_id)
             )
+
+    def update_title(self, tenant_id: str, thread_id: str, title: str) -> ChatThread | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "UPDATE chat_threads SET title=%s, title_source='manual' "
+                "WHERE id=%s AND tenant_id=%s "
+                "RETURNING id, title, title_source, created_at, updated_at, "
+                "(SELECT count(*) FROM chat_messages m WHERE m.thread_id = chat_threads.id) "
+                "AS message_count",
+                (title, thread_id, tenant_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return ChatThread(
+            id=row["id"],
+            title=row["title"],
+            title_source=row["title_source"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            message_count=row["message_count"],
+        )

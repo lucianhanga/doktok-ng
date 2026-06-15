@@ -106,6 +106,43 @@ def test_chat_with_unknown_thread_is_404() -> None:
     assert resp.status_code == 404
 
 
+def test_rename_thread_sets_manual_title_and_stops_autoseed() -> None:
+    client = _client(FakeRagAnswerer())
+    h = {"Authorization": "Bearer tok-a"}
+    tid = client.post("/api/v1/chat/threads", headers=h).json()["id"]
+
+    renamed = client.patch(f"/api/v1/chat/threads/{tid}", json={"title": "Tax stuff"}, headers=h)
+    assert renamed.status_code == 200
+    body = renamed.json()
+    assert body["title"] == "Tax stuff"
+    assert body["title_source"] == "manual"
+
+    # A subsequent message must NOT overwrite the manual title with the auto-seed.
+    client.post(
+        "/api/v1/chat", json={"question": "first question here", "thread_id": tid}, headers=h
+    )
+    threads = client.get("/api/v1/chat/threads", headers=h).json()
+    assert threads[0]["title"] == "Tax stuff"
+
+
+def test_rename_validation_and_tenant_isolation() -> None:
+    client = _client(FakeRagAnswerer())
+    a = {"Authorization": "Bearer tok-a"}
+    tid = client.post("/api/v1/chat/threads", headers=a).json()["id"]
+    # Blank title -> 422.
+    assert (
+        client.patch(f"/api/v1/chat/threads/{tid}", json={"title": "   "}, headers=a).status_code
+        == 422
+    )
+    # Another tenant cannot rename it -> 404 (no existence leak).
+    cross = client.patch(
+        f"/api/v1/chat/threads/{tid}",
+        json={"title": "hijack"},
+        headers={"Authorization": "Bearer tok-b"},
+    )
+    assert cross.status_code == 404
+
+
 def test_threads_are_tenant_isolated() -> None:
     client = _client(FakeRagAnswerer())
     a_thread = client.post(

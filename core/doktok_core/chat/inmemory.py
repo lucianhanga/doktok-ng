@@ -53,7 +53,11 @@ class InMemoryChatThreadRepository:
         self._messages.setdefault((tenant_id, thread_id), []).append(message)
         thread = self._threads.get((tenant_id, thread_id))
         if thread is not None:
-            title = thread.title or content[:80]
+            # Auto-seed the title from the first message only while still auto (never overwrite a
+            # manual rename).
+            title = thread.title
+            if thread.title_source == "auto" and not title:
+                title = content[:80]
             self._threads[(tenant_id, thread_id)] = thread.model_copy(
                 update={"updated_at": message.created_at, "title": title}
             )
@@ -65,3 +69,13 @@ class InMemoryChatThreadRepository:
     def delete_thread(self, tenant_id: str, thread_id: str) -> None:
         self._threads.pop((tenant_id, thread_id), None)
         self._messages.pop((tenant_id, thread_id), None)
+
+    def update_title(self, tenant_id: str, thread_id: str, title: str) -> ChatThread | None:
+        thread = self._threads.get((tenant_id, thread_id))
+        if thread is None:
+            return None
+        updated = thread.model_copy(update={"title": title, "title_source": "manual"})
+        self._threads[(tenant_id, thread_id)] = updated
+        return updated.model_copy(
+            update={"message_count": len(self._messages.get((tenant_id, thread_id), []))}
+        )

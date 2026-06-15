@@ -477,13 +477,21 @@ class ChatMessage(BaseModel):
 
 
 class ChatThread(BaseModel):
-    """A persisted conversation (M6.4 #248). ``title`` is derived from the first user message."""
+    """A persisted conversation (M6.4 #248). ``title`` is derived from the first user message until
+    the user renames it, after which ``title_source='manual'`` and auto-seeding stops."""
 
     id: str
     title: str = ""
     created_at: datetime
     updated_at: datetime
     message_count: int = 0
+    title_source: str = "auto"  # 'auto' | 'manual'
+
+
+class ChatThreadUpdate(BaseModel):
+    """Body for renaming a chat thread (M8 chat overhaul). Trimmed + bounded server-side."""
+
+    title: str = Field(min_length=1, max_length=200)
 
 
 class QueryFilters(BaseModel):

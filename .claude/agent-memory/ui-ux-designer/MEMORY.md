@@ -4,3 +4,4 @@
 - [Documents views + thumbnails](documents-views-thumbnails.md) — List/Thumbnails subtabs, shared toolbar, S/M/L size control, multi-select, token filter, sort, card anatomy
 - [Insights / Embedding Space viz](insights-embedding-viz.md) — design for new Insights tab: 2D/3D embedding scatter, backend UMAP/PCA, deck.gl, primary-category coloring
 - [Chat streaming + reasoning + sources](chat-streaming-reasoning-sources.md) — Phase 2 ChatPanel UX: streamed answer, native details reasoning, two-col source mini-cards with importance bars
+- [Chat screen redesign](chat-screen-redesign.md) — 3-col layout, collapsible reasoning w/ tokens+time+ranked candidates, rename, collapsible rail, [n]->side preview, collapsible sources; backend gaps listed

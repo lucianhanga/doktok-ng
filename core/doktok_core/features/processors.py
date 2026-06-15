@@ -55,8 +55,34 @@ def _pages(file_storage: FileStorage, storage_path: str) -> list[str]:
     raw = _read_text(file_storage, storage_path, "content.json")
     if not raw:
         return []
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []  # malformed page data: fall back to content.md upstream rather than crash
     return [str(page.get("text", "")) for page in data.get("pages", [])]
+
+
+# First-pages budget for cheap LLM enrichment (M8.x #311): title/summary/date/location and the
+# document category are well-determined by the opening pages, so feed only those to the model to
+# cut tokens/latency/cost. The heavier features (RAG chunking, NER, entities, structured records)
+# still read the whole document. Page-aware (a single page can be huge), capped by characters too.
+_META_HEAD_PAGES, _META_HEAD_CHARS = 2, 6000
+_CLASSIFY_HEAD_PAGES, _CLASSIFY_HEAD_CHARS = 3, 8000
+
+
+def _head_pages(
+    file_storage: FileStorage, storage_path: str, max_pages: int, max_chars: int
+) -> str:
+    """The first ``max_pages`` pages joined and capped at ``max_chars`` - enough context for cheap
+    enrichment without feeding the whole document. Falls back to content.md when page data is
+    missing; returns the full (shorter) text unchanged when it is below the cap."""
+    pages = _pages(file_storage, storage_path)
+    text = (
+        "\n\n".join(pages[:max_pages])
+        if pages
+        else _read_text(file_storage, storage_path, "content.md")
+    )
+    return text[:max_chars]
 
 
 # The entity types the rule-based EntitiesFeature owns: everything except the NER types.
@@ -288,7 +314,10 @@ class DocMetadataFeature:
         self._documents.set_unidentifiable(
             tenant_id, document_id, value=detect_unidentifiable(content)
         )
-        meta = normalize_metadata(self._extractor.extract(content))
+        # The title/date/location/summary are determined by the opening pages; feed only those to
+        # the LLM (#311) - the unidentifiable check above still uses the full content.
+        head = _head_pages(self._files, document.storage_path, _META_HEAD_PAGES, _META_HEAD_CHARS)
+        meta = normalize_metadata(self._extractor.extract(head))
         self._documents.set_metadata(
             tenant_id,
             document_id,
@@ -334,11 +363,14 @@ class DocClassifyFeature:
         if document.unidentifiable:
             self._categories.set_document_categories(tenant_id, document_id, [])
             return
-        content = _read_text(self._files, document.storage_path, "content.md")
-        if not content.strip():
+        # Categories are well-determined by the opening pages; feed only those to the LLM (#311).
+        head = _head_pages(
+            self._files, document.storage_path, _CLASSIFY_HEAD_PAGES, _CLASSIFY_HEAD_CHARS
+        )
+        if not head.strip():
             return
         existing = [c.name for c in self._categories.list_active(tenant_id)]
-        labels = self._classifier.classify(content, existing)
+        labels = self._classifier.classify(head, existing)
         category_ids: list[str] = []
         for label in labels:
             if len(category_ids) >= MAX_CATEGORIES_PER_DOCUMENT:

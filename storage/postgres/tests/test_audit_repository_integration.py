@@ -36,3 +36,36 @@ def test_record_list_scope_and_filter(db: Database) -> None:
     doc_a = repo.list_events(TEST_TENANT_A, document_id="doc-a")
     assert {e.id for e in doc_a} == {"ev1", "ev2"}
     assert repo.list_events(TEST_TENANT_A, document_id="doc-b") == []
+
+
+def test_enhanced_activity_fields_round_trip(db: Database) -> None:
+    repo = PostgresAuditLogRepository(db)
+    event = AuditEvent(
+        id="ev-rich",
+        tenant_id=TEST_TENANT_A,
+        event_type="feature.classified",
+        actor="reconciler",
+        actor_kind="worker",
+        document_id="doc-a",
+        timestamp=datetime.now(UTC),
+        metadata={"before": "x", "after": "y"},
+        severity="warning",
+        phase="enrich",
+        description="Reclassified document category",
+        record_kind="category",
+        record_id="cat-7",
+        doc_filename="invoice.pdf",
+        doc_title="Invoice 2026",
+    )
+    repo.record(event)
+
+    (stored,) = repo.list_events(TEST_TENANT_A, document_id="doc-a")
+    assert stored.severity == "warning"
+    assert stored.phase == "enrich"
+    assert stored.description == "Reclassified document category"
+    assert stored.record_kind == "category"
+    assert stored.record_id == "cat-7"
+    # No documents row exists for doc-a, so the supplied snapshot is kept verbatim.
+    assert stored.doc_filename == "invoice.pdf"
+    assert stored.doc_title == "Invoice 2026"
+    assert stored.metadata == {"before": "x", "after": "y"}

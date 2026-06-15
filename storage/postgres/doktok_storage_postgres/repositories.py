@@ -524,7 +524,10 @@ class PostgresDocumentRepository:
             )
 
 
-_AUDIT_COLUMNS = "id, tenant_id, event_type, actor, document_id, job_id, timestamp, metadata"
+_ACTIVITY_COLUMNS = (
+    "id, tenant_id, document_id, job_id, doc_filename, doc_title, phase, event_type, severity, "
+    "record_kind, record_id, actor, actor_kind, description, occurred_at, detail"
+)
 
 
 def _row_to_event(row: dict[str, Any]) -> AuditEvent:
@@ -535,13 +538,23 @@ def _row_to_event(row: dict[str, Any]) -> AuditEvent:
         actor=row["actor"],
         document_id=row["document_id"],
         job_id=row["job_id"],
-        timestamp=row["timestamp"],
-        metadata=row["metadata"] or {},
+        timestamp=row["occurred_at"],
+        metadata=row["detail"] or {},
+        severity=row["severity"],
+        phase=row["phase"] or "",
+        description=row["description"] or "",
+        actor_kind=row["actor_kind"],
+        record_kind=row["record_kind"],
+        record_id=row["record_id"],
+        doc_filename=row["doc_filename"],
+        doc_title=row["doc_title"],
     )
 
 
 class PostgresAuditLogRepository:
-    """``AuditLogRepository`` backed by PostgreSQL. Append-only: record + tenant-scoped reads."""
+    """``AuditLogRepository`` backed by PostgreSQL ``document_activity``. Append-only: record +
+    tenant-scoped reads. ``doc_filename``/``doc_title`` are snapshotted at write time (from the
+    ``documents`` row when not supplied) so a row stays readable after the document is deleted."""
 
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -549,15 +562,33 @@ class PostgresAuditLogRepository:
     def record(self, event: AuditEvent) -> None:
         with self._db.connection() as conn:
             conn.execute(
-                f"INSERT INTO audit_events ({_AUDIT_COLUMNS}) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO document_activity "
+                "(id, tenant_id, document_id, job_id, doc_filename, doc_title, phase, event_type, "
+                "severity, record_kind, record_id, actor, actor_kind, description, occurred_at, "
+                "detail) VALUES (%s, %s, %s, %s, "
+                "COALESCE(%s, (SELECT original_filename FROM documents "
+                "WHERE id=%s AND tenant_id=%s)), "
+                "COALESCE(%s, (SELECT title FROM documents WHERE id=%s AND tenant_id=%s)), "
+                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     event.id,
                     event.tenant_id,
-                    event.event_type,
-                    event.actor,
                     event.document_id,
                     event.job_id,
+                    event.doc_filename,
+                    event.document_id,
+                    event.tenant_id,
+                    event.doc_title,
+                    event.document_id,
+                    event.tenant_id,
+                    event.phase,
+                    event.event_type,
+                    event.severity,
+                    event.record_kind,
+                    event.record_id,
+                    event.actor,
+                    event.actor_kind,
+                    event.description,
                     event.timestamp,
                     Json(event.metadata),
                 ),
@@ -580,8 +611,8 @@ class PostgresAuditLogRepository:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                f"SELECT {_AUDIT_COLUMNS} FROM audit_events {clause} "
-                "ORDER BY timestamp DESC, id DESC LIMIT %s OFFSET %s",
+                f"SELECT {_ACTIVITY_COLUMNS} FROM document_activity {clause} "
+                "ORDER BY occurred_at DESC, id DESC LIMIT %s OFFSET %s",
                 tuple(params),
             ).fetchall()
         return [_row_to_event(row) for row in rows]

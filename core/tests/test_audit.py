@@ -90,6 +90,10 @@ def test_pipeline_emits_full_activity_for_a_text_document(tmp_path: Path) -> Non
     )
     assert activated.document_id == job.document_id
     assert "Parsed plain text" in activated.metadata["summary"]
+    # Enhanced activity fields are derived for the legacy event types.
+    assert activated.phase == "index"
+    assert activated.severity == "info"
+    assert activated.description == "Document activated and searchable"
 
 
 def test_pipeline_emits_failed_for_unsupported(tmp_path: Path) -> None:
@@ -103,3 +107,5 @@ def test_pipeline_emits_failed_for_unsupported(tmp_path: Path) -> None:
         e for e in audit.list_events(TENANT) if e.event_type == AuditEventType.DOCUMENT_FAILED.value
     ]
     assert failed and failed[0].metadata["error_code"] == "unsupported_type"
+    assert failed[0].severity == "error"
+    assert failed[0].phase == "intake"

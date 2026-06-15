@@ -6,6 +6,7 @@ import type { AuditEvent } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 function ev(over: Partial<AuditEvent> & Pick<AuditEvent, "id">): AuditEvent {
@@ -103,4 +104,27 @@ test("deleted-document rows render from the snapshot without an open link", asyn
   await waitFor(() => expect(screen.getByText("gone.pdf")).toBeInTheDocument());
   // No document_id -> the filename is plain text, not a clickable link.
   expect(screen.queryByRole("button", { name: "gone.pdf" })).not.toBeInTheDocument();
+});
+
+test("remembers filters across remount and Reset restores defaults", async () => {
+  mockEvents([
+    ev({ id: "ok", event_type: "feature.completed", severity: "info", description: "ner done" }),
+    ev({ id: "bad", event_type: "feature.failed", severity: "error", description: "ner boom" }),
+  ]);
+  const first = render(<ActivityPanel />);
+  await waitFor(() => expect(screen.getByText("ner done")).toBeInTheDocument());
+  fireEvent.change(screen.getByLabelText("Severity"), { target: { value: "error" } });
+  expect(screen.queryByText("ner done")).not.toBeInTheDocument();
+
+  // Unmount (switch away) and remount (switch back): the severity filter is restored.
+  first.unmount();
+  render(<ActivityPanel />);
+  await waitFor(() => expect(screen.getByText("ner boom")).toBeInTheDocument());
+  expect(screen.getByLabelText("Severity")).toHaveValue("error");
+  expect(screen.queryByText("ner done")).not.toBeInTheDocument();
+
+  // Reset restores factory defaults (all severities shown again).
+  fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+  await waitFor(() => expect(screen.getByText("ner done")).toBeInTheDocument());
+  expect(screen.getByLabelText("Severity")).toHaveValue("all");
 });

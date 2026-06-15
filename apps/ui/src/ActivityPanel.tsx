@@ -4,8 +4,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchActivity, type ActivitySeverity, type AuditEvent } from "./api";
 import { DataTable } from "./DataTable";
 import { useInterval } from "./hooks";
+import { loadJSON, removeKey, saveJSON } from "./persist";
 
 const PAGE_SIZE = 100;
+const FILTERS_KEY = "doktok.activity.filters";
+const TABLE_KEY = "doktok.activity.table";
+
+interface PersistedFilters {
+  search?: string;
+  severity?: "all" | ActivitySeverity;
+  phase?: string;
+}
 
 type State =
   | { kind: "loading" }
@@ -96,12 +105,29 @@ function ActivityDetail({ event }: { event: AuditEvent }) {
 }
 
 export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
+  const initialFilters = useMemo(() => loadJSON<PersistedFilters>(FILTERS_KEY, {}), []);
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [search, setSearch] = useState("");
-  const [severity, setSeverity] = useState<"all" | ActivitySeverity>("all");
-  const [phase, setPhase] = useState<string>("all");
+  const [search, setSearch] = useState(initialFilters.search ?? "");
+  const [severity, setSeverity] = useState<"all" | ActivitySeverity>(
+    initialFilters.severity ?? "all",
+  );
+  const [phase, setPhase] = useState<string>(initialFilters.phase ?? "all");
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [resetNonce, setResetNonce] = useState(0);
+
+  // Remember filters across tab switches / reloads.
+  useEffect(() => {
+    saveJSON(FILTERS_KEY, { search, severity, phase });
+  }, [search, severity, phase]);
+
+  const reset = useCallback(() => {
+    setSearch("");
+    setSeverity("all");
+    setPhase("all");
+    removeKey(FILTERS_KEY);
+    setResetNonce((n) => n + 1); // resets the table layout (sorting/sizing/visibility)
+  }, []);
   // How many rows are currently loaded; the live refresh re-fetches exactly this window so paging
   // position is preserved while new events still appear at the top.
   const loadedCount = useRef(PAGE_SIZE);
@@ -239,9 +265,14 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
     <section aria-label="Activity" className="panel">
       <div className="result-head">
         <h2>Activity</h2>
-        <button type="button" onClick={refresh}>
-          Refresh
-        </button>
+        <div className="result-head-actions">
+          <button type="button" onClick={reset} title="Reset filters, sorting and column layout">
+            Reset
+          </button>
+          <button type="button" onClick={refresh}>
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="activity-filters">
@@ -295,6 +326,8 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
             globalFilter={search}
             renderDetail={(e) => <ActivityDetail event={e} />}
             emptyLabel="No activity matches the current filters."
+            persistKey={TABLE_KEY}
+            resetNonce={resetNonce}
           />
           <div className="activity-more">
             <span className="activity-count">

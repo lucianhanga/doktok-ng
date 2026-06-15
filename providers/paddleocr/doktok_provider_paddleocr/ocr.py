@@ -22,7 +22,7 @@ import threading
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
 
-from doktok_contracts.media import OcrPageResult
+from doktok_contracts.media import OcrPageResult, OcrTextLine
 
 logger = logging.getLogger("doktok.ocr.paddle")
 
@@ -67,12 +67,13 @@ def _worker_init(lang: str, det_model: str, rec_model: str, cpu_threads: int) ->
     )
 
 
-def _worker_ocr(image_png: bytes) -> tuple[str, float | None]:
+def _worker_ocr(image_png: bytes) -> tuple[str, float | None, list[OcrTextLine]]:
     return _run_ocr(_WORKER_ENGINE, image_png)
 
 
-def _run_ocr(engine: Any, image_png: bytes) -> tuple[str, float | None]:
-    """Decode the PNG, run the predictor, and assemble the page text + mean confidence.
+def _run_ocr(engine: Any, image_png: bytes) -> tuple[str, float | None, list[OcrTextLine]]:
+    """Decode the PNG, run the predictor, and assemble the page text + mean confidence + per-line
+    boxes (in image pixels, for the positioned searchable-PDF text layer).
 
     Pure given an ``engine`` (so it runs identically in-process for tests and in a worker process).
     """
@@ -85,13 +86,16 @@ def _run_ocr(engine: Any, image_png: bytes) -> tuple[str, float | None]:
 
     texts: list[str] = []
     scores: list[float] = []
+    lines: list[OcrTextLine] = []
     for item in results or []:
         page_text, page_scores = assemble_text(item)
         if page_text:
             texts.append(page_text)
         scores.extend(page_scores)
+        for text, (x0, y0, x1, y1) in assemble_lines(item):
+            lines.append(OcrTextLine(text=text, x0=x0, y0=y0, x1=x1, y1=y1))
     confidence = sum(scores) / len(scores) if scores else None
-    return "\n".join(texts), confidence
+    return "\n".join(texts), confidence, lines
 
 
 class PaddleOcr:
@@ -166,20 +170,23 @@ class PaddleOcr:
 
     def ocr_image(self, image_png: bytes) -> OcrPageResult:
         if self._engine is not None:
-            text, confidence = _run_ocr(self._engine, image_png)  # in-process (tests)
+            text, confidence, lines = _run_ocr(self._engine, image_png)  # in-process (tests)
         else:
             # Dispatch to a worker process; many caller threads submitting here drive real
             # cross-page parallelism across ``pool_size`` cores.
-            text, confidence = self._executor().submit(_worker_ocr, image_png).result()
-        return OcrPageResult(text=text, confidence=confidence)
+            text, confidence, lines = self._executor().submit(_worker_ocr, image_png).result()
+        return OcrPageResult(text=text, confidence=confidence, lines=lines)
 
 
 def _as_list(value: Any) -> list[Any]:
     return [] if value is None else list(value)
 
 
-def assemble_text(result: Any) -> tuple[str, list[float]]:
-    """Join a PaddleOCR result's recognized lines in reading order (top-to-bottom, left-to-right).
+_BBox = tuple[float, float, float, float]  # (x0, y0, x1, y1) in image pixels
+
+
+def _ordered(result: Any) -> list[tuple[str, float | None, _BBox | None]]:
+    """Recognized lines in reading order (top-to-bottom, left-to-right) with score + bbox.
 
     ``result`` is PaddleOCR's per-image result (a dict with ``rec_texts``/``rec_scores`` and either
     ``rec_boxes`` [x1,y1,x2,y2] or ``rec_polys``/``dt_polys`` [[x,y]x4]).
@@ -191,17 +198,34 @@ def assemble_text(result: Any) -> tuple[str, list[float]]:
     if polys is None:
         polys = result.get("dt_polys")
 
-    def top_left(i: int) -> tuple[float, float]:
+    def bbox(i: int) -> _BBox | None:
         if boxes is not None and i < len(boxes):
-            box = boxes[i]
-            return (float(box[1]), float(box[0]))  # (y1, x1)
+            b = boxes[i]
+            return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
         if polys is not None and i < len(polys):
             pts = polys[i]
-            return (min(float(p[1]) for p in pts), min(float(p[0]) for p in pts))
-        return (float(i), 0.0)
+            xs = [float(p[0]) for p in pts]
+            ys = [float(p[1]) for p in pts]
+            return (min(xs), min(ys), max(xs), max(ys))
+        return None
+
+    def top_left(i: int) -> tuple[float, float]:
+        bb = bbox(i)
+        return (bb[1], bb[0]) if bb else (float(i), 0.0)
 
     # Bucket the y-coordinate so lines on the same row sort left-to-right.
     order = sorted(range(len(texts)), key=lambda i: (round(top_left(i)[0] / 10.0), top_left(i)[1]))
-    text = "\n".join(str(texts[i]) for i in order)
-    ordered_scores = [scores[i] for i in order if i < len(scores)]
-    return text, ordered_scores
+    return [(str(texts[i]), (scores[i] if i < len(scores) else None), bbox(i)) for i in order]
+
+
+def assemble_text(result: Any) -> tuple[str, list[float]]:
+    """Join a result's recognized lines in reading order; returns the text + per-line scores."""
+    items = _ordered(result)
+    text = "\n".join(t for t, _, _ in items)
+    scores = [s for _, s, _ in items if s is not None]
+    return text, scores
+
+
+def assemble_lines(result: Any) -> list[tuple[str, _BBox]]:
+    """Recognized lines (non-empty, with a box) in reading order, for the positioned text layer."""
+    return [(t, bb) for t, _, bb in _ordered(result) if bb is not None and t.strip()]

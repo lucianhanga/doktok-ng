@@ -2,25 +2,41 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from doktok_contracts.schemas import EntityType
 
 
 @dataclass
+class OcrTextLine:
+    """One recognized line + its axis-aligned bbox in rendered-image pixels. The searchable PDF
+    page is created at the image's pixel size, so these coordinates are also its PDF points - which
+    makes the positioned text layer DPI-independent by construction."""
+
+    text: str
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+@dataclass
 class OcrPageResult:
-    """Text recognized from a single page image, with optional confidence (0-1)."""
+    """Text recognized from a single page image, with optional confidence (0-1) and per-line boxes
+    (empty when the engine does not report them, e.g. the Ollama vision OCR path)."""
 
     text: str
     confidence: float | None = None
+    lines: list[OcrTextLine] = field(default_factory=list)
 
 
 @dataclass
 class RenderedPage:
-    """A page image plus its text, used to assemble a searchable PDF."""
+    """A page image plus its text (and optional per-line boxes) to assemble a searchable PDF."""
 
     image_png: bytes
     text: str
+    lines: list[OcrTextLine] = field(default_factory=list)
 
 
 @dataclass

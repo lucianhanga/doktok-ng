@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from doktok_contracts.media import RenderedPage
+from doktok_contracts.media import OcrPageResult, RenderedPage
 from doktok_contracts.ports import (
     ChatModelProvider,
     OcrExtractor,
@@ -106,7 +106,9 @@ def extract_document(
         image = Path(path).read_bytes()
         page = ocr.ocr_image(image)
         result = ExtractionResult(page.text, [page.text], "ocr", 1, page.confidence)
-        normalized = builder.build([RenderedPage(image, page.text)]) if builder else None
+        normalized = (
+            builder.build([RenderedPage(image, page.text, page.lines)]) if builder else None
+        )
         return result, normalized
 
     raise NeedsOcrError(f"no extractor for {mime}")
@@ -142,6 +144,7 @@ def _extract_pdf(
         return ExtractionResult(_pdf_markdown(pages), pages, "pdf_text", len(pages)), None
 
     images: list[bytes] | None = None
+    ocr_results: dict[int, OcrPageResult] = {}
     used_ocr = [False] * len(pages)
 
     # Pass 1: decide which pages need OCR (skipping born-digital + clean-embedded pages), without
@@ -161,19 +164,21 @@ def _extract_pdf(
 
         # Pass 2: OCR the pages that need it - in parallel across the predictor pool (PaddleOCR is
         # CPU-bound and thread-safe per predictor), so a multi-page scan uses many cores at once.
-        def _ocr_page(i: int) -> str:
-            return ocr.ocr_image(images[i]).text if images and i < len(images) else ""
+        def _ocr_page(i: int) -> OcrPageResult:
+            if images and i < len(images):
+                return ocr.ocr_image(images[i])
+            return OcrPageResult(text="")
 
         if ocr_concurrency > 1 and len(to_ocr) > 1:
             with ThreadPoolExecutor(max_workers=min(ocr_concurrency, len(to_ocr))) as pool:
-                ocr_texts = dict(zip(to_ocr, pool.map(_ocr_page, to_ocr), strict=True))
+                ocr_results = dict(zip(to_ocr, pool.map(_ocr_page, to_ocr), strict=True))
         else:
-            ocr_texts = {i: _ocr_page(i) for i in to_ocr}
+            ocr_results = {i: _ocr_page(i) for i in to_ocr}
 
         # Pass 3: assign the result (sequential; the embedded-vs-OCR decision may call the LLM).
         for i in to_ocr:
             embedded = pages[i]
-            ocr_text = ocr_texts[i]
+            ocr_text = ocr_results[i].text
             if not embedded.strip():
                 pages[i] = ocr_text  # nothing to compare against
                 used_ocr[i] = True
@@ -195,7 +200,15 @@ def _extract_pdf(
     result = ExtractionResult(_pdf_markdown(pages), pages, method, len(pages), None)
     normalized = None
     if all(used_ocr) and images is not None and builder is not None:
+        # Every page chose OCR here, so attach each page's line boxes for a positioned text layer.
         normalized = builder.build(
-            [RenderedPage(images[i], pages[i]) for i in range(min(len(images), len(pages)))]
+            [
+                RenderedPage(
+                    images[i],
+                    pages[i],
+                    ocr_results[i].lines if i in ocr_results else [],
+                )
+                for i in range(min(len(images), len(pages)))
+            ]
         )
     return result, normalized

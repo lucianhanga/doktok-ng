@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from doktok_contracts.media import RenderedPage
+from doktok_contracts.media import OcrTextLine, RenderedPage
 from doktok_modalities_files import (
     PyMuPdfClassifier,
     PyMuPdfRenderer,
@@ -41,6 +41,24 @@ def test_searchable_pdf_contains_text_layer(tmp_path: Path) -> None:
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
         assert doc.page_count == 1
         assert "searchable words" in doc[0].get_text()
+
+
+def test_searchable_pdf_positions_text_at_line_boxes(tmp_path: Path) -> None:
+    import fitz
+
+    image = PyMuPdfRenderer().render_pages(_make_pdf(tmp_path, "x"), dpi=120)[0]
+    line = OcrTextLine(text="positioned", x0=100, y0=200, x1=400, y1=240)
+    pdf_bytes = SearchablePdfBuilder().build(
+        [RenderedPage(image_png=image, text="ignored when lines are present", lines=[line])]
+    )
+
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        # get_text("words") -> [x0, y0, x1, y1, word, ...]; the invisible layer still has positions.
+        hits = [w for w in doc[0].get_text("words") if w[4] == "positioned"]
+        assert hits, "expected the positioned line to be searchable"
+        x0, y0, _x1, _y1 = hits[0][:4]
+        # Sits at the line box (image px == PDF points), not whole-page flowed at the top-left.
+        assert 90 <= x0 <= 410 and 190 <= y0 <= 260
 
 
 def test_classifier_flags_full_page_image_and_ignores_plain_text(tmp_path: Path) -> None:

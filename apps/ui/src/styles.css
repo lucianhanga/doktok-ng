@@ -2255,3 +2255,37 @@ tr.row-selected {
   outline: 2px solid var(--accent, #6ea8fe);
   outline-offset: 1px;
 }
+
+/* --- Overview: clickable Recent Activity rows + Activity-tab row highlight (M8) -------- */
+.timeline-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.2rem 0.3rem;
+  border-radius: 5px;
+}
+.timeline-entry:not(:disabled):hover {
+  background: var(--hover-fill, rgba(255, 255, 255, 0.05));
+}
+.timeline-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-doc {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.timeline-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A row deep-linked from the Overview timeline briefly stands out in the Activity table. */
+.datatable-row-highlight > td {
+  background: var(--selected-fill, rgba(110, 168, 254, 0.15));
+}

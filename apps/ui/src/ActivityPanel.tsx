@@ -104,7 +104,13 @@ function ActivityDetail({ event }: { event: AuditEvent }) {
   );
 }
 
-export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
+export function ActivityPanel({
+  onOpenDocument,
+  focusId,
+}: {
+  onOpenDocument?: (id: string) => void;
+  focusId?: string | null;
+}) {
   const initialFilters = useMemo(() => loadJSON<PersistedFilters>(FILTERS_KEY, {}), []);
   const [state, setState] = useState<State>({ kind: "loading" });
   const [search, setSearch] = useState(initialFilters.search ?? "");
@@ -328,6 +334,7 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
             emptyLabel="No activity matches the current filters."
             persistKey={TABLE_KEY}
             resetNonce={resetNonce}
+            highlightId={focusId ?? undefined}
           />
           <div className="activity-more">
             <span className="activity-count">

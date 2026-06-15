@@ -96,12 +96,21 @@ export default function App() {
   const [docsNeedsAttention, setDocsNeedsAttention] = useState(false);
   // Unread badge on the Chat tab: set when a backgrounded answer finishes off-tab, cleared on visit.
   const [chatUnread, setChatUnread] = useState(false);
+  // The activity event to highlight when opening the Activity tab from the Overview timeline.
+  const [activityFocusId, setActivityFocusId] = useState<string | null>(null);
 
   function go(next: View) {
     setOpenDoc(null);
     setDocsNeedsAttention(false);
     if (next === "chat") setChatUnread(false);
+    if (next !== "activity") setActivityFocusId(null);
     setView(next);
+  }
+
+  function openActivity(eventId: string) {
+    setOpenDoc(null);
+    setActivityFocusId(eventId);
+    setView("activity");
   }
 
   function showPendingFeatures() {
@@ -143,7 +152,12 @@ export default function App() {
           state - e.g. a chat conversation or document-list filters - survives opening a document and
           coming back. Unmounting it (the old ternary) reset that state to empty. */}
       <div hidden={openDoc !== null}>
-        {view === "overview" && <OverviewPanel onShowPendingFeatures={showPendingFeatures} />}
+        {view === "overview" && (
+          <OverviewPanel
+            onShowPendingFeatures={showPendingFeatures}
+            onOpenActivity={openActivity}
+          />
+        )}
         {view === "documents" && (
           <DocumentsPanel
             key={`docs-${docsNeedsAttention}`}
@@ -165,7 +179,9 @@ export default function App() {
         {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
         {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}
         {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
-        {view === "activity" && <ActivityPanel onOpenDocument={setOpenDoc} />}
+        {view === "activity" && (
+          <ActivityPanel onOpenDocument={setOpenDoc} focusId={activityFocusId} />
+        )}
         {view === "status" && <HealthPanel />}
         {view === "settings" && <SettingsPanel />}
       </div>

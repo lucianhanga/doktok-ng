@@ -7,6 +7,7 @@ import {
   fetchDocumentDetail,
   fetchDocumentEntities,
   reingestDocument,
+  rotateDocument,
   retryDocumentFeature,
   type DocEntity,
   type DocumentDetailData,
@@ -95,6 +96,20 @@ export function DocumentDetail({
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not re-ingest"));
   }
 
+  function reocr() {
+    if (!window.confirm("Re-OCR this document? It is re-processed from the original.")) return;
+    reingestDocument(id)
+      .then(onClose)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not re-OCR"));
+  }
+
+  function rotateRight() {
+    if (!window.confirm("Rotate 90° clockwise and re-process this document?")) return;
+    rotateDocument(id, 90)
+      .then(onClose) // the source is rotated + re-queued; it reprocesses on the next worker run
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not rotate"));
+  }
+
   function showFullText() {
     fetchDocumentContent(id)
       .then(setFullContent)
@@ -133,6 +148,17 @@ export function DocumentDetail({
               >
                 Download
               </a>
+              {(doc.detected_mime === "application/pdf" ||
+                doc.detected_mime?.startsWith("image/")) && (
+                <>
+                  <button type="button" onClick={rotateRight} title="Rotate 90° clockwise + re-OCR">
+                    Rotate right ↻
+                  </button>
+                  <button type="button" onClick={reocr} title="Re-run OCR from the original">
+                    Re-OCR
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>

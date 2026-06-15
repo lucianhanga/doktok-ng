@@ -18,6 +18,7 @@ from doktok_contracts.schemas import (
     ChatMessage,
     ChatRequest,
     ChatThread,
+    ChatThreadUpdate,
     ChatTurn,
     Citation,
     RagAnswer,
@@ -97,6 +98,19 @@ def thread_messages(thread_id: str, tenant: Tenant, threads: Threads) -> list[Ch
     if not threads.thread_exists(tenant.tenant_id, thread_id):
         raise HTTPException(status_code=404, detail="thread not found")
     return threads.get_messages(tenant.tenant_id, thread_id)
+
+
+@router.patch("/threads/{thread_id}", response_model=ChatThread)
+def rename_thread(
+    thread_id: str, body: ChatThreadUpdate, tenant: Tenant, threads: Threads
+) -> ChatThread:
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="title must not be blank")
+    updated = threads.update_title(tenant.tenant_id, thread_id, title)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="thread not found")
+    return updated
 
 
 @router.delete("/threads/{thread_id}", status_code=204)

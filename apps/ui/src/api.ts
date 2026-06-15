@@ -671,6 +671,7 @@ export interface ChatThread {
   created_at: string;
   updated_at: string;
   message_count: number;
+  title_source?: "auto" | "manual";
 }
 
 export interface ChatMessage {
@@ -700,6 +701,16 @@ export function getThreadMessages(threadId: string, signal?: AbortSignal): Promi
 export async function deleteChatThread(threadId: string): Promise<void> {
   const response = await fetch(`/api/v1/chat/threads/${threadId}`, { method: "DELETE" });
   if (!response.ok && response.status !== 404) throw friendlyHttpError(response.status);
+}
+
+export async function renameChatThread(threadId: string, title: string): Promise<ChatThread> {
+  const response = await fetch(`/api/v1/chat/threads/${threadId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!response.ok) throw friendlyHttpError(response.status);
+  return (await response.json()) as ChatThread;
 }
 
 // ---- Structured aggregation (M6.3): deterministic SUM/COUNT over extracted records ----

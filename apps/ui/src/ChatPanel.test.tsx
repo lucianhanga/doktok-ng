@@ -389,3 +389,67 @@ test("streams pipeline steps into the activity window", async () => {
   expect(screen.getByText("Understanding your question")).toBeInTheDocument();
   expect(screen.getByText("Searching and ranking your documents")).toBeInTheDocument();
 });
+
+test("renames a conversation via the rename button", async () => {
+  const patched: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/chat/threads/t-old") && init?.method === "PATCH") {
+        patched.push(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            id: "t-old",
+            title: "Tax 2024",
+            title_source: "manual",
+            created_at: "2026-06-14T00:00:00Z",
+            updated_at: "2026-06-14T00:00:02Z",
+            message_count: 2,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/v1/chat/threads")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "t-old",
+              title: "prior question",
+              created_at: "2026-06-14T00:00:00Z",
+              updated_at: "2026-06-14T00:00:01Z",
+              message_count: 2,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    }),
+  );
+
+  render(<ChatPanel />);
+  await waitFor(() => expect(screen.getByText("prior question")).toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /Rename conversation/ }));
+  const input = screen.getByLabelText(/Rename conversation/);
+  await userEvent.clear(input);
+  await userEvent.type(input, "Tax 2024{Enter}");
+  await waitFor(() => expect(patched.length).toBe(1));
+  expect(patched[0]).toContain("Tax 2024");
+});
+
+test("collapses and expands the conversations sidebar", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("[]", { status: 200 })),
+  );
+  render(<ChatPanel />);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Collapse conversations" })).toBeInTheDocument(),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Collapse conversations" }));
+  // Collapsed: the "+ New conversation" full button is gone, an expand affordance appears.
+  expect(screen.queryByText("+ New conversation")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Expand conversations" }));
+  expect(screen.getByText("+ New conversation")).toBeInTheDocument();
+});

@@ -30,6 +30,23 @@ def test_thread_roundtrip_messages_and_title(db: Database) -> None:
     assert listed[0].title == "How many leave days do I get?"
 
 
+def test_rename_sets_manual_title_and_blocks_autoseed(db: Database) -> None:
+    repo = PostgresChatThreadRepository(db)
+    thread = repo.create_thread(TENANT)
+
+    renamed = repo.update_title(TENANT, thread.id, "Leave policy")
+    assert renamed is not None
+    assert renamed.title == "Leave policy" and renamed.title_source == "manual"
+
+    # A first message must not overwrite the manual title with the auto-seed.
+    repo.append_message(TENANT, thread.id, "user", "How many leave days do I get?")
+    assert repo.list_threads(TENANT)[0].title == "Leave policy"
+
+    # Renaming an unknown / other-tenant thread returns None (no cross-tenant write).
+    assert repo.update_title(TENANT, "nope", "x") is None
+    assert repo.update_title("test-b", thread.id, "hijack") is None
+
+
 def test_assistant_reasoning_and_citations_roundtrip(db: Database) -> None:
     # Reasoning + source citations must persist so a resumed/reloaded thread re-shows them.
     repo = PostgresChatThreadRepository(db)

@@ -1878,3 +1878,66 @@ tr.row-selected {
   display: flex;
   gap: 0.5rem;
 }
+
+/* --- Chat: rename, collapsible sidebar + sources (M8) ---------------------- */
+.chat-threads-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chat-threads-head .chat-thread-new {
+  flex: 1;
+}
+
+.chat-threads-toggle {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.4rem;
+  color: var(--muted, #8b97a8);
+}
+
+.chat-threads-collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 2.2rem;
+  min-width: 2.2rem;
+  padding: 0.5rem 0;
+}
+
+.chat-thread-new-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.2rem 0.4rem;
+}
+
+.chat-thread-rename {
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.chat-thread-rename-btn {
+  flex: 0 0 auto;
+  color: var(--muted, #8b97a8);
+  padding: 0 0.25rem;
+}
+
+.chat-thread-rename-btn:hover {
+  color: var(--accent, #6ea8fe);
+}
+
+.chat-sources-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted, #8b97a8);
+  margin-bottom: 0.4rem;
+}

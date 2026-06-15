@@ -7,6 +7,7 @@ import {
   documentThumbnailUrl,
   getThreadMessages,
   listChatThreads,
+  renameChatThread,
   type ChatThread,
   type ChatTurn,
   type Citation,
@@ -14,6 +15,10 @@ import {
   type RagAnswer,
 } from "./api";
 import { Markdown } from "./Markdown";
+import { loadJSON, saveJSON } from "./persist";
+
+const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
+const SOURCES_KEY = "doktok.chat.sourcesCollapsed";
 
 interface Exchange {
   question: string;
@@ -127,14 +132,30 @@ function SourcesColumn({
 }) {
   // Order by importance (most relevant first); rank follows that order.
   const ranked = [...citations].sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0));
+  const [collapsed, setCollapsed] = useState<boolean>(() => loadJSON(SOURCES_KEY, false));
+  const toggle = () => {
+    setCollapsed((c) => {
+      saveJSON(SOURCES_KEY, !c);
+      return !c;
+    });
+  };
   return (
     <aside className="chat-sources" aria-label="Sources">
-      <h3 className="muted">Sources ({ranked.length})</h3>
-      <ol className="chat-source-list">
-        {ranked.map((c, i) => (
-          <SourceCard key={c.chunk_id} citation={c} rank={i + 1} onOpen={onOpenDocument} />
-        ))}
-      </ol>
+      <button
+        type="button"
+        className="chat-sources-toggle link-button"
+        aria-expanded={!collapsed}
+        onClick={toggle}
+      >
+        <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> Sources ({ranked.length})
+      </button>
+      {!collapsed && (
+        <ol className="chat-source-list">
+          {ranked.map((c, i) => (
+            <SourceCard key={c.chunk_id} citation={c} rank={i + 1} onOpen={onOpenDocument} />
+          ))}
+        </ol>
+      )}
     </aside>
   );
 }
@@ -221,85 +242,225 @@ function InlineCitations({
   citations: Citation[];
   onOpenDocument?: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState<boolean>(() => loadJSON(SOURCES_KEY, false));
+  const toggle = () => {
+    setCollapsed((c) => {
+      saveJSON(SOURCES_KEY, !c);
+      return !c;
+    });
+  };
   return (
-    <ol className="citations">
-      {citations.map((c) => (
-        <li key={c.chunk_id}>
-          <button
-            type="button"
-            className="link-button citation-open"
-            onClick={() => onOpenDocument?.(c.document_id)}
-            disabled={!onOpenDocument}
-          >
-            [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
-            {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
-          </button>
-          <div className="snippet">{c.snippet}</div>
-        </li>
-      ))}
-    </ol>
+    <div className="chat-sources" aria-label="Sources">
+      <button
+        type="button"
+        className="chat-sources-toggle link-button"
+        aria-expanded={!collapsed}
+        onClick={toggle}
+      >
+        <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> Sources ({citations.length})
+      </button>
+      {!collapsed && (
+        <ol className="citations">
+          {citations.map((c) => (
+            <li key={c.chunk_id}>
+              <button
+                type="button"
+                className="link-button citation-open"
+                onClick={() => onOpenDocument?.(c.document_id)}
+                disabled={!onOpenDocument}
+              >
+                [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
+                {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
+              </button>
+              <div className="snippet">{c.snippet}</div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 
-/** The saved-conversations sidebar (M6.4 #248): resume or delete past threads, or start a new one. */
+/** One thread row, with inline rename (double-click the title or the pencil). */
+function ThreadRow({
+  thread,
+  active,
+  streaming,
+  unread,
+  onResume,
+  onDelete,
+  onRename,
+}: {
+  thread: ChatThread;
+  active: boolean;
+  streaming: boolean;
+  unread: boolean;
+  onResume: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(thread.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const label = thread.title || "Untitled conversation";
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  function startEditing() {
+    setDraft(thread.title);
+    setEditing(true);
+  }
+
+  function commit() {
+    const next = draft.trim();
+    setEditing(false);
+    if (next && next !== thread.title) onRename(thread.id, next);
+    else setDraft(thread.title);
+  }
+
+  if (editing) {
+    return (
+      <li className={active ? "active" : undefined}>
+        <input
+          ref={inputRef}
+          className="chat-thread-rename"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              setDraft(thread.title);
+              setEditing(false);
+            }
+          }}
+          aria-label={`Rename conversation ${label}`}
+        />
+      </li>
+    );
+  }
+
+  return (
+    <li className={active ? "active" : undefined}>
+      <button
+        type="button"
+        className="chat-thread-item link-button"
+        onClick={() => onResume(thread.id)}
+        onDoubleClick={startEditing}
+        title={label}
+      >
+        {streaming && (
+          <span
+            className="chat-thread-spinner"
+            role="status"
+            aria-label="Generating in the background"
+          />
+        )}
+        {!streaming && unread && <span className="chat-thread-unread" aria-label="Unread reply" />}
+        <span className="chat-thread-title">{label}</span>
+        <span className="muted chat-thread-meta">{thread.message_count}</span>
+      </button>
+      <button
+        type="button"
+        className="chat-thread-rename-btn link-button"
+        aria-label={`Rename conversation ${label}`}
+        title="Rename"
+        onClick={startEditing}
+      >
+        &#9998;
+      </button>
+      <button
+        type="button"
+        className="chat-thread-delete link-button"
+        aria-label={`Delete conversation ${label}`}
+        onClick={() => onDelete(thread.id)}
+      >
+        &times;
+      </button>
+    </li>
+  );
+}
+
+/** The saved-conversations sidebar (M6.4 #248): resume, rename, or delete past threads, start a new
+ * one, or collapse the whole rail. */
 function ThreadList({
   threads,
   activeId,
   streamingIds,
   unreadIds,
+  collapsed,
+  onToggleCollapse,
   onResume,
   onDelete,
+  onRename,
   onNew,
 }: {
   threads: ChatThread[];
   activeId: string | null;
   streamingIds: Set<string>;
   unreadIds: Set<string>;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
   onResume: (id: string) => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
   onNew: () => void;
 }) {
+  if (collapsed) {
+    return (
+      <aside className="chat-threads chat-threads-collapsed" aria-label="Conversations">
+        <button
+          type="button"
+          className="chat-threads-toggle link-button"
+          onClick={onToggleCollapse}
+          aria-label="Expand conversations"
+          title="Expand conversations"
+        >
+          &#9654;
+        </button>
+        <button
+          type="button"
+          className="chat-thread-new-icon link-button"
+          onClick={onNew}
+          aria-label="New conversation"
+          title="New conversation"
+        >
+          +
+        </button>
+      </aside>
+    );
+  }
   return (
     <aside className="chat-threads" aria-label="Conversations">
-      <button type="button" className="chat-thread-new" onClick={onNew}>
-        + New conversation
-      </button>
+      <div className="chat-threads-head">
+        <button type="button" className="chat-thread-new" onClick={onNew}>
+          + New conversation
+        </button>
+        <button
+          type="button"
+          className="chat-threads-toggle link-button"
+          onClick={onToggleCollapse}
+          aria-label="Collapse conversations"
+          title="Collapse conversations"
+        >
+          &#9664;
+        </button>
+      </div>
       <ol className="chat-thread-list">
-        {threads.map((t) => {
-          const isStreaming = streamingIds.has(t.id);
-          const isUnread = unreadIds.has(t.id) && t.id !== activeId;
-          return (
-            <li key={t.id} className={t.id === activeId ? "active" : undefined}>
-              <button
-                type="button"
-                className="chat-thread-item link-button"
-                onClick={() => onResume(t.id)}
-                title={t.title || "Untitled conversation"}
-              >
-                {isStreaming && (
-                  <span
-                    className="chat-thread-spinner"
-                    role="status"
-                    aria-label="Generating in the background"
-                  />
-                )}
-                {!isStreaming && isUnread && (
-                  <span className="chat-thread-unread" aria-label="Unread reply" />
-                )}
-                <span className="chat-thread-title">{t.title || "Untitled conversation"}</span>
-                <span className="muted chat-thread-meta">{t.message_count}</span>
-              </button>
-              <button
-                type="button"
-                className="chat-thread-delete link-button"
-                aria-label={`Delete conversation ${t.title || "Untitled"}`}
-                onClick={() => onDelete(t.id)}
-              >
-                &times;
-              </button>
-            </li>
-          );
-        })}
+        {threads.map((t) => (
+          <ThreadRow
+            key={t.id}
+            thread={t}
+            active={t.id === activeId}
+            streaming={streamingIds.has(t.id)}
+            unread={unreadIds.has(t.id) && t.id !== activeId}
+            onResume={onResume}
+            onDelete={onDelete}
+            onRename={onRename}
+          />
+        ))}
         {threads.length === 0 && (
           <li className="muted chat-thread-empty">No saved conversations yet.</li>
         )}
@@ -329,6 +490,9 @@ export function ChatPanel({
   // while you were away (sidebar unread dot, cleared when you open them).
   const [streamingThreads, setStreamingThreads] = useState<Set<string>>(new Set());
   const [unreadThreads, setUnreadThreads] = useState<Set<string>>(new Set());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
+    loadJSON(SIDEBAR_KEY, false),
+  );
   // Live accumulator + abort controller PER thread key, so a background stream survives a switch.
   const liveRef = useRef<Map<string, Streaming>>(new Map());
   const controllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -540,6 +704,23 @@ export function ChatPanel({
     if (id === threadRef.current) reset();
   }
 
+  function renameThread(id: string, title: string) {
+    // Optimistic: update the list immediately, then persist; refresh reconciles on success.
+    setThreads((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, title, title_source: "manual" } : t)),
+    );
+    void renameChatThread(id, title)
+      .then(refreshThreads)
+      .catch(() => refreshThreads());
+  }
+
+  function toggleSidebar() {
+    setSidebarCollapsed((c) => {
+      saveJSON(SIDEBAR_KEY, !c);
+      return !c;
+    });
+  }
+
   const turns: TurnView[] = exchanges.map((ex) => ({
     question: ex.question,
     reasoning: ex.reasoning ?? "",
@@ -573,8 +754,11 @@ export function ChatPanel({
         activeId={threadId}
         streamingIds={streamingThreads}
         unreadIds={unreadThreads}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
         onResume={resume}
         onDelete={removeThread}
+        onRename={renameThread}
         onNew={reset}
       />
       <div className="chat-main">

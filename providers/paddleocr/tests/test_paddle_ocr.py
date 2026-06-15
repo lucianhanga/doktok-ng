@@ -240,3 +240,6 @@ def test_shutdown_tears_down_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["wait"] is True  # joined so spawn workers exit instead of orphaning
     assert ocr._pool is None
     ocr.shutdown()  # idempotent: safe with no pool running
+    # Once closed the pool is NOT rebuilt - a page in flight at Ctrl-C can't resurrect it.
+    with pytest.raises(RuntimeError, match="shut down"):
+        ocr._executor()

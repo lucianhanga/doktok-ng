@@ -186,6 +186,7 @@ class PaddleOcr:
         # Enhanced path: unwarp + textline-orientation models, and the 4-way orientation vote.
         self._preprocess = preprocess
         self._orient_vote = orient_vote
+        self._closed = False  # set by shutdown(); blocks pool rebuild after a graceful stop
         self._pool: ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # guards lazy pool creation
 
@@ -207,9 +208,11 @@ class PaddleOcr:
 
     def shutdown(self) -> None:
         """Tear down the worker pool so its model-laden spawn processes do not leak (become
-        launchd-owned orphans, ~1 GB each) when the worker stops. Call once on worker exit; safe
-        when no pool was ever started or an in-process engine is used."""
+        launchd-owned orphans, ~1 GB each) when the worker stops. Once closed, the pool is NOT
+        rebuilt (so a page still in flight at Ctrl-C can't resurrect it). Safe to call repeatedly
+        and when no pool was ever started or an in-process engine is used."""
         with self._lock:
+            self._closed = True
             pool = self._pool
             self._pool = None
         if pool is not None:
@@ -217,22 +220,23 @@ class PaddleOcr:
             logger.info("PaddleOCR process pool shut down")
 
     def _executor(self) -> ProcessPoolExecutor:
-        if self._pool is None:
-            with self._lock:
-                if self._pool is None:
-                    logger.info("starting PaddleOCR process pool (workers=%d)", self._pool_size)
-                    self._pool = ProcessPoolExecutor(
-                        max_workers=self._pool_size,
-                        initializer=_worker_init,
-                        initargs=(
-                            self._lang,
-                            self._det_model,
-                            self._rec_model,
-                            self._cpu_threads,
-                            self._preprocess,
-                        ),
-                    )
-        return self._pool
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("PaddleOCR pool is shut down")
+            if self._pool is None:
+                logger.info("starting PaddleOCR process pool (workers=%d)", self._pool_size)
+                self._pool = ProcessPoolExecutor(
+                    max_workers=self._pool_size,
+                    initializer=_worker_init,
+                    initargs=(
+                        self._lang,
+                        self._det_model,
+                        self._rec_model,
+                        self._cpu_threads,
+                        self._preprocess,
+                    ),
+                )
+            return self._pool
 
     def ocr_image(self, image_png: bytes) -> OcrPageResult:
         if self._engine is not None:  # in-process (tests)

@@ -353,52 +353,6 @@ function AnswerBlock({
   );
 }
 
-function InlineCitations({
-  citations,
-  onOpenDocument,
-}: {
-  citations: Citation[];
-  onOpenDocument?: (id: string) => void;
-}) {
-  const [collapsed, setCollapsed] = useState<boolean>(() => loadJSON(SOURCES_KEY, false));
-  const toggle = () => {
-    setCollapsed((c) => {
-      saveJSON(SOURCES_KEY, !c);
-      return !c;
-    });
-  };
-  return (
-    <div className="chat-sources" aria-label="Sources">
-      <button
-        type="button"
-        className="chat-sources-toggle link-button"
-        aria-expanded={!collapsed}
-        onClick={toggle}
-      >
-        <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> Sources ({citations.length})
-      </button>
-      {!collapsed && (
-        <ol className="citations">
-          {citations.map((c) => (
-            <li key={c.chunk_id}>
-              <button
-                type="button"
-                className="link-button citation-open"
-                onClick={() => onOpenDocument?.(c.document_id)}
-                disabled={!onOpenDocument}
-              >
-                [{c.index}] {c.original_filename ?? c.title ?? c.document_id.slice(0, 8)}
-                {c.page_start ? <span className="muted"> p.{c.page_start}</span> : null}
-              </button>
-              <div className="snippet">{c.snippet}</div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
-}
-
 /** One thread row, with inline rename (double-click the title or the pencil). */
 function ThreadRow({
   thread,
@@ -877,7 +831,6 @@ export function ChatPanel({
       metrics: streaming.metrics,
     });
   }
-  const lastIndex = turns.length - 1;
 
   // Clicking a citation (a [n] marker, a source card, or an inline source) opens the document in
   // the right-hand drawer instead of navigating away from the chat.
@@ -887,109 +840,106 @@ export function ChatPanel({
   const activeThread = threads.find((t) => t.id === threadId);
   const threadTokens = activeThread?.total_tokens ?? 0;
   const threadMs = activeThread?.total_inference_ms ?? 0;
+  const columnTitle = activeThread?.title?.trim() || "New conversation";
 
   return (
-    <section
-      aria-label="Chat"
-      className={`panel chat-layout${drawerDocId ? " chat-layout-drawer" : ""}`}
-    >
-      <ThreadList
-        threads={threads}
-        activeId={threadId}
-        streamingIds={streamingThreads}
-        unreadIds={unreadThreads}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={toggleSidebar}
-        onResume={resume}
-        onDelete={removeThread}
-        onRename={renameThread}
-        onNew={reset}
-      />
-      <div className="chat-main">
-        <div className="result-head">
-          <h2>
-            Chat with your documents
-            {threadTokens > 0 && (
-              <span className="chat-thread-totals">
-                {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
-              </span>
+    <section aria-label="Chat" className="panel chat-page">
+      <div className="chat-page-head">
+        <h2>Chat with your documents</h2>
+      </div>
+      <div className={`chat-layout${drawerDocId ? " chat-layout-drawer" : ""}`}>
+        <ThreadList
+          threads={threads}
+          activeId={threadId}
+          streamingIds={streamingThreads}
+          unreadIds={unreadThreads}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
+          onResume={resume}
+          onDelete={removeThread}
+          onRename={renameThread}
+          onNew={reset}
+        />
+        <div className="chat-main">
+          <div className="result-head">
+            <h3 className="chat-column-title" title={columnTitle}>
+              {columnTitle}
+              {threadTokens > 0 && (
+                <span className="chat-thread-totals">
+                  {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
+                </span>
+              )}
+            </h3>
+            {turns.length > 0 && (
+              <button type="button" className="link-button" onClick={reset}>
+                <span className="muted">New conversation</span>
+              </button>
             )}
-          </h2>
-          {turns.length > 0 && (
-            <button type="button" className="link-button" onClick={reset}>
-              <span className="muted">New conversation</span>
-            </button>
+          </div>
+
+          <ol className="chat-transcript" aria-label="Conversation">
+            {turns.map((turn, i) => (
+              <li
+                key={i}
+                className={
+                  turn.citations.length > 0 ? "chat-exchange chat-turn-body" : "chat-exchange"
+                }
+              >
+                <AnswerBlock turn={turn} onOpenDocument={openInDrawer} />
+                {turn.citations.length > 0 && (
+                  <SourcesColumn citations={turn.citations} onOpenDocument={openInDrawer} />
+                )}
+              </li>
+            ))}
+          </ol>
+
+          <form onSubmit={ask} className="search-form">
+            <input
+              type="text"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              placeholder={
+                turns.length ? "Ask a follow-up..." : "Ask a question about your documents..."
+              }
+              aria-label="Question"
+              disabled={streaming !== null}
+            />
+            {streaming !== null ? (
+              <button type="button" onClick={stop}>
+                Stop
+              </button>
+            ) : (
+              <button type="submit">Ask</button>
+            )}
+          </form>
+
+          <label className="chat-reasoning-toggle">
+            <input
+              type="checkbox"
+              checked={showReasoning}
+              onChange={(e) => setShowReasoning(e.target.checked)}
+              disabled={streaming !== null}
+            />
+            <span className="muted">Show reasoning</span>
+          </label>
+
+          {errorMsg && (
+            <p role="alert" className="status-error">
+              Chat failed: {errorMsg}
+            </p>
           )}
         </div>
-
-        <ol className="chat-transcript" aria-label="Conversation">
-        {turns.map((turn, i) => {
-          // The latest turn shows its sources in a side column; older turns keep a compact list.
-          if (i === lastIndex && turn.citations.length > 0) {
-            return (
-              <li key={i} className="chat-exchange chat-turn-body">
-                <AnswerBlock turn={turn} onOpenDocument={openInDrawer} />
-                <SourcesColumn citations={turn.citations} onOpenDocument={openInDrawer} />
-              </li>
-            );
-          }
-          return (
-            <li key={i} className="chat-exchange">
-              <AnswerBlock turn={turn} onOpenDocument={openInDrawer} />
-              {turn.citations.length > 0 && (
-                <InlineCitations citations={turn.citations} onOpenDocument={openInDrawer} />
-              )}
-            </li>
-          );
-        })}
-      </ol>
-
-      <form onSubmit={ask} className="search-form">
-        <input
-          type="text"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder={
-            turns.length ? "Ask a follow-up..." : "Ask a question about your documents..."
-          }
-          aria-label="Question"
-          disabled={streaming !== null}
-        />
-        {streaming !== null ? (
-          <button type="button" onClick={stop}>
-            Stop
-          </button>
-        ) : (
-          <button type="submit">Ask</button>
-        )}
-      </form>
-
-      <label className="chat-reasoning-toggle">
-        <input
-          type="checkbox"
-          checked={showReasoning}
-          onChange={(e) => setShowReasoning(e.target.checked)}
-          disabled={streaming !== null}
-        />
-        <span className="muted">Show reasoning</span>
-      </label>
-
-        {errorMsg && (
-          <p role="alert" className="status-error">
-            Chat failed: {errorMsg}
-          </p>
+        {drawerDocId && (
+          <aside className="chat-doc-drawer" aria-label="Document preview">
+            <DocumentDetail
+              key={drawerDocId}
+              id={drawerDocId}
+              onClose={() => setDrawerDocId(null)}
+              onOpenDocument={onOpenDocument}
+            />
+          </aside>
         )}
       </div>
-      {drawerDocId && (
-        <aside className="chat-doc-drawer" aria-label="Document preview">
-          <DocumentDetail
-            key={drawerDocId}
-            id={drawerDocId}
-            onClose={() => setDrawerDocId(null)}
-            onOpenDocument={onOpenDocument}
-          />
-        </aside>
-      )}
     </section>
   );
 }

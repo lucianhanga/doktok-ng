@@ -2041,3 +2041,29 @@ tr.row-selected {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Chat: tab title above both columns; chat column titled by the conversation (M8) ----- */
+.chat-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-page-head {
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+.chat-page-head h2 {
+  margin: 0;
+}
+
+/* The chat column's own title = the conversation title, with the cumulative totals beside it. */
+.chat-column-title {
+  margin: 0;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}

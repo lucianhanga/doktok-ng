@@ -107,40 +107,42 @@ function SourceCard({
         disabled={!onOpen}
         title={`Open ${label}`}
       >
-        {imgFailed ? (
-          <span className="chat-source-thumb chat-source-thumb-fallback">DOC</span>
-        ) : (
-          <img
-            className="chat-source-thumb"
-            src={documentThumbnailUrl(citation.document_id)}
-            alt=""
-            loading="lazy"
-            onError={() => setImgFailed(true)}
-          />
-        )}
-        <span className="chat-source-body">
-          <span className="chat-source-title">
-            [{citation.index}] {label}
-            {citation.page_start ? <span className="muted"> p.{citation.page_start}</span> : null}
-          </span>
-          {pct != null && (
-            <span className="importance">
-              <span
-                className="importance-bar"
-                role="meter"
-                aria-valuenow={pct}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-label={`Relevance ${pct} percent, rank ${rank}`}
-              >
-                <span className="importance-fill" style={{ width: `${pct}%` }} />
-              </span>
-              <span className="importance-label muted">
-                {pct}% &middot; #{rank}
-              </span>
+        {pct != null && (
+          <span className="chat-source-meter">
+            <span
+              className="importance-bar"
+              role="meter"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`Relevance ${pct} percent, rank ${rank}`}
+            >
+              <span className="importance-fill" style={{ width: `${pct}%` }} />
             </span>
+            <span className="importance-label muted">
+              {pct}% &middot; #{rank}
+            </span>
+          </span>
+        )}
+        <span className="chat-source-main">
+          {imgFailed ? (
+            <span className="chat-source-thumb chat-source-thumb-fallback">DOC</span>
+          ) : (
+            <img
+              className="chat-source-thumb"
+              src={documentThumbnailUrl(citation.document_id)}
+              alt=""
+              loading="lazy"
+              onError={() => setImgFailed(true)}
+            />
           )}
-          {citation.snippet && <span className="snippet">{citation.snippet}</span>}
+          <span className="chat-source-body">
+            <span className="chat-source-title">
+              [{citation.index}] {label}
+              {citation.page_start ? <span className="muted"> p.{citation.page_start}</span> : null}
+            </span>
+            {citation.snippet && <span className="snippet">{citation.snippet}</span>}
+          </span>
         </span>
       </button>
     </li>
@@ -979,7 +981,7 @@ export function ChatPanel({
                 </div>
                 <SourcesList
                   citations={turns[rail.turnIndex]?.citations ?? []}
-                  onOpenDocument={openInRail}
+                  onOpenDocument={onOpenDocument}
                 />
               </div>
             )}

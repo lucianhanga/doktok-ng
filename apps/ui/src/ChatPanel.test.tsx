@@ -250,9 +250,9 @@ test("shows the sources column with importance and opens a document", async () =
   const meters = screen.getAllByRole("meter");
   expect(meters[0].getAttribute("aria-valuenow")).toBe("100");
 
-  // Clicking a source switches the same rail to the document preview (M8 #9).
+  // Clicking a source opens the FULL document card (app handler), not the in-chat rail.
   await userEvent.click(screen.getByRole("button", { name: /top\.pdf/ }));
-  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
+  expect(onOpen).toHaveBeenCalledWith("d2");
   // The inline [2] marker is clickable too.
   expect(screen.getByTitle("Open source [2]")).toBeInTheDocument();
 });
@@ -662,10 +662,9 @@ test("the right rail toggles sources and switches to preview and back", async ()
   await userEvent.click(chip);
   expect(screen.queryByLabelText("Sources")).not.toBeInTheDocument();
 
-  // Open sources, drill into a source -> preview, then Back returns to the sources list.
-  await userEvent.click(chip);
-  await userEvent.click(screen.getByRole("button", { name: /z\.pdf/ }));
+  // An inline [n] marker opens the document preview in the same rail; Back closes it.
+  await userEvent.click(screen.getByTitle("Open source [1]"));
   expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
   await userEvent.click(screen.getByText(/Back to documents/));
-  expect(screen.getByLabelText("Sources")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Document preview")).not.toBeInTheDocument();
 });

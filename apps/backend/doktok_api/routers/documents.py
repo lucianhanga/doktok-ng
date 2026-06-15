@@ -282,6 +282,40 @@ def _document_dir(document: Document, files_root: Path) -> Path | None:
     return base if (root == base or root in base.parents) else None
 
 
+def _read_original(document: Document, files_root: Path) -> bytes:
+    """Read a document's original bytes (raises 404 if its files are gone)."""
+    base = _document_dir(document, files_root)
+    if base is None:
+        raise HTTPException(status_code=404, detail="document files not found")
+    rel = document.metadata.get("original") or document.original_filename
+    source = (base / str(rel)).resolve()
+    if (source != base and base not in source.parents) or not source.is_file():
+        raise HTTPException(status_code=404, detail="original file not found")
+    return source.read_bytes()  # read before purging, so nothing is lost
+
+
+def _purge_and_requeue(
+    document: Document,
+    data: bytes,
+    files_root: Path,
+    tenant_id: str,
+    repo: DocumentRepository,
+    jobs: IngestionJobRepository,
+) -> str:
+    """Purge a document's rows + files, then drop ``data`` into the ingest folder to reprocess."""
+    base = _document_dir(document, files_root)
+    jobs.delete_for_document(tenant_id, document.id)
+    repo.delete(tenant_id, document.id)  # FK-cascades chunks/entities/features/links/records
+    if base is not None:
+        shutil.rmtree(base, ignore_errors=True)
+    ingest_dir = files_root / tenant_id / "ingest"
+    ingest_dir.mkdir(parents=True, exist_ok=True)
+    # Defense-in-depth: re-basename the stored filename so a crafted value can't escape ingest/.
+    safe_name = Path(document.original_filename).name or "document"
+    (ingest_dir / safe_name).write_bytes(data)
+    return safe_name
+
+
 @router.post("/{document_id}/reingest")
 def reingest_document(
     document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs
@@ -292,26 +326,37 @@ def reingest_document(
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
     files_root = Path(request.app.state.settings.files_root)
-    base = _document_dir(document, files_root)
-    if base is None:
-        raise HTTPException(status_code=404, detail="document files not found")
-
-    rel = document.metadata.get("original") or document.original_filename
-    source = (base / str(rel)).resolve()
-    if (source != base and base not in source.parents) or not source.is_file():
-        raise HTTPException(status_code=404, detail="original file not found")
-    data = source.read_bytes()  # read before purging, so nothing is lost
-
-    jobs.delete_for_document(tenant.tenant_id, document_id)
-    repo.delete(tenant.tenant_id, document_id)  # FK-cascades chunks/entities/features/links/records
-    shutil.rmtree(base, ignore_errors=True)
-
-    ingest_dir = files_root / tenant.tenant_id / "ingest"
-    ingest_dir.mkdir(parents=True, exist_ok=True)
-    # Defense-in-depth: re-basename the stored filename so a crafted value can't escape ingest/.
-    safe_name = Path(document.original_filename).name or "document"
-    (ingest_dir / safe_name).write_bytes(data)
+    data = _read_original(document, files_root)
+    safe_name = _purge_and_requeue(document, data, files_root, tenant.tenant_id, repo, jobs)
     return {"status": "queued", "filename": safe_name}
+
+
+@router.post("/{document_id}/rotate")
+def rotate_document(
+    document_id: str,
+    request: Request,
+    tenant: Tenant,
+    repo: Repo,
+    jobs: Jobs,
+    degrees: Annotated[int, Query()] = 90,
+) -> dict[str, str]:
+    """Rotate the whole document clockwise (90/180/270) and re-ingest it upright. PDFs get a
+    lossless /Rotate bump; images are re-encoded. The worker then re-OCRs the upright pages."""
+    from doktok_modalities_files import rotate_source
+
+    if degrees not in (90, 180, 270):
+        raise HTTPException(status_code=422, detail="degrees must be 90, 180 or 270")
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    files_root = Path(request.app.state.settings.files_root)
+    data = _read_original(document, files_root)
+    try:
+        rotated = rotate_source(data, document.detected_mime, degrees)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    safe_name = _purge_and_requeue(document, rotated, files_root, tenant.tenant_id, repo, jobs)
+    return {"status": "queued", "filename": safe_name, "degrees": str(degrees)}
 
 
 @router.delete("/{document_id}")

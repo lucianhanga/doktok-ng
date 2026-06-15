@@ -10,6 +10,7 @@ from doktok_modalities_files.render import (
     PyMuPdfRenderer,
     PyMuPdfThumbnailer,
     SearchablePdfBuilder,
+    rotate_source,
 )
 
 __version__ = "0.0.0"
@@ -22,4 +23,5 @@ __all__ = [
     "PyMuPdfTextExtractor",
     "PyMuPdfThumbnailer",
     "SearchablePdfBuilder",
+    "rotate_source",
 ]

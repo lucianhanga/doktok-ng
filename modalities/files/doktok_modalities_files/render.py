@@ -5,6 +5,46 @@ from __future__ import annotations
 from doktok_contracts.media import RenderedPage
 
 
+def rotate_source(data: bytes, mime: str | None, degrees: int) -> bytes:
+    """Rotate a document clockwise by 90/180/270 degrees and return the new bytes.
+
+    PDFs get a lossless ``/Rotate`` bump (no re-rasterization), which both renders upright for OCR
+    and displays upright in a viewer; images are re-encoded rotated. Raises ``ValueError`` for an
+    unsupported type or a non-multiple-of-90 angle.
+    """
+    degrees %= 360
+    if degrees == 0:
+        return data
+    if degrees not in (90, 180, 270):
+        raise ValueError("degrees must be a multiple of 90")
+
+    if mime == "application/pdf":
+        import fitz
+
+        doc = fitz.open(stream=data, filetype="pdf")
+        try:
+            for page in doc:
+                page.set_rotation((page.rotation + degrees) % 360)
+            return bytes(doc.tobytes())
+        finally:
+            doc.close()
+
+    if mime and mime.startswith("image/"):
+        import io
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as image:
+            fmt = image.format or "PNG"
+            # PIL rotates counter-clockwise; negate for clockwise. expand keeps the full content.
+            rotated = image.rotate(-degrees, expand=True)
+            buffer = io.BytesIO()
+            rotated.save(buffer, format=fmt)
+            return buffer.getvalue()
+
+    raise ValueError(f"cannot rotate {mime}")
+
+
 class PyMuPdfRenderer:
     """``PdfRenderer`` that rasterizes PDF pages to PNG bytes."""
 

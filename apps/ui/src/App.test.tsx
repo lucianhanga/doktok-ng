@@ -44,11 +44,12 @@ test("renders the DokTok NG shell with the Overview landing", async () => {
   );
 });
 
-test("Status tab shows backend health", async () => {
+test("the fixed status bar shows backend health (no Status tab)", async () => {
   mockRoutes();
   render(<App />);
-  await userEvent.click(screen.getByRole("button", { name: "Status" }));
-  await waitFor(() => expect(screen.getByText("doktok-ng-backend")).toBeInTheDocument());
+  // The status bar is always visible at the bottom - no tab to click.
+  expect(screen.queryByRole("button", { name: "Status" })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/doktok-ng-backend/)).toBeInTheDocument());
 });
 
 test("Ingestion tab shows the jobs view", async () => {

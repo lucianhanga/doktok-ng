@@ -13,6 +13,8 @@ import {
   type Citation,
   type QueryFilters,
   type RagAnswer,
+  type RankedChunk,
+  type TurnMetrics,
 } from "./api";
 import { DocumentDetail } from "./DocumentDetail";
 import { Markdown } from "./Markdown";
@@ -20,12 +22,24 @@ import { loadJSON, saveJSON } from "./persist";
 
 const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
 const SOURCES_KEY = "doktok.chat.sourcesCollapsed";
+const REASONING_KEY = "doktok.chat.reasoningCollapsed";
+
+function fmtMs(ms: number): string {
+  if (ms <= 0) return "0s";
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+function fmtTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
 
 interface Exchange {
   question: string;
   answer: RagAnswer;
   reasoning?: string;
   steps?: string[]; // live pipeline activity; kept in-session, not persisted to the DB
+  ranking?: RankedChunk[];
+  metrics?: TurnMetrics | null;
 }
 
 /** The in-progress turn while tokens stream in. */
@@ -37,6 +51,8 @@ interface Streaming {
   citations: Citation[];
   rewrittenQuery: string | null;
   filters: QueryFilters | null;
+  ranking: RankedChunk[];
+  metrics: TurnMetrics | null;
 }
 
 /** A unified view of either a completed exchange or the streaming turn, for rendering. */
@@ -50,6 +66,8 @@ interface TurnView {
   filters: QueryFilters | null;
   grounded: boolean;
   streaming: boolean;
+  ranking: RankedChunk[];
+  metrics: TurnMetrics | null;
 }
 
 /** Render the inferred retrieval filters (category / date range) as a short readable phrase. */
@@ -161,42 +179,120 @@ function SourcesColumn({
   );
 }
 
+/** The per-turn ranked candidate chunks (M8 #4/#7): winners first, with RRF score + rank %. */
+function RankedChunks({
+  ranking,
+  onOpenDocument,
+}: {
+  ranking: RankedChunk[];
+  onOpenDocument?: (id: string) => void;
+}) {
+  if (ranking.length === 0) return null;
+  const winners = ranking.filter((r) => r.selected).length;
+  return (
+    <div className="chat-ranking">
+      <div className="chat-ranking-head muted">
+        Chunk ranking — {winners} of {ranking.length} selected
+      </div>
+      <ol className="chat-ranking-list">
+        {ranking.map((rc) => {
+          const label = rc.original_filename ?? rc.document_id.slice(0, 8);
+          const pct = rc.relevance != null ? `${Math.round(rc.relevance * 100)}%` : "—";
+          return (
+            <li key={rc.chunk_id} className={rc.selected ? "selected" : "dropped"}>
+              <button
+                type="button"
+                className="link-button chat-ranking-doc"
+                onClick={() => onOpenDocument?.(rc.document_id)}
+                disabled={!onOpenDocument}
+                title={`Open ${label}`}
+              >
+                {label}
+                {rc.page_start ? <span className="muted"> p.{rc.page_start}</span> : null}
+              </button>
+              <span className="muted chat-ranking-scores">
+                RRF {rc.retrieval_score.toFixed(3)} · rank {pct}
+                {rc.selected ? " · selected" : ""}
+                {rc.cited ? " · cited" : ""}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 /**
- * A small fixed-height window showing the pipeline steps + the model's reasoning, scrolling as they
- * stream (auto-pinned to the bottom while live). The answer streams separately below. Shown only
- * when there is reasoning or at least one step.
+ * Collapsible "Reasoning & Steps" panel (M8 #2/#3/#4): pipeline steps + the model's reasoning +
+ * the per-turn chunk ranking. Collapsed it shows a one-line summary (steps · tokens · time); while
+ * streaming it auto-expands and pins to the bottom. Shown only when there is something to show.
  */
 function ActivityPanel({
   steps,
   reasoning,
   streaming,
   caret,
+  metrics,
+  ranking,
+  onOpenDocument,
 }: {
   steps: string[];
   reasoning: string;
   streaming: boolean;
   caret: boolean;
+  metrics: TurnMetrics | null;
+  ranking: RankedChunk[];
+  onOpenDocument?: (id: string) => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState<boolean>(() => loadJSON(REASONING_KEY, false));
+  // While streaming, force-expand so the user watches it think; restore their preference after.
+  const open = streaming || !collapsed;
   useEffect(() => {
-    if (streaming && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [steps, reasoning, streaming]);
-  if (steps.length === 0 && !reasoning) return null;
+    if (streaming && open && bodyRef.current)
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [steps, reasoning, streaming, open]);
+  if (steps.length === 0 && !reasoning && ranking.length === 0) return null;
+
+  const summary: string[] = [];
+  if (steps.length) summary.push(`${steps.length} steps`);
+  if (metrics && metrics.reasoning_tokens > 0) {
+    summary.push(`${metrics.estimated ? "~" : ""}${fmtTokens(metrics.reasoning_tokens)} tokens`);
+  }
+  if (metrics && metrics.reasoning_ms > 0) summary.push(fmtMs(metrics.reasoning_ms));
+
   return (
     <div className="chat-activity">
-      <div className="chat-activity-label">Reasoning &amp; steps</div>
-      <div className="chat-activity-body" ref={bodyRef}>
-        {steps.map((s, i) => (
-          <div
-            key={i}
-            className={streaming && i === steps.length - 1 ? "chat-step active" : "chat-step"}
-          >
-            {s}
-          </div>
-        ))}
-        {reasoning && <Markdown>{reasoning}</Markdown>}
-        {caret && <span className="chat-caret" aria-hidden="true" />}
-      </div>
+      <button
+        type="button"
+        className="chat-activity-label link-button"
+        aria-expanded={open}
+        onClick={() => {
+          const next = !collapsed;
+          setCollapsed(next);
+          saveJSON(REASONING_KEY, next);
+        }}
+        disabled={streaming}
+      >
+        <span aria-hidden="true">{open ? "▾" : "▸"}</span> Reasoning &amp; steps
+        {summary.length > 0 && <span className="muted"> — {summary.join(" · ")}</span>}
+      </button>
+      {open && (
+        <div className="chat-activity-body" ref={bodyRef}>
+          {steps.map((s, i) => (
+            <div
+              key={i}
+              className={streaming && i === steps.length - 1 ? "chat-step active" : "chat-step"}
+            >
+              {s}
+            </div>
+          ))}
+          {reasoning && <Markdown>{reasoning}</Markdown>}
+          {caret && <span className="chat-caret" aria-hidden="true" />}
+          <RankedChunks ranking={ranking} onOpenDocument={onOpenDocument} />
+        </div>
+      )}
     </div>
   );
 }
@@ -235,6 +331,9 @@ function AnswerBlock({
         reasoning={turn.reasoning}
         streaming={turn.streaming}
         caret={reasoningStreaming}
+        metrics={turn.metrics}
+        ranking={turn.ranking}
+        onOpenDocument={onOpenDocument}
       />
       {!turn.streaming && !turn.grounded && (
         <p role="status" className="banner-warning">
@@ -562,6 +661,8 @@ export function ChatPanel({
         question: s.question,
         reasoning: s.reasoning || undefined,
         steps: s.steps,
+        ranking: s.ranking,
+        metrics: s.metrics,
         answer: {
           answer: s.answer,
           citations: s.citations,
@@ -602,6 +703,8 @@ export function ChatPanel({
       citations: [],
       rewrittenQuery: null,
       filters: null,
+      ranking: [],
+      metrics: null,
     };
     setStreaming(init); // instant feedback in the current view
 
@@ -641,6 +744,8 @@ export function ChatPanel({
             onReasoning: (d) => patchThread(key, (s) => ({ ...s, reasoning: s.reasoning + d })),
             onToken: (d) => patchThread(key, (s) => ({ ...s, answer: s.answer + d })),
             onSources: (c) => patchThread(key, (s) => ({ ...s, citations: c })),
+            onRanking: (r) => patchThread(key, (s) => ({ ...s, ranking: r })),
+            onMetrics: (m) => patchThread(key, (s) => ({ ...s, metrics: m })),
             onError: (m) => {
               if (key === currentKey()) setErrorMsg(m);
             },
@@ -697,6 +802,8 @@ export function ChatPanel({
           restored.push({
             question: messages[i].content,
             reasoning: reply?.reasoning || undefined,
+            ranking: reply?.ranking ?? [],
+            metrics: reply?.metrics ?? null,
             answer: {
               answer: reply?.content ?? "",
               citations: reply?.citations ?? [],
@@ -752,6 +859,8 @@ export function ChatPanel({
     filters: ex.answer.filters ?? null,
     grounded: ex.answer.grounded,
     streaming: false,
+    ranking: ex.ranking ?? [],
+    metrics: ex.metrics ?? null,
   }));
   if (streaming) {
     turns.push({
@@ -764,6 +873,8 @@ export function ChatPanel({
       filters: streaming.filters,
       grounded: false,
       streaming: true,
+      ranking: streaming.ranking,
+      metrics: streaming.metrics,
     });
   }
   const lastIndex = turns.length - 1;
@@ -771,6 +882,11 @@ export function ChatPanel({
   // Clicking a citation (a [n] marker, a source card, or an inline source) opens the document in
   // the right-hand drawer instead of navigating away from the chat.
   const openInDrawer = (id: string) => setDrawerDocId(id);
+
+  // Per-chat totals for the active conversation (M8 #11), from the server-computed thread figures.
+  const activeThread = threads.find((t) => t.id === threadId);
+  const threadTokens = activeThread?.total_tokens ?? 0;
+  const threadMs = activeThread?.total_inference_ms ?? 0;
 
   return (
     <section
@@ -791,7 +907,14 @@ export function ChatPanel({
       />
       <div className="chat-main">
         <div className="result-head">
-          <h2>Chat with your documents</h2>
+          <h2>
+            Chat with your documents
+            {threadTokens > 0 && (
+              <span className="chat-thread-totals">
+                {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
+              </span>
+            )}
+          </h2>
           {turns.length > 0 && (
             <button type="button" className="link-button" onClick={reset}>
               <span className="muted">New conversation</span>

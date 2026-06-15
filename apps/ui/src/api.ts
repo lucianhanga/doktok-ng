@@ -505,12 +505,39 @@ export interface QueryFilters {
   date_to?: string | null;
 }
 
+export interface RankedChunk {
+  chunk_id: string;
+  document_id: string;
+  original_filename?: string | null;
+  page_start?: number | null;
+  retrieval_score: number;
+  relevance?: number | null;
+  selected: boolean;
+  cited: boolean;
+}
+
+export interface TurnMetrics {
+  prompt_tokens: number;
+  answer_tokens: number;
+  reasoning_tokens: number;
+  overhead_tokens: number;
+  reasoning_ms: number;
+  answer_ms: number;
+  total_ms: number;
+  reused_previous_results: boolean;
+  rewritten_query?: string | null;
+  estimated: boolean;
+  total_tokens?: number; // convenience; backend computes via property (not serialized) - sum locally
+}
+
 export interface RagAnswer {
   answer: string;
   citations: Citation[];
   grounded: boolean;
   rewritten_query?: string | null;
   filters?: QueryFilters | null;
+  ranking?: RankedChunk[];
+  metrics?: TurnMetrics | null;
 }
 
 export interface ChatTurn {
@@ -561,13 +588,15 @@ export async function chat(
 // ---- Streaming chat (M6.4, ADR-0018 Phase 3): Server-Sent Events over a fetch POST ----
 
 export interface ChatEvent {
-  type: string; // "meta" | "step" | "reasoning" | "token" | "sources" | "done" | "error"
+  type: string; // meta | step | reasoning | token | sources | ranking | metrics | done | error
   delta?: string;
   rewritten_query?: string | null;
   filters?: QueryFilters | null;
   citations?: Citation[];
   grounded?: boolean;
   message?: string;
+  ranking?: RankedChunk[];
+  metrics?: TurnMetrics | null;
 }
 
 /**
@@ -600,6 +629,8 @@ export interface ChatStreamHandlers {
   onReasoning?: (delta: string) => void;
   onToken?: (delta: string) => void;
   onSources?: (citations: Citation[]) => void;
+  onRanking?: (ranking: RankedChunk[]) => void;
+  onMetrics?: (metrics: TurnMetrics) => void;
   onError?: (message: string) => void;
 }
 
@@ -651,6 +682,12 @@ export async function chatStream(
         case "sources":
           handlers.onSources?.(event.citations ?? []);
           break;
+        case "ranking":
+          handlers.onRanking?.(event.ranking ?? []);
+          break;
+        case "metrics":
+          if (event.metrics) handlers.onMetrics?.(event.metrics);
+          break;
         case "error":
           handlers.onError?.(event.message ?? "the model failed while answering");
           break;
@@ -672,6 +709,8 @@ export interface ChatThread {
   updated_at: string;
   message_count: number;
   title_source?: "auto" | "manual";
+  total_tokens?: number;
+  total_inference_ms?: number;
 }
 
 export interface ChatMessage {
@@ -682,6 +721,8 @@ export interface ChatMessage {
   // Persisted assistant-turn extras so a resumed thread re-shows reasoning + the source cards.
   reasoning?: string;
   citations?: Citation[];
+  ranking?: RankedChunk[];
+  metrics?: TurnMetrics | null;
 }
 
 export function listChatThreads(signal?: AbortSignal): Promise<ChatThread[]> {

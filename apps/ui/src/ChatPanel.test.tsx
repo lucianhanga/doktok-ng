@@ -484,3 +484,90 @@ test("clicking an inline [n] marker opens the document drawer", async () => {
   await userEvent.click(screen.getByTitle("Open source [1]"));
   expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
 });
+
+test("reasoning panel shows a token/time summary and ranked chunks; ranked doc opens drawer", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("reasoning", { delta: "weighing the rows" }),
+        frame("token", { delta: "Answer here." }),
+        frame("ranking", {
+          ranking: [
+            {
+              chunk_id: "c1", document_id: "dWin", original_filename: "win.pdf",
+              retrieval_score: 0.812, relevance: 1.0, selected: true, cited: true,
+            },
+            {
+              chunk_id: "c2", document_id: "dLose", original_filename: "lose.pdf",
+              retrieval_score: 0.21, relevance: null, selected: false, cited: false,
+            },
+          ],
+        }),
+        frame("sources", { citations: [] }),
+        frame("metrics", {
+          metrics: {
+            prompt_tokens: 100, answer_tokens: 20, reasoning_tokens: 1200, overhead_tokens: 30,
+            reasoning_ms: 2500, answer_ms: 800, total_ms: 3300,
+            reused_previous_results: false, estimated: true,
+          },
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("Answer here.")).toBeInTheDocument());
+
+  // Summary: steps + ~tokens (estimated) + time.
+  expect(screen.getByText(/1\.2k tokens/)).toBeInTheDocument();
+  expect(screen.getByText(/2\.5s/)).toBeInTheDocument();
+  // Ranked chunks rendered with RRF score.
+  expect(screen.getByText(/RRF 0\.812/)).toBeInTheDocument();
+  // Clicking a ranked doc opens the drawer.
+  await userEvent.click(screen.getByRole("button", { name: /win\.pdf/ }));
+  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
+});
+
+test("chat header shows per-chat token + time totals from the thread", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/api/v1/chat/threads") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            id: "thr-1", title: "", created_at: "2026-06-14T00:00:00Z",
+            updated_at: "2026-06-14T00:00:00Z", message_count: 0,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/v1/chat/threads")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "thr-1", title: "t", created_at: "2026-06-14T00:00:00Z",
+              updated_at: "2026-06-14T00:00:01Z", message_count: 2,
+              total_tokens: 5400, total_inference_ms: 7200,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return sseResponse([
+        frame("token", { delta: "hi." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
+  );
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/5\.4k tokens/)).toBeInTheDocument());
+  expect(screen.getByText(/7\.2s/)).toBeInTheDocument();
+});

@@ -109,6 +109,30 @@ test("a duplicate document shows a banner that opens the original", async () => 
   expect(onOpen).toHaveBeenCalledWith("orig-1");
 });
 
+test("rotate right re-ingests the rotated document (PDF/image only)", async () => {
+  const calls = mockDetail([], { detected_mime: "application/pdf" });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const onClose = vi.fn();
+  render(<DocumentDetail id="d1" onClose={onClose} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+
+  await userEvent.click(screen.getByRole("button", { name: /Rotate right/ }));
+  await waitFor(() =>
+    expect(
+      calls.some((c) => c.url.includes("/rotate?degrees=90") && c.method === "POST"),
+    ).toBe(true),
+  );
+  expect(onClose).toHaveBeenCalled();
+});
+
+test("rotate/re-OCR buttons are hidden for non-OCR documents", async () => {
+  mockDetail(); // default mime is text/plain
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /Rotate right/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Re-OCR/ })).not.toBeInTheDocument();
+});
+
 test("offers open and download links", async () => {
   mockDetail();
   render(<DocumentDetail id="d1" onClose={() => {}} />);

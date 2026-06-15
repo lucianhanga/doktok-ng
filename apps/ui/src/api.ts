@@ -413,6 +413,17 @@ export async function reingestDocument(id: string): Promise<void> {
   }
 }
 
+/** Rotate a document clockwise (90/180/270) and re-ingest it upright. */
+export async function rotateDocument(id: string, degrees = 90): Promise<void> {
+  const response = await fetch(
+    `/api/v1/documents/${encodeURIComponent(id)}/rotate?degrees=${degrees}`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    throw new Error(`Rotate request failed: ${response.status}`);
+  }
+}
+
 /** Delete a document and its files. */
 export async function deleteDocument(id: string): Promise<void> {
   const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, { method: "DELETE" });

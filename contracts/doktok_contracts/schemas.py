@@ -515,6 +515,33 @@ class DocumentContent(BaseModel):
     content: str
 
 
+class LayoutLine(BaseModel):
+    """One OCR line + its bbox in the page image's pixels (x0,y0 top-left; x1,y1 bottom-right)."""
+
+    text: str
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+class LayoutPage(BaseModel):
+    """A page's OCR geometry: image pixel size + render DPI + the recognized line boxes."""
+
+    page_number: int
+    width_px: int
+    height_px: int
+    dpi: int | None = None
+    lines: list[LayoutLine] = Field(default_factory=list)
+
+
+class DocumentLayout(BaseModel):
+    """Per-page OCR boxes for overlaying on the page image (empty until a doc is OCR'd)."""
+
+    document_id: str
+    pages: list[LayoutPage] = Field(default_factory=list)
+
+
 class StatsSummary(BaseModel):
     """At-a-glance tenant counts for the overview dashboard."""
 

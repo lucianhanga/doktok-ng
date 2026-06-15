@@ -17,6 +17,10 @@ class FakeStorage:
             raise FileNotFoundError(path)
         return self._files[name]
 
+    def write_bytes(self, path: str, data: bytes) -> None: ...
+    def write_text(self, path: str, text: str) -> None: ...
+    def move(self, source: str, destination: str) -> None: ...
+
 
 def _json_pages(*pages: str) -> bytes:
     return json.dumps({"pages": [{"text": p} for p in pages]}).encode()

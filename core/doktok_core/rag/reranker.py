@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterator
 
-from doktok_contracts.ports import ChatModelProvider
+from doktok_contracts.media import ChatChunk
+from doktok_contracts.ports import ChatModelProvider, StreamingChatModelProvider
 from doktok_contracts.schemas import SearchHit
 
 logger = logging.getLogger("doktok.rag.rerank")
@@ -65,6 +67,36 @@ class LlmReranker:
         except Exception:  # noqa: BLE001 - a rerank failure falls back to retrieval order
             logger.warning("LLM reranker failed; using retrieval order", exc_info=True)
             order = []
+        if not order:
+            return hits[:top_k]
+        return [hits[i] for i in order][:top_k]
+
+    def rerank_stream(
+        self, query: str, hits: list[SearchHit], *, top_k: int, think: bool | None = None
+    ) -> Iterator[ChatChunk]:
+        """Like ``rerank`` but streams the model's reasoning chunks (M8): yields ChatChunk(kind=
+        'reasoning') as the model thinks, then RETURNS the reordered hits (via StopIteration.value).
+        Falls back to retrieval order on any failure or a non-streaming model."""
+        if len(hits) <= 1:
+            return hits[:top_k]
+        passages = "\n".join(
+            f"[{i}] {(hit.text or hit.snippet)[:_MAX_PASSAGE_CHARS]}" for i, hit in enumerate(hits)
+        )
+        prompt = _PROMPT.format(top_k=top_k, query=query[:500], passages=passages)
+        parts: list[str] = []
+        try:
+            if isinstance(self._chat, StreamingChatModelProvider):
+                for chunk in self._chat.stream_complete(prompt, think=think):
+                    if chunk.kind == "reasoning":
+                        yield chunk
+                    else:
+                        parts.append(chunk.text)
+            else:
+                parts.append(self._chat.complete(prompt))
+        except Exception:  # noqa: BLE001 - a rerank failure falls back to retrieval order
+            logger.warning("LLM reranker (stream) failed; using retrieval order", exc_info=True)
+            return hits[:top_k]
+        order = _parse_order("".join(parts), len(hits))
         if not order:
             return hits[:top_k]
         return [hits[i] for i in order][:top_k]

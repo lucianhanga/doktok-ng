@@ -214,6 +214,31 @@ class DefaultRagAnswerer:
         except Exception:  # noqa: BLE001 - understanding failure degrades to the plain question
             logger.warning("query understanding failed; using the original question", exc_info=True)
             return question, None
+        return self._parse_understanding(data, question)
+
+    def _understand_stream(
+        self, history: list[ChatTurn], question: str, reasoning: bool | None
+    ) -> Iterator[ChatEvent]:
+        """Streaming sibling of ``_understand`` (M8): yields the rewrite call's reasoning as it
+        thinks, then RETURNS (standalone_query, filters) via StopIteration.value. Its JSON output is
+        accumulated and parsed, never surfaced as answer tokens. Degrades to the plain question."""
+        prompt = _UNDERSTAND_PROMPT.format(
+            history=self._format_history(history) or "(none)", question=question
+        )
+        parts: list[str] = []
+        try:
+            for chunk in self._stream(prompt, reasoning):
+                if chunk.kind == "reasoning":
+                    yield ChatEvent(type="reasoning", delta=chunk.text)
+                else:
+                    parts.append(chunk.text)
+        except Exception:  # noqa: BLE001 - understanding failure degrades to the plain question
+            logger.warning("query understanding failed; using the original question", exc_info=True)
+            return question, None
+        return self._parse_understanding(_first_json_object("".join(parts)), question)
+
+    @staticmethod
+    def _parse_understanding(data: object, question: str) -> tuple[str, QueryFilters | None]:
         if not isinstance(data, dict):
             return question, None
         query = _clean_str(data.get("query")) or question
@@ -246,6 +271,19 @@ class DefaultRagAnswerer:
         Returns (packed_hits, relevance_by_chunk, prompt, ranking), or None to refuse (empty / no
         hits / too weak). Shared by the one-shot and streaming paths. ``filters`` scope retrieval.
         """
+        candidates = self._retrieve_candidates(tenant_id, question, limit, filters)
+        if candidates is None:
+            return None
+        if self._reranker is not None:
+            hits = self._reranker.rerank(question, candidates, top_k=limit)
+        else:
+            hits = candidates[:limit]
+        return self._finalize(hits, candidates, question)
+
+    def _retrieve_candidates(
+        self, tenant_id: str, question: str, limit: int, filters: QueryFilters | None
+    ) -> list[SearchHit] | None:
+        """Retrieve the candidate set + apply the evidence floor. None = refuse (empty/too weak)."""
         if not question:
             return None
         wide = self._retrieve_k if self._reranker is not None else limit
@@ -256,24 +294,46 @@ class DefaultRagAnswerer:
         # answer over thin context (deterministic; only active when min_score > 0).
         if self._min_score > 0 and max(hit.score for hit in candidates) < self._min_score:
             return None
-        if self._reranker is not None:
-            hits = self._reranker.rerank(question, candidates, top_k=limit)
-        else:
-            hits = candidates[:limit]
+        return candidates
+
+    def _finalize(
+        self, hits: list[SearchHit], candidates: list[SearchHit], question: str
+    ) -> tuple[list[SearchHit], dict[str, float], str, list[RankedChunk]]:
+        """Given the reranked top-k + the candidate set, capture relevance, build the ranking trace,
+        pack the context, and assemble the prompt."""
         # Capture each source's importance from the FINAL relevance order (best first) before
         # _pack_edges_best scrambles the list. Normalized rank: best = 1.0, keyed by chunk_id so it
         # survives the reordering. (M6.4)
         n = len(hits)
         relevance = {hit.chunk_id: (n - i) / n for i, hit in enumerate(hits)}
         ranking = _build_ranking(hits, candidates, relevance)
-        hits = _pack_edges_best(hits)
+        packed = _pack_edges_best(hits)
         prompt = _PROMPT.format(
             refusal=REFUSAL,
             today=now_local().strftime("%A, %d %B %Y"),
-            context=self._format_context(hits),
+            context=self._format_context(packed),
             question=question,
         )
-        return hits, relevance, prompt, ranking
+        return packed, relevance, prompt, ranking
+
+    def _stream_rerank(
+        self, question: str, candidates: list[SearchHit], limit: int, reasoning: bool | None
+    ) -> Iterator[ChatEvent]:
+        """Rerank the candidates, streaming the reranker's reasoning as ChatEvents when it supports
+        it (M8), then RETURN the reranked top-k via StopIteration.value."""
+        if self._reranker is None:
+            return candidates[:limit]
+        rerank_stream = getattr(self._reranker, "rerank_stream", None)
+        if rerank_stream is None:
+            return self._reranker.rerank(question, candidates, top_k=limit)
+        gen = rerank_stream(question, candidates, top_k=limit, think=reasoning)
+        try:
+            while True:
+                chunk = next(gen)
+                if chunk.kind == "reasoning":
+                    yield ChatEvent(type="reasoning", delta=chunk.text)
+        except StopIteration as stop:
+            return stop.value or candidates[:limit]
 
     def _answer(
         self,
@@ -353,7 +413,8 @@ class DefaultRagAnswerer:
             return
 
         yield ChatEvent(type="step", delta="Understanding your question")
-        standalone, filters = self._understand(history, question)
+        # Stream the rewrite call's thinking so this phase isn't a silent wait (M8).
+        standalone, filters = yield from self._understand_stream(history, question, reasoning)
         understand_usage = _last_usage(self._chat)
         rewritten = standalone if standalone != question else None
         question = standalone
@@ -371,13 +432,15 @@ class DefaultRagAnswerer:
             return
 
         yield ChatEvent(type="step", delta="Searching and ranking your documents")
-        prepared = self._prepare(tenant_id, question, limit, filters=filters)
-        if prepared is None:
+        candidates = self._retrieve_candidates(tenant_id, question, limit, filters)
+        if candidates is None:
             yield ChatEvent(type="token", delta=REFUSAL)
             yield ChatEvent(type="sources", citations=[])
             yield ChatEvent(type="done", grounded=False)
             return
-        hits, relevance, prompt, ranking = prepared
+        # Stream the reranker's thinking too (the slow 40-passage call), then finalize.
+        ranked = yield from self._stream_rerank(question, candidates, limit, reasoning)
+        hits, relevance, prompt, ranking = self._finalize(ranked, candidates, question)
         yield ChatEvent(type="step", delta="Composing the answer")
 
         answer_parts: list[str] = []

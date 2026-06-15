@@ -326,3 +326,29 @@ def test_stream_flags_followup_reuse_in_metrics() -> None:
     metrics_ev = next(e for e in events if e.type == "metrics")
     assert metrics_ev.metrics is not None
     assert metrics_ev.metrics.reused_previous_results is True
+
+
+def test_stream_surfaces_rewrite_and_rerank_reasoning() -> None:
+    from doktok_core.rag.reranker import LlmReranker
+
+    # A streaming chat that thinks on every call (rewrite, rerank, answer).
+    chat = FakeStreamingChatWithUsage('{"query": "q"}', reasoning="pondering")
+    retriever = FakeRetriever([_hit(1), _hit(2)])
+    answerer = DefaultRagAnswerer(retriever, chat, reranker=LlmReranker(chat))
+    events = list(answerer.answer_thread_stream("t1", [], "q", 2))
+    types = [e.type for e in events]
+
+    # Reasoning is streamed during the understand phase (before "Searching") and during the
+    # rerank phase (before "Composing") - not only during the final answer.
+    searching = types.index("step", types.index("step") + 1)  # 2nd step = "Searching..."
+    composing = max(i for i, t in enumerate(types) if t == "step")  # "Composing the answer"
+    reasoning_before_search = (
+        any(
+            t == "reasoning"
+            for t in types[: types.index("step")]  # never, step is first
+        )
+        or any(e.type == "reasoning" for e in events[1:searching])
+    )
+    reasoning_before_compose = any(e.type == "reasoning" for e in events[searching:composing])
+    assert reasoning_before_search  # understand-phase thinking streamed
+    assert reasoning_before_compose  # rerank-phase thinking streamed

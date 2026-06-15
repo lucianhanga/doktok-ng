@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from doktok_contracts.media import OcrPageResult, RenderedPage
+from doktok_contracts.media import OcrPageResult, PageLayout, RenderedPage
 from doktok_contracts.ports import (
     ChatModelProvider,
     OcrExtractor,
@@ -56,6 +56,9 @@ class ExtractionResult:
     page_count: int
     ocr_confidence: float | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    # Per-page OCR geometry (aligned with ``pages``; None where a page has no OCR boxes, e.g.
+    # born-digital text or the Ollama OCR path). Persisted to content.json. Empty = no layout.
+    page_layouts: list[PageLayout | None] = field(default_factory=list)
 
 
 def _pdf_markdown(pages: list[str]) -> str:
@@ -105,7 +108,11 @@ def extract_document(
             raise NeedsOcrError(f"{mime} requires OCR")
         image = Path(path).read_bytes()
         page = ocr.ocr_image(image)
-        result = ExtractionResult(page.text, [page.text], "ocr", 1, page.confidence)
+        # dpi=None: a source image's boxes are in its own pixels, not a rendered DPI.
+        layout = PageLayout(page.width, page.height, None, page.lines) if page.lines else None
+        result = ExtractionResult(
+            page.text, [page.text], "ocr", 1, page.confidence, page_layouts=[layout]
+        )
         normalized = (
             builder.build([RenderedPage(image, page.text, page.lines)]) if builder else None
         )
@@ -195,9 +202,21 @@ def _extract_pdf(
     else:
         method = "pdf_mixed"
 
+    # Per-page OCR geometry for content.json: only for pages whose OCR text was chosen and that
+    # have line boxes (the boxes are in the rendered image's pixels at ocr_dpi).
+    page_layouts: list[PageLayout | None] = []
+    for i in range(len(pages)):
+        r = ocr_results.get(i)
+        if used_ocr[i] and r is not None and r.lines:
+            page_layouts.append(PageLayout(r.width, r.height, ocr_dpi, r.lines))
+        else:
+            page_layouts.append(None)
+
     # PaddleOCR per-page confidence is not threaded back through this path, so the PDF-level
     # confidence stays unset (as before).
-    result = ExtractionResult(_pdf_markdown(pages), pages, method, len(pages), None)
+    result = ExtractionResult(
+        _pdf_markdown(pages), pages, method, len(pages), None, page_layouts=page_layouts
+    )
     normalized = None
     if all(used_ocr) and images is not None and builder is not None:
         # Every page chose OCR here, so attach each page's line boxes for a positioned text layer.

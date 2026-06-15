@@ -85,12 +85,14 @@ def test_run_ocr_assembles_from_engine() -> None:
             return [{"rec_texts": ["hi"], "rec_scores": [0.8], "rec_boxes": [[0, 0, 5, 5]]}]
 
     buffer = io.BytesIO()
-    image_mod.new("RGB", (4, 4), "white").save(buffer, format="PNG")
-    text, confidence, lines = _run_ocr(FakeEngine(), buffer.getvalue())
-    assert text == "hi" and confidence is not None and abs(confidence - 0.8) < 1e-6
-    # The per-line box is carried through (image pixels) for the positioned text layer.
-    assert len(lines) == 1
-    assert (lines[0].text, lines[0].x0, lines[0].y0, lines[0].x1, lines[0].y1) == ("hi", 0, 0, 5, 5)
+    image_mod.new("RGB", (6, 4), "white").save(buffer, format="PNG")  # width=6, height=4
+    page = _run_ocr(FakeEngine(), buffer.getvalue())
+    assert page.text == "hi" and page.confidence is not None and abs(page.confidence - 0.8) < 1e-6
+    # The per-line box + image pixel size are carried through for the positioned/persisted layer.
+    assert len(page.lines) == 1
+    line = page.lines[0]
+    assert (line.text, line.x0, line.y0, line.x1, line.y1) == ("hi", 0, 0, 5, 5)
+    assert (page.width, page.height) == (6, 4)
 
 
 def test_no_engine_dispatches_to_worker_pool(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -133,6 +133,8 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
       {
         id: "severity",
         header: "Severity",
+        size: 120,
+        minSize: 80,
         accessorFn: (e) => severityOf(e),
         cell: ({ getValue }) => {
           const sev = getValue<ActivitySeverity>();
@@ -147,6 +149,8 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
       {
         id: "time",
         header: "When",
+        size: 185,
+        minSize: 120,
         accessorFn: (e) => e.timestamp,
         cell: ({ getValue }) => when(getValue<string>()),
         sortingFn: "alphanumeric",
@@ -154,6 +158,8 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
       {
         id: "document",
         header: "Document",
+        size: 220,
+        minSize: 100,
         accessorFn: (e) => docLabel(e),
         cell: ({ row }) => {
           const e = row.original;
@@ -176,20 +182,26 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
       {
         id: "phase",
         header: "Phase",
+        size: 110,
+        minSize: 70,
         accessorFn: (e) => e.phase ?? "",
         cell: ({ getValue }) => getValue<string>() || "-",
       },
       {
         id: "event",
         header: "Event",
+        size: 175,
+        minSize: 100,
         accessorFn: (e) => e.event_type,
         cell: ({ getValue }) => <span className="badge">{getValue<string>()}</span>,
       },
       {
         id: "description",
         header: "Description",
+        size: 400,
+        minSize: 120,
         accessorFn: (e) => describe(e),
-        cell: ({ getValue }) => <span className="activity-desc">{getValue<string>()}</span>,
+        cell: ({ getValue }) => getValue<string>(),
       },
     ],
     [onOpenDocument],

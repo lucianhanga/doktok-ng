@@ -148,3 +148,11 @@ def test_detail_aggregate(tmp_path: Path) -> None:
 def test_detail_other_tenant_is_404(tmp_path: Path) -> None:
     client = _detail_client(tmp_path)
     assert client.get("/api/v1/documents/missing/detail", headers=_auth()).status_code == 404
+
+
+def test_detail_logs_a_view(tmp_path: Path) -> None:
+    client = _detail_client(tmp_path)
+    body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    # The view is logged and shows up in the card's own recent-activity trail.
+    viewed = [e for e in body["recent_activity"] if e["event_type"] == "document.viewed"]
+    assert viewed and viewed[0]["actor_kind"] == "user"

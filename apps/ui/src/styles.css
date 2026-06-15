@@ -1981,3 +1981,63 @@ tr.row-selected {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Chat: reasoning metrics summary, ranked chunks, per-chat totals (M8 PR5) -------- */
+.chat-activity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted, #8b97a8);
+  margin-bottom: 0.3rem;
+}
+
+.chat-thread-totals {
+  margin-left: 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--muted, #8b97a8);
+  opacity: 0.75;
+}
+
+.chat-ranking {
+  margin-top: 0.6rem;
+  border-top: 1px dashed rgba(127, 127, 127, 0.25);
+  padding-top: 0.4rem;
+}
+
+.chat-ranking-head {
+  font-size: 0.78rem;
+  margin-bottom: 0.25rem;
+}
+
+.chat-ranking-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.chat-ranking-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.chat-ranking-list li.dropped {
+  opacity: 0.55;
+}
+
+.chat-ranking-doc {
+  color: var(--accent, #6ea8fe);
+}
+
+.chat-ranking-scores {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}

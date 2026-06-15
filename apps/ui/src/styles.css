@@ -1505,9 +1505,9 @@ tr.row-selected {
   border-top: 1px solid var(--border, #2a3342);
   padding-top: 1.25rem;
 }
-/* A comfortable reading measure keeps answers from sprawling across the full column. */
+/* Fill the conversation column (it narrows on its own when the sources/preview rail opens). */
 .chat-answer-block {
-  max-width: 75ch;
+  width: 100%;
 }
 /* Question header row: the question (clamped to a few lines) on the left, its actions (Sources
    chip, edit, delete) right-justified on the same level. */

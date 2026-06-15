@@ -405,6 +405,7 @@ def build_services(
             text_extractor=text_extractor,
             pdf_extractor=pdf_extractor,
             layout=layout,
+            document_normalizer=document_normalizer,
             ocr_extractor=ocr_extractor,
             pdf_renderer=pdf_renderer,
             searchable_pdf_builder=searchable_pdf_builder,

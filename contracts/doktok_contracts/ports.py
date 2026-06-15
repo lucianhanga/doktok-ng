@@ -19,6 +19,7 @@ from doktok_contracts.media import (
     ExtractedMetadata,
     ExtractedTerm,
     ExtractedTransaction,
+    LlmUsage,
     OcrPageResult,
     ProjectionResult,
     RenderedPage,
@@ -392,6 +393,17 @@ class EmbeddingProjectionRepository(Protocol):
 @runtime_checkable
 class ChatModelProvider(Protocol):
     def complete(self, prompt: str) -> str: ...
+
+
+@runtime_checkable
+class UsageReportingChatModel(Protocol):
+    """Optional capability (M8): a chat provider that records token/timing for its most recent call.
+
+    The answerer checks for it and collects usage after ``complete``/``stream_complete``; providers
+    that don't implement it simply yield no metrics. ``get_last_usage`` reflects the last call made
+    on this provider instance (None if it has not been called or usage was unavailable)."""
+
+    def get_last_usage(self) -> LlmUsage | None: ...
 
 
 @runtime_checkable

@@ -114,7 +114,9 @@ def extract_document(
             page.text, [page.text], "ocr", 1, page.confidence, page_layouts=[layout]
         )
         normalized = (
-            builder.build([RenderedPage(image, page.text, page.lines)]) if builder else None
+            builder.build([RenderedPage(image, page.text, page.lines, rotation=page.rotation)])
+            if builder
+            else None
         )
         return result, normalized
 
@@ -226,6 +228,7 @@ def _extract_pdf(
                     images[i],
                     pages[i],
                     ocr_results[i].lines if i in ocr_results else [],
+                    rotation=ocr_results[i].rotation if i in ocr_results else 0,
                 )
                 for i in range(min(len(images), len(pages)))
             ]

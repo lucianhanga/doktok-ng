@@ -62,14 +62,15 @@ def _worker_init(
         cpu_threads,
         preprocess,
     )
-    # Standard path skips the doc-orientation + unwarping + textline models (rendered pages are
-    # upright/flat and they ~triple per-page latency). The Enhanced path enables them to fix
-    # rotated/curved/upside-down scans, accepting the slowdown.
+    # Standard path skips the unwarping + textline models (rendered pages are upright/flat and they
+    # ~triple per-page latency). The Enhanced path enables them to fix curved/upside-down scans.
+    # Page orientation (90/180/270) is handled by the explicit 4-way vote, not PaddleOCR's own
+    # doc-orientation classifier (which proved unreliable), so that model stays off.
     _WORKER_ENGINE = PaddleOCR(
         lang=lang,
         text_detection_model_name=det_model,
         text_recognition_model_name=rec_model,
-        use_doc_orientation_classify=preprocess,
+        use_doc_orientation_classify=False,
         use_doc_unwarping=preprocess,
         use_textline_orientation=preprocess,
     )
@@ -77,6 +78,50 @@ def _worker_init(
 
 def _worker_ocr(image_png: bytes) -> OcrPageResult:
     return _run_ocr(_WORKER_ENGINE, image_png)
+
+
+def _rotate_png(image_png: bytes, degrees: int) -> bytes:
+    """Rotate a PNG clockwise by 90/180/270 (same convention as the searchable-PDF builder, so the
+    chosen orientation's boxes line up with the rotated image)."""
+    import io as _io
+
+    from PIL import Image
+
+    with Image.open(_io.BytesIO(image_png)) as image:
+        rotated = image.rotate(-degrees, expand=True)  # PIL is counter-clockwise; negate for cw
+        buffer = _io.BytesIO()
+        rotated.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def _score(page: OcrPageResult) -> float:
+    """Rank an orientation: a correctly-upright page reads more confident text. Combine mean
+    confidence with line count so a sideways page (few/low-confidence lines) loses."""
+    if not page.lines or page.confidence is None:
+        return 0.0
+    return page.confidence * len(page.lines)
+
+
+def _worker_ocr_vote(image_png: bytes) -> OcrPageResult:
+    return _run_ocr_vote(_WORKER_ENGINE, image_png)
+
+
+def _run_ocr_vote(engine: Any, image_png: bytes) -> OcrPageResult:
+    """4-way orientation vote (Enhanced): OCR the page at 0/90/180/270 and keep the orientation that
+    reads the most confident text. The winner's text/boxes are in that rotated frame; ``rotation``
+    records the angle so the searchable PDF + overlay can present it upright."""
+    best: OcrPageResult | None = None
+    best_angle = 0
+    best_score = -1.0
+    for angle in (0, 90, 180, 270):
+        png = image_png if angle == 0 else _rotate_png(image_png, angle)
+        page = _run_ocr(engine, png)
+        score = _score(page)
+        if score > best_score:
+            best, best_angle, best_score = page, angle, score
+    assert best is not None
+    best.rotation = best_angle
+    return best
 
 
 def _run_ocr(engine: Any, image_png: bytes) -> OcrPageResult:
@@ -126,6 +171,7 @@ class PaddleOcr:
         pool_size: int = 1,
         cpu_threads: int = 1,
         preprocess: bool = False,
+        orient_vote: bool = False,
     ) -> None:
         # ``lang='german'`` selects the Latin recognizer (German/English/most European scripts). The
         # mobile det+rec models are ~40% faster than the medium defaults at ~0.98 confidence.
@@ -137,8 +183,9 @@ class PaddleOcr:
         self._pool_size = max(1, pool_size)
         # Threads per worker process; with one core per worker, real parallelism is the pool size.
         self._cpu_threads = max(1, cpu_threads)
-        # Enhanced path: enable the doc-orientation + unwarp + textline-orientation models.
+        # Enhanced path: unwarp + textline-orientation models, and the 4-way orientation vote.
         self._preprocess = preprocess
+        self._orient_vote = orient_vote
         self._pool: ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # guards lazy pool creation
 
@@ -188,11 +235,17 @@ class PaddleOcr:
         return self._pool
 
     def ocr_image(self, image_png: bytes) -> OcrPageResult:
-        if self._engine is not None:
-            return _run_ocr(self._engine, image_png)  # in-process (tests)
+        if self._engine is not None:  # in-process (tests)
+            return (
+                _run_ocr_vote(self._engine, image_png)
+                if self._orient_vote
+                else _run_ocr(self._engine, image_png)
+            )
         # Dispatch to a worker process; many caller threads submitting here drive real
-        # cross-page parallelism across ``pool_size`` cores.
-        return self._executor().submit(_worker_ocr, image_png).result()
+        # cross-page parallelism across ``pool_size`` cores. The 4-way vote (Enhanced) OCRs each
+        # page at all four orientations, so it is ~4x slower - opt-in only.
+        worker = _worker_ocr_vote if self._orient_vote else _worker_ocr
+        return self._executor().submit(worker, image_png).result()
 
 
 def _as_list(value: Any) -> list[Any]:

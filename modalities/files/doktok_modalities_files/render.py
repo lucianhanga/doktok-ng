@@ -100,11 +100,18 @@ class SearchablePdfBuilder:
 
         out = fitz.open()
         for page in pages:
-            image = fitz.open(stream=page.image_png, filetype="png")
+            # The Enhanced 4-way vote returns boxes in a rotated frame; rotate the image to match so
+            # it is stored upright and the boxes still line up.
+            image_png = (
+                rotate_source(page.image_png, "image/png", page.rotation)
+                if page.rotation
+                else page.image_png
+            )
+            image = fitz.open(stream=image_png, filetype="png")
             rect = image[0].rect
             image.close()
             new_page = out.new_page(width=rect.width, height=rect.height)
-            new_page.insert_image(rect, stream=page.image_png)
+            new_page.insert_image(rect, stream=image_png)
             # render_mode=3 -> invisible text: searchable/selectable, not drawn over the image.
             if page.lines:
                 # Positioned layer: each line sits over the words it came from. The page is sized to

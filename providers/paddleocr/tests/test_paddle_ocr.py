@@ -95,6 +95,27 @@ def test_run_ocr_assembles_from_engine() -> None:
     assert (page.width, page.height) == (6, 4)
 
 
+def test_orientation_vote_picks_the_best_rotation() -> None:
+    import io
+
+    image_mod = pytest.importorskip("PIL.Image")
+    pytest.importorskip("numpy")
+    from doktok_provider_paddleocr.ocr import _run_ocr_vote
+
+    class FakeEngine:
+        # Confident only when the image is portrait (taller than wide) - i.e. correctly upright.
+        def predict(self, image: object) -> list[dict[str, object]]:
+            height, width = image.shape[:2]  # type: ignore[attr-defined]
+            score = 0.99 if height > width else 0.3
+            return [{"rec_texts": ["text"], "rec_scores": [score], "rec_boxes": [[0, 0, 5, 5]]}]
+
+    buffer = io.BytesIO()
+    image_mod.new("RGB", (40, 10), "white").save(buffer, format="PNG")  # landscape (sideways)
+    page = _run_ocr_vote(FakeEngine(), buffer.getvalue())
+    assert page.rotation == 90  # rotating 90deg makes it portrait -> highest-confidence orientation
+    assert page.confidence == 0.99
+
+
 def test_no_engine_dispatches_to_worker_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     # Without an injected engine, ocr_image submits to the process pool. Here we stub the executor
     # with an inline one and a fake worker engine, so no real subprocess/paddle is needed.

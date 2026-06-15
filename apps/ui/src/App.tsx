@@ -169,7 +169,7 @@ export default function App() {
         {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
         {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}
         {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
-        {view === "activity" && <ActivityPanel />}
+        {view === "activity" && <ActivityPanel onOpenDocument={setOpenDoc} />}
         {view === "status" && <HealthPanel />}
         {view === "settings" && <SettingsPanel />}
       </div>

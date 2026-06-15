@@ -8,8 +8,13 @@ from pathlib import Path
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import DocumentRepository, IngestionJobRepository
+from doktok_contracts.ports import (
+    AuditLogRepository,
+    DocumentRepository,
+    IngestionJobRepository,
+)
 from doktok_contracts.schemas import Document, DocumentStatus, IngestionJob, JobStatus
+from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.ingestion.inmemory import InMemoryIngestionJobRepository
@@ -32,10 +37,15 @@ def _client(
     files_root: Path,
     docs: InMemoryDocumentRepository,
     job_repo: InMemoryIngestionJobRepository,
+    audit: InMemoryAuditLogRepository | None = None,
 ) -> TestClient:
     registry = build_registry()
     registry.register(DocumentRepository, docs)  # type: ignore[type-abstract]
     registry.register(IngestionJobRepository, job_repo)  # type: ignore[type-abstract]
+    registry.register(
+        AuditLogRepository,  # type: ignore[type-abstract]
+        audit or InMemoryAuditLogRepository(),
+    )
     settings = Settings(
         env="test", tenant_tokens=TOKENS, files_root=str(files_root), _env_file=None
     )  # type: ignore[call-arg]
@@ -227,13 +237,20 @@ def test_delete_removes_file_and_record(tmp_path: Path) -> None:
     (failed_dir / "report.pdf").write_bytes(b"%PDF-1.4 fake")
     docs = InMemoryDocumentRepository()
     docs.add(_failed_doc(str(failed_dir)))
+    audit = InMemoryAuditLogRepository()
 
-    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).delete(
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository(), audit).delete(
         "/api/v1/documents/d1", headers=AUTH
     )
     assert resp.status_code == 200 and resp.json()["status"] == "deleted"
     assert not failed_dir.exists()  # files removed
     assert docs.get(TENANT, "d1") is None  # record removed
+
+    # The deletion is logged with the identity snapshot, so the row survives the document's removal.
+    events = audit.list_events(TENANT, document_id="d1")
+    assert [e.event_type for e in events] == ["document.deleted"]
+    assert events[0].actor_kind == "user"
+    assert events[0].doc_filename == "report.pdf"
 
 
 def test_delete_requires_token(tmp_path: Path) -> None:

@@ -61,6 +61,14 @@ class AuditEventType(StrEnum):
     DOCUMENT_QUARANTINED = "document.quarantined"
     DOCUMENT_FAILED = "document.failed"
     DOCUMENT_DUPLICATE = "document.duplicate"
+    # Enrichment features driven by the reconciler (classify/NER/records/chunk_embed/...).
+    FEATURE_COMPLETED = "feature.completed"
+    FEATURE_FAILED = "feature.failed"
+    # User-initiated lifecycle actions.
+    FEATURE_RETRIED = "feature.retried"
+    DOCUMENT_ROTATED = "document.rotated"
+    DOCUMENT_REINGESTED = "document.reingested"
+    DOCUMENT_DELETED = "document.deleted"
 
 
 class EntityType(StrEnum):

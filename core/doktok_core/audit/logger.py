@@ -30,6 +30,12 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.DOCUMENT_ACTIVATED.value: ("index", "info", "Document activated and searchable"),
     AuditEventType.DOCUMENT_QUARANTINED.value: ("intake", "warning", "Document quarantined"),
     AuditEventType.DOCUMENT_FAILED.value: ("intake", "error", "Document processing failed"),
+    AuditEventType.FEATURE_COMPLETED.value: ("enrich", "info", "Feature completed"),
+    AuditEventType.FEATURE_FAILED.value: ("enrich", "error", "Feature failed"),
+    AuditEventType.FEATURE_RETRIED.value: ("user", "info", "Feature re-queued by user"),
+    AuditEventType.DOCUMENT_ROTATED.value: ("user", "info", "Document rotated and re-ingested"),
+    AuditEventType.DOCUMENT_REINGESTED.value: ("user", "info", "Document re-ingested by user"),
+    AuditEventType.DOCUMENT_DELETED.value: ("delete", "info", "Document deleted by user"),
 }
 
 

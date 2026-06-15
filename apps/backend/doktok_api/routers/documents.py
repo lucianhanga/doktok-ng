@@ -20,6 +20,7 @@ from doktok_contracts.ports import (
     IngestionJobRepository,
 )
 from doktok_contracts.schemas import (
+    AuditEventType,
     Category,
     Document,
     DocumentContent,
@@ -41,6 +42,7 @@ from doktok_contracts.schemas import (
     SortDir,
     TokenMatch,
 )
+from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
@@ -333,10 +335,22 @@ def get_document_categories(
 
 @router.post("/{document_id}/features/{feature}/retry")
 def retry_document_feature(
-    document_id: str, feature: str, tenant: Tenant, features: Features
+    document_id: str, feature: str, tenant: Tenant, features: Features, audit: Audit
 ) -> dict[str, str]:
     if not features.reset(tenant.tenant_id, document_id, feature):
         raise HTTPException(status_code=404, detail="feature not found for this document")
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.FEATURE_RETRIED,
+        actor="user",
+        actor_kind="user",
+        document_id=document_id,
+        description=f"{feature} re-queued by user",
+        record_kind="feature",
+        record_id=feature,
+        details={"feature": feature},
+    )
     return {"status": "queued"}
 
 
@@ -394,6 +408,7 @@ def reingest_document(
     tenant: Tenant,
     repo: Repo,
     jobs: Jobs,
+    audit: Audit,
     profile: Annotated[Literal["standard", "enhanced"], Query()] = "standard",
 ) -> dict[str, str]:
     """Re-ingest (re-OCR) a document: read its original, purge its rows/files, and drop it back in
@@ -405,6 +420,18 @@ def reingest_document(
     files_root = Path(request.app.state.settings.files_root)
     data = _read_original(document, files_root)
     subdir = "ingest.enhanced" if profile == "enhanced" else "ingest"
+    # Record before the purge so the snapshot reads the still-present document row. The purge drops
+    # the old document_id; the requeue creates a fresh one with its own trail under the same name.
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_REINGESTED,
+        actor="user",
+        actor_kind="user",
+        document_id=document_id,
+        description=f"Re-ingested by user ({profile} profile)",
+        details={"profile": profile},
+    )
     safe_name = _purge_and_requeue(document, data, files_root, tenant.tenant_id, repo, jobs, subdir)
     return {"status": "queued", "filename": safe_name, "profile": profile}
 
@@ -416,6 +443,7 @@ def rotate_document(
     tenant: Tenant,
     repo: Repo,
     jobs: Jobs,
+    audit: Audit,
     degrees: Annotated[int, Query()] = 90,
 ) -> dict[str, str]:
     """Rotate the whole document clockwise (90/180/270) and re-ingest it upright. PDFs get a
@@ -433,13 +461,23 @@ def rotate_document(
         rotated = rotate_source(data, document.detected_mime, degrees)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_ROTATED,
+        actor="user",
+        actor_kind="user",
+        document_id=document_id,
+        description=f"Rotated {degrees} clockwise and re-ingested",
+        details={"degrees": degrees},
+    )
     safe_name = _purge_and_requeue(document, rotated, files_root, tenant.tenant_id, repo, jobs)
     return {"status": "queued", "filename": safe_name, "degrees": str(degrees)}
 
 
 @router.delete("/{document_id}")
 def delete_document(
-    document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs
+    document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs, audit: Audit
 ) -> dict[str, str]:
     """Delete a document, its files, and all its derived rows (chunks/entities/features/links/
     records via FK cascade)."""
@@ -451,6 +489,19 @@ def delete_document(
     base = _document_dir(document, Path(request.app.state.settings.files_root))
     jobs.delete_for_document(tenant.tenant_id, document_id)
     repo.delete(tenant.tenant_id, document_id)  # FK-cascades derived rows
+    # Record after the delete (so it only logs actual removals) with the identity passed explicitly:
+    # the document row is gone, so the activity row carries the snapshot and survives on its own.
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_DELETED,
+        actor="user",
+        actor_kind="user",
+        document_id=document_id,
+        description="Deleted by user",
+        doc_filename=document.original_filename,
+        doc_title=document.title,
+    )
     # Remove files last: with DB rows already gone, a failed rmtree leaves only orphan files (which
     # a retry clears), never a dangling DB row pointing at missing files.
     if base is not None:

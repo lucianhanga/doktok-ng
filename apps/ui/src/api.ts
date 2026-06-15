@@ -156,6 +156,8 @@ export function fetchCategories(signal?: AbortSignal): Promise<CategorySummary[]
   return getJson<CategorySummary[]>("/api/v1/categories", signal);
 }
 
+export type ActivitySeverity = "info" | "warning" | "error";
+
 export interface AuditEvent {
   id: string;
   event_type: string;
@@ -164,10 +166,25 @@ export interface AuditEvent {
   job_id: string | null;
   timestamp: string;
   metadata: Record<string, unknown>;
+  // Enhanced activity log (M8). Older rows may omit these; treat as optional.
+  severity?: ActivitySeverity;
+  phase?: string;
+  description?: string;
+  actor_kind?: string;
+  record_kind?: string | null;
+  record_id?: string | null;
+  doc_filename?: string | null;
+  doc_title?: string | null;
 }
 
-export async function fetchActivity(signal?: AbortSignal): Promise<AuditEvent[]> {
-  const response = await fetch("/api/v1/audit", { signal });
+export async function fetchActivity(
+  opts: { documentId?: string; limit?: number; signal?: AbortSignal } = {},
+): Promise<AuditEvent[]> {
+  const params = new URLSearchParams();
+  if (opts.documentId) params.set("document_id", opts.documentId);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const query = params.toString();
+  const response = await fetch(`/api/v1/audit${query ? `?${query}` : ""}`, { signal: opts.signal });
   if (!response.ok) {
     throw new Error(`Activity request failed: ${response.status}`);
   }

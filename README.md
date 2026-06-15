@@ -25,10 +25,12 @@ the *style*, narrowed to documents.
 (`DOKTOK_DEFAULT_MODEL`) answers **only from those excerpts** with `[n]` citations, and **refuses**
 when the evidence is insufficient. Tenant-scoped and token-protected.
 
-**M5 (Entity indexing).** On top of M4, ingested documents have their **entities extracted** (rule-based:
-emails, URLs, money, dates, invoice/contract IDs) into a tenant-scoped `document_entities` table, browsable
-and filterable via `GET /api/v1/entities` (+ `/documents`) and an **Entities** tab. (PERSON/ORG NER via
-spaCy is a documented follow-up.)
+**M5 (Entity indexing).** On top of M4, ingested documents have their **entities extracted** into a
+tenant-scoped `document_entities` table, browsable and filterable via `GET /api/v1/entities`
+(+ `/documents`) and an **Entities** tab. The rule-based regex extractor emits **emails and URLs**
+only — the low-value types (money, dates, invoice/contract/document IDs) were dropped (#312) because
+their matches were ~90% noise; monetary data lives in extracted records and dates in metadata.
+**PERSON/ORG/GPE** come from NER and significant keyword terms are stored as `CUSTOM_TOKEN`.
 
 On top of the structured entities, each document's **significant terms** are extracted with
 PostgreSQL `to_tsvector` in the document's **detected language** (stopwords removed, stemmed) and
@@ -55,9 +57,10 @@ and a **Search** tab in the UI — tenant-scoped and token-protected. Earlier mi
 `paddleocr` — PP-OCRv5, deterministic and CPU-only; the legacy Ollama vision model `glm-ocr` remains
 selectable) and a derived `normalized/searchable.pdf` (images + invisible OCR text layer) becomes
 the canonical "system document" — with the original always kept (`original.<ext>`). Mixed PDFs keep
-embedded text and only OCR blank pages. Each document yields `manifest.json`, `content.md` (plain text
-for embeddings), `content.json`, and `pages/`, surfaced via the tenant-scoped `/api/v1/documents` API
-and the Documents tab. Every document activity is recorded to an immutable, tenant-scoped
+embedded text and only OCR blank pages. **Office documents** (`.docx`/`.xlsx`/`.pptx`) are converted
+to PDF on ingest by a local Gotenberg container and then follow the same path (see below). Each
+document yields `manifest.json`, `content.md` (plain text for embeddings), `content.json`, and
+`pages/`, surfaced via the tenant-scoped `/api/v1/documents` API and the Documents tab. Every document activity is recorded to an immutable, tenant-scoped
 **activity/audit log** (`GET /api/v1/audit` and the **Activity** tab). Everything is multi-tenant and
 token-protected. See the [milestone roadmap](docs/milestones/M0-M10.md).
 
@@ -129,6 +132,24 @@ toolbar and selection model. Each document's first-page preview is served by
 `GET /api/v1/documents/{id}/thumbnail` (a WebP produced by the reconciled `thumbnail` feature;
 404 → placeholder until it has rendered).
 
+## Supported file types
+
+DokTok NG ingests (by content-detected MIME, not extension):
+
+- **Text / Markdown** (`.txt`, `.md`) — direct extraction.
+- **PDF** — born-digital text via PyMuPDF; scanned/mixed PDFs via OCR.
+- **Images** (`.png`, `.jpg`, `.tif`, `.webp`) — OCR.
+- **Office (OOXML)** (`.docx`, `.xlsx`, `.pptx`) — converted to PDF on ingest by a **local Gotenberg
+  container** (`gotenberg/gotenberg:8`, MIT-licensed) that wraps headless LibreOffice, then run
+  through the normal PDF path. Conversion is fully local; **document content never leaves the host**.
+  Office ingestion fails with a `needs_ocr` error if Gotenberg is not reachable. (ADR-0019, #313.)
+
+For an office document, the converted PDF is the canonical **viewable** form: in-browser preview shows
+it inline like a native PDF, "Open in new tab" opens that PDF, and thumbnails / page images / the OCR
+text overlay all derive from it. **Download** returns the **original** file (e.g. the `.docx`), which
+is always preserved byte-for-byte. Gotenberg is configured by `DOKTOK_GOTENBERG_URL` (default
+`http://localhost:3000`); override the compose host port with `DOKTOK_GOTENBERG_PORT`.
+
 ## Quickstart
 
 Prerequisites: [`uv`](https://docs.astral.sh/uv/), [`pnpm`](https://pnpm.io/), Docker, `libmagic`
@@ -142,8 +163,9 @@ First copy `.env.example` to `.env` (it ships a local dev token and tenant). `ma
 # 1. Install dependencies (Python uv workspace + JS pnpm workspace)
 make setup
 
-# 2. Start PostgreSQL 17 + pgvector
+# 2. Start the Docker services (PostgreSQL 17 + pgvector, and Gotenberg for office conversion).
 #    If host port 5432 is taken, set DOKTOK_DB_PORT=5433 in .env first.
+#    Gotenberg listens on host port 3000; override with DOKTOK_GOTENBERG_PORT if it clashes.
 make db
 
 # 3. Run the backend (http://localhost:8000)
@@ -166,9 +188,9 @@ DokTok NG runs as **manual foreground processes, each in its own terminal** - th
 no aggregate start command. After a machine reboot (or a fresh shell), start things in this order:
 
 ```bash
-# 1. Start Docker Desktop (the db container does NOT auto-start with it).
-# 2. Start PostgreSQL 17 + pgvector
-make db
+# 1. Start Docker Desktop (the containers do NOT auto-start with it).
+# 2. Start the Docker services: PostgreSQL 17 + pgvector and Gotenberg (office -> PDF).
+make db   # = docker compose up -d (starts both the db and gotenberg services)
 # 3. Make sure Ollama is running (menu-bar app or `ollama serve`).
 
 # 4. Terminal A - FastAPI backend (http://localhost:8000)

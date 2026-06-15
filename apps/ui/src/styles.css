@@ -1845,3 +1845,31 @@ tr.row-selected {
 .linklike:hover {
   text-decoration: underline;
 }
+
+.activity-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.activity-count {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.activity-more button {
+  padding: 0.35rem 0.9rem;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.activity-more button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

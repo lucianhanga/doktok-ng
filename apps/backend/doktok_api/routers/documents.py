@@ -6,7 +6,7 @@ import base64
 import json
 import shutil
 from collections import Counter
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote, unquote
@@ -70,6 +70,8 @@ Audit = Annotated[AuditLogRepository, Depends(get_audit_repository)]
 _EXCERPT_CHARS = 4000
 # Highest-frequency entities surfaced on the card; the full list is fetched lazily.
 _TOP_ENTITIES = 12
+# Repeated opens of a document within this window collapse to a single document.viewed row.
+_VIEW_DEDUP_SECONDS = 5
 
 
 _MAX_TOKENS = 20  # cap on token filters per request
@@ -211,8 +213,10 @@ def get_document_detail(
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
 
-    # Log the view (every open of the detail card). Emitted before reading recent_activity so it
-    # shows up immediately in the card's mini-trail.
+    # Log the view (every open of the detail card). A deterministic id bucketed to a short window
+    # collapses duplicate opens - notably React StrictMode firing the detail GET twice on mount -
+    # into a single row via the repository's insert-if-absent semantics.
+    bucket = int(datetime.now(UTC).timestamp()) // _VIEW_DEDUP_SECONDS
     record_activity(
         audit,
         tenant.tenant_id,
@@ -220,6 +224,7 @@ def get_document_detail(
         actor="user",
         actor_kind="user",
         document_id=document_id,
+        event_id=f"view-{tenant.tenant_id}-{document_id}-{bucket}",
     )
 
     all_entities = entities.list_for_document(tenant.tenant_id, document_id)

@@ -569,7 +569,7 @@ class PostgresAuditLogRepository:
                 "COALESCE(%s, (SELECT original_filename FROM documents "
                 "WHERE id=%s AND tenant_id=%s)), "
                 "COALESCE(%s, (SELECT title FROM documents WHERE id=%s AND tenant_id=%s)), "
-                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
                 (
                     event.id,
                     event.tenant_id,

@@ -178,11 +178,12 @@ export interface AuditEvent {
 }
 
 export async function fetchActivity(
-  opts: { documentId?: string; limit?: number; signal?: AbortSignal } = {},
+  opts: { documentId?: string; limit?: number; offset?: number; signal?: AbortSignal } = {},
 ): Promise<AuditEvent[]> {
   const params = new URLSearchParams();
   if (opts.documentId) params.set("document_id", opts.documentId);
   if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.offset) params.set("offset", String(opts.offset));
   const query = params.toString();
   const response = await fetch(`/api/v1/audit${query ? `?${query}` : ""}`, { signal: opts.signal });
   if (!response.ok) {

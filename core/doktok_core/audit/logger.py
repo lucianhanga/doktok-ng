@@ -57,14 +57,18 @@ def record_activity(
     record_id: str | None = None,
     doc_filename: str | None = None,
     doc_title: str | None = None,
+    event_id: str | None = None,
 ) -> None:
+    """Record one activity row. ``event_id`` lets the caller supply a deterministic id so repeated
+    near-identical events (e.g. a document view fired twice by React StrictMode) collapse to one
+    row via the repository's insert-if-absent semantics; otherwise a random id is used."""
     default_phase, default_severity, default_description = _EVENT_DEFAULTS.get(
         event_type.value, ("", "info", "")
     )
     try:
         repo.record(
             AuditEvent(
-                id=uuid.uuid4().hex,
+                id=event_id or uuid.uuid4().hex,
                 tenant_id=tenant_id,
                 event_type=event_type.value,
                 actor=actor,

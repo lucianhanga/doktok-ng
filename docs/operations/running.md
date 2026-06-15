@@ -14,7 +14,7 @@ you start in the order below.
 These must be installed once (see the README Quickstart for details):
 
 - [`uv`](https://docs.astral.sh/uv/) (Python workspace) and [`pnpm`](https://pnpm.io/) (JS workspace)
-- Docker (Docker Desktop on macOS) for the Postgres container
+- Docker (Docker Desktop on macOS) for the Postgres and Gotenberg containers
 - `libmagic` (macOS: `brew install libmagic`)
 - [Ollama](https://ollama.com/) with the default models pulled (see `.env` / ADR-0003)
 
@@ -26,9 +26,11 @@ gitignored, so it lives only on this machine.
 Run these in order. Steps 4-6 each stay in the foreground in their **own terminal**.
 
 ```bash
-# 1. Start Docker Desktop (the app). The db container does NOT auto-start with it.
+# 1. Start Docker Desktop (the app). The containers do NOT auto-start with it.
 
-# 2. Start PostgreSQL 17 + pgvector (the doktok-db container)
+# 2. Start the Docker services (PostgreSQL 17 + pgvector, and Gotenberg for office conversion).
+#    `make db` runs `docker compose up -d`, which brings up both the doktok-db and
+#    doktok-gotenberg containers.
 make db
 
 # 3. Make sure Ollama is running (the Ollama menu-bar app, or `ollama serve`).
@@ -55,7 +57,7 @@ curl http://localhost:8000/health
 
 | Command | Process | Notes |
 |---|---|---|
-| `make db` | `docker compose up -d` (container `doktok-db`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5432`). |
+| `make db` | `docker compose up -d` (containers `doktok-db`, `doktok-gotenberg`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5432`); Gotenberg (office -> PDF) on `DOKTOK_GOTENBERG_PORT` (default `3000`). |
 | `make run-backend` | `uvicorn doktok_api.main:app --reload --port 8000` | Foreground. Serves `/api/v1` (token-protected) and public `/health`. |
 | `make run-worker` | `uv run doktok-worker` | Foreground. Watches each tenant's `ingest/` folder and runs the pipeline. |
 | `make run-ui` | `pnpm --filter @doktok/ui dev` | Foreground. Vite dev server; the dev proxy injects the bearer token. |
@@ -87,6 +89,9 @@ backend, worker, UI), but you do not lose data.
 - **Docker Desktop** - unless you have set it to launch at login.
 - **The `doktok-db` container** - `docker-compose.yml` sets **no `restart:` policy**, so the
   container does not come back when Docker starts. You run `make db`.
+- **The `doktok-gotenberg` container** - converts office documents (`.docx`/`.xlsx`/`.pptx`) to PDF
+  on ingest. It has `restart: unless-stopped`, so once started it returns with the Docker daemon, but
+  `make db` starts it the first time. If it is unreachable, office ingestion fails with `needs_ocr`.
 - **Ollama** - unless the menu-bar app is a login item.
 - **The backend, worker, and UI** - always started by hand with the Make targets above.
 
@@ -137,6 +142,7 @@ For throughput tuning see [performance-and-ollama.md](performance-and-ollama.md)
 | Backend or worker can't reach the database | `doktok-db` container not running | Run `make db`; confirm with `docker ps` (container `doktok-db`). |
 | Worker or chat errors mentioning the model server | Ollama not running, or model not pulled | Start Ollama; `ollama list` to confirm the models in `.env` are present. |
 | OCR ingestion fails after a dependency change | PaddleOCR extra pruned by `uv sync` | Re-run `make ocr-paddle` on the worker host. |
+| Office (`.docx`/`.xlsx`/`.pptx`) ingestion fails with `needs_ocr` | Gotenberg container not running or unreachable | Run `make db` (starts `doktok-gotenberg`); confirm with `docker ps`. Check `DOKTOK_GOTENBERG_URL` / `DOKTOK_GOTENBERG_PORT`. |
 | UI loads but API calls are unauthorized | UI started without the dev proxy | Start the UI via `make run-ui` so the proxy injects the bearer token. |
 
 ## Future option

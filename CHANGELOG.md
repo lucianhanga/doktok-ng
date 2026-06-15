@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Office-document support (`.docx`/`.xlsx`/`.pptx`)** (#313): OOXML documents are added to the MIME
+  allowlist and converted to PDF **on ingest** by a **local Gotenberg container**
+  (`gotenberg/gotenberg:8`, MIT-licensed) wrapping headless LibreOffice, then run through the existing
+  PDF extraction / render / OCR / thumbnail / preview path. Conversion is fully local; document
+  content never leaves the host. New `DocumentNormalizer` port + `GotenbergNormalizer` adapter; new
+  `gotenberg` service in `docker-compose.yml`; new settings `DOKTOK_GOTENBERG_URL` (default
+  `http://localhost:3000`) and `DOKTOK_GOTENBERG_PORT` (default `3000`). The converted PDF is the
+  canonical viewable form (inline preview, "Open in new tab", thumbnails, page images, OCR overlay);
+  **Download** returns the original office file, preserved byte-for-byte. (ADR-0019.)
+
+### Changed
+- **First-pages enrichment for cheap LLM features** (#311): the `doc_metadata` and `doc_classify`
+  feature processors now read only the **opening pages** of a document (page-aware helper `_head_pages`:
+  ~2 pages / ~6k chars for metadata, ~3 pages / ~8k chars for classification) instead of a flat
+  character slice, cutting tokens, latency, and cost. Full text is still used for chunking/embeddings,
+  the regex entity extractor, NER, and structured records. Feature versions were intentionally not
+  bumped, so this applies to newly ingested / reprocessed documents, not a retroactive corpus re-run.
+
+### Removed
+- **Low-value regex entities** (#312): the rule-based extractor no longer emits MONEY, DATE,
+  INVOICE_ID, CONTRACT_ID, or DOCUMENT_ID (their matches were ~90% noise; monetary data lives in
+  extracted records, dates in metadata). It now emits only EMAIL and URL; NER still emits PERSON/ORG/GPE
+  and the lexical extractor still emits CUSTOM_TOKEN. The enum values are kept for back-compat but
+  marked not-extracted; migration `0030_drop_low_value_entities.sql` deletes existing rows of the five
+  dropped types.
+
+### Known issues
+- **Long-document `structured_records` truncation** (#314): the structured-records extractor silently
+  truncates very long documents to the first 16k characters, dropping the tail of transactions.
+  Tracked as a follow-up; not yet fixed.
+
+### Added
 - **Settings-driven reasoning, end to end**: document interrogation (RAG chat) now honors
   `rag.reasoning` from Settings by default instead of being driven solely by the chat **Show
   reasoning** toggle (the toggle still overrides the setting per message). Root cause was

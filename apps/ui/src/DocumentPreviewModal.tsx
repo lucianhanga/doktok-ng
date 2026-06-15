@@ -12,6 +12,13 @@ function kindFor(mime: string | null): Kind {
   return "unsupported";
 }
 
+/** Office (and other) documents are converted to a normalized PDF at ingest (#313); that PDF is the
+ * canonical viewable form, so it previews inline exactly like a native PDF. */
+function hasNormalizedPdf(doc: DokDocument): boolean {
+  const sd = doc.metadata?.["system_document"];
+  return typeof sd === "string" && sd.toLowerCase().endsWith(".pdf");
+}
+
 /** Accessible file preview overlay (native <dialog>: focus trap + ESC for free). */
 export function DocumentPreviewModal({ doc, onClose }: { doc: DokDocument; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -19,8 +26,14 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: DokDocument; onClo
   const [layoutPages, setLayoutPages] = useState<LayoutPage[]>([]);
   const [mode, setMode] = useState<"document" | "regions">("document");
 
-  const kind = kindFor(doc.detected_mime);
-  const fileUrl = documentFileUrl(doc.id);
+  // A type we can't show directly (e.g. docx/pptx) previews via its normalized PDF, so the modal
+  // behaves like it does for native PDFs; "Download" still hands back the original file.
+  const originalKind = kindFor(doc.detected_mime);
+  const usesNormalizedPdf = originalKind === "unsupported" && hasNormalizedPdf(doc);
+  const kind = usesNormalizedPdf ? "pdf" : originalKind;
+  const fileUrl = usesNormalizedPdf
+    ? documentFileUrl(doc.id, { variant: "normalized" })
+    : documentFileUrl(doc.id);
   const newTabUrl = fileUrl;
   const downloadUrl = documentFileUrl(doc.id, { disposition: "attachment" });
 

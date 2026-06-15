@@ -77,14 +77,16 @@ class EntityType(StrEnum):
     ORG = "ORG"
     GPE = "GPE"
     LOCATION = "LOCATION"
-    DATE = "DATE"
     EMAIL = "EMAIL"
     URL = "URL"
+    CUSTOM_TOKEN = "CUSTOM_TOKEN"
+    # No longer extracted (M8.x, #312): the regex matches were mostly noise on real documents.
+    # Kept in the vocabulary so historical rows + the cleanup migration still resolve.
+    DATE = "DATE"
     MONEY = "MONEY"
     DOCUMENT_ID = "DOCUMENT_ID"
     INVOICE_ID = "INVOICE_ID"
     CONTRACT_ID = "CONTRACT_ID"
-    CUSTOM_TOKEN = "CUSTOM_TOKEN"
 
 
 class TenantContext(BaseModel):

@@ -38,6 +38,29 @@ test("renders an image preview with new-tab + download and a safe rel", () => {
   expect(screen.getByLabelText("Close preview")).toBeInTheDocument();
 });
 
+test("previews an office document via its normalized PDF; download keeps the original", () => {
+  render(
+    <DocumentPreviewModal
+      doc={doc({
+        detected_mime:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        original_filename: "report.docx",
+        metadata: { system_document: "normalized/searchable.pdf" },
+      })}
+      onClose={() => {}}
+    />,
+  );
+
+  const frame = screen.getByTitle("Preview of report.docx");
+  expect(frame.getAttribute("src")).toBe("/api/v1/documents/d1/file?variant=normalized");
+
+  // Download still hands back the original .docx, not the converted PDF.
+  expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+    "href",
+    "/api/v1/documents/d1/file?disposition=attachment",
+  );
+});
+
 test("shows a not-previewable fallback for unsupported types", () => {
   render(
     <DocumentPreviewModal

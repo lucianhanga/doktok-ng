@@ -36,6 +36,7 @@ from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effo
 from doktok_core.visualizations.service import ProjectionRunner, ProjectionService
 from doktok_modalities_files import (
     DirectTextExtractor,
+    GotenbergNormalizer,
     LibmagicMimeDetector,
     PyMuPdfClassifier,
     PyMuPdfRenderer,
@@ -142,6 +143,7 @@ def build_services(
     mime_detector = LibmagicMimeDetector()
     security_policy = DefaultSecurityPolicy(max_file_mb=settings.max_file_mb)
     text_extractor = DirectTextExtractor()
+    document_normalizer = GotenbergNormalizer(settings.gotenberg_url)
     pdf_extractor = PyMuPdfTextExtractor()
     timeout = settings.ollama_timeout_seconds
     ocr_extractor: OcrExtractor
@@ -339,6 +341,7 @@ def build_services(
             max_pages=settings.max_pages,
             ocr_concurrency=ocr_concurrency,
             ocr_dpi=settings.ocr_dpi,
+            normalizer=document_normalizer,
         )
 
     if settings.staged_ingestion:
@@ -402,6 +405,7 @@ def build_services(
             text_extractor=text_extractor,
             pdf_extractor=pdf_extractor,
             layout=layout,
+            document_normalizer=document_normalizer,
             ocr_extractor=ocr_extractor,
             pdf_renderer=pdf_renderer,
             searchable_pdf_builder=searchable_pdf_builder,

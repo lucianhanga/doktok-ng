@@ -31,6 +31,7 @@ from doktok_contracts.ports import (
     ChatModelProvider,
     Chunker,
     ChunkRepository,
+    DocumentNormalizer,
     DocumentRepository,
     EmbeddingProvider,
     EntityExtractor,
@@ -108,6 +109,8 @@ class IngestionServices:
     text_extractor: TextExtractor
     pdf_extractor: PdfTextExtractor
     layout: FilesystemLayout
+    # Office-document -> PDF normalizer (#313). When absent, office files fail with ``needs_ocr``.
+    document_normalizer: DocumentNormalizer | None = None
     # OCR services (M3). When absent, files needing OCR fail with ``needs_ocr``.
     ocr_extractor: OcrExtractor | None = None
     pdf_renderer: PdfRenderer | None = None
@@ -444,6 +447,7 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             max_pages=services.max_pages,
             ocr_concurrency=services.ocr_concurrency,
             ocr_dpi=services.ocr_dpi,
+            normalizer=services.document_normalizer,
         )
     except NeedsOcrError as exc:
         return _fail(services, job, code="needs_ocr", message=str(exc))

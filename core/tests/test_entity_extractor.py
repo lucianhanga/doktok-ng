@@ -9,7 +9,9 @@ def _by_type(text: str) -> dict[EntityType, list[str]]:
     return out
 
 
-def test_extracts_common_types() -> None:
+def test_extracts_email_and_url_only() -> None:
+    # M8.x (#312): only EMAIL + URL are extracted by regex now; MONEY/DATE/INVOICE_ID/CONTRACT_ID
+    # were dropped as low-value noise.
     text = (
         "Contact Jane at JANE@Example.COM or visit https://Example.com/Path. "
         "The invoice total is $1,250.00, due 2026-06-10. "
@@ -18,10 +20,7 @@ def test_extracts_common_types() -> None:
     found = _by_type(text)
     assert found[EntityType.EMAIL] == ["jane@example.com"]
     assert found[EntityType.URL] == ["https://example.com/path"]
-    assert "$1,250.00" in found[EntityType.MONEY]
-    assert "2026-06-10" in found[EntityType.DATE]
-    assert "INV-2026-001" in found[EntityType.INVOICE_ID]
-    assert "CT-42" in found[EntityType.CONTRACT_ID]
+    assert set(found) == {EntityType.EMAIL, EntityType.URL}  # nothing else extracted
 
 
 def test_no_entities_in_plain_text() -> None:

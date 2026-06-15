@@ -1,8 +1,10 @@
 """Rule-based entity extraction (M5, brief section 19).
 
-Deterministic regex extraction for the types that patterns capture reliably: EMAIL, URL, MONEY,
-DATE, INVOICE_ID, CONTRACT_ID. PERSON/ORG/GPE need NER (spaCy or LLM-assisted) and are a documented
-follow-up; the ``EntityExtractor`` port lets that adapter be swapped in without touching core.
+Deterministic regex extraction for the types that patterns capture reliably and usefully: EMAIL and
+URL. MONEY / DATE / INVOICE_ID / CONTRACT_ID were dropped (M8.x, #312) - their regex matches were
+~90% noise on real documents (monetary data lives in extracted records, dates in metadata). PERSON/
+ORG/GPE come from NER (spaCy or LLM-assisted); the ``EntityExtractor`` port lets that adapter be
+swapped in without touching core.
 """
 
 from __future__ import annotations
@@ -13,10 +15,6 @@ from dataclasses import dataclass
 
 from doktok_contracts.media import ExtractedEntity
 from doktok_contracts.schemas import EntityType
-
-
-def _identity(value: str) -> str:
-    return value.strip()
 
 
 def _lower(value: str) -> str:
@@ -41,35 +39,6 @@ _RULES: list[_Rule] = [
         EntityType.EMAIL, re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), 0, _lower
     ),
     _Rule(EntityType.URL, re.compile(r"https?://[^\s<>()\[\]]+"), 0, _url),
-    _Rule(
-        EntityType.MONEY,
-        re.compile(
-            r"[$€£]\s?\d[\d,]*(?:\.\d+)?"
-            r"|\d[\d,]*(?:\.\d+)?\s?(?:USD|EUR|GBP|dollars|euros|pounds)\b",
-            re.IGNORECASE,
-        ),
-        0,
-        _identity,
-    ),
-    _Rule(EntityType.DATE, re.compile(r"\b\d{4}-\d{2}-\d{2}\b"), 0, _identity),
-    _Rule(EntityType.DATE, re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b"), 0, _identity),
-    _Rule(
-        EntityType.INVOICE_ID,
-        re.compile(
-            r"invoice\s*(?:no\.?|number|#)?\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-]{2,})", re.IGNORECASE
-        ),
-        1,
-        lambda v: v.strip().upper(),
-    ),
-    _Rule(
-        EntityType.CONTRACT_ID,
-        re.compile(
-            r"contract\s*(?:no\.?|number|#)?\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-]{2,})",
-            re.IGNORECASE,
-        ),
-        1,
-        lambda v: v.strip().upper(),
-    ),
 ]
 
 

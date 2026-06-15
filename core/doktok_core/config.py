@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     ocr_enhanced_dpi: int = 300
     ocr_enhanced_det_model: str = "PP-OCRv6_medium_det"
     ocr_enhanced_rec_model: str = "PP-OCRv6_medium_rec"
+    # Gotenberg (local container) converts office documents to PDF on ingest (M8.x #313).
+    gotenberg_url: str = "http://localhost:3000"
     ollama_base_url: str = "http://localhost:11434"
     # HTTP timeout (seconds) for each Ollama call. Generous because requests queue at Ollama under
     # parallel ingestion (raise OLLAMA_NUM_PARALLEL to run them concurrently instead of queuing).

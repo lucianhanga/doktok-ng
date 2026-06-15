@@ -3,8 +3,9 @@ from datetime import UTC, datetime
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import FeatureRepository
+from doktok_contracts.ports import AuditLogRepository, FeatureRepository
 from doktok_contracts.schemas import DocumentFeature, FeatureStatus
+from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
@@ -66,6 +67,10 @@ class FakeFeatureRepository:
 def _client(repo: FakeFeatureRepository) -> TestClient:
     registry = build_registry()
     registry.register(FeatureRepository, repo)
+    registry.register(
+        AuditLogRepository,  # type: ignore[type-abstract]
+        InMemoryAuditLogRepository(),
+    )
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 

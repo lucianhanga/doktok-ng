@@ -69,6 +69,7 @@ class AuditEventType(StrEnum):
     DOCUMENT_ROTATED = "document.rotated"
     DOCUMENT_REINGESTED = "document.reingested"
     DOCUMENT_DELETED = "document.deleted"
+    DOCUMENT_VIEWED = "document.viewed"
 
 
 class EntityType(StrEnum):

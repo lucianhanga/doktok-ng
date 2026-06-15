@@ -211,6 +211,17 @@ def get_document_detail(
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
 
+    # Log the view (every open of the detail card). Emitted before reading recent_activity so it
+    # shows up immediately in the card's mini-trail.
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_VIEWED,
+        actor="user",
+        actor_kind="user",
+        document_id=document_id,
+    )
+
     all_entities = entities.list_for_document(tenant.tenant_id, document_id)
     by_type = Counter(e.entity_type.value for e in all_entities)
     entity_summary = DocumentEntitySummary(

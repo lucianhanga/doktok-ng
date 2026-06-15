@@ -96,9 +96,13 @@ export function DocumentDetail({
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not re-ingest"));
   }
 
-  function reocr() {
-    if (!window.confirm("Re-OCR this document? It is re-processed from the original.")) return;
-    reingestDocument(id)
+  function reocr(profile: "standard" | "enhanced") {
+    const note =
+      profile === "enhanced"
+        ? "Re-OCR with the Enhanced profile (slower: higher DPI + heavier models + orientation/unwarp)?"
+        : "Re-OCR this document? It is re-processed from the original.";
+    if (!window.confirm(note)) return;
+    reingestDocument(id, profile)
       .then(onClose)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not re-OCR"));
   }
@@ -154,8 +158,19 @@ export function DocumentDetail({
                   <button type="button" onClick={rotateRight} title="Rotate 90° clockwise + re-OCR">
                     Rotate right ↻
                   </button>
-                  <button type="button" onClick={reocr} title="Re-run OCR from the original">
+                  <button
+                    type="button"
+                    onClick={() => reocr("standard")}
+                    title="Re-run OCR from the original"
+                  >
                     Re-OCR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => reocr("enhanced")}
+                    title="Slower, higher-quality OCR: higher DPI + heavier models + orientation/unwarp"
+                  >
+                    Re-OCR enhanced
                   </button>
                 </>
               )}

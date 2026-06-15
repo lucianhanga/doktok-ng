@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # `ocr_concurrency` workers from oversubscribing: real parallelism comes from the process pool.
     # Rule of thumb: ocr_concurrency * ocr_cpu_threads <= physical cores.
     ocr_cpu_threads: int = 1
+    # Enhanced re-OCR profile (opt-in, slower, better): higher DPI + heavier PP-OCRv6 medium models
+    # + the doc-orientation/unwarp/textline-orientation preprocessors (fixes rotated/curved scans).
+    # Routed via the ingest.enhanced/ folder; files dropped there use these instead of the defaults.
+    ocr_enhanced_dpi: int = 300
+    ocr_enhanced_det_model: str = "PP-OCRv6_medium_det"
+    ocr_enhanced_rec_model: str = "PP-OCRv6_medium_rec"
     ollama_base_url: str = "http://localhost:11434"
     # HTTP timeout (seconds) for each Ollama call. Generous because requests queue at Ollama under
     # parallel ingestion (raise OLLAMA_NUM_PARALLEL to run them concurrently instead of queuing).

@@ -403,11 +403,15 @@ export async function retryDocumentFeature(id: string, feature: string): Promise
   }
 }
 
-/** Re-queue a failed document for ingestion (moves it back to the ingest folder). */
-export async function reingestDocument(id: string): Promise<void> {
-  const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}/reingest`, {
-    method: "POST",
-  });
+/** Re-ingest (re-OCR) a document. profile="enhanced" uses the slower, higher-quality OCR pass. */
+export async function reingestDocument(
+  id: string,
+  profile: "standard" | "enhanced" = "standard",
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/documents/${encodeURIComponent(id)}/reingest?profile=${profile}`,
+    { method: "POST" },
+  );
   if (!response.ok) {
     throw new Error(`Re-ingest request failed: ${response.status}`);
   }

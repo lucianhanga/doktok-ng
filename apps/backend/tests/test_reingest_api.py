@@ -159,6 +159,21 @@ def test_delete_does_not_purge_another_documents_job(tmp_path: Path) -> None:
     assert docs.get(TENANT, "d2") is not None  # and so does the other document
 
 
+def test_reingest_enhanced_routes_to_the_enhanced_ingest_folder(tmp_path: Path) -> None:
+    active_dir = tmp_path / TENANT / "docs.active" / "guid1"
+    active_dir.mkdir(parents=True)
+    (active_dir / "report.pdf").write_bytes(b"%PDF-1.4 fake")
+    docs = InMemoryDocumentRepository()
+    docs.add(_failed_doc(str(active_dir), status=DocumentStatus.ACTIVE))
+
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).post(
+        "/api/v1/documents/d1/reingest?profile=enhanced", headers=AUTH
+    )
+    assert resp.status_code == 200 and resp.json()["profile"] == "enhanced"
+    assert (tmp_path / TENANT / "ingest.enhanced" / "report.pdf").is_file()  # enhanced intake folder
+    assert not (tmp_path / TENANT / "ingest" / "report.pdf").exists()  # not the standard folder
+
+
 def test_rotate_document_requeues_a_rotated_pdf(tmp_path: Path) -> None:
     import fitz
 

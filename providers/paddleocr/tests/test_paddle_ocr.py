@@ -176,7 +176,29 @@ def test_executor_built_lazily_with_pool_size(monkeypatch: pytest.MonkeyPatch) -
     first = ocr._executor()
     assert ocr._executor() is first  # built once, then reused
     assert captured["max_workers"] == 6
-    assert captured["initargs"] == ("german", "PP-OCRv5_mobile_det", "latin_PP-OCRv5_mobile_rec", 1)
+    assert captured["initargs"] == (
+        "german",
+        "PP-OCRv5_mobile_det",
+        "latin_PP-OCRv5_mobile_rec",
+        1,
+        False,  # preprocess off by default (standard profile)
+    )
+
+
+def test_preprocess_flag_passed_to_worker_init(monkeypatch: pytest.MonkeyPatch) -> None:
+    import doktok_provider_paddleocr.ocr as ocr_mod
+
+    captured: dict[str, tuple[object, ...]] = {}
+
+    class _FakePool:
+        def __init__(
+            self, *, max_workers: int, initializer: object, initargs: tuple[object, ...]
+        ) -> None:
+            captured["initargs"] = initargs
+
+    monkeypatch.setattr(ocr_mod, "ProcessPoolExecutor", _FakePool)
+    PaddleOcr(pool_size=1, preprocess=True)._executor()
+    assert captured["initargs"][-1] is True  # enhanced profile enables the preprocessors
 
 
 def test_shutdown_tears_down_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:

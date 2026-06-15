@@ -13,14 +13,17 @@ from pathlib import Path
 class FilesystemLayout:
     """Resolves a tenant's lifecycle folders (ingest, in.process, docs.active/failed, etc.)."""
 
-    def __init__(self, root: str | Path, tenant_id: str) -> None:
+    def __init__(self, root: str | Path, tenant_id: str, ingest_dir: str = "ingest") -> None:
         self.root = Path(root)
         self.tenant_id = tenant_id
         self.base = self.root / tenant_id
+        # The intake folder this layout watches. A second layout with ingest_dir="ingest.enhanced"
+        # routes a document to the Enhanced re-OCR services, sharing every other lifecycle path.
+        self._ingest_dir = ingest_dir
 
     @property
     def ingest(self) -> Path:
-        return self.base / "ingest"
+        return self.base / self._ingest_dir
 
     @property
     def in_process(self) -> Path:

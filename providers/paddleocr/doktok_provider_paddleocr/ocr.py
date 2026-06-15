@@ -49,21 +49,29 @@ def _cap_cpu_threads(n: int) -> None:
         os.environ[var] = str(n)
 
 
-def _worker_init(lang: str, det_model: str, rec_model: str, cpu_threads: int) -> None:
+def _worker_init(
+    lang: str, det_model: str, rec_model: str, cpu_threads: int, preprocess: bool
+) -> None:
     global _WORKER_ENGINE
     _cap_cpu_threads(cpu_threads)
     from paddleocr import PaddleOCR
 
-    logger.info("PaddleOCR worker models (lang=%s, cpu_threads=%d)", lang, cpu_threads)
-    # Skip the doc-orientation + unwarping models: rendered PDF pages are upright and flat, and
-    # those models roughly triple per-page latency.
+    logger.info(
+        "PaddleOCR worker models (lang=%s, cpu_threads=%d, preprocess=%s)",
+        lang,
+        cpu_threads,
+        preprocess,
+    )
+    # Standard path skips the doc-orientation + unwarping + textline models (rendered pages are
+    # upright/flat and they ~triple per-page latency). The Enhanced path enables them to fix
+    # rotated/curved/upside-down scans, accepting the slowdown.
     _WORKER_ENGINE = PaddleOCR(
         lang=lang,
         text_detection_model_name=det_model,
         text_recognition_model_name=rec_model,
-        use_doc_orientation_classify=False,
-        use_doc_unwarping=False,
-        use_textline_orientation=False,
+        use_doc_orientation_classify=preprocess,
+        use_doc_unwarping=preprocess,
+        use_textline_orientation=preprocess,
     )
 
 
@@ -117,6 +125,7 @@ class PaddleOcr:
         engine: Any = None,
         pool_size: int = 1,
         cpu_threads: int = 1,
+        preprocess: bool = False,
     ) -> None:
         # ``lang='german'`` selects the Latin recognizer (German/English/most European scripts). The
         # mobile det+rec models are ~40% faster than the medium defaults at ~0.98 confidence.
@@ -128,6 +137,8 @@ class PaddleOcr:
         self._pool_size = max(1, pool_size)
         # Threads per worker process; with one core per worker, real parallelism is the pool size.
         self._cpu_threads = max(1, cpu_threads)
+        # Enhanced path: enable the doc-orientation + unwarp + textline-orientation models.
+        self._preprocess = preprocess
         self._pool: ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # guards lazy pool creation
 
@@ -171,6 +182,7 @@ class PaddleOcr:
                             self._det_model,
                             self._rec_model,
                             self._cpu_threads,
+                            self._preprocess,
                         ),
                     )
         return self._pool

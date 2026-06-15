@@ -301,14 +301,18 @@ def _purge_and_requeue(
     tenant_id: str,
     repo: DocumentRepository,
     jobs: IngestionJobRepository,
+    ingest_subdir: str = "ingest",
 ) -> str:
-    """Purge a document's rows + files, then drop ``data`` into the ingest folder to reprocess."""
+    """Purge a document's rows + files, then drop ``data`` into an ingest folder to reprocess.
+
+    ``ingest_subdir`` selects the intake folder - "ingest" (standard) or "ingest.enhanced" (the
+    worker's Enhanced re-OCR services watch the latter)."""
     base = _document_dir(document, files_root)
     jobs.delete_for_document(tenant_id, document.id)
     repo.delete(tenant_id, document.id)  # FK-cascades chunks/entities/features/links/records
     if base is not None:
         shutil.rmtree(base, ignore_errors=True)
-    ingest_dir = files_root / tenant_id / "ingest"
+    ingest_dir = files_root / tenant_id / ingest_subdir
     ingest_dir.mkdir(parents=True, exist_ok=True)
     # Defense-in-depth: re-basename the stored filename so a crafted value can't escape ingest/.
     safe_name = Path(document.original_filename).name or "document"
@@ -318,17 +322,24 @@ def _purge_and_requeue(
 
 @router.post("/{document_id}/reingest")
 def reingest_document(
-    document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs
+    document_id: str,
+    request: Request,
+    tenant: Tenant,
+    repo: Repo,
+    jobs: Jobs,
+    profile: Annotated[Literal["standard", "enhanced"], Query()] = "standard",
 ) -> dict[str, str]:
-    """Re-ingest a document of any status: read its original file, purge its DB rows and files, and
-    drop the original back in the ingest folder so the worker reprocesses it cleanly."""
+    """Re-ingest (re-OCR) a document: read its original, purge its rows/files, and drop it back in
+    the ingest folder. ``profile=enhanced`` routes it to the slower, higher-quality OCR pass
+    (heavier models + 300 DPI + orientation/unwarp), via the worker's ingest.enhanced/ folder."""
     document = repo.get(tenant.tenant_id, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
     files_root = Path(request.app.state.settings.files_root)
     data = _read_original(document, files_root)
-    safe_name = _purge_and_requeue(document, data, files_root, tenant.tenant_id, repo, jobs)
-    return {"status": "queued", "filename": safe_name}
+    subdir = "ingest.enhanced" if profile == "enhanced" else "ingest"
+    safe_name = _purge_and_requeue(document, data, files_root, tenant.tenant_id, repo, jobs, subdir)
+    return {"status": "queued", "filename": safe_name, "profile": profile}
 
 
 @router.post("/{document_id}/rotate")

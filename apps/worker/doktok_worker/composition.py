@@ -100,6 +100,7 @@ def build_services(
     ProjectionRunner,
     Database,
     Callable[[], None] | None,
+    Callable[[], None],
 ]:
     """Build per-tenant ingestion services, the feature reconciler, and a shared database handle.
 
@@ -169,6 +170,12 @@ def build_services(
 
         def ocr_reload() -> None:  # noqa: F811 - single definition, guarded by the isinstance
             paddle.reconfigure(app_settings.get_ocr_settings().ocr_concurrency)
+
+    # Graceful shutdown: tear down the PaddleOCR process pool so its spawn workers do not leak as
+    # ~1 GB launchd orphans on every worker restart. No-op for the Ollama OCR path.
+    def cleanup() -> None:
+        if isinstance(ocr_extractor, PaddleOcr):
+            ocr_extractor.shutdown()
 
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
@@ -401,4 +408,4 @@ def build_services(
                 stage_ledger=stage_ledger,
             )
         )
-    return services, reconciler, projection_runner, db, ocr_reload
+    return services, reconciler, projection_runner, db, ocr_reload, cleanup

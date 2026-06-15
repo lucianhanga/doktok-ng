@@ -272,6 +272,7 @@ class DefaultRagAnswerer:
             yield ChatEvent(type="done", grounded=True)
             return
 
+        yield ChatEvent(type="step", delta="Understanding your question")
         standalone, filters = self._understand(history, question)
         rewritten = standalone if standalone != question else None
         question = standalone
@@ -285,6 +286,7 @@ class DefaultRagAnswerer:
             yield ChatEvent(type="done", grounded=True)
             return
 
+        yield ChatEvent(type="step", delta="Searching and ranking your documents")
         prepared = self._prepare(tenant_id, question, limit, filters=filters)
         if prepared is None:
             yield ChatEvent(type="token", delta=REFUSAL)
@@ -292,6 +294,7 @@ class DefaultRagAnswerer:
             yield ChatEvent(type="done", grounded=False)
             return
         hits, relevance, prompt = prepared
+        yield ChatEvent(type="step", delta="Composing the answer")
 
         answer_parts: list[str] = []
         try:

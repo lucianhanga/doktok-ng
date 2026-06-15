@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from doktok_contracts.schemas import ChatMessage, ChatThread
+from doktok_contracts.schemas import ChatMessage, ChatThread, Citation
 
 
 class InMemoryChatThreadRepository:
@@ -33,10 +33,22 @@ class InMemoryChatThreadRepository:
         return list(self._messages.get((tenant_id, thread_id), []))
 
     def append_message(
-        self, tenant_id: str, thread_id: str, role: str, content: str
+        self,
+        tenant_id: str,
+        thread_id: str,
+        role: str,
+        content: str,
+        *,
+        reasoning: str = "",
+        citations: list[Citation] | None = None,
     ) -> ChatMessage:
         message = ChatMessage(
-            id=uuid.uuid4().hex, role=role, content=content, created_at=datetime.now(UTC)
+            id=uuid.uuid4().hex,
+            role=role,
+            content=content,
+            created_at=datetime.now(UTC),
+            reasoning=reasoning,
+            citations=list(citations or []),
         )
         self._messages.setdefault((tenant_id, thread_id), []).append(message)
         thread = self._threads.get((tenant_id, thread_id))

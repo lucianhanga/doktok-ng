@@ -19,6 +19,7 @@ from doktok_contracts.schemas import (
     CategorySummary,
     ChatMessage,
     ChatThread,
+    Citation,
     Document,
     DocumentChunk,
     DocumentEntity,
@@ -1697,27 +1698,42 @@ class PostgresChatThreadRepository:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT id, role, content, created_at FROM chat_messages "
+                "SELECT id, role, content, created_at, reasoning, citations FROM chat_messages "
                 "WHERE tenant_id=%s AND thread_id=%s ORDER BY created_at, id",
                 (tenant_id, thread_id),
             ).fetchall()
         return [
             ChatMessage(
-                id=r["id"], role=r["role"], content=r["content"], created_at=r["created_at"]
+                id=r["id"],
+                role=r["role"],
+                content=r["content"],
+                created_at=r["created_at"],
+                reasoning=r["reasoning"] or "",
+                citations=[Citation(**c) for c in (r["citations"] or [])],
             )
             for r in rows
         ]
 
     def append_message(
-        self, tenant_id: str, thread_id: str, role: str, content: str
+        self,
+        tenant_id: str,
+        thread_id: str,
+        role: str,
+        content: str,
+        *,
+        reasoning: str = "",
+        citations: list[Citation] | None = None,
     ) -> ChatMessage:
         message_id = uuid.uuid4().hex
+        citation_json = Json([c.model_dump() for c in (citations or [])])
         with self._db.connection() as conn, conn.transaction():
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
-                "INSERT INTO chat_messages (id, thread_id, tenant_id, role, content) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING id, role, content, created_at",
-                (message_id, thread_id, tenant_id, role, content),
+                "INSERT INTO chat_messages "
+                "(id, thread_id, tenant_id, role, content, reasoning, citations) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING id, role, content, created_at, reasoning, citations",
+                (message_id, thread_id, tenant_id, role, content, reasoning, citation_json),
             ).fetchone()
             # Bump the thread's activity time; if it has no title yet, seed it from this message.
             conn.execute(
@@ -1728,7 +1744,12 @@ class PostgresChatThreadRepository:
             )
         assert row is not None
         return ChatMessage(
-            id=row["id"], role=row["role"], content=row["content"], created_at=row["created_at"]
+            id=row["id"],
+            role=row["role"],
+            content=row["content"],
+            created_at=row["created_at"],
+            reasoning=row["reasoning"] or "",
+            citations=[Citation(**c) for c in (row["citations"] or [])],
         )
 
     def thread_exists(self, tenant_id: str, thread_id: str) -> bool:

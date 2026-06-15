@@ -19,6 +19,7 @@ from doktok_contracts.schemas import (
     ChatRequest,
     ChatThread,
     ChatTurn,
+    Citation,
     RagAnswer,
 )
 from doktok_core.aggregation import aggregation_answer, looks_like_aggregation, route_to_intent
@@ -128,7 +129,9 @@ def chat(
         else answerer.answer_thread(tenant_id, history, question, limit)
     )
     if request.thread_id:
-        threads.append_message(tenant_id, request.thread_id, "assistant", answer.answer)
+        threads.append_message(
+            tenant_id, request.thread_id, "assistant", answer.answer, citations=answer.citations
+        )
     return answer
 
 
@@ -156,6 +159,8 @@ def chat_stream(
 
     def events() -> Iterator[str]:
         parts: list[str] = []
+        reason_parts: list[str] = []
+        citations: list[Citation] = []
         structured = _try_aggregation(question, http_request, tenant_id)
         if structured is not None:
             yield _sse(ChatEvent(type="meta"))
@@ -163,16 +168,28 @@ def chat_stream(
             yield _sse(ChatEvent(type="sources", citations=structured.citations))
             yield _sse(ChatEvent(type="done", grounded=structured.grounded))
             parts.append(structured.answer)
+            citations = structured.citations
         else:
             for event in answerer.answer_thread_stream(
                 tenant_id, history, question, limit, reasoning=request.reasoning
             ):
                 if event.type == "token":
                     parts.append(event.delta)
+                elif event.type == "reasoning":
+                    reason_parts.append(event.delta)
+                elif event.type == "sources":
+                    citations = event.citations
                 yield _sse(event)
         answer_text = "".join(parts).strip()
         if request.thread_id and answer_text:
-            threads.append_message(tenant_id, request.thread_id, "assistant", answer_text)
+            threads.append_message(
+                tenant_id,
+                request.thread_id,
+                "assistant",
+                answer_text,
+                reasoning="".join(reason_parts).strip(),
+                citations=citations,
+            )
 
     return StreamingResponse(
         events(),

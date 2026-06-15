@@ -35,6 +35,7 @@ from doktok_contracts.schemas import (
     ChatMessage,
     ChatThread,
     ChatTurn,
+    Citation,
     Document,
     DocumentArtifact,
     DocumentChunk,
@@ -607,7 +608,14 @@ class ChatThreadRepository(Protocol):
     def list_threads(self, tenant_id: str, *, limit: int = 50) -> list[ChatThread]: ...
     def get_messages(self, tenant_id: str, thread_id: str) -> list[ChatMessage]: ...
     def append_message(
-        self, tenant_id: str, thread_id: str, role: str, content: str
+        self,
+        tenant_id: str,
+        thread_id: str,
+        role: str,
+        content: str,
+        *,
+        reasoning: str = "",
+        citations: list[Citation] | None = None,
     ) -> ChatMessage: ...
     def thread_exists(self, tenant_id: str, thread_id: str) -> bool: ...
     def delete_thread(self, tenant_id: str, thread_id: str) -> None: ...

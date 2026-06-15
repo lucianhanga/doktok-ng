@@ -67,13 +67,13 @@ def _worker_init(lang: str, det_model: str, rec_model: str, cpu_threads: int) ->
     )
 
 
-def _worker_ocr(image_png: bytes) -> tuple[str, float | None, list[OcrTextLine]]:
+def _worker_ocr(image_png: bytes) -> OcrPageResult:
     return _run_ocr(_WORKER_ENGINE, image_png)
 
 
-def _run_ocr(engine: Any, image_png: bytes) -> tuple[str, float | None, list[OcrTextLine]]:
+def _run_ocr(engine: Any, image_png: bytes) -> OcrPageResult:
     """Decode the PNG, run the predictor, and assemble the page text + mean confidence + per-line
-    boxes (in image pixels, for the positioned searchable-PDF text layer).
+    boxes (in image pixels, for the positioned searchable-PDF text layer) + the image pixel size.
 
     Pure given an ``engine`` (so it runs identically in-process for tests and in a worker process).
     """
@@ -81,6 +81,7 @@ def _run_ocr(engine: Any, image_png: bytes) -> tuple[str, float | None, list[Ocr
     from PIL import Image
 
     rgb = np.array(Image.open(io.BytesIO(image_png)).convert("RGB"))
+    height, width = rgb.shape[:2]
     bgr = rgb[:, :, ::-1]  # PaddleOCR expects OpenCV (BGR) order
     results = engine.predict(bgr)
 
@@ -95,7 +96,13 @@ def _run_ocr(engine: Any, image_png: bytes) -> tuple[str, float | None, list[Ocr
         for text, (x0, y0, x1, y1) in assemble_lines(item):
             lines.append(OcrTextLine(text=text, x0=x0, y0=y0, x1=x1, y1=y1))
     confidence = sum(scores) / len(scores) if scores else None
-    return "\n".join(texts), confidence, lines
+    return OcrPageResult(
+        text="\n".join(texts),
+        confidence=confidence,
+        lines=lines,
+        width=int(width),
+        height=int(height),
+    )
 
 
 class PaddleOcr:
@@ -170,12 +177,10 @@ class PaddleOcr:
 
     def ocr_image(self, image_png: bytes) -> OcrPageResult:
         if self._engine is not None:
-            text, confidence, lines = _run_ocr(self._engine, image_png)  # in-process (tests)
-        else:
-            # Dispatch to a worker process; many caller threads submitting here drive real
-            # cross-page parallelism across ``pool_size`` cores.
-            text, confidence, lines = self._executor().submit(_worker_ocr, image_png).result()
-        return OcrPageResult(text=text, confidence=confidence, lines=lines)
+            return _run_ocr(self._engine, image_png)  # in-process (tests)
+        # Dispatch to a worker process; many caller threads submitting here drive real
+        # cross-page parallelism across ``pool_size`` cores.
+        return self._executor().submit(_worker_ocr, image_png).result()
 
 
 def _as_list(value: Any) -> list[Any]:

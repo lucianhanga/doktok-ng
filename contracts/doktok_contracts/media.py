@@ -22,12 +22,15 @@ class OcrTextLine:
 
 @dataclass
 class OcrPageResult:
-    """Text recognized from a single page image, with optional confidence (0-1) and per-line boxes
-    (empty when the engine does not report them, e.g. the Ollama vision OCR path)."""
+    """Text recognized from a single page image, with optional confidence (0-1), per-line boxes
+    (empty when the engine does not report them, e.g. the Ollama vision OCR path), and the source
+    image's pixel size (the coordinate space the boxes live in; 0 when unknown)."""
 
     text: str
     confidence: float | None = None
     lines: list[OcrTextLine] = field(default_factory=list)
+    width: int = 0
+    height: int = 0
 
 
 @dataclass
@@ -37,6 +40,17 @@ class RenderedPage:
     image_png: bytes
     text: str
     lines: list[OcrTextLine] = field(default_factory=list)
+
+
+@dataclass
+class PageLayout:
+    """Per-page OCR geometry persisted to content.json so coordinates are interpretable: the image
+    pixel size + render DPI the line boxes are expressed in (``dpi`` None for source images)."""
+
+    width_px: int
+    height_px: int
+    dpi: int | None
+    lines: list[OcrTextLine]
 
 
 @dataclass

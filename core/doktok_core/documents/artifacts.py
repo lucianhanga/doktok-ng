@@ -24,6 +24,7 @@ import mimetypes
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from doktok_contracts.ports import FileStorage
 
@@ -65,6 +66,24 @@ class ArtifactResult:
     system_document: str
 
 
+def _content_pages(result: ExtractionResult) -> list[dict[str, Any]]:
+    """Per-page entries for content.json: text, plus OCR geometry (line boxes + image pixel size +
+    render DPI) when the page was OCR'd, so the coordinates are interpretable downstream."""
+    layouts = result.page_layouts or [None] * len(result.pages)
+    pages: list[dict[str, Any]] = []
+    for i, (text, layout) in enumerate(zip(result.pages, layouts, strict=False), start=1):
+        entry: dict[str, Any] = {"page_number": i, "text": text}
+        if layout is not None:
+            entry["render_dpi"] = layout.dpi
+            entry["width_px"] = layout.width_px
+            entry["height_px"] = layout.height_px
+            entry["lines"] = [
+                {"text": ln.text, "bbox": [ln.x0, ln.y0, ln.x1, ln.y1]} for ln in layout.lines
+            ]
+        pages.append(entry)
+    return pages
+
+
 def write_document_artifacts(
     file_storage: FileStorage,
     layout: FilesystemLayout,
@@ -97,7 +116,7 @@ def write_document_artifacts(
         "extraction_method": result.extraction_method,
         "page_count": result.page_count,
         "ocr_confidence": result.ocr_confidence,
-        "pages": [{"page_number": i, "text": text} for i, text in enumerate(result.pages, start=1)],
+        "pages": _content_pages(result),
         "metadata": result.metadata,
     }
     file_storage.write_text(

@@ -4,6 +4,7 @@ import {
   chatStream,
   createChatThread,
   deleteChatThread,
+  deleteMessagesFrom,
   documentThumbnailUrl,
   getThreadMessages,
   listChatThreads,
@@ -294,11 +295,17 @@ function AnswerBlock({
   onOpenDocument,
   sourcesActive = false,
   onShowSources,
+  onEdit,
+  onDelete,
+  canModify = false,
 }: {
   turn: TurnView;
   onOpenDocument?: (id: string) => void;
   sourcesActive?: boolean;
   onShowSources?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  canModify?: boolean;
 }) {
   // While streaming, the caret sits in the activity window until answer tokens begin, then moves
   // to the answer below.
@@ -329,6 +336,28 @@ function AnswerBlock({
               onClick={onShowSources}
             >
               Sources ({turn.citations.length})
+            </button>
+          )}
+          {canModify && !turn.streaming && onEdit && (
+            <button
+              type="button"
+              className="chat-q-action link-button"
+              aria-label="Edit this question and resubmit"
+              title="Edit & resubmit"
+              onClick={onEdit}
+            >
+              &#9998;
+            </button>
+          )}
+          {canModify && !turn.streaming && onDelete && (
+            <button
+              type="button"
+              className="chat-q-action link-button"
+              aria-label="Delete this question and everything after it"
+              title="Delete from here"
+              onClick={onDelete}
+            >
+              &times;
             </button>
           )}
         </div>
@@ -752,6 +781,34 @@ export function ChatPanel({
     setThreadId(null);
   }
 
+  // Delete a turn (and everything after it) from the UI + the persisted thread. Maps the turn index
+  // to its user message by reloading the thread, so it works after resume without tracking ids.
+  async function truncateFrom(turnIndex: number) {
+    setRail({ mode: "none" });
+    const tid = threadRef.current;
+    if (tid) {
+      try {
+        const msgs = await getThreadMessages(tid);
+        const target = msgs.filter((m) => m.role === "user")[turnIndex];
+        if (target) await deleteMessagesFrom(tid, target.id);
+      } catch {
+        // best-effort: still trim the UI even if the server call fails
+      }
+    }
+    setExchanges((prev) => prev.slice(0, turnIndex));
+  }
+
+  function deleteQuestion(turnIndex: number) {
+    if (streaming) return; // never modify history mid-stream
+    void truncateFrom(turnIndex);
+  }
+
+  function editQuestion(turnIndex: number) {
+    if (streaming) return;
+    const q = exchanges[turnIndex]?.question ?? "";
+    void truncateFrom(turnIndex).then(() => setQuestion(q)); // load it back for editing + resubmit
+  }
+
   function resume(id: string) {
     setErrorMsg(null);
     setRail({ mode: "none" }); // a turnIndex from the previous thread must not leak across
@@ -915,6 +972,9 @@ export function ChatPanel({
                   onOpenDocument={openInRail}
                   sourcesActive={rail.mode === "sources" && rail.turnIndex === i}
                   onShowSources={() => showSources(i)}
+                  canModify={streaming === null}
+                  onEdit={() => editQuestion(i)}
+                  onDelete={() => deleteQuestion(i)}
                 />
               </li>
             ))}

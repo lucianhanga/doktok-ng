@@ -1533,6 +1533,18 @@ tr.row-selected {
   align-items: center;
   gap: 0.4rem;
 }
+.chat-q-action {
+  color: var(--muted, #8b97a8);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+.chat-q-action:hover {
+  color: var(--accent, #6ea8fe);
+}
+.chat-q-action[aria-label^="Delete"]:hover {
+  color: var(--danger, #d9534f);
+}
 .chat-rewritten {
   margin: 0;
   font-style: italic;

@@ -335,6 +335,44 @@ class Citation(BaseModel):
     relevance: float | None = None
 
 
+class RankedChunk(BaseModel):
+    """One candidate chunk in a turn's retrieval/ranking trace (M8 #4/#7). The reranker returns an
+    order, not a score, so ``relevance`` is the normalized rank (best=1.0) and ``retrieval_score``
+    is the only true numeric (the hybrid retriever's RRF score)."""
+
+    chunk_id: str
+    document_id: str
+    original_filename: str | None = None
+    page_start: int | None = None
+    retrieval_score: float  # hybrid (RRF) score from the retriever
+    relevance: float | None = None  # normalized final rank (selected chunks only)
+    selected: bool = False  # made the final top-k packed into the prompt
+    cited: bool = False  # the answer actually referenced it with [n]
+
+
+class TurnMetrics(BaseModel):
+    """Per-assistant-turn LLM token/timing metrics (M8 #2/#3/#11). ``reasoning_tokens`` powers the
+    collapsed Reasoning & Steps badge; ``overhead_tokens`` is the query-rewrite/filter call. Totals
+    sum across all turns for the per-chat figure. Tokens may be estimated (``estimated``)."""
+
+    prompt_tokens: int = 0  # the answer call's input tokens
+    answer_tokens: int = 0  # the answer call's visible output tokens
+    reasoning_tokens: int = 0  # the answer call's thinking tokens
+    overhead_tokens: int = 0  # the understanding (rewrite + filters) call, total tokens
+    reasoning_ms: int = 0  # wall time until the first answer token (reasoning phase)
+    answer_ms: int = 0  # wall time streaming the answer
+    total_ms: int = 0  # whole turn
+    reused_previous_results: bool = False  # the follow-up was rewritten using the conversation
+    rewritten_query: str | None = None
+    estimated: bool = False
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.prompt_tokens + self.answer_tokens + self.reasoning_tokens + self.overhead_tokens
+        )
+
+
 class FeatureStatus(StrEnum):
     """State of a single processing feature for one document (ADR-0009)."""
 
@@ -474,6 +512,10 @@ class ChatMessage(BaseModel):
     # (assistant turns only; empty for user turns).
     reasoning: str = ""
     citations: list[Citation] = Field(default_factory=list)
+    # Per-turn ranking trace + token/timing metrics (M8); assistant turns only, defaults keep old
+    # rows + user turns valid.
+    ranking: list[RankedChunk] = Field(default_factory=list)
+    metrics: TurnMetrics | None = None
 
 
 class ChatThread(BaseModel):
@@ -486,6 +528,9 @@ class ChatThread(BaseModel):
     updated_at: datetime
     message_count: int = 0
     title_source: str = "auto"  # 'auto' | 'manual'
+    # Per-chat aggregates across all assistant turns (M8 #11), computed on read.
+    total_tokens: int = 0
+    total_inference_ms: int = 0
 
 
 class ChatThreadUpdate(BaseModel):
@@ -519,11 +564,15 @@ class RagAnswer(BaseModel):
     rewritten_query: str | None = None
     # Filters inferred from the question + applied to retrieval (M6.4 Phase 2); None = none applied.
     filters: QueryFilters | None = None
+    # Per-turn ranking trace + metrics (M8), so the one-shot path persists the same as streaming.
+    ranking: list[RankedChunk] = Field(default_factory=list)
+    metrics: TurnMetrics | None = None
 
 
 class ChatEvent(BaseModel):
     """One event in a streamed chat turn (M6.4, ADR-0018 Phase 3). ``type`` is one of meta / step /
-    reasoning / token / sources / done / error; the relevant field(s) are set per type. ``step`` is
+    reasoning / token / sources / ranking / metrics / done / error; relevant field(s) set per type.
+    ``step`` is
     a human-readable pipeline-phase label (understanding / searching / answering) for the activity
     window - the deterministic-RAG analogue of tool-call traces."""
 
@@ -534,6 +583,8 @@ class ChatEvent(BaseModel):
     citations: list[Citation] = Field(default_factory=list)  # sources
     grounded: bool = False  # done
     message: str = ""  # error
+    ranking: list[RankedChunk] = Field(default_factory=list)  # ranking (M8 #4/#7)
+    metrics: TurnMetrics | None = None  # metrics (M8 #2/#3/#11)
 
 
 class DocumentContent(BaseModel):

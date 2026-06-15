@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from doktok_contracts.schemas import ChatMessage, ChatThread, Citation
+from doktok_contracts.schemas import ChatMessage, ChatThread, Citation, RankedChunk, TurnMetrics
 
 
 class InMemoryChatThreadRepository:
@@ -21,11 +21,22 @@ class InMemoryChatThreadRepository:
         return thread
 
     def list_threads(self, tenant_id: str, *, limit: int = 50) -> list[ChatThread]:
-        threads = [
-            t.model_copy(update={"message_count": len(self._messages.get((tenant_id, t.id), []))})
-            for (tid, _), t in self._threads.items()
-            if tid == tenant_id
-        ]
+        threads = []
+        for (tid, _), t in self._threads.items():
+            if tid != tenant_id:
+                continue
+            msgs = self._messages.get((tid, t.id), [])
+            tokens = sum(m.metrics.total_tokens for m in msgs if m.metrics is not None)
+            ms = sum(m.metrics.total_ms for m in msgs if m.metrics is not None)
+            threads.append(
+                t.model_copy(
+                    update={
+                        "message_count": len(msgs),
+                        "total_tokens": tokens,
+                        "total_inference_ms": ms,
+                    }
+                )
+            )
         threads.sort(key=lambda t: t.updated_at, reverse=True)
         return threads[:limit]
 
@@ -41,6 +52,8 @@ class InMemoryChatThreadRepository:
         *,
         reasoning: str = "",
         citations: list[Citation] | None = None,
+        ranking: list[RankedChunk] | None = None,
+        metrics: TurnMetrics | None = None,
     ) -> ChatMessage:
         message = ChatMessage(
             id=uuid.uuid4().hex,
@@ -49,6 +62,8 @@ class InMemoryChatThreadRepository:
             created_at=datetime.now(UTC),
             reasoning=reasoning,
             citations=list(citations or []),
+            ranking=list(ranking or []),
+            metrics=metrics,
         )
         self._messages.setdefault((tenant_id, thread_id), []).append(message)
         thread = self._threads.get((tenant_id, thread_id))

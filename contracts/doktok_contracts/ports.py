@@ -55,12 +55,14 @@ from doktok_contracts.schemas import (
     ProjectionRequest,
     QueryFilters,
     RagAnswer,
+    RankedChunk,
     SearchHit,
     SecurityDecision,
     SortDir,
     StatsSummary,
     TokenMatch,
     TokenSuggestion,
+    TurnMetrics,
 )
 
 # --- Repositories ---------------------------------------------------------------------------
@@ -628,6 +630,8 @@ class ChatThreadRepository(Protocol):
         *,
         reasoning: str = "",
         citations: list[Citation] | None = None,
+        ranking: list[RankedChunk] | None = None,
+        metrics: TurnMetrics | None = None,
     ) -> ChatMessage: ...
     def thread_exists(self, tenant_id: str, thread_id: str) -> bool: ...
     def delete_thread(self, tenant_id: str, thread_id: str) -> None: ...

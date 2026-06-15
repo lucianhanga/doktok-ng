@@ -22,6 +22,8 @@ from doktok_contracts.schemas import (
     ChatTurn,
     Citation,
     RagAnswer,
+    RankedChunk,
+    TurnMetrics,
 )
 from doktok_core.aggregation import aggregation_answer, looks_like_aggregation, route_to_intent
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -144,7 +146,13 @@ def chat(
     )
     if request.thread_id:
         threads.append_message(
-            tenant_id, request.thread_id, "assistant", answer.answer, citations=answer.citations
+            tenant_id,
+            request.thread_id,
+            "assistant",
+            answer.answer,
+            citations=answer.citations,
+            ranking=answer.ranking,
+            metrics=answer.metrics,
         )
     return answer
 
@@ -175,6 +183,8 @@ def chat_stream(
         parts: list[str] = []
         reason_parts: list[str] = []
         citations: list[Citation] = []
+        ranking: list[RankedChunk] = []
+        metrics: TurnMetrics | None = None
         structured = _try_aggregation(question, http_request, tenant_id)
         if structured is not None:
             yield _sse(ChatEvent(type="meta"))
@@ -193,6 +203,10 @@ def chat_stream(
                     reason_parts.append(event.delta)
                 elif event.type == "sources":
                     citations = event.citations
+                elif event.type == "ranking":
+                    ranking = event.ranking
+                elif event.type == "metrics":
+                    metrics = event.metrics
                 yield _sse(event)
         answer_text = "".join(parts).strip()
         if request.thread_id and answer_text:
@@ -203,6 +217,8 @@ def chat_stream(
                 answer_text,
                 reasoning="".join(reason_parts).strip(),
                 citations=citations,
+                ranking=ranking,
+                metrics=metrics,
             )
 
     return StreamingResponse(

@@ -2,10 +2,52 @@
 
 from __future__ import annotations
 
-from doktok_contracts.schemas import Citation
+from doktok_contracts.schemas import Citation, RankedChunk, TurnMetrics
 from doktok_storage_postgres import Database, PostgresChatThreadRepository
 
 TENANT = "test-a"
+
+
+def test_ranking_and_metrics_roundtrip_and_thread_totals(db: Database) -> None:
+    repo = PostgresChatThreadRepository(db)
+    thread = repo.create_thread(TENANT)
+    repo.append_message(TENANT, thread.id, "user", "what is the total?")
+    repo.append_message(
+        TENANT,
+        thread.id,
+        "assistant",
+        "42 [1].",
+        ranking=[
+            RankedChunk(
+                chunk_id="c1",
+                document_id="d1",
+                retrieval_score=0.9,
+                relevance=1.0,
+                selected=True,
+                cited=True,
+            ),
+            RankedChunk(chunk_id="c2", document_id="d2", retrieval_score=0.4, selected=False),
+        ],
+        metrics=TurnMetrics(
+            prompt_tokens=100,
+            answer_tokens=20,
+            reasoning_tokens=5,
+            overhead_tokens=10,
+            total_ms=1234,
+        ),
+    )
+
+    messages = repo.get_messages(TENANT, thread.id)
+    assistant = messages[1]
+    assert len(assistant.ranking) == 2
+    assert assistant.ranking[0].selected and assistant.ranking[0].cited
+    assert assistant.metrics is not None
+    assert assistant.metrics.reasoning_tokens == 5
+    assert assistant.metrics.total_tokens == 135  # 100+20+5+10
+
+    listed = repo.list_threads(TENANT)[0]
+    assert listed.total_tokens == 135
+    assert listed.total_inference_ms == 1234
 
 
 def test_thread_roundtrip_messages_and_title(db: Database) -> None:

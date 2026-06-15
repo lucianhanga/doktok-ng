@@ -265,3 +265,64 @@ def test_citations_carry_normalized_relevance() -> None:
     assert by_chunk["c4"] == 0.25  # last of 4 -> (4-3)/4
     values = sorted((v for v in by_chunk.values() if v is not None), reverse=True)
     assert values == [1.0, 0.75, 0.5, 0.25]
+
+
+class FakeStreamingChatWithUsage:
+    """A streaming chat model that also reports token/timing usage (M8 PR3/PR4)."""
+
+    def __init__(self, reply: str, *, reasoning: str = "") -> None:
+        self._reply = reply
+        self._reasoning = reasoning
+
+    def complete(self, prompt: str) -> str:  # the understanding (rewrite) call
+        return prompt and self._reply or self._reply
+
+    def stream_complete(self, prompt, *, think=None):  # type: ignore[no-untyped-def]
+        from doktok_contracts.media import ChatChunk
+
+        if self._reasoning:
+            yield ChatChunk(kind="reasoning", text=self._reasoning)
+        yield ChatChunk(kind="answer", text=self._reply)
+
+    def get_last_usage(self):  # type: ignore[no-untyped-def]
+        from doktok_contracts.media import LlmUsage
+
+        return LlmUsage(
+            prompt_tokens=100, answer_tokens=20, reasoning_tokens=5, wall_ms=50, estimated=False
+        )
+
+
+def test_stream_emits_ranking_and_metrics() -> None:
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3)])
+    chat = FakeStreamingChatWithUsage("Grounded answer [1].", reasoning="thinking...")
+    events = list(DefaultRagAnswerer(retriever, chat).answer_thread_stream("t1", [], "q", 3))
+    types = [e.type for e in events]
+    assert "ranking" in types and "metrics" in types
+    # ranking precedes sources precedes metrics precedes done
+    assert types.index("ranking") < types.index("sources") < types.index("metrics")
+    assert types[-1] == "done"
+
+    ranking_ev = next(e for e in events if e.type == "ranking")
+    assert len(ranking_ev.ranking) == 3
+    assert ranking_ev.ranking[0].selected is True
+    # [1] was cited in the answer -> the first ranked chunk is flagged cited.
+    assert ranking_ev.ranking[0].cited is True
+
+    metrics_ev = next(e for e in events if e.type == "metrics")
+    assert metrics_ev.metrics is not None
+    assert metrics_ev.metrics.reasoning_tokens == 5
+    assert metrics_ev.metrics.answer_tokens == 20
+    assert metrics_ev.metrics.total_tokens >= 125
+
+
+def test_stream_flags_followup_reuse_in_metrics() -> None:
+    # The rewrite turns the follow-up into a standalone query -> reused_previous_results=True.
+    retriever = FakeRetriever([_hit(1)])
+    chat = FakeStreamingChatWithUsage('{"query": "standalone rewritten query", "category": null}')
+    history = [type("T", (), {"role": "user", "content": "earlier"})()]
+    events = list(
+        DefaultRagAnswerer(retriever, chat).answer_thread_stream("t1", history, "and then?", 3)
+    )
+    metrics_ev = next(e for e in events if e.type == "metrics")
+    assert metrics_ev.metrics is not None
+    assert metrics_ev.metrics.reused_previous_results is True

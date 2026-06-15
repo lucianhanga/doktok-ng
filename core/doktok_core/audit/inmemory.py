@@ -8,8 +8,14 @@ from doktok_contracts.schemas import AuditEvent
 class InMemoryAuditLogRepository:
     def __init__(self) -> None:
         self._events: list[AuditEvent] = []
+        self._ids: set[str] = set()
 
     def record(self, event: AuditEvent) -> None:
+        # Insert-if-absent by id (mirrors the Postgres ON CONFLICT DO NOTHING), so a deterministic
+        # id can dedup repeated near-identical events such as a double-fired document view.
+        if event.id in self._ids:
+            return
+        self._ids.add(event.id)
         self._events.append(event.model_copy(deep=True))
 
     def list_events(

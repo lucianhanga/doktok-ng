@@ -1,9 +1,11 @@
 import { type ColumnDef } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchActivity, type ActivitySeverity, type AuditEvent } from "./api";
 import { DataTable } from "./DataTable";
 import { useInterval } from "./hooks";
+
+const PAGE_SIZE = 100;
 
 type State =
   | { kind: "loading" }
@@ -98,17 +100,43 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
   const [search, setSearch] = useState("");
   const [severity, setSeverity] = useState<"all" | ActivitySeverity>("all");
   const [phase, setPhase] = useState<string>("all");
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // How many rows are currently loaded; the live refresh re-fetches exactly this window so paging
+  // position is preserved while new events still appear at the top.
+  const loadedCount = useRef(PAGE_SIZE);
 
-  const load = useCallback(() => {
-    fetchActivity({ limit: 500 })
-      .then((events) => setState({ kind: "ok", events }))
+  const refresh = useCallback(() => {
+    const count = loadedCount.current;
+    fetchActivity({ limit: count })
+      .then((events) => {
+        loadedCount.current = Math.max(PAGE_SIZE, events.length);
+        setHasMore(events.length === count);
+        setState({ kind: "ok", events });
+      })
       .catch((err: unknown) =>
         setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" }),
       );
   }, []);
 
-  useEffect(load, [load]);
-  useInterval(load, 5000);
+  const loadMore = useCallback(() => {
+    setLoadingMore(true);
+    fetchActivity({ limit: PAGE_SIZE, offset: loadedCount.current })
+      .then((next) => {
+        setState((prev) => {
+          const existing = prev.kind === "ok" ? prev.events : [];
+          const seen = new Set(existing.map((e) => e.id));
+          const merged = [...existing, ...next.filter((e) => !seen.has(e.id))];
+          loadedCount.current = merged.length;
+          return { kind: "ok", events: merged };
+        });
+        setHasMore(next.length === PAGE_SIZE);
+      })
+      .finally(() => setLoadingMore(false));
+  }, []);
+
+  useEffect(refresh, [refresh]);
+  useInterval(refresh, 5000);
 
   const events = state.kind === "ok" ? state.events : [];
 
@@ -211,7 +239,7 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
     <section aria-label="Activity" className="panel">
       <div className="result-head">
         <h2>Activity</h2>
-        <button type="button" onClick={load}>
+        <button type="button" onClick={refresh}>
           Refresh
         </button>
       </div>
@@ -259,14 +287,27 @@ export function ActivityPanel({ onOpenDocument }: { onOpenDocument?: (id: string
         <p className="empty">No activity yet. Ingest a document to see its timeline here.</p>
       )}
       {state.kind === "ok" && events.length > 0 && (
-        <DataTable<AuditEvent>
-          data={filtered}
-          columns={columns}
-          getRowId={(e) => e.id}
-          globalFilter={search}
-          renderDetail={(e) => <ActivityDetail event={e} />}
-          emptyLabel="No activity matches the current filters."
-        />
+        <>
+          <DataTable<AuditEvent>
+            data={filtered}
+            columns={columns}
+            getRowId={(e) => e.id}
+            globalFilter={search}
+            renderDetail={(e) => <ActivityDetail event={e} />}
+            emptyLabel="No activity matches the current filters."
+          />
+          <div className="activity-more">
+            <span className="activity-count">
+              Showing {filtered.length}
+              {filtered.length !== events.length ? ` of ${events.length} loaded` : ""}
+            </span>
+            {hasMore && (
+              <button type="button" onClick={loadMore} disabled={loadingMore}>
+                {loadingMore ? "Loading..." : `Load ${PAGE_SIZE} more`}
+              </button>
+            )}
+          </div>
+        </>
       )}
     </section>
   );

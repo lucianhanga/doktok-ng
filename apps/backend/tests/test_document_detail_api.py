@@ -156,3 +156,13 @@ def test_detail_logs_a_view(tmp_path: Path) -> None:
     # The view is logged and shows up in the card's own recent-activity trail.
     viewed = [e for e in body["recent_activity"] if e["event_type"] == "document.viewed"]
     assert viewed and viewed[0]["actor_kind"] == "user"
+
+
+def test_detail_view_is_deduped_within_window(tmp_path: Path) -> None:
+    # React StrictMode fires the detail GET twice on mount; the deterministic bucketed id collapses
+    # rapid repeat opens to a single view row.
+    client = _detail_client(tmp_path)
+    client.get("/api/v1/documents/d1/detail", headers=_auth())
+    body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    viewed = [e for e in body["recent_activity"] if e["event_type"] == "document.viewed"]
+    assert len(viewed) == 1

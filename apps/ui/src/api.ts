@@ -72,6 +72,35 @@ export function documentThumbnailUrl(id: string): string {
   return `/api/v1/documents/${encodeURIComponent(id)}/thumbnail`;
 }
 
+export interface LayoutLine {
+  text: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+export interface LayoutPage {
+  page_number: number;
+  width_px: number;
+  height_px: number;
+  dpi: number | null;
+  lines: LayoutLine[];
+}
+export interface DocumentLayout {
+  document_id: string;
+  pages: LayoutPage[];
+}
+
+/** Per-page OCR boxes for the overlay viewer (empty until a doc is OCR'd with box persistence). */
+export function fetchDocumentLayout(id: string, signal?: AbortSignal): Promise<DocumentLayout> {
+  return getJson<DocumentLayout>(`/api/v1/documents/${encodeURIComponent(id)}/layout`, signal);
+}
+
+/** Same-origin URL for a rendered page image (PNG) used under the box overlay. */
+export function documentPageImageUrl(id: string, page: number, dpi = 150): string {
+  return `/api/v1/documents/${encodeURIComponent(id)}/page/${page}/image?dpi=${dpi}`;
+}
+
 export interface DocumentPage {
   items: DokDocument[];
   total: number;

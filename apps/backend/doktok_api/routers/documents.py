@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 from collections import Counter
 from datetime import date, datetime
@@ -28,18 +29,21 @@ from doktok_contracts.schemas import (
     DocumentEntitySummary,
     DocumentFeature,
     DocumentIdSelection,
+    DocumentLayout,
     DocumentListPage,
     DocumentSort,
     DocumentStatus,
     EntityType,
     EntityTypeCount,
+    LayoutLine,
+    LayoutPage,
     ListAnchor,
     SortDir,
     TokenMatch,
 )
-from doktok_core.documents.artifacts import THUMBNAIL_REL
+from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from doktok_api.dependencies import (
     Tenant,
@@ -241,6 +245,69 @@ def get_document_content(document_id: str, tenant: Tenant, repo: Repo) -> Docume
         if path.exists():
             content = path.read_text(encoding="utf-8")
     return DocumentContent(document_id=document_id, content=content)
+
+
+@router.get("/{document_id}/layout", response_model=DocumentLayout)
+def get_document_layout(document_id: str, tenant: Tenant, repo: Repo) -> DocumentLayout:
+    """Per-page OCR line boxes (from content.json) for overlaying on the page image. Empty for
+    documents OCR'd before box persistence (#285) or never OCR'd."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    pages: list[LayoutPage] = []
+    if document.storage_path:
+        path = Path(document.storage_path) / "content.json"
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for page in data.get("pages", []):
+                lines = page.get("lines")
+                if not lines:
+                    continue  # only pages with OCR geometry
+                pages.append(
+                    LayoutPage(
+                        page_number=page["page_number"],
+                        width_px=page.get("width_px", 0),
+                        height_px=page.get("height_px", 0),
+                        dpi=page.get("render_dpi"),
+                        lines=[
+                            LayoutLine(text=ln["text"], x0=b[0], y0=b[1], x1=b[2], y1=b[3])
+                            for ln in lines
+                            if (b := ln.get("bbox")) and len(b) == 4
+                        ],
+                    )
+                )
+    return DocumentLayout(document_id=document_id, pages=pages)
+
+
+@router.get("/{document_id}/page/{page_number}/image")
+def get_document_page_image(
+    document_id: str,
+    page_number: int,
+    tenant: Tenant,
+    repo: Repo,
+    dpi: Annotated[int, Query(ge=72, le=300)] = 150,
+) -> Response:
+    """Render one page (1-based) of the normalized/searchable PDF to PNG, for the box-overlay
+    viewer. The page is sized to the OCR image, so the layout boxes overlay it by proportion."""
+    import fitz
+
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None or not document.storage_path:
+        raise HTTPException(status_code=404, detail="document not found")
+    pdf_path = (Path(document.storage_path) / NORMALIZED_PDF_REL).resolve()
+    base = Path(document.storage_path).resolve()
+    if base not in pdf_path.parents or not pdf_path.is_file():
+        raise HTTPException(status_code=404, detail="page image not available")
+    with fitz.open(pdf_path) as doc:
+        if page_number < 1 or page_number > doc.page_count:
+            raise HTTPException(status_code=404, detail="page out of range")
+        pix = doc[page_number - 1].get_pixmap(matrix=fitz.Matrix(dpi / 72.0, dpi / 72.0))
+        png = bytes(pix.tobytes("png"))
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.get("/{document_id}/entities", response_model=list[DocumentEntity])

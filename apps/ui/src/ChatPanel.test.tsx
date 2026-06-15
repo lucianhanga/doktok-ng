@@ -571,3 +571,54 @@ test("chat header shows per-chat token + time totals from the thread", async () 
   await waitFor(() => expect(screen.getByText(/5\.4k tokens/)).toBeInTheDocument());
   expect(screen.getByText(/7\.2s/)).toBeInTheDocument();
 });
+
+test("each resumed question shows its own sources, not just the last", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/chat/threads/t2/messages")) {
+        return new Response(
+          JSON.stringify([
+            { id: "u1", role: "user", content: "first question", created_at: "2026-06-14T00:00:00Z" },
+            {
+              id: "a1", role: "assistant", content: "first answer [1].",
+              created_at: "2026-06-14T00:00:01Z",
+              citations: [
+                { index: 1, document_id: "dA", chunk_id: "cA", original_filename: "alpha.pdf", snippet: "a", relevance: 1.0 },
+              ],
+            },
+            { id: "u2", role: "user", content: "second question", created_at: "2026-06-14T00:00:02Z" },
+            {
+              id: "a2", role: "assistant", content: "second answer [1].",
+              created_at: "2026-06-14T00:00:03Z",
+              citations: [
+                { index: 1, document_id: "dB", chunk_id: "cB", original_filename: "beta.pdf", snippet: "b", relevance: 1.0 },
+              ],
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/v1/chat/threads")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "t2", title: "prior", created_at: "2026-06-14T00:00:00Z",
+              updated_at: "2026-06-14T00:00:03Z", message_count: 4,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    }),
+  );
+
+  render(<ChatPanel />);
+  await waitFor(() => expect(screen.getByText("prior")).toBeInTheDocument());
+  await userEvent.click(screen.getByText("prior"));
+  // Both questions' sources are shown (per-question), not only the last turn's.
+  await waitFor(() => expect(screen.getByRole("button", { name: /alpha\.pdf/ })).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /beta\.pdf/ })).toBeInTheDocument();
+});

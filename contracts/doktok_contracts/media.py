@@ -31,6 +31,9 @@ class OcrPageResult:
     lines: list[OcrTextLine] = field(default_factory=list)
     width: int = 0
     height: int = 0
+    # Clockwise rotation (0/90/180/270) the Enhanced 4-way vote applied to upright the page; the
+    # text/lines/width/height above are already in that rotated frame.
+    rotation: int = 0
 
 
 @dataclass
@@ -40,6 +43,8 @@ class RenderedPage:
     image_png: bytes
     text: str
     lines: list[OcrTextLine] = field(default_factory=list)
+    # Clockwise rotation to apply to image_png so it matches the (already-rotated) line boxes.
+    rotation: int = 0
 
 
 @dataclass

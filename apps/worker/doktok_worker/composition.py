@@ -174,6 +174,7 @@ def build_services(
             pool_size=max(1, ocr_concurrency // 2),
             cpu_threads=settings.ocr_cpu_threads,
             preprocess=True,
+            orient_vote=True,  # reliable 4-way 90/180/270 orientation (slower, ~4x per page)
         )
     # Live-reload OCR parallelism from Settings (M7.6): the worker calls this between ingest scans
     # (no OCR in flight) to resize the PaddleOCR pool without a restart. Paddle-only; the Ollama OCR

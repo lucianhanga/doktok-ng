@@ -29,6 +29,11 @@ def _est_tokens(chars: int) -> int:
     return max(0, round(chars / 3.5))
 
 
+def _as_int(value: object) -> int:
+    """Coerce an Ollama JSON field (typed ``object``) to int; 0 when absent or non-numeric."""
+    return value if isinstance(value, int) else 0
+
+
 class OllamaChatModelProvider:
     """``ChatModelProvider`` backed by Ollama's ``/api/generate`` endpoint."""
 
@@ -84,11 +89,11 @@ class OllamaChatModelProvider:
         eval_count = body.get("eval_count")
         eval_ns = body.get("eval_duration")
         self._last_usage = LlmUsage(
-            prompt_tokens=body.get("prompt_eval_count") or 0,
-            answer_tokens=eval_count if eval_count is not None else _est_tokens(len(text)),
+            prompt_tokens=_as_int(body.get("prompt_eval_count")),
+            answer_tokens=_as_int(eval_count) if eval_count is not None else _est_tokens(len(text)),
             reasoning_tokens=0,  # /api/generate is non-streaming; reasoning isn't separable here
             wall_ms=wall_ms,
-            eval_ms=round(eval_ns / 1_000_000) if eval_ns else None,
+            eval_ms=round(_as_int(eval_ns) / 1_000_000) if eval_ns else None,
             estimated=eval_count is None,
         )
         return text
@@ -143,16 +148,16 @@ class OllamaChatModelProvider:
         eval_ns = done.get("eval_duration")
         if eval_count is not None:
             reasoning_tokens, answer_tokens = _split_tokens(
-                int(eval_count), reasoning_chars, answer_chars
+                _as_int(eval_count), reasoning_chars, answer_chars
             )
         else:
             reasoning_tokens = _est_tokens(reasoning_chars)
             answer_tokens = _est_tokens(answer_chars)
         self._last_usage = LlmUsage(
-            prompt_tokens=done.get("prompt_eval_count") or 0,
+            prompt_tokens=_as_int(done.get("prompt_eval_count")),
             answer_tokens=answer_tokens,
             reasoning_tokens=reasoning_tokens,
             wall_ms=wall_ms,
-            eval_ms=round(int(eval_ns) / 1_000_000) if eval_ns else None,
+            eval_ms=round(_as_int(eval_ns) / 1_000_000) if eval_ns else None,
             estimated=eval_count is None,
         )

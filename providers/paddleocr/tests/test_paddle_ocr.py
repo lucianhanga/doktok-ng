@@ -243,3 +243,15 @@ def test_shutdown_tears_down_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     # Once closed the pool is NOT rebuilt - a page in flight at Ctrl-C can't resurrect it.
     with pytest.raises(RuntimeError, match="shut down"):
         ocr._executor()
+
+
+def test_pick_orientation_biases_to_upright_on_near_tie() -> None:
+    from doktok_provider_paddleocr.ocr import _pick_orientation
+
+    # 180 edges out 0 but within the margin -> keep upright (the reported re-OCR upside-down bug:
+    # textline-orientation makes an upright page and its 180 twin read about equally).
+    assert _pick_orientation({0: 1.0, 90: 0.2, 180: 1.05, 270: 0.2}) == 0
+    # A genuinely sideways page reads far better upright -> still rotates.
+    assert _pick_orientation({0: 0.3, 90: 0.99, 180: 0.3, 270: 0.2}) == 90
+    # A genuine upside-down page (clearly better at 180) still flips.
+    assert _pick_orientation({0: 0.5, 90: 0.2, 180: 0.9, 270: 0.2}) == 180

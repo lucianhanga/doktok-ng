@@ -36,7 +36,7 @@ class _FakeNormalizer:
 @pytest.mark.parametrize("mime", [MIME_DOCX, MIME_XLSX, MIME_PPTX])
 def test_office_doc_routes_through_normalizer_to_pdf_path(mime: str) -> None:
     normalizer = _FakeNormalizer()
-    result, _ = extract_document(
+    result, normalized_pdf = extract_document(
         mime,
         "/tmp/doc.office",
         text_extractor=_FakeText(),
@@ -47,6 +47,8 @@ def test_office_doc_routes_through_normalizer_to_pdf_path(mime: str) -> None:
     assert normalizer.calls == [("/tmp/doc.office", mime)]
     assert result.extraction_method == "pdf_text"
     assert "Hello from the office document" in result.content_md
+    # The converted PDF is returned as the normalized artifact so preview/thumbnail serve a PDF.
+    assert normalized_pdf == b"%PDF-1.4 fake"
 
 
 def test_office_doc_without_normalizer_raises() -> None:

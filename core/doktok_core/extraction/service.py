@@ -116,7 +116,7 @@ def extract_document(
         with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp.flush()
-            return _extract_pdf(
+            result, ocr_pdf = _extract_pdf(
                 tmp.name,
                 pdf_extractor,
                 ocr,
@@ -130,6 +130,10 @@ def extract_document(
                 ocr_concurrency,
                 ocr_dpi,
             )
+        # The converted PDF is the canonical viewable form, so persist it as the normalized
+        # artifact (what preview serves). If the converted PDF itself needed OCR, prefer the
+        # searchable PDF that carries the recovered text layer.
+        return result, ocr_pdf if ocr_pdf is not None else pdf_bytes
 
     if mime == MIME_PDF:
         return _extract_pdf(

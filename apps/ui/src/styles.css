@@ -2145,6 +2145,11 @@ tr.row-selected {
   min-width: 0;
 }
 
+/* Give the conversation title room to read as a section header above the transcript. */
+.chat-main .result-head {
+  margin-bottom: 1.5rem;
+}
+
 /* --- Header theme toggle (M8): sun | moon sliding switch, right of the title ----------- */
 .app-header-top {
   display: flex;

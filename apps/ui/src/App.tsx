@@ -10,10 +10,8 @@ import { EntitiesPanel } from "./EntitiesPanel";
 import { InsightsPanel } from "./InsightsPanel";
 import { JobsPanel } from "./JobsPanel";
 import { OverviewPanel } from "./OverviewPanel";
-import { SearchPanel } from "./SearchPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { ThemeToggle } from "./ThemeToggle";
-import { TokenSearchPanel } from "./TokenSearchPanel";
 
 type HealthState =
   | { kind: "loading" }
@@ -72,8 +70,6 @@ type View =
   | "status"
   | "ingestion"
   | "documents"
-  | "search"
-  | "tokensearch"
   | "chat"
   | "entities"
   | "totals"
@@ -84,8 +80,6 @@ type View =
 const TABS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "documents", label: "Documents" },
-  { id: "search", label: "Search" },
-  { id: "tokensearch", label: "Token Search" },
   { id: "chat", label: "Chat" },
   { id: "entities", label: "Entities" },
   { id: "totals", label: "Totals" },
@@ -157,8 +151,6 @@ export default function App() {
             initialNeedsAttention={docsNeedsAttention}
           />
         )}
-        {view === "search" && <SearchPanel onOpenDocument={setOpenDoc} />}
-        {view === "tokensearch" && <TokenSearchPanel onOpenDocument={setOpenDoc} />}
         {/* Chat stays MOUNTED across tab switches (hidden when inactive) so a streamed answer keeps
             running in the background and the transcript survives; an answer that finishes off-tab
             marks the Chat tab unread. */}

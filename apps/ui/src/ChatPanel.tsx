@@ -21,8 +21,13 @@ import { Markdown } from "./Markdown";
 import { loadJSON, saveJSON } from "./persist";
 
 const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
-const SOURCES_KEY = "doktok.chat.sourcesCollapsed";
 const REASONING_KEY = "doktok.chat.reasoningCollapsed";
+
+/** The shared right rail: closed, showing a turn's sources, or previewing a document. */
+type RailState =
+  | { mode: "none" }
+  | { mode: "sources"; turnIndex: number }
+  | { mode: "preview"; docId: string; from: "sources" | "citation"; turnIndex: number | null };
 
 function fmtMs(ms: number): string {
   if (ms <= 0) return "0s";
@@ -142,40 +147,21 @@ function SourceCard({
   );
 }
 
-function SourcesColumn({
+/** The ranked source cards (most relevant first), shown inside the shared right rail (M8). */
+function SourcesList({
   citations,
   onOpenDocument,
 }: {
   citations: Citation[];
   onOpenDocument?: (id: string) => void;
 }) {
-  // Order by importance (most relevant first); rank follows that order.
   const ranked = [...citations].sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0));
-  const [collapsed, setCollapsed] = useState<boolean>(() => loadJSON(SOURCES_KEY, false));
-  const toggle = () => {
-    setCollapsed((c) => {
-      saveJSON(SOURCES_KEY, !c);
-      return !c;
-    });
-  };
   return (
-    <aside className="chat-sources" aria-label="Sources">
-      <button
-        type="button"
-        className="chat-sources-toggle link-button"
-        aria-expanded={!collapsed}
-        onClick={toggle}
-      >
-        <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> Sources ({ranked.length})
-      </button>
-      {!collapsed && (
-        <ol className="chat-source-list">
-          {ranked.map((c, i) => (
-            <SourceCard key={c.chunk_id} citation={c} rank={i + 1} onOpen={onOpenDocument} />
-          ))}
-        </ol>
-      )}
-    </aside>
+    <ol className="chat-source-list">
+      {ranked.map((c, i) => (
+        <SourceCard key={c.chunk_id} citation={c} rank={i + 1} onOpen={onOpenDocument} />
+      ))}
+    </ol>
   );
 }
 
@@ -565,8 +551,8 @@ export function ChatPanel({
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
     loadJSON(SIDEBAR_KEY, false),
   );
-  // The document opened from a citation, shown in the right-hand preview drawer (M8 #9).
-  const [drawerDocId, setDrawerDocId] = useState<string | null>(null);
+  // The shared right rail: a turn's Sources list, or a document Preview (M8). One at a time.
+  const [rail, setRail] = useState<RailState>({ mode: "none" });
   // Live accumulator + abort controller PER thread key, so a background stream survives a switch.
   const liveRef = useRef<Map<string, Streaming>>(new Map());
   const controllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -734,12 +720,14 @@ export function ChatPanel({
     setStreaming(null);
     setExchanges([]);
     setErrorMsg(null);
+    setRail({ mode: "none" });
     threadRef.current = null;
     setThreadId(null);
   }
 
   function resume(id: string) {
     setErrorMsg(null);
+    setRail({ mode: "none" }); // a turnIndex from the previous thread must not leak across
     const liveForId = liveRef.current.get(id) ?? null; // re-attach if it is still streaming
     setFlag(setUnreadThreads, id, false); // opening it clears the unread badge
     getThreadMessages(id)
@@ -832,9 +820,29 @@ export function ChatPanel({
     });
   }
 
-  // Clicking a citation (a [n] marker, a source card, or an inline source) opens the document in
-  // the right-hand drawer instead of navigating away from the chat.
-  const openInDrawer = (id: string) => setDrawerDocId(id);
+  // Right-rail handlers. The "Sources (n)" chip opens a turn's sources; a citation/source-card
+  // opens the document preview. Both share one rail track (never two right columns at once).
+  const showSources = (turnIndex: number) =>
+    setRail((r) =>
+      r.mode === "sources" && r.turnIndex === turnIndex
+        ? { mode: "none" }
+        : { mode: "sources", turnIndex },
+    );
+  const openInRail = (docId: string) =>
+    setRail((r) => ({
+      mode: "preview",
+      docId,
+      from: r.mode === "sources" ? "sources" : "citation",
+      turnIndex: r.mode === "sources" ? r.turnIndex : null,
+    }));
+  const closeRail = () => setRail({ mode: "none" });
+  const backFromPreview = () =>
+    setRail((r) =>
+      r.mode === "preview" && r.from === "sources" && r.turnIndex !== null
+        ? { mode: "sources", turnIndex: r.turnIndex }
+        : { mode: "none" },
+    );
+  const railOpen = rail.mode !== "none";
 
   // Per-chat totals for the active conversation (M8 #11), from the server-computed thread figures.
   const activeThread = threads.find((t) => t.id === threadId);
@@ -847,7 +855,7 @@ export function ChatPanel({
       <div className="chat-page-head">
         <h2>Chat with your documents</h2>
       </div>
-      <div className={`chat-layout${drawerDocId ? " chat-layout-drawer" : ""}`}>
+      <div className={`chat-layout${railOpen ? " chat-layout-rail" : ""}`}>
         <ThreadList
           threads={threads}
           activeId={threadId}
@@ -870,32 +878,33 @@ export function ChatPanel({
                 </span>
               )}
             </h3>
-            {turns.length > 0 && (
-              <button type="button" className="link-button" onClick={reset}>
-                <span className="muted">New conversation</span>
-              </button>
-            )}
           </div>
 
           <ol className="chat-transcript" aria-label="Conversation">
             {turns.map((turn, i) => (
-              <li
-                key={i}
-                className={
-                  turn.citations.length > 0 ? "chat-exchange chat-turn-body" : "chat-exchange"
-                }
-              >
-                <AnswerBlock turn={turn} onOpenDocument={openInDrawer} />
+              <li key={i} className="chat-exchange">
+                <AnswerBlock turn={turn} onOpenDocument={openInRail} />
                 {turn.citations.length > 0 && (
-                  <SourcesColumn citations={turn.citations} onOpenDocument={openInDrawer} />
+                  <div className="chat-turn-meta">
+                    <button
+                      type="button"
+                      className="chat-sources-chip"
+                      aria-expanded={rail.mode === "sources" && rail.turnIndex === i}
+                      aria-controls="chat-right-rail"
+                      onClick={() => showSources(i)}
+                    >
+                      Sources ({turn.citations.length})
+                    </button>
+                  </div>
                 )}
               </li>
             ))}
           </ol>
 
-          <form onSubmit={ask} className="search-form">
-            <input
-              type="text"
+          <form onSubmit={ask} className="search-form chat-ask-form">
+            <textarea
+              className="chat-ask-input"
+              rows={3}
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               placeholder={
@@ -929,14 +938,38 @@ export function ChatPanel({
             </p>
           )}
         </div>
-        {drawerDocId && (
-          <aside className="chat-doc-drawer" aria-label="Document preview">
-            <DocumentDetail
-              key={drawerDocId}
-              id={drawerDocId}
-              onClose={() => setDrawerDocId(null)}
-              onOpenDocument={onOpenDocument}
-            />
+        {rail.mode !== "none" && (
+          <aside
+            id="chat-right-rail"
+            className="chat-right-rail"
+            aria-label={rail.mode === "preview" ? "Document preview" : "Sources"}
+          >
+            {rail.mode === "preview" ? (
+              <DocumentDetail
+                key={rail.docId}
+                id={rail.docId}
+                onClose={backFromPreview}
+                onOpenDocument={onOpenDocument}
+              />
+            ) : (
+              <div className="chat-rail-sources">
+                <div className="chat-rail-head">
+                  <h3>Sources ({turns[rail.turnIndex]?.citations.length ?? 0})</h3>
+                  <button
+                    type="button"
+                    className="chat-rail-close link-button"
+                    aria-label="Close sources"
+                    onClick={closeRail}
+                  >
+                    &times;
+                  </button>
+                </div>
+                <SourcesList
+                  citations={turns[rail.turnIndex]?.citations ?? []}
+                  onOpenDocument={openInRail}
+                />
+              </div>
+            )}
           </aside>
         )}
       </div>

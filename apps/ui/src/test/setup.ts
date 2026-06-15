@@ -1,5 +1,19 @@
 import "@testing-library/jest-dom";
 
+// jsdom does not implement matchMedia; the theme toggle uses it. Provide a no-op (dark default).
+if (typeof globalThis.matchMedia === "undefined") {
+  globalThis.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof globalThis.matchMedia;
+}
+
 // jsdom in this setup does not expose a working localStorage; provide a minimal in-memory one so
 // UI code that persists settings (and tests that assert it) works under test.
 if (typeof globalThis.localStorage === "undefined") {

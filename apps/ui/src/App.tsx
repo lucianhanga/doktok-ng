@@ -12,6 +12,7 @@ import { JobsPanel } from "./JobsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { ThemeToggle } from "./ThemeToggle";
 import { TokenSearchPanel } from "./TokenSearchPanel";
 
 type HealthState =
@@ -118,7 +119,10 @@ export default function App() {
   return (
     <main className="app">
       <header className="app-header">
-        <h1>DokTok NG</h1>
+        <div className="app-header-top">
+          <h1>DokTok NG</h1>
+          <ThemeToggle />
+        </div>
         <p className="tagline">Local-first document intelligence</p>
         <nav className="tabs" aria-label="Sections">
           {TABS.map((tab) => (

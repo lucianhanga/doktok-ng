@@ -74,6 +74,8 @@ test("streams a grounded answer with sources", async () => {
   await waitFor(() => expect(screen.getByText(/The total is 42/)).toBeInTheDocument());
   // The inline [1] marker in the answer is a clickable citation reference (M8 #9).
   expect(screen.getByTitle("Open source [1]")).toBeInTheDocument();
+  // Sources live behind the per-turn chip; opening it shows the source in the right rail.
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
@@ -240,13 +242,15 @@ test("shows the sources column with importance and opens a document", async () =
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText(/Total is 42/)).toBeInTheDocument());
 
+  // Open the per-turn Sources chip -> the shared right rail shows the ranked sources.
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(2\)/ }));
   expect(screen.getByLabelText("Sources")).toBeInTheDocument();
   expect(screen.getByText(/100% . #1/)).toBeInTheDocument();
   expect(screen.getByText(/25% . #2/)).toBeInTheDocument();
   const meters = screen.getAllByRole("meter");
   expect(meters[0].getAttribute("aria-valuenow")).toBe("100");
 
-  // Clicking a source now opens the in-chat document drawer (M8 #9), not the full-page view.
+  // Clicking a source switches the same rail to the document preview (M8 #9).
   await userEvent.click(screen.getByRole("button", { name: /top\.pdf/ }));
   expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
   // The inline [2] marker is clickable too.
@@ -323,6 +327,8 @@ test("lists saved conversations and resumes one into the transcript", async () =
   await waitFor(() => expect(screen.getByText(/prior answer/)).toBeInTheDocument());
   // Persisted reasoning + sources are restored, not lost on resume.
   expect(screen.getByText(/I weighed the invoice rows\./)).toBeInTheDocument();
+  // The restored turn's sources are reachable via its Sources chip.
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
   expect(screen.getByRole("button", { name: /inv\.pdf/ })).toBeInTheDocument();
 });
 
@@ -618,7 +624,48 @@ test("each resumed question shows its own sources, not just the last", async () 
   render(<ChatPanel />);
   await waitFor(() => expect(screen.getByText("prior")).toBeInTheDocument());
   await userEvent.click(screen.getByText("prior"));
-  // Both questions' sources are shown (per-question), not only the last turn's.
-  await waitFor(() => expect(screen.getByRole("button", { name: /alpha\.pdf/ })).toBeInTheDocument());
+  // Each turn has its OWN Sources chip (per-question), not one shared set.
+  const chips = await screen.findAllByRole("button", { name: /Sources \(1\)/ });
+  expect(chips).toHaveLength(2);
+  // First turn's chip shows alpha.pdf in the rail...
+  await userEvent.click(chips[0]);
+  expect(screen.getByRole("button", { name: /alpha\.pdf/ })).toBeInTheDocument();
+  // ...the second turn's chip shows beta.pdf (its own sources).
+  await userEvent.click(chips[1]);
   expect(screen.getByRole("button", { name: /beta\.pdf/ })).toBeInTheDocument();
+});
+
+test("the right rail toggles sources and switches to preview and back", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer [1]." }),
+        frame("sources", {
+          citations: [
+            { index: 1, document_id: "dz", chunk_id: "cz", original_filename: "z.pdf", snippet: "z" },
+          ],
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/Answer/)).toBeInTheDocument());
+
+  const chip = screen.getByRole("button", { name: /Sources \(1\)/ });
+  // Toggle the rail open (sources) and shut again.
+  await userEvent.click(chip);
+  expect(screen.getByLabelText("Sources")).toBeInTheDocument();
+  await userEvent.click(chip);
+  expect(screen.queryByLabelText("Sources")).not.toBeInTheDocument();
+
+  // Open sources, drill into a source -> preview, then Back returns to the sources list.
+  await userEvent.click(chip);
+  await userEvent.click(screen.getByRole("button", { name: /z\.pdf/ }));
+  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
+  await userEvent.click(screen.getByText(/Back to documents/));
+  expect(screen.getByLabelText("Sources")).toBeInTheDocument();
 });

@@ -10,15 +10,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections.abc import Iterator
 from datetime import date
 
-from doktok_contracts.media import ChatChunk
+from doktok_contracts.media import ChatChunk, LlmUsage
 from doktok_contracts.ports import (
     ChatModelProvider,
     Reranker,
     Retriever,
     StreamingChatModelProvider,
+    UsageReportingChatModel,
 )
 from doktok_contracts.schemas import (
     ChatEvent,
@@ -26,7 +28,9 @@ from doktok_contracts.schemas import (
     Citation,
     QueryFilters,
     RagAnswer,
+    RankedChunk,
     SearchHit,
+    TurnMetrics,
 )
 
 from doktok_core.rag.capabilities import match_capability, now_local
@@ -37,6 +41,63 @@ REFUSAL = "I could not find enough evidence in the indexed documents to answer t
 
 _MAX_CONTEXT_CHARS = 1500  # per excerpt, to bound the prompt size
 _CITATION_RE = re.compile(r"\[(\d+)\]")
+_RANKING_CAP = 20  # how many candidate chunks to surface/persist in the ranking trace (M8)
+
+
+def _last_usage(provider: object) -> LlmUsage | None:
+    """The provider's usage for its most recent call, if it reports it (M8)."""
+    if isinstance(provider, UsageReportingChatModel):
+        return provider.get_last_usage()
+    return None
+
+
+def _build_ranking(
+    selected: list[SearchHit],
+    candidates: list[SearchHit],
+    relevance: dict[str, float],
+) -> list[RankedChunk]:
+    """The ranking trace: the selected (winning) chunks in final order, then the next-best
+    non-selected candidates by RRF score, capped to keep the row small (M8 #4/#7)."""
+    out: list[RankedChunk] = []
+    seen: set[str] = set()
+    for hit in selected:
+        seen.add(hit.chunk_id)
+        out.append(
+            RankedChunk(
+                chunk_id=hit.chunk_id,
+                document_id=hit.document_id,
+                original_filename=hit.original_filename,
+                page_start=hit.page_start,
+                retrieval_score=hit.score,
+                relevance=relevance.get(hit.chunk_id),
+                selected=True,
+            )
+        )
+    extras = sorted(
+        (c for c in candidates if c.chunk_id not in seen), key=lambda c: c.score, reverse=True
+    )
+    for cand in extras:
+        if len(out) >= _RANKING_CAP:
+            break
+        out.append(
+            RankedChunk(
+                chunk_id=cand.chunk_id,
+                document_id=cand.document_id,
+                original_filename=cand.original_filename,
+                page_start=cand.page_start,
+                retrieval_score=cand.score,
+                selected=False,
+            )
+        )
+    return out[:_RANKING_CAP]
+
+
+def _mark_cited(ranking: list[RankedChunk], citations: list[Citation]) -> None:
+    """Flag the ranking entries the answer actually referenced with [n]."""
+    cited_ids = {c.chunk_id for c in citations}
+    for rc in ranking:
+        if rc.chunk_id in cited_ids:
+            rc.cited = True
 
 
 def _pack_edges_best(hits: list[SearchHit]) -> list[SearchHit]:
@@ -179,31 +240,32 @@ class DefaultRagAnswerer:
         limit: int,
         *,
         filters: QueryFilters | None = None,
-    ) -> tuple[list[SearchHit], dict[str, float], str] | None:
+    ) -> tuple[list[SearchHit], dict[str, float], str, list[RankedChunk]] | None:
         """Retrieve -> evidence floor -> rerank -> capture relevance -> pack -> build prompt.
 
-        Returns (packed_hits, relevance_by_chunk, prompt), or None to refuse (empty/no hits/too
-        weak). Shared by the one-shot and streaming answer paths. ``filters`` scope retrieval.
+        Returns (packed_hits, relevance_by_chunk, prompt, ranking), or None to refuse (empty / no
+        hits / too weak). Shared by the one-shot and streaming paths. ``filters`` scope retrieval.
         """
         if not question:
             return None
         wide = self._retrieve_k if self._reranker is not None else limit
-        hits = self._retriever.search(tenant_id, question, wide, filters=filters)
-        if not hits:
+        candidates = self._retriever.search(tenant_id, question, wide, filters=filters)
+        if not candidates:
             return None
         # Evidence floor: if even the strongest hit is weak, refuse rather than ask the model to
         # answer over thin context (deterministic; only active when min_score > 0).
-        if self._min_score > 0 and max(hit.score for hit in hits) < self._min_score:
+        if self._min_score > 0 and max(hit.score for hit in candidates) < self._min_score:
             return None
         if self._reranker is not None:
-            hits = self._reranker.rerank(question, hits, top_k=limit)
+            hits = self._reranker.rerank(question, candidates, top_k=limit)
         else:
-            hits = hits[:limit]
+            hits = candidates[:limit]
         # Capture each source's importance from the FINAL relevance order (best first) before
         # _pack_edges_best scrambles the list. Normalized rank: best = 1.0, keyed by chunk_id so it
         # survives the reordering. (M6.4)
         n = len(hits)
         relevance = {hit.chunk_id: (n - i) / n for i, hit in enumerate(hits)}
+        ranking = _build_ranking(hits, candidates, relevance)
         hits = _pack_edges_best(hits)
         prompt = _PROMPT.format(
             refusal=REFUSAL,
@@ -211,7 +273,7 @@ class DefaultRagAnswerer:
             context=self._format_context(hits),
             question=question,
         )
-        return hits, relevance, prompt
+        return hits, relevance, prompt, ranking
 
     def _answer(
         self,
@@ -227,7 +289,8 @@ class DefaultRagAnswerer:
             return RagAnswer(
                 answer=REFUSAL, grounded=False, rewritten_query=rewritten_query, filters=filters
             )
-        hits, relevance, prompt = prepared
+        hits, relevance, prompt, ranking = prepared
+        t0 = time.monotonic()
         try:
             answer = self._chat.complete(prompt).strip()
         except Exception:  # noqa: BLE001 - a model failure becomes a graceful refusal, not a 500
@@ -235,18 +298,34 @@ class DefaultRagAnswerer:
             return RagAnswer(
                 answer=REFUSAL, grounded=False, rewritten_query=rewritten_query, filters=filters
             )
+        total_ms = round((time.monotonic() - t0) * 1000)
 
         if not answer or answer == REFUSAL:
             return RagAnswer(
                 answer=REFUSAL, grounded=False, rewritten_query=rewritten_query, filters=filters
             )
 
+        citations = self._citations(answer, hits, relevance)
+        _mark_cited(ranking, citations)
+        usage = _last_usage(self._chat)
+        metrics = TurnMetrics(
+            prompt_tokens=usage.prompt_tokens if usage else 0,
+            answer_tokens=usage.answer_tokens if usage else 0,
+            reasoning_tokens=usage.reasoning_tokens if usage else 0,
+            answer_ms=usage.wall_ms if usage else total_ms,
+            total_ms=total_ms,
+            reused_previous_results=rewritten_query is not None,
+            rewritten_query=rewritten_query,
+            estimated=usage.estimated if usage else True,
+        )
         return RagAnswer(
             answer=answer,
-            citations=self._citations(answer, hits, relevance),
+            citations=citations,
             grounded=True,
             rewritten_query=rewritten_query,
             filters=filters,
+            ranking=ranking,
+            metrics=metrics,
         )
 
     def answer_thread_stream(
@@ -263,6 +342,7 @@ class DefaultRagAnswerer:
         events appear only when reasoning is on and the model emits thinking. ``reasoning=None``
         follows the chat model's configured reasoning (Settings); True/False overrides it."""
         question = question.strip()
+        turn_start = time.monotonic()
         # Deterministic capability on the raw question (zero model calls) - e.g. current time.
         direct = match_capability(question)
         if direct is not None:
@@ -274,8 +354,12 @@ class DefaultRagAnswerer:
 
         yield ChatEvent(type="step", delta="Understanding your question")
         standalone, filters = self._understand(history, question)
+        understand_usage = _last_usage(self._chat)
         rewritten = standalone if standalone != question else None
         question = standalone
+        if rewritten is not None:
+            reused = f"Considered the conversation; searching: {rewritten}"
+            yield ChatEvent(type="step", delta=reused)
         yield ChatEvent(type="meta", rewritten_query=rewritten, filters=filters)
 
         # Catch a follow-up the rewrite turned into a capability question (e.g. "and the time?").
@@ -293,15 +377,19 @@ class DefaultRagAnswerer:
             yield ChatEvent(type="sources", citations=[])
             yield ChatEvent(type="done", grounded=False)
             return
-        hits, relevance, prompt = prepared
+        hits, relevance, prompt, ranking = prepared
         yield ChatEvent(type="step", delta="Composing the answer")
 
         answer_parts: list[str] = []
+        compose_start = time.monotonic()
+        first_answer_ts: float | None = None
         try:
             for chunk in self._stream(prompt, reasoning):
                 if chunk.kind == "reasoning":
                     yield ChatEvent(type="reasoning", delta=chunk.text)
                 else:
+                    if first_answer_ts is None:
+                        first_answer_ts = time.monotonic()
                     answer_parts.append(chunk.text)
                     yield ChatEvent(type="token", delta=chunk.text)
         except Exception:  # noqa: BLE001 - a mid-stream model failure degrades to a refusal
@@ -310,10 +398,29 @@ class DefaultRagAnswerer:
             yield ChatEvent(type="done", grounded=False)
             return
 
+        end_ts = time.monotonic()
         answer = "".join(answer_parts).strip()
         grounded = bool(answer) and answer != REFUSAL
         citations = self._citations(answer, hits, relevance) if grounded else []
+        _mark_cited(ranking, citations)
+        usage = _last_usage(self._chat)
+        reasoning_ms = round(((first_answer_ts or end_ts) - compose_start) * 1000)
+        answer_ms = round((end_ts - (first_answer_ts or end_ts)) * 1000)
+        metrics = TurnMetrics(
+            prompt_tokens=usage.prompt_tokens if usage else 0,
+            answer_tokens=usage.answer_tokens if usage else 0,
+            reasoning_tokens=usage.reasoning_tokens if usage else 0,
+            overhead_tokens=understand_usage.total_tokens if understand_usage else 0,
+            reasoning_ms=reasoning_ms,
+            answer_ms=answer_ms,
+            total_ms=round((end_ts - turn_start) * 1000),
+            reused_previous_results=rewritten is not None,
+            rewritten_query=rewritten,
+            estimated=(usage.estimated if usage else True),
+        )
+        yield ChatEvent(type="ranking", ranking=ranking)
         yield ChatEvent(type="sources", citations=citations)
+        yield ChatEvent(type="metrics", metrics=metrics)
         yield ChatEvent(type="done", grounded=grounded)
 
     def _stream(self, prompt: str, reasoning: bool | None) -> Iterator[ChatChunk]:

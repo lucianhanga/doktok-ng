@@ -37,10 +37,12 @@ from doktok_contracts.schemas import (
     OcrSettings,
     ProjectionPoint,
     ProjectionRequest,
+    RankedChunk,
     SortDir,
     StatsSummary,
     TokenMatch,
     TokenSuggestion,
+    TurnMetrics,
 )
 from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
@@ -1706,12 +1708,26 @@ class PostgresChatThreadRepository:
             message_count=0,
         )
 
+    # Per-thread token total summed from each assistant message's metrics jsonb (M8 #11).
+    _TOKENS_SUM = (
+        "COALESCE(SUM("
+        "COALESCE((m.metrics->>'prompt_tokens')::int,0)"
+        "+COALESCE((m.metrics->>'answer_tokens')::int,0)"
+        "+COALESCE((m.metrics->>'reasoning_tokens')::int,0)"
+        "+COALESCE((m.metrics->>'overhead_tokens')::int,0)),0)"
+    )
+    _MS_SUM = "COALESCE(SUM(COALESCE((m.metrics->>'total_ms')::int,0)),0)"
+
     def list_threads(self, tenant_id: str, *, limit: int = 50) -> list[ChatThread]:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
                 "SELECT t.id, t.title, t.title_source, t.created_at, t.updated_at, "
-                "(SELECT count(*) FROM chat_messages m WHERE m.thread_id = t.id) AS message_count "
+                "(SELECT count(*) FROM chat_messages m WHERE m.thread_id = t.id) AS message_count, "
+                f"(SELECT {self._TOKENS_SUM} FROM chat_messages m WHERE m.thread_id = t.id) "
+                "AS total_tokens, "
+                f"(SELECT {self._MS_SUM} FROM chat_messages m WHERE m.thread_id = t.id) "
+                "AS total_inference_ms "
                 "FROM chat_threads t WHERE t.tenant_id=%s ORDER BY t.updated_at DESC LIMIT %s",
                 (tenant_id, limit),
             ).fetchall()
@@ -1723,29 +1739,35 @@ class PostgresChatThreadRepository:
                 created_at=r["created_at"],
                 updated_at=r["updated_at"],
                 message_count=r["message_count"],
+                total_tokens=r["total_tokens"],
+                total_inference_ms=r["total_inference_ms"],
             )
             for r in rows
         ]
+
+    @staticmethod
+    def _to_message(r: dict[str, Any]) -> ChatMessage:
+        metrics = r.get("metrics") or None
+        return ChatMessage(
+            id=r["id"],
+            role=r["role"],
+            content=r["content"],
+            created_at=r["created_at"],
+            reasoning=r["reasoning"] or "",
+            citations=[Citation(**c) for c in (r["citations"] or [])],
+            ranking=[RankedChunk(**rc) for rc in (r.get("ranking") or [])],
+            metrics=TurnMetrics(**metrics) if metrics else None,
+        )
 
     def get_messages(self, tenant_id: str, thread_id: str) -> list[ChatMessage]:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT id, role, content, created_at, reasoning, citations FROM chat_messages "
-                "WHERE tenant_id=%s AND thread_id=%s ORDER BY created_at, id",
+                "SELECT id, role, content, created_at, reasoning, citations, ranking, metrics "
+                "FROM chat_messages WHERE tenant_id=%s AND thread_id=%s ORDER BY created_at, id",
                 (tenant_id, thread_id),
             ).fetchall()
-        return [
-            ChatMessage(
-                id=r["id"],
-                role=r["role"],
-                content=r["content"],
-                created_at=r["created_at"],
-                reasoning=r["reasoning"] or "",
-                citations=[Citation(**c) for c in (r["citations"] or [])],
-            )
-            for r in rows
-        ]
+        return [self._to_message(r) for r in rows]
 
     def append_message(
         self,
@@ -1756,17 +1778,31 @@ class PostgresChatThreadRepository:
         *,
         reasoning: str = "",
         citations: list[Citation] | None = None,
+        ranking: list[RankedChunk] | None = None,
+        metrics: TurnMetrics | None = None,
     ) -> ChatMessage:
         message_id = uuid.uuid4().hex
         citation_json = Json([c.model_dump() for c in (citations or [])])
+        ranking_json = Json([rc.model_dump() for rc in (ranking or [])])
+        metrics_json = Json(metrics.model_dump() if metrics is not None else {})
         with self._db.connection() as conn, conn.transaction():
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
                 "INSERT INTO chat_messages "
-                "(id, thread_id, tenant_id, role, content, reasoning, citations) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                "RETURNING id, role, content, created_at, reasoning, citations",
-                (message_id, thread_id, tenant_id, role, content, reasoning, citation_json),
+                "(id, thread_id, tenant_id, role, content, reasoning, citations, ranking, metrics) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING id, role, content, created_at, reasoning, citations, ranking, metrics",
+                (
+                    message_id,
+                    thread_id,
+                    tenant_id,
+                    role,
+                    content,
+                    reasoning,
+                    citation_json,
+                    ranking_json,
+                    metrics_json,
+                ),
             ).fetchone()
             # Bump the thread's activity time; seed the title from this message only while it is
             # still auto (a manual rename sets title_source='manual' and is never overwritten).
@@ -1778,14 +1814,7 @@ class PostgresChatThreadRepository:
                 (content, thread_id, tenant_id),
             )
         assert row is not None
-        return ChatMessage(
-            id=row["id"],
-            role=row["role"],
-            content=row["content"],
-            created_at=row["created_at"],
-            reasoning=row["reasoning"] or "",
-            citations=[Citation(**c) for c in (row["citations"] or [])],
-        )
+        return self._to_message(row)
 
     def thread_exists(self, tenant_id: str, thread_id: str) -> bool:
         with self._db.connection() as conn:

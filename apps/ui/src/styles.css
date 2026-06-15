@@ -702,17 +702,20 @@ table.jobs td {
 .feature-chips .feat-done {
   background: rgba(46, 160, 67, 0.18);
   border-color: rgba(46, 160, 67, 0.5);
+  color: var(--success, #3fb950);
 }
 
 .feature-chips .feat-failed {
   background: rgba(220, 60, 60, 0.18);
   border-color: rgba(220, 60, 60, 0.5);
+  color: var(--danger, #d9534f);
 }
 
 .feature-chips .feat-pending,
 .feature-chips .feat-running {
   background: rgba(255, 196, 0, 0.18);
   border-color: rgba(255, 196, 0, 0.5);
+  color: var(--warning, #d6a700);
 }
 
 .doc-summary p {

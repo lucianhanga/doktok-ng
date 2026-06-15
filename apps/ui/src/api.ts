@@ -120,6 +120,7 @@ export interface DocumentQuery {
   limit?: number;
   sort?: DocumentSort;
   dir?: SortDir;
+  title?: string;
   tokens?: string[];
   tokenMatch?: TokenMatch;
 }
@@ -137,6 +138,7 @@ export async function fetchDocuments(
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.sort) params.set("sort", opts.sort);
   if (opts?.dir) params.set("dir", opts.dir);
+  if (opts?.title?.trim()) params.set("title", opts.title.trim());
   if (opts?.tokenMatch) params.set("token_match", opts.tokenMatch);
   (opts?.tokens ?? []).forEach((t) => params.append("token", t));
   const qs = params.toString();

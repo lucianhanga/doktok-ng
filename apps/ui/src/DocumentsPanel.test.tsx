@@ -269,6 +269,22 @@ test("sort control changes the documents query", async () => {
   });
 });
 
+test("typing in the title filter narrows the query", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "swm.pdf", title: "SWM Rechnung" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("swm.pdf")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText("Filter by title"), { target: { value: "rechnung" } });
+
+  await waitFor(() => {
+    const calledWithTitle = fetchMock.mock.calls.some((call) => {
+      const url = String(call[0]);
+      return url.includes("/api/v1/documents?") && url.includes("title=rechnung");
+    });
+    expect(calledWithTitle).toBe(true);
+  });
+});
+
 test("adding a token filter narrows the query", async () => {
   const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
   render(<DocumentsPanel />);

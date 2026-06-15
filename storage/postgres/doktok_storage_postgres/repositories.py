@@ -241,6 +241,13 @@ _SORT_EXPR: dict[DocumentSort, tuple[str, bool, str]] = {
 }
 
 
+def _like_contains(value: str) -> str:
+    """A case-insensitive LIKE pattern matching ``value`` as a literal substring (wildcards in the
+    user's input are escaped so '50%' or 'a_b' match literally; backslash is the ESCAPE char)."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _doc_filter_sql(
     tenant_id: str,
     *,
@@ -248,21 +255,25 @@ def _doc_filter_sql(
     category: str | None,
     needs_attention: bool,
     unidentifiable: bool | None,
+    title: str | None,
     tokens: tuple[str, ...],
     token_type: EntityType | None,
     token_match: TokenMatch,
 ) -> tuple[str, dict[str, Any]]:
     """Build the shared document-filter WHERE clause (status + category + needs-attention +
-    unidentifiable + tokens) and its parameters. Used by both ``list_documents`` (adds keyset +
-    order) and ``list_document_ids``. All values are parameterized; tokens go in as a single
-    ``text[]``."""
+    unidentifiable + title + tokens) and its parameters. Used by both ``list_documents`` (adds
+    keyset + order) and ``list_document_ids``. All values are parameterized; tokens go in as a
+    single ``text[]``."""
     distinct_tokens = tuple(dict.fromkeys(tokens))  # dedupe, keep order
+    title_clean = title.strip() if title else None
     params: dict[str, Any] = {
         "tenant": tenant_id,
         "status": status.value if status else None,
         "category": category,
         "needs_attention": needs_attention,
         "unidentifiable": unidentifiable,
+        "title": title_clean,
+        "title_like": _like_contains(title_clean) if title_clean else None,
         "tokens": list(distinct_tokens),
         "token_type": token_type.value if token_type else None,
         "token_count": len(distinct_tokens),
@@ -270,6 +281,7 @@ def _doc_filter_sql(
     where = (
         "d.tenant_id = %(tenant)s "
         "AND (%(status)s::text IS NULL OR d.status = %(status)s) "
+        "AND (%(title)s::text IS NULL OR d.title ILIKE %(title_like)s) "
         "AND (%(category)s::text IS NULL OR EXISTS ("
         "  SELECT 1 FROM document_category_links l JOIN categories c ON c.id = l.category_id "
         "  WHERE l.document_id = d.id AND l.tenant_id = d.tenant_id "
@@ -423,6 +435,7 @@ class PostgresDocumentRepository:
         unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
         direction: SortDir = SortDir.DESC,
+        title: str | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
@@ -433,6 +446,7 @@ class PostgresDocumentRepository:
             category=category,
             needs_attention=needs_attention,
             unidentifiable=unidentifiable,
+            title=title,
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,
@@ -490,6 +504,7 @@ class PostgresDocumentRepository:
         category: str | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
+        title: str | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
@@ -501,6 +516,7 @@ class PostgresDocumentRepository:
             category=category,
             needs_attention=needs_attention,
             unidentifiable=unidentifiable,
+            title=title,
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,

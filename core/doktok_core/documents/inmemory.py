@@ -144,10 +144,12 @@ class InMemoryDocumentRepository:
         category: str | None,
         needs_attention: bool,
         unidentifiable: bool | None,
+        title: str | None,
         tokens: tuple[str, ...],
         token_type: EntityType | None,
         token_match: TokenMatch,
     ) -> list[Document]:
+        title_clean = title.strip().lower() if title and title.strip() else None
         return [
             d
             for d in self._docs.values()
@@ -155,6 +157,7 @@ class InMemoryDocumentRepository:
             and (status is None or d.status == status)
             and (not needs_attention or d.id in self.attention_ids)
             and (category is None or category in self.categories_by_doc.get(d.id, set()))
+            and (title_clean is None or (d.title is not None and title_clean in d.title.lower()))
             # True = only flagged; False = exclude flagged (NULL 'unassessed' stays shown) - matches
             # the Postgres `IS NOT TRUE` semantics.
             and (
@@ -176,6 +179,7 @@ class InMemoryDocumentRepository:
         unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
         direction: SortDir = SortDir.DESC,
+        title: str | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
@@ -186,6 +190,7 @@ class InMemoryDocumentRepository:
             category=category,
             needs_attention=needs_attention,
             unidentifiable=unidentifiable,
+            title=title,
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,
@@ -236,6 +241,7 @@ class InMemoryDocumentRepository:
         category: str | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
+        title: str | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
@@ -249,6 +255,7 @@ class InMemoryDocumentRepository:
                 category=category,
                 needs_attention=needs_attention,
                 unidentifiable=unidentifiable,
+                title=title,
                 tokens=tokens,
                 token_type=token_type,
                 token_match=token_match,

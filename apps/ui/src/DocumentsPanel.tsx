@@ -385,6 +385,45 @@ function TokenFilterBar({
   );
 }
 
+function TitleFilterBar({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [input, setInput] = useState(value);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Follow external changes (e.g. a cleared filter) without clobbering what the user is typing.
+  useEffect(() => {
+    setInput((cur) => (cur.trim() === value ? cur : value));
+  }, [value]);
+
+  // Debounce so each keystroke does not fire a list reload; commit the trimmed value.
+  useEffect(() => {
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => onChange(input.trim()), 300);
+    return () => {
+      if (debounce.current) clearTimeout(debounce.current);
+    };
+  }, [input, onChange]);
+
+  return (
+    <div className="token-bar" role="search">
+      <span className="token-input-wrap">
+        <input
+          type="text"
+          aria-label="Filter by title"
+          placeholder="Filter by title…"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
+        {input && (
+          <button type="button" className="token-chip" aria-label="Clear title filter"
+            onClick={() => setInput("")}>
+            clear ×
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
+
 export function DocumentsPanel({
   onOpenDocument,
   initialNeedsAttention = false,
@@ -401,6 +440,7 @@ export function DocumentsPanel({
   const [view, setView] = useState<View>("list");
   const [sort, setSort] = useState<DocumentSort>("acquired");
   const [dir, setDir] = useState<SortDir>("desc");
+  const [title, setTitle] = useState("");
   const [tokens, setTokens] = useState<string[]>([]);
   const [tokenMatch, setTokenMatch] = useState<TokenMatch>("all");
   const [thumbSize, setThumbSize] = useState<ThumbSize>(() => readThumbSize());
@@ -421,6 +461,7 @@ export function DocumentsPanel({
       unidentifiable: unidentifiable || undefined,
       sort,
       dir,
+      title: title || undefined,
       tokens,
       tokenMatch,
     };
@@ -459,7 +500,18 @@ export function DocumentsPanel({
       if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
       setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
     });
-  }, [category, status, needsAttention, unidentifiable, sort, dir, tokens, tokenMatch, windowSize]);
+  }, [
+    category,
+    status,
+    needsAttention,
+    unidentifiable,
+    sort,
+    dir,
+    title,
+    tokens,
+    tokenMatch,
+    windowSize,
+  ]);
 
   useEffect(load, [load]);
   useInterval(load, 4000);
@@ -468,7 +520,7 @@ export function DocumentsPanel({
   useEffect(() => {
     setWindowSize(PAGE_SIZE);
     lastToggled.current = null;
-  }, [category, status, needsAttention, unidentifiable, sort, dir, tokens, tokenMatch]);
+  }, [category, status, needsAttention, unidentifiable, sort, dir, title, tokens, tokenMatch]);
 
   useEffect(() => persistThumbSize(thumbSize), [thumbSize]);
 
@@ -672,6 +724,8 @@ export function DocumentsPanel({
         <SortControl sort={sort} dir={dir} onSort={setSort} onDir={setDir} />
         {view === "thumbnails" && <ThumbSizeControl size={thumbSize} onChange={setThumbSize} />}
       </div>
+
+      <TitleFilterBar value={title} onChange={setTitle} />
 
       <TokenFilterBar
         tokens={tokens}

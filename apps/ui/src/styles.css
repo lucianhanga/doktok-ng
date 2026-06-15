@@ -1506,9 +1506,29 @@ tr.row-selected {
 .chat-answer-block {
   max-width: 75ch;
 }
+/* Question header row: the question (clamped to a few lines) on the left, its actions (Sources
+   chip, edit, delete) right-justified on the same level. */
+.chat-question-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
 .chat-question {
   font-weight: 600;
   margin: 0;
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chat-question-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 .chat-rewritten {
   margin: 0;
@@ -2013,14 +2033,8 @@ tr.row-selected {
   color: var(--muted, #8b97a8);
 }
 
-/* The right-justified "Sources (n)" chip beneath an answer (M8). */
-.chat-turn-meta {
-  display: flex;
-  margin-top: 0.2rem;
-}
-
+/* The "Sources (n)" chip + edit/delete actions on the question row (M8). */
 .chat-sources-chip {
-  margin-left: auto;
   padding: 0.2rem 0.7rem;
   border: 1px solid var(--border, #2a3342);
   border-radius: 999px;

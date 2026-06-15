@@ -286,9 +286,13 @@ function ActivityPanel({
 function AnswerBlock({
   turn,
   onOpenDocument,
+  sourcesActive = false,
+  onShowSources,
 }: {
   turn: TurnView;
   onOpenDocument?: (id: string) => void;
+  sourcesActive?: boolean;
+  onShowSources?: () => void;
 }) {
   // While streaming, the caret sits in the activity window until answer tokens begin, then moves
   // to the answer below.
@@ -305,7 +309,24 @@ function AnswerBlock({
       : undefined;
   return (
     <div className="chat-answer-block">
-      <p className="chat-question">{turn.question}</p>
+      <div className="chat-question-row">
+        <p className="chat-question" title={turn.question}>
+          {turn.question}
+        </p>
+        <div className="chat-question-actions">
+          {turn.citations.length > 0 && onShowSources && (
+            <button
+              type="button"
+              className="chat-sources-chip"
+              aria-expanded={sourcesActive}
+              aria-controls="chat-right-rail"
+              onClick={onShowSources}
+            >
+              Sources ({turn.citations.length})
+            </button>
+          )}
+        </div>
+      </div>
       {turn.rewrittenQuery && (
         <p className="muted chat-rewritten">searched for: {turn.rewrittenQuery}</p>
       )}
@@ -883,20 +904,12 @@ export function ChatPanel({
           <ol className="chat-transcript" aria-label="Conversation">
             {turns.map((turn, i) => (
               <li key={i} className="chat-exchange">
-                <AnswerBlock turn={turn} onOpenDocument={openInRail} />
-                {turn.citations.length > 0 && (
-                  <div className="chat-turn-meta">
-                    <button
-                      type="button"
-                      className="chat-sources-chip"
-                      aria-expanded={rail.mode === "sources" && rail.turnIndex === i}
-                      aria-controls="chat-right-rail"
-                      onClick={() => showSources(i)}
-                    >
-                      Sources ({turn.citations.length})
-                    </button>
-                  </div>
-                )}
+                <AnswerBlock
+                  turn={turn}
+                  onOpenDocument={openInRail}
+                  sourcesActive={rail.mode === "sources" && rail.turnIndex === i}
+                  onShowSources={() => showSources(i)}
+                />
               </li>
             ))}
           </ol>

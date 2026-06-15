@@ -97,6 +97,9 @@ function SourceCard({
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const label = citation.original_filename ?? citation.title ?? citation.document_id.slice(0, 8);
+  // Show the document title too (besides the filename) when it adds information.
+  const subtitle =
+    citation.title && citation.title !== citation.original_filename ? citation.title : null;
   const pct = citation.relevance != null ? Math.round(citation.relevance * 100) : null;
   return (
     <li>
@@ -141,6 +144,7 @@ function SourceCard({
               [{citation.index}] {label}
               {citation.page_start ? <span className="muted"> p.{citation.page_start}</span> : null}
             </span>
+            {subtitle && <span className="chat-source-doctitle">{subtitle}</span>}
             {citation.snippet && <span className="snippet">{citation.snippet}</span>}
           </span>
         </span>

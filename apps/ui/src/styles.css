@@ -1680,6 +1680,14 @@ tr.row-selected {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.chat-source-doctitle {
+  font-size: 0.74rem;
+  color: var(--muted, #8b97a8);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .chat-source-card .snippet {
   font-size: 0.72rem;
   color: var(--muted, #8b97a8);

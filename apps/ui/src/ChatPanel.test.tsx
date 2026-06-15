@@ -71,7 +71,9 @@ test("streams a grounded answer with sources", async () => {
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
-  await waitFor(() => expect(screen.getByText("The total is 42 [1].")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/The total is 42/)).toBeInTheDocument());
+  // The inline [1] marker in the answer is a clickable citation reference (M8 #9).
+  expect(screen.getByTitle("Open source [1]")).toBeInTheDocument();
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
@@ -236,7 +238,7 @@ test("shows the sources column with importance and opens a document", async () =
   render(<ChatPanel onOpenDocument={onOpen} />);
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-  await waitFor(() => expect(screen.getByText("Total is 42 [1][2].")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/Total is 42/)).toBeInTheDocument());
 
   expect(screen.getByLabelText("Sources")).toBeInTheDocument();
   expect(screen.getByText(/100% . #1/)).toBeInTheDocument();
@@ -244,8 +246,11 @@ test("shows the sources column with importance and opens a document", async () =
   const meters = screen.getAllByRole("meter");
   expect(meters[0].getAttribute("aria-valuenow")).toBe("100");
 
+  // Clicking a source now opens the in-chat document drawer (M8 #9), not the full-page view.
   await userEvent.click(screen.getByRole("button", { name: /top\.pdf/ }));
-  expect(onOpen).toHaveBeenCalledWith("d2");
+  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
+  // The inline [2] marker is clickable too.
+  expect(screen.getByTitle("Open source [2]")).toBeInTheDocument();
 });
 
 test("flags unread when an answer finishes while the panel is inactive (off-tab)", async () => {
@@ -315,7 +320,7 @@ test("lists saved conversations and resumes one into the transcript", async () =
   // The saved thread shows in the sidebar; clicking it restores the conversation.
   await waitFor(() => expect(screen.getByText("prior question")).toBeInTheDocument());
   await userEvent.click(screen.getByText("prior question"));
-  await waitFor(() => expect(screen.getByText("prior answer [1].")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/prior answer/)).toBeInTheDocument());
   // Persisted reasoning + sources are restored, not lost on resume.
   expect(screen.getByText(/I weighed the invoice rows\./)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /inv\.pdf/ })).toBeInTheDocument();
@@ -452,4 +457,30 @@ test("collapses and expands the conversations sidebar", async () => {
   expect(screen.queryByText("+ New conversation")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Expand conversations" }));
   expect(screen.getByText("+ New conversation")).toBeInTheDocument();
+});
+
+test("clicking an inline [n] marker opens the document drawer", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("token", { delta: "The answer is 42 [1]." }),
+        frame("sources", {
+          citations: [
+            { index: 1, document_id: "d9", chunk_id: "c9", original_filename: "src.pdf", snippet: "x" },
+          ],
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByTitle("Open source [1]")).toBeInTheDocument());
+
+  expect(screen.queryByLabelText("Document preview")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByTitle("Open source [1]"));
+  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
 });

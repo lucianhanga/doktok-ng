@@ -60,6 +60,15 @@ class ExtractionResult:
     # born-digital text or the Ollama OCR path). Persisted to content.json. Empty = no layout.
     page_layouts: list[PageLayout | None] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # Some scanned/OCR'd PDFs yield text with NUL (0x00) bytes; Postgres text columns reject
+        # them, which otherwise fails chunk/entity indexing with "indexing_error". Strip at the
+        # source so content.md/json, chunks, entities and embeddings are all clean.
+        if "\x00" in self.content_md:
+            self.content_md = self.content_md.replace("\x00", "")
+        if any("\x00" in p for p in self.pages):
+            self.pages = [p.replace("\x00", "") for p in self.pages]
+
 
 def _pdf_markdown(pages: list[str]) -> str:
     return "\n\n".join(f"## Page {i}\n\n{page.strip()}" for i, page in enumerate(pages, start=1))

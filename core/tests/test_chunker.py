@@ -29,3 +29,11 @@ def test_deterministic() -> None:
 
 def test_blank_text_yields_no_chunks() -> None:
     assert FixedWindowChunker().chunk("   \n  ") == []
+
+
+def test_strips_nul_bytes() -> None:
+    # NUL (0x00) bytes from some OCR'd PDFs must be removed: Postgres text columns reject them.
+    chunks = FixedWindowChunker().chunk("Invoice\x00 total\x00 42")
+    assert chunks
+    assert all("\x00" not in c.text for c in chunks)
+    assert chunks[0].text == "Invoice total 42"

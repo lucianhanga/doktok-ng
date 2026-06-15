@@ -272,6 +272,17 @@ class AuditEvent(BaseModel):
     job_id: str | None = None
     timestamp: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Enhanced activity log (full lifecycle). Defaults keep older call sites valid.
+    severity: str = "info"  # info | warning | error
+    phase: str = ""  # lifecycle phase: intake/extract/enrich/index/reconcile/user/delete
+    description: str = ""  # human-readable one-line summary for the activity table
+    actor_kind: str = "worker"  # worker | user | system
+    record_kind: str | None = None  # which related record changed (metadata/category/entity/...)
+    record_id: str | None = None
+    # Document identity snapshot (captured at write time) so a row stays readable after the
+    # document is deleted - the activity row has no FK and survives the document's cascade delete.
+    doc_filename: str | None = None
+    doc_title: str | None = None
 
 
 class EntitySummary(BaseModel):

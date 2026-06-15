@@ -84,6 +84,28 @@ def test_unidentifiable_filter() -> None:
     assert next(d for d in no_filter["items"] if d["id"] == "u")["unidentifiable"] is True
 
 
+def test_title_filter_is_case_insensitive_substring() -> None:
+    client = _client(
+        _repo(
+            _doc("a", title="Jahresrechnung M-Strom 2021"),
+            _doc("b", title="Stromvertrag Anhang"),
+            _doc("c", title="Invoice 2022"),
+            _doc("n", title=None),
+        )
+    )
+
+    # Substring, case-insensitive: matches both 'M-Strom' and 'Stromvertrag'.
+    hits = client.get("/api/v1/documents?title=strom", headers=AUTH).json()
+    assert {d["id"] for d in hits["items"]} == {"a", "b"} and hits["total"] == 2
+
+    one = client.get("/api/v1/documents?title=invoice", headers=AUTH).json()
+    assert [d["id"] for d in one["items"]] == ["c"]
+
+    # No filter returns everything (including the null-title doc).
+    allp = client.get("/api/v1/documents", headers=AUTH).json()
+    assert {d["id"] for d in allp["items"]} == {"a", "b", "c", "n"}
+
+
 def test_sort_by_created_date_desc_nulls_last() -> None:
     a = _doc("a", document_date=date(2024, 1, 10))
     b = _doc("b", document_date=date(2024, 3, 1))

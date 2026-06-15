@@ -93,6 +93,7 @@ class DocumentRepository(Protocol):
         unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
         direction: SortDir = SortDir.DESC,
+        title: str | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
@@ -100,7 +101,8 @@ class DocumentRepository(Protocol):
         """Keyset-paginated documents ordered by ``sort``/``direction`` with ``id`` as tie-breaker.
 
         ``cursor`` is the ``ListAnchor`` of the last row already seen (None = first page); it must
-        match the requested ``sort``/``direction``. Null sort values always sort last. ``tokens``
+        match the requested ``sort``/``direction``. Null sort values always sort last. ``title``
+        keeps only documents whose title contains it (case-insensitive substring). ``tokens``
         keeps only documents carrying those entity/keyword values (combined per ``token_match``,
         optionally constrained to ``token_type``); ``needs_attention`` keeps documents with a
         non-done feature; ``category`` keeps documents linked to that active category. All filters
@@ -116,6 +118,7 @@ class DocumentRepository(Protocol):
         category: str | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
+        title: str | None = None,
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,

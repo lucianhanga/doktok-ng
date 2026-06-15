@@ -13,8 +13,10 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
-from doktok_contracts.ports import FeatureProcessor, FeatureRepository
-from doktok_contracts.schemas import DocumentFeature
+from doktok_contracts.ports import AuditLogRepository, FeatureProcessor, FeatureRepository
+from doktok_contracts.schemas import AuditEventType, DocumentFeature
+
+from doktok_core.audit.logger import record_activity
 
 logger = logging.getLogger("doktok.features")
 
@@ -38,8 +40,10 @@ class FeatureReconciler:
         max_per_pass: int = 1000,
         concurrency: int = 1,
         clock: Callable[[], datetime] = _utcnow,
+        audit_log: AuditLogRepository | None = None,
     ) -> None:
         self._repo = feature_repo
+        self._audit_log = audit_log
         self._processors = {p.name: p for p in processors}
         self._registered = [(p.name, p.version) for p in processors]
         # (feature, prerequisite) edges: a stage is only claimed once each prerequisite is done.
@@ -88,6 +92,14 @@ class FeatureReconciler:
         try:
             processor.process(tenant_id, row.document_id)
             self._repo.mark_done(row.id, feature_version=processor.version)
+            self._record(
+                tenant_id,
+                AuditEventType.FEATURE_COMPLETED,
+                row,
+                severity="info",
+                description=f"{row.feature} completed",
+                details={"feature": row.feature, "version": processor.version},
+            )
         except Exception as exc:  # noqa: BLE001 - a feature failure retries, never crashes
             backoff = self._backoff_base * (2 ** max(0, row.attempts - 1))
             self._repo.mark_failed(
@@ -102,6 +114,42 @@ class FeatureReconciler:
                 row.attempts,
                 exc,
             )
+            self._record(
+                tenant_id,
+                AuditEventType.FEATURE_FAILED,
+                row,
+                severity="error",
+                description=f"{row.feature} failed: {exc}"[:240],
+                details={"feature": row.feature, "error": str(exc), "attempt": row.attempts},
+            )
+
+    def _record(
+        self,
+        tenant_id: str,
+        event_type: AuditEventType,
+        row: DocumentFeature,
+        *,
+        severity: str,
+        description: str,
+        details: dict[str, object],
+    ) -> None:
+        """Emit one activity row for a feature run (non-fatal: never breaks reconciliation)."""
+        if self._audit_log is None:
+            return
+        record_activity(
+            self._audit_log,
+            tenant_id,
+            event_type,
+            actor="reconciler",
+            actor_kind="worker",
+            document_id=row.document_id,
+            severity=severity,
+            phase="enrich",
+            description=description,
+            record_kind="feature",
+            record_id=row.feature,
+            details=details,
+        )
 
     def _drain(self, tenant_id: str) -> int:
         if self._concurrency == 1:

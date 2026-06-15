@@ -364,6 +364,7 @@ def build_services(
         processors,
         tenant_ids(settings),
         concurrency=reconcile_concurrency,
+        audit_log=audit_log,
     )
 
     # Insights embedding map (ADR-0016, M7.1): a tenant-aggregate projection job, drained from the

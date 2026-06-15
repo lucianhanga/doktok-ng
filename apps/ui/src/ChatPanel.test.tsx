@@ -165,8 +165,8 @@ test("requests reasoning by default and renders it in a collapsible panel", asyn
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   await waitFor(() => expect(screen.getByText("It is 42 [1].")).toBeInTheDocument());
-  // The reasoning lives behind a disclosure summary.
-  expect(screen.getByText("Reasoning")).toBeInTheDocument();
+  // The reasoning shows in the activity window.
+  expect(screen.getByText(/Reasoning & steps/i)).toBeInTheDocument();
   expect(screen.getByText(/Let me check the invoice totals\./)).toBeInTheDocument();
   // The stream request asked the model to think.
   expect(JSON.parse(String(streamInit?.body)).reasoning).toBe(true);
@@ -279,7 +279,16 @@ test("lists saved conversations and resumes one into the transcript", async () =
         return new Response(
           JSON.stringify([
             { id: "m1", role: "user", content: "prior question", created_at: "2026-06-14T00:00:00Z" },
-            { id: "m2", role: "assistant", content: "prior answer [1].", created_at: "2026-06-14T00:00:01Z" },
+            {
+              id: "m2",
+              role: "assistant",
+              content: "prior answer [1].",
+              created_at: "2026-06-14T00:00:01Z",
+              reasoning: "I weighed the invoice rows.",
+              citations: [
+                { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "inv.pdf", snippet: "row", relevance: 1.0 },
+              ],
+            },
           ]),
           { status: 200 },
         );
@@ -307,4 +316,30 @@ test("lists saved conversations and resumes one into the transcript", async () =
   await waitFor(() => expect(screen.getByText("prior question")).toBeInTheDocument());
   await userEvent.click(screen.getByText("prior question"));
   await waitFor(() => expect(screen.getByText("prior answer [1].")).toBeInTheDocument());
+  // Persisted reasoning + sources are restored, not lost on resume.
+  expect(screen.getByText(/I weighed the invoice rows\./)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /inv\.pdf/ })).toBeInTheDocument();
+});
+
+test("streams pipeline steps into the activity window", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("step", { delta: "Understanding your question" }),
+        frame("meta", { rewritten_query: null }),
+        frame("step", { delta: "Searching and ranking your documents" }),
+        frame("token", { delta: "Answer [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "find it");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("Answer [1].")).toBeInTheDocument());
+  expect(screen.getByText("Understanding your question")).toBeInTheDocument();
+  expect(screen.getByText("Searching and ranking your documents")).toBeInTheDocument();
 });

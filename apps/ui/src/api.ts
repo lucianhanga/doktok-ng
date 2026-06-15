@@ -499,7 +499,7 @@ export async function chat(
 // ---- Streaming chat (M6.4, ADR-0018 Phase 3): Server-Sent Events over a fetch POST ----
 
 export interface ChatEvent {
-  type: string; // "meta" | "reasoning" | "token" | "sources" | "done" | "error"
+  type: string; // "meta" | "step" | "reasoning" | "token" | "sources" | "done" | "error"
   delta?: string;
   rewritten_query?: string | null;
   filters?: QueryFilters | null;
@@ -534,6 +534,7 @@ export function parseSse(buffer: string): { events: ChatEvent[]; rest: string } 
 
 export interface ChatStreamHandlers {
   onMeta?: (rewrittenQuery: string | null, filters: QueryFilters | null) => void;
+  onStep?: (label: string) => void;
   onReasoning?: (delta: string) => void;
   onToken?: (delta: string) => void;
   onSources?: (citations: Citation[]) => void;
@@ -576,6 +577,9 @@ export async function chatStream(
         case "meta":
           handlers.onMeta?.(event.rewritten_query ?? null, event.filters ?? null);
           break;
+        case "step":
+          if (event.delta) handlers.onStep?.(event.delta);
+          break;
         case "reasoning":
           if (event.delta) handlers.onReasoning?.(event.delta);
           break;
@@ -612,6 +616,9 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  // Persisted assistant-turn extras so a resumed thread re-shows reasoning + the source cards.
+  reasoning?: string;
+  citations?: Citation[];
 }
 
 export function listChatThreads(signal?: AbortSignal): Promise<ChatThread[]> {

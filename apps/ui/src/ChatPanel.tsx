@@ -19,6 +19,7 @@ interface Exchange {
   question: string;
   answer: RagAnswer;
   reasoning?: string;
+  steps?: string[]; // live pipeline activity; kept in-session, not persisted to the DB
 }
 
 /** The in-progress turn while tokens stream in. */
@@ -26,6 +27,7 @@ interface Streaming {
   question: string;
   answer: string;
   reasoning: string;
+  steps: string[];
   citations: Citation[];
   rewrittenQuery: string | null;
   filters: QueryFilters | null;
@@ -35,6 +37,7 @@ interface Streaming {
 interface TurnView {
   question: string;
   reasoning: string;
+  steps: string[];
   answer: string;
   citations: Citation[];
   rewrittenQuery: string | null;
@@ -142,22 +145,49 @@ function SourcesColumn({
   );
 }
 
-/** Collapsible panel for the model's reasoning, shown only when reasoning text exists. */
-function ReasoningPanel({ text, streaming }: { text: string; streaming: boolean }) {
-  if (!text) return null;
+/**
+ * A small fixed-height window showing the pipeline steps + the model's reasoning, scrolling as they
+ * stream (auto-pinned to the bottom while live). The answer streams separately below. Shown only
+ * when there is reasoning or at least one step.
+ */
+function ActivityPanel({
+  steps,
+  reasoning,
+  streaming,
+  caret,
+}: {
+  steps: string[];
+  reasoning: string;
+  streaming: boolean;
+  caret: boolean;
+}) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (streaming && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [steps, reasoning, streaming]);
+  if (steps.length === 0 && !reasoning) return null;
   return (
-    <details className="chat-reasoning">
-      <summary>Reasoning</summary>
-      <div className="chat-reasoning-body">
-        <Markdown>{text}</Markdown>
-        {streaming && <span className="chat-caret" aria-hidden="true" />}
+    <div className="chat-activity">
+      <div className="chat-activity-label">Reasoning &amp; steps</div>
+      <div className="chat-activity-body" ref={bodyRef}>
+        {steps.map((s, i) => (
+          <div
+            key={i}
+            className={streaming && i === steps.length - 1 ? "chat-step active" : "chat-step"}
+          >
+            {s}
+          </div>
+        ))}
+        {reasoning && <Markdown>{reasoning}</Markdown>}
+        {caret && <span className="chat-caret" aria-hidden="true" />}
       </div>
-    </details>
+    </div>
   );
 }
 
 function AnswerBlock({ turn }: { turn: TurnView }) {
-  // While streaming, the caret sits on the reasoning until answer tokens begin, then on the answer.
+  // While streaming, the caret sits in the activity window until answer tokens begin, then moves
+  // to the answer below.
   const reasoningStreaming = turn.streaming && turn.answer.length === 0;
   return (
     <div className="chat-answer-block">
@@ -168,7 +198,12 @@ function AnswerBlock({ turn }: { turn: TurnView }) {
       {describeFilters(turn.filters) && (
         <p className="muted chat-rewritten">filtered to: {describeFilters(turn.filters)}</p>
       )}
-      <ReasoningPanel text={turn.reasoning} streaming={reasoningStreaming} />
+      <ActivityPanel
+        steps={turn.steps}
+        reasoning={turn.reasoning}
+        streaming={turn.streaming}
+        caret={reasoningStreaming}
+      />
       {!turn.streaming && !turn.grounded && (
         <p role="status" className="banner-warning">
           This answer isn't grounded in your documents - no supporting sources were found, so treat
@@ -314,6 +349,7 @@ export function ChatPanel({
       question: q,
       answer: "",
       reasoning: "",
+      steps: [],
       citations: [],
       rewrittenQuery: null,
       filters: null,
@@ -351,6 +387,7 @@ export function ChatPanel({
         showReasoning || undefined,
         {
           onMeta: (rq, flt) => patch((s) => ({ ...s, rewrittenQuery: rq, filters: flt })),
+          onStep: (label) => patch((s) => ({ ...s, steps: [...s.steps, label] })),
           onReasoning: (d) => patch((s) => ({ ...s, reasoning: s.reasoning + d })),
           onToken: (d) => patch((s) => ({ ...s, answer: s.answer + d })),
           onSources: (c) => patch((s) => ({ ...s, citations: c })),
@@ -388,6 +425,7 @@ export function ChatPanel({
       {
         question: s.question,
         reasoning: s.reasoning || undefined,
+        steps: s.steps,
         answer: {
           answer: s.answer,
           citations: s.citations,
@@ -421,15 +459,21 @@ export function ChatPanel({
     setState({ kind: "loading" });
     getThreadMessages(id)
       .then((messages) => {
-        // Pair consecutive user -> assistant messages back into exchanges. Citations/reasoning are
-        // ephemeral (not persisted), so a resumed turn shows the text without its sources.
+        // Pair consecutive user -> assistant messages back into exchanges. Reasoning + citations
+        // are persisted with the assistant turn, so a resumed thread re-shows them (and the
+        // top-documents source cards) instead of losing them.
         const restored: Exchange[] = [];
         for (let i = 0; i < messages.length; i++) {
           if (messages[i].role !== "user") continue;
           const reply = messages[i + 1]?.role === "assistant" ? messages[i + 1] : null;
           restored.push({
             question: messages[i].content,
-            answer: { answer: reply?.content ?? "", citations: [], grounded: true },
+            reasoning: reply?.reasoning || undefined,
+            answer: {
+              answer: reply?.content ?? "",
+              citations: reply?.citations ?? [],
+              grounded: true,
+            },
           });
           if (reply) i++;
         }
@@ -451,6 +495,7 @@ export function ChatPanel({
   const turns: TurnView[] = exchanges.map((ex) => ({
     question: ex.question,
     reasoning: ex.reasoning ?? "",
+    steps: ex.steps ?? [],
     answer: ex.answer.answer,
     citations: ex.answer.citations,
     rewrittenQuery: ex.answer.rewritten_query ?? null,
@@ -462,6 +507,7 @@ export function ChatPanel({
     turns.push({
       question: streaming.question,
       reasoning: streaming.reasoning,
+      steps: streaming.steps,
       answer: streaming.answer,
       citations: streaming.citations,
       rewrittenQuery: streaming.rewrittenQuery,

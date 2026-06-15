@@ -450,6 +450,10 @@ class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
     created_at: datetime
+    # Persisted so a resumed/reloaded thread can re-show the model's reasoning and the source cards
+    # (assistant turns only; empty for user turns).
+    reasoning: str = ""
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ChatThread(BaseModel):
@@ -490,11 +494,13 @@ class RagAnswer(BaseModel):
 
 
 class ChatEvent(BaseModel):
-    """One event in a streamed chat turn (M6.4, ADR-0018 Phase 3). ``type`` is one of meta /
-    reasoning / token / sources / done / error; the relevant field(s) are set per type."""
+    """One event in a streamed chat turn (M6.4, ADR-0018 Phase 3). ``type`` is one of meta / step /
+    reasoning / token / sources / done / error; the relevant field(s) are set per type. ``step`` is
+    a human-readable pipeline-phase label (understanding / searching / answering) for the activity
+    window - the deterministic-RAG analogue of tool-call traces."""
 
     type: str
-    delta: str = ""  # reasoning / token
+    delta: str = ""  # reasoning / token / step (the step label)
     rewritten_query: str | None = None  # meta
     filters: QueryFilters | None = None  # meta (inferred retrieval filters, M6.4 Phase 2)
     citations: list[Citation] = Field(default_factory=list)  # sources

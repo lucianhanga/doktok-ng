@@ -65,8 +65,25 @@ class SearchablePdfBuilder:
             image.close()
             new_page = out.new_page(width=rect.width, height=rect.height)
             new_page.insert_image(rect, stream=page.image_png)
-            if page.text.strip():
-                # render_mode=3 -> invisible text: searchable/selectable, not drawn over the image.
+            # render_mode=3 -> invisible text: searchable/selectable, not drawn over the image.
+            if page.lines:
+                # Positioned layer: each line sits over the words it came from. The page is sized to
+                # the image's pixels, so the OCR boxes (image px) are already PDF points (DPI-safe).
+                # Use point-based insert_text (not insert_textbox, which rejects when the font is
+                # taller than the box): baseline near the box bottom, font fit to the box height.
+                for line in page.lines:
+                    if not line.text.strip():
+                        continue
+                    height = line.y1 - line.y0
+                    fontsize = max(1.0, height * 0.8)
+                    new_page.insert_text(
+                        (line.x0, line.y1 - height * 0.15),
+                        line.text,
+                        fontsize=fontsize,
+                        render_mode=3,
+                    )
+            elif page.text.strip():
+                # Fallback (no per-line boxes, e.g. the Ollama vision OCR path): whole-page flow.
                 new_page.insert_textbox(rect, page.text, fontsize=8, render_mode=3)
         data: bytes = out.tobytes()
         out.close()

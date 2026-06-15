@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from doktok_provider_paddleocr.ocr import PaddleOcr, assemble_text
+from doktok_provider_paddleocr.ocr import PaddleOcr, assemble_lines, assemble_text
 
 
 def test_assembles_lines_in_reading_order() -> None:
@@ -20,6 +20,21 @@ def test_assembles_lines_in_reading_order() -> None:
     text, scores = assemble_text(result)
     assert text == "Hello\nworld\nsecond line"
     assert scores == [0.99, 0.9, 0.95]
+
+
+def test_assemble_lines_returns_boxes_in_reading_order() -> None:
+    # Same fixture as the ordering test; assemble_lines pairs each line with its bbox for the
+    # positioned searchable-PDF text layer.
+    result = {
+        "rec_texts": ["world", "Hello"],
+        "rec_scores": [0.9, 0.99],
+        "rec_boxes": [[120, 10, 200, 30], [10, 12, 90, 30]],
+    }
+    lines = assemble_lines(result)
+    assert [t for t, _ in lines] == ["Hello", "world"]  # reading order
+    assert lines[0][1] == (10.0, 12.0, 90.0, 30.0)  # "Hello" box (x0,y0,x1,y1)
+    # Lines without a usable box are dropped (the layer needs coordinates).
+    assert assemble_lines({"rec_texts": ["x"], "rec_scores": [0.5]}) == []
 
 
 def test_handles_polys_and_empty() -> None:
@@ -71,8 +86,11 @@ def test_run_ocr_assembles_from_engine() -> None:
 
     buffer = io.BytesIO()
     image_mod.new("RGB", (4, 4), "white").save(buffer, format="PNG")
-    text, confidence = _run_ocr(FakeEngine(), buffer.getvalue())
+    text, confidence, lines = _run_ocr(FakeEngine(), buffer.getvalue())
     assert text == "hi" and confidence is not None and abs(confidence - 0.8) < 1e-6
+    # The per-line box is carried through (image pixels) for the positioned text layer.
+    assert len(lines) == 1
+    assert (lines[0].text, lines[0].x0, lines[0].y0, lines[0].x1, lines[0].y1) == ("hi", 0, 0, 5, 5)
 
 
 def test_no_engine_dispatches_to_worker_pool(monkeypatch: pytest.MonkeyPatch) -> None:

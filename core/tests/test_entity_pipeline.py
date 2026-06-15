@@ -65,8 +65,9 @@ def test_entities_are_extracted_and_aggregated(tmp_path: Path) -> None:
 
     types = {e.entity_type for e in entity_repo.entities}
     assert EntityType.EMAIL in types
-    assert EntityType.MONEY in types
-    assert EntityType.DATE in types
+    # MONEY / DATE are no longer extracted (M8.x #312).
+    assert EntityType.MONEY not in types
+    assert EntityType.DATE not in types
 
     email = next(e for e in entity_repo.entities if e.entity_type is EntityType.EMAIL)
     assert email.normalized_value == "a@b.com"

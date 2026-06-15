@@ -120,6 +120,13 @@ def delete_thread(thread_id: str, tenant: Tenant, threads: Threads) -> None:
     threads.delete_thread(tenant.tenant_id, thread_id)
 
 
+@router.delete("/threads/{thread_id}/messages/{message_id}/after", status_code=204)
+def truncate_thread(thread_id: str, message_id: str, tenant: Tenant, threads: Threads) -> None:
+    """Delete a message and everything after it (truncate the conversation) - used when a question
+    is deleted or edited. Idempotent: a missing message simply removes nothing."""
+    threads.delete_messages_from(tenant.tenant_id, thread_id, message_id)
+
+
 # ---- Chat ----
 
 

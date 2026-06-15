@@ -754,6 +754,15 @@ export async function renameChatThread(threadId: string, title: string): Promise
   return (await response.json()) as ChatThread;
 }
 
+/** Truncate a thread: delete this message and everything after it (for deleting/editing a turn). */
+export async function deleteMessagesFrom(threadId: string, messageId: string): Promise<void> {
+  const response = await fetch(
+    `/api/v1/chat/threads/${threadId}/messages/${messageId}/after`,
+    { method: "DELETE" },
+  );
+  if (!response.ok && response.status !== 404) throw friendlyHttpError(response.status);
+}
+
 // ---- Structured aggregation (M6.3): deterministic SUM/COUNT over extracted records ----
 
 export interface AggregationIntent {

@@ -5,3 +5,5 @@
 - [Insights / Embedding Space viz](insights-embedding-viz.md) — design for new Insights tab: 2D/3D embedding scatter, backend UMAP/PCA, deck.gl, primary-category coloring
 - [Chat streaming + reasoning + sources](chat-streaming-reasoning-sources.md) — Phase 2 ChatPanel UX: streamed answer, native details reasoning, two-col source mini-cards with importance bars
 - [Chat screen redesign](chat-screen-redesign.md) — 3-col layout, collapsible reasoning w/ tokens+time+ranked candidates, rename, collapsible rail, [n]->side preview, collapsible sources; backend gaps listed
+- [Chat look-and-feel redesign](chat-look-feel-redesign.md) — remove all vertical rules, single reading column, right-justified Sources chip -> ONE shared right rail (Sources|Preview tabs); drops per-turn sources grid + separate doc drawer
+- [Light/dark theme tokens + toggle](theming-tokens-light-dark.md) — full dark|light token table, where to replace raw rgba/Canvas/hex literals, sun/moon header switch + persistence/a11y spec

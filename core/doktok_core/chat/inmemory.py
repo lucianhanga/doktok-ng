@@ -85,6 +85,17 @@ class InMemoryChatThreadRepository:
         self._threads.pop((tenant_id, thread_id), None)
         self._messages.pop((tenant_id, thread_id), None)
 
+    def delete_messages_from(self, tenant_id: str, thread_id: str, message_id: str) -> int:
+        msgs = self._messages.get((tenant_id, thread_id))
+        if not msgs:
+            return 0
+        idx = next((i for i, m in enumerate(msgs) if m.id == message_id), None)
+        if idx is None:
+            return 0
+        removed = len(msgs) - idx
+        self._messages[(tenant_id, thread_id)] = msgs[:idx]
+        return removed
+
     def update_title(self, tenant_id: str, thread_id: str, title: str) -> ChatThread | None:
         thread = self._threads.get((tenant_id, thread_id))
         if thread is None:

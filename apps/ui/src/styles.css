@@ -1,17 +1,91 @@
+/* Theme tokens (M8). Dark is the default on :root (the existing `var(--x, #fallback)` usages keep
+   working); light overrides on [data-theme="light"], set on <html> by the anti-FOUC script in
+   index.html + the header sun/moon toggle. */
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+
+  --bg: #0d1117;
+  --surface: #0f1520;
+  --surface-2: #161c26;
+  --surface-3: #1b2230;
+  --border: #2a3342;
+  --border-strong: #3a4555;
+  --text: #e6edf3;
+  --muted: #8b97a8;
+  --accent: #6ea8fe;
+  --accent-strong: #3b82f6;
+  --accent-contrast: #0b1220;
+  --danger: #d9534f;
+  --success: #3fb950;
+  --warning: #d6a700;
+  --hover-fill: rgba(255, 255, 255, 0.05);
+  --track-fill: rgba(255, 255, 255, 0.1);
+  --selected-fill: rgba(110, 168, 254, 0.15);
+  --overlay-scrim: rgba(0, 0, 0, 0.5);
+  --shadow: rgba(0, 0, 0, 0.35);
+  --thumb-bg: #ffffff; /* document scans stay white in both themes */
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --surface-3: #e8ecf1;
+  --border: #d8dee6;
+  --border-strong: #c2cbd6;
+  --text: #1c2430;
+  --muted: #5b6675;
+  --accent: #2f6feb;
+  --accent-strong: #1f5fd0;
+  --accent-contrast: #ffffff;
+  --danger: #c0392b;
+  --success: #1a7f37;
+  --warning: #9a6700;
+  --hover-fill: rgba(0, 0, 0, 0.04);
+  --track-fill: rgba(0, 0, 0, 0.1);
+  --selected-fill: rgba(47, 111, 235, 0.12);
+  --overlay-scrim: rgba(0, 0, 0, 0.45);
+  --shadow: rgba(0, 0, 0, 0.12);
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
 }
 
-.app {
+/* 3-part app shell (M8): fixed header (title + menu), scrollable tab content, thin status bar. */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.app-inner {
   width: 90%;
   max-width: 1600px;
   margin: 0 auto;
-  padding: 2rem 1.5rem;
+  padding: 0 1.5rem;
+}
+.app-header {
+  flex: 0 0 auto;
+  padding-top: 1.5rem;
+}
+.app-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem 0 1.5rem;
+}
+.app-statusbar {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border, #2a3342);
+  background: var(--surface, #0f1520);
+  padding: 0.3rem 0;
+  font-size: 0.72rem;
+  color: var(--muted, #8b97a8);
 }
 
 .app-header h1 {
@@ -48,7 +122,7 @@ body {
 }
 
 .status-error {
-  color: #b60205;
+  color: var(--danger);
 }
 
 .tabs {
@@ -248,7 +322,7 @@ table.jobs td {
 }
 
 .pipeline-stats .pipeline-alert strong {
-  color: #b60205;
+  color: var(--danger);
 }
 
 .link-button {
@@ -429,7 +503,7 @@ table.jobs td {
   margin: 0.25rem 0 0;
   padding: 0;
   list-style: none;
-  background: Canvas;
+  background: var(--surface);
   border: 1px solid rgba(127, 127, 127, 0.4);
   border-radius: 8px;
   max-height: 280px;
@@ -652,17 +726,20 @@ table.jobs td {
 .feature-chips .feat-done {
   background: rgba(46, 160, 67, 0.18);
   border-color: rgba(46, 160, 67, 0.5);
+  color: var(--success, #3fb950);
 }
 
 .feature-chips .feat-failed {
   background: rgba(220, 60, 60, 0.18);
   border-color: rgba(220, 60, 60, 0.5);
+  color: var(--danger, #d9534f);
 }
 
 .feature-chips .feat-pending,
 .feature-chips .feat-running {
   background: rgba(255, 196, 0, 0.18);
   border-color: rgba(255, 196, 0, 0.5);
+  color: var(--warning, #d6a700);
 }
 
 .doc-summary p {
@@ -683,7 +760,7 @@ table.jobs td {
 }
 
 .bulk-bar .danger {
-  color: #b00020;
+  color: var(--danger);
   border-color: rgba(176, 0, 32, 0.5);
 }
 
@@ -728,7 +805,7 @@ tr.row-selected {
 }
 
 .docs-table .cell-type {
-  color: #888;
+  color: var(--muted);
 }
 
 /* Processing column: let the per-feature chips wrap instead of overflowing off-screen. */
@@ -825,7 +902,7 @@ tr.row-selected {
   padding: 0.6rem 0;
   margin: -0.25rem 0 0.75rem;
   border-bottom: 1px solid rgba(127, 127, 127, 0.25);
-  background: Canvas;
+  background: var(--surface);
 }
 .doc-card-head h2 {
   margin: 0;
@@ -888,7 +965,7 @@ tr.row-selected {
   object-position: top;
   border: 1px solid rgba(127, 127, 127, 0.3);
   border-radius: 6px;
-  background: #fff;
+  background: var(--thumb-bg);
 }
 .doc-thumb-fallback {
   display: flex;
@@ -1085,7 +1162,7 @@ tr.row-selected {
 .doc-card-thumb-wrap {
   position: relative;
   aspect-ratio: 3 / 4;
-  background: #fff;
+  background: var(--thumb-bg);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -1207,7 +1284,7 @@ tr.row-selected {
 }
 .insights-controls .seg button.active {
   background: var(--accent, #3b82f6);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 .insights-stage {
   display: grid;
@@ -1227,7 +1304,7 @@ tr.row-selected {
   width: 100%;
   max-width: min(100%, 82vh);
   aspect-ratio: 1 / 1;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--hover-fill);
   border: 1px solid var(--border, #2a3342);
   border-radius: 10px;
   touch-action: none;
@@ -1256,7 +1333,7 @@ tr.row-selected {
   border-radius: 6px;
 }
 .insights-legend button:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hover-fill);
 }
 .insights-legend button.legend-off {
   opacity: 0.4;
@@ -1279,7 +1356,7 @@ tr.row-selected {
   gap: 0.35rem;
   min-width: 220px;
   min-height: 90px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--hover-fill);
   border: 1px solid var(--border, #2a3342);
   border-radius: 10px;
   padding: 0.75rem 0.9rem;
@@ -1318,7 +1395,7 @@ tr.row-selected {
   line-height: 1.05;
   border: 1px solid var(--border, #2a3342);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--hover-fill);
   max-height: 78vh;
   overflow-y: auto;
 }
@@ -1352,8 +1429,7 @@ tr.row-selected {
   min-width: 0;
 }
 .chat-threads {
-  border-right: 1px solid var(--border, #2a3342);
-  padding-right: 0.75rem;
+  padding-right: 0.25rem;
 }
 .chat-thread-new {
   width: 100%;
@@ -1447,12 +1523,51 @@ tr.row-selected {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  border-left: 2px solid var(--border, #2a3342);
-  padding-left: 0.85rem;
+}
+/* Separate turns with proximity + one faint horizontal hairline, never a boxed-in vertical rule. */
+.chat-exchange + .chat-exchange {
+  border-top: 1px solid var(--border, #2a3342);
+  padding-top: 1.25rem;
+}
+/* Fill the conversation column (it narrows on its own when the sources/preview rail opens). */
+.chat-answer-block {
+  width: 100%;
+}
+/* Question header row: the question (clamped to a few lines) on the left, its actions (Sources
+   chip, edit, delete) right-justified on the same level. */
+.chat-question-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
 }
 .chat-question {
   font-weight: 600;
   margin: 0;
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chat-question-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.chat-q-action {
+  color: var(--muted, #8b97a8);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+.chat-q-action:hover {
+  color: var(--accent, #6ea8fe);
+}
+.chat-q-action[aria-label^="Delete"]:hover {
+  color: var(--danger, #d9534f);
 }
 .chat-rewritten {
   margin: 0;
@@ -1487,14 +1602,6 @@ tr.row-selected {
   border-radius: 6px;
   background: var(--surface-2, #161c26);
 }
-.chat-activity-label {
-  padding: 0.3rem 0.6rem;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted, #8b97a8);
-  border-bottom: 1px solid var(--border, #2a3342);
-}
 .chat-activity-body {
   max-height: 16rem; /* ~12-15 rows; scrolls as steps/reasoning stream */
   overflow-y: auto;
@@ -1524,18 +1631,7 @@ tr.row-selected {
   cursor: pointer;
 }
 
-/* Chat sources column + importance (M6.4) */
-.chat-turn-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 1.5rem;
-  align-items: start;
-}
-@media (max-width: 820px) {
-  .chat-turn-body {
-    grid-template-columns: 1fr;
-  }
-}
+/* Chat source cards + importance (M6.4) */
 .chat-answer-block {
   display: flex;
   flex-direction: column;
@@ -1563,43 +1659,80 @@ tr.row-selected {
   flex-direction: column;
   gap: 0.5rem;
 }
+/* Source card (M8 rework): match bar + rank on top, then a larger thumbnail on the left with the
+   smaller, grayed text on the right. Same look in both themes (tokens). */
 .chat-source-card {
   display: flex;
-  gap: 0.6rem;
+  flex-direction: column;
+  gap: 0.5rem;
   width: 100%;
-  align-items: flex-start;
+  align-items: stretch;
   border: 1px solid var(--border, #2a3342);
   border-radius: 8px;
-  padding: 0.5rem;
+  padding: 0.6rem;
   cursor: pointer;
 }
 .chat-source-card:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hover-fill);
+}
+.chat-source-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.chat-source-main {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  min-width: 0;
 }
 .chat-source-thumb {
-  width: 38px;
-  height: 50px;
+  width: 56px;
+  height: 72px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: 5px;
   flex: 0 0 auto;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--thumb-bg, #fff);
+  border: 1px solid var(--border, #2a3342);
 }
 .chat-source-thumb-fallback {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.6rem;
-  color: #9ca3af;
+  font-size: 0.65rem;
+  color: var(--muted, #8b97a8);
+  background: var(--surface-3, #1b2230);
 }
 .chat-source-body {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.2rem;
   min-width: 0;
 }
 .chat-source-title {
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 600;
+  color: var(--muted, #8b97a8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-source-doctitle {
+  font-size: 0.74rem;
+  color: var(--muted, #8b97a8);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-source-card .snippet {
+  font-size: 0.72rem;
+  color: var(--muted, #8b97a8);
+  opacity: 0.85;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .importance {
   display: flex;
@@ -1610,7 +1743,7 @@ tr.row-selected {
   display: block;
   flex: 1;
   height: 0.4rem;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--track-fill);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -1942,25 +2075,62 @@ tr.row-selected {
   margin-bottom: 0.4rem;
 }
 
-/* --- Chat: citation drawer (M8 #9) ---------------------------------------- */
-/* When a citation opens a document, the chat becomes 3-column (threads | conversation | preview). */
-.chat-layout-drawer {
-  grid-template-columns: 220px minmax(0, 1fr) minmax(0, 460px);
+/* --- Chat: shared right rail (sources | document preview) (M8) ------------- */
+/* Opening sources OR a citation gives the chat a 3rd column (threads | conversation | rail). */
+.chat-layout-rail {
+  grid-template-columns: 220px minmax(0, 1fr) minmax(0, 440px);
 }
 
-.chat-doc-drawer {
+.chat-right-rail {
   position: sticky;
   top: 1rem;
   max-height: calc(100vh - 2rem);
   overflow: auto;
-  border-left: 1px solid rgba(127, 127, 127, 0.25);
-  padding-left: 1rem;
+  background: var(--surface-2, #161c26);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
+.chat-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.chat-rail-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.chat-rail-close {
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--muted, #8b97a8);
+}
+
+/* The "Sources (n)" chip + edit/delete actions on the question row (M8). */
+.chat-sources-chip {
+  padding: 0.2rem 0.7rem;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted, #8b97a8);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.chat-sources-chip:hover,
+.chat-sources-chip[aria-expanded="true"] {
+  border-color: var(--accent, #6ea8fe);
+  color: var(--accent, #6ea8fe);
 }
 
 /* Inline [n] citation marker rendered as a clickable reference inside the answer. */
 .citation-ref {
   border: none;
-  background: rgba(110, 168, 254, 0.15);
+  background: var(--selected-fill, rgba(110, 168, 254, 0.15));
   color: var(--accent, #6ea8fe);
   border-radius: 4px;
   padding: 0 0.25rem;
@@ -1972,12 +2142,11 @@ tr.row-selected {
 }
 
 .citation-ref:hover {
-  background: rgba(110, 168, 254, 0.3);
   text-decoration: underline;
 }
 
 @media (max-width: 1100px) {
-  .chat-layout-drawer {
+  .chat-layout-rail {
     grid-template-columns: 1fr;
   }
 }
@@ -2050,8 +2219,6 @@ tr.row-selected {
 
 .chat-page-head {
   margin-bottom: 1rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid rgba(127, 127, 127, 0.25);
 }
 
 .chat-page-head h2 {
@@ -2066,4 +2233,135 @@ tr.row-selected {
   align-items: baseline;
   gap: 0.6rem;
   min-width: 0;
+}
+
+/* Give the conversation title room to read as a section header above the transcript. */
+.chat-main .result-head {
+  margin-bottom: 1.5rem;
+}
+
+/* --- Header theme toggle (M8): sun | moon sliding switch, right of the title ----------- */
+.app-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.theme-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 56px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #2a3342);
+  background: var(--surface-2, #161c26);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent, #6ea8fe);
+  outline-offset: 2px;
+}
+
+.theme-toggle-icon {
+  display: inline-flex;
+  width: 24px;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #8b97a8);
+  z-index: 1;
+}
+
+/* Highlight the icon of the side the theme is currently on. */
+.theme-toggle[aria-checked="true"] .theme-toggle-moon {
+  color: var(--accent, #6ea8fe);
+}
+.theme-toggle[aria-checked="false"] .theme-toggle-sun {
+  color: var(--warning, #d6a700);
+}
+
+.theme-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--thumb-bg, #fff);
+  box-shadow: 0 1px 3px var(--shadow, rgba(0, 0, 0, 0.35));
+  transition: transform 0.18s ease;
+}
+
+/* aria-checked=true => dark => knob on the moon (right) side. */
+.theme-toggle[aria-checked="true"] .theme-toggle-knob {
+  transform: translateX(28px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle-knob {
+    transition: none;
+  }
+}
+
+/* --- Chat: multi-line question box (M8) ---------------------------------------- */
+/* The ask box is a 3-row textarea: Enter inserts a newline; only the Ask button submits. */
+.chat-ask-form {
+  align-items: flex-end;
+}
+
+.chat-ask-input {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.chat-ask-input:focus-visible {
+  outline: 2px solid var(--accent, #6ea8fe);
+  outline-offset: 1px;
+}
+
+/* --- Overview: clickable Recent Activity rows + Activity-tab row highlight (M8) -------- */
+.timeline-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.2rem 0.3rem;
+  border-radius: 5px;
+}
+.timeline-entry:not(:disabled):hover {
+  background: var(--hover-fill, rgba(255, 255, 255, 0.05));
+}
+.timeline-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-doc {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.timeline-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A row deep-linked from the Overview timeline briefly stands out in the Activity table. */
+.datatable-row-highlight > td {
+  background: var(--selected-fill, rgba(110, 168, 254, 0.15));
 }

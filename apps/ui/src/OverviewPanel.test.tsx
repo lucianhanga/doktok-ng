@@ -55,3 +55,43 @@ test("renders counts and recent activity", async () => {
   expect(screen.queryByText("Jobs by status")).not.toBeInTheDocument();
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
 });
+
+test("shows the duplicates count and opens a recent-activity entry in the Activity tab", async () => {
+  const onOpenActivity = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/stats")) {
+        return new Response(
+          JSON.stringify({ documents: 2, jobs: { active: 2, duplicate: 4 }, entities: 1 }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify([
+          {
+            id: "ev9",
+            event_type: "document.activated",
+            actor: "worker",
+            document_id: "d9",
+            job_id: null,
+            timestamp: "2026-06-10T00:00:00Z",
+            metadata: {},
+            description: "Document activated and searchable",
+            doc_filename: "report.pdf",
+          },
+        ]),
+        { status: 200 },
+      );
+    }),
+  );
+  render(<OverviewPanel onOpenActivity={onOpenActivity} />);
+  await waitFor(() => expect(screen.getByText("Duplicates")).toBeInTheDocument());
+  // The duplicates count is surfaced.
+  expect(screen.getByText("4")).toBeInTheDocument();
+  // The recent-activity row shows the document name + description, and is clickable.
+  expect(screen.getByText("report.pdf")).toBeInTheDocument();
+  await screen.getByText("report.pdf").click();
+  expect(onOpenActivity).toHaveBeenCalledWith("ev9");
+});

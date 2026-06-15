@@ -10,10 +10,22 @@ import {
 } from "./api";
 import { useInterval } from "./hooks";
 
+function activityLabel(ev: AuditEvent): string {
+  return ev.doc_title || ev.doc_filename || (ev.document_id ? ev.document_id.slice(0, 8) : "");
+}
+
+function activityDetail(ev: AuditEvent): string {
+  if (ev.description) return ev.description;
+  const m = ev.metadata ?? {};
+  return String(m.summary ?? m.error_code ?? m.filename ?? "");
+}
+
 export function OverviewPanel({
   onShowPendingFeatures,
+  onOpenActivity,
 }: {
   onShowPendingFeatures?: () => void;
+  onOpenActivity?: (eventId: string) => void;
 }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<AuditEvent[]>([]);
@@ -91,6 +103,9 @@ export function OverviewPanel({
             <span className="muted">Failed</span> <strong>{failed}</strong>
           </li>
           <li>
+            <span className="muted">Duplicates</span> <strong>{jobs.duplicate ?? 0}</strong>
+          </li>
+          <li>
             <button
               type="button"
               className="link-button"
@@ -126,15 +141,28 @@ export function OverviewPanel({
           <p className="empty">No activity yet.</p>
         ) : (
           <ul className="timeline">
-            {recent.map((ev) => (
-              <li key={ev.id}>
-                <time className="muted" dateTime={ev.timestamp} title={ev.timestamp}>
-                  {new Date(ev.timestamp).toLocaleString()}
-                </time>{" "}
-                <span className="badge">{ev.event_type}</span>{" "}
-                {String(ev.metadata?.summary ?? ev.metadata?.filename ?? "")}
-              </li>
-            ))}
+            {recent.map((ev) => {
+              const label = activityLabel(ev);
+              const detail = activityDetail(ev);
+              return (
+                <li key={ev.id}>
+                  <button
+                    type="button"
+                    className="timeline-entry link-button"
+                    onClick={() => onOpenActivity?.(ev.id)}
+                    disabled={!onOpenActivity}
+                    title="Open in the Activity tab"
+                  >
+                    <time className="muted timeline-time" dateTime={ev.timestamp}>
+                      {new Date(ev.timestamp).toLocaleString()}
+                    </time>
+                    <span className="badge">{ev.event_type}</span>
+                    {label && <span className="timeline-doc">{label}</span>}
+                    {detail && <span className="muted timeline-detail">{detail}</span>}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

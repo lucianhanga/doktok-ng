@@ -36,6 +36,8 @@ export interface DataTableProps<T> {
   persistKey?: string;
   /** Bump this number to reset sorting/visibility/sizing to defaults and clear persistence. */
   resetNonce?: number;
+  /** Row id to highlight + scroll into view (e.g. when arriving from a deep link). */
+  highlightId?: string;
 }
 
 /**
@@ -74,6 +76,7 @@ export function DataTable<T>({
   emptyLabel = "Nothing to show.",
   persistKey,
   resetNonce,
+  highlightId,
 }: DataTableProps<T>) {
   const persisted = useMemo<PersistedTableState>(
     () => (persistKey ? loadJSON<PersistedTableState>(persistKey, {}) : {}),
@@ -214,6 +217,7 @@ export function DataTable<T>({
                   key={row.id}
                   row={row}
                   isOpen={isOpen}
+                  highlight={highlightId === row.id}
                   onToggle={renderDetail ? () => toggle(row.id) : undefined}
                   detailColSpan={leafCount}
                   renderDetail={renderDetail}
@@ -230,19 +234,25 @@ export function DataTable<T>({
 function FragmentRow<T>({
   row,
   isOpen,
+  highlight,
   onToggle,
   detailColSpan,
   renderDetail,
 }: {
   row: Row<T>;
   isOpen: boolean;
+  highlight?: boolean;
   onToggle?: () => void;
   detailColSpan: number;
   renderDetail?: (row: T) => ReactNode;
 }) {
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  useEffect(() => {
+    if (highlight) rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlight]);
   return (
     <>
-      <tr>
+      <tr ref={rowRef} className={highlight ? "datatable-row-highlight" : undefined}>
         {onToggle && (
           <td className="datatable-expander-col">
             <button

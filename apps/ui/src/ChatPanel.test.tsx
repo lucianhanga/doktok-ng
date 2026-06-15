@@ -74,6 +74,8 @@ test("streams a grounded answer with sources", async () => {
   await waitFor(() => expect(screen.getByText(/The total is 42/)).toBeInTheDocument());
   // The inline [1] marker in the answer is a clickable citation reference (M8 #9).
   expect(screen.getByTitle("Open source [1]")).toBeInTheDocument();
+  // Sources live behind the per-turn chip; opening it shows the source in the right rail.
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
@@ -240,15 +242,17 @@ test("shows the sources column with importance and opens a document", async () =
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText(/Total is 42/)).toBeInTheDocument());
 
+  // Open the per-turn Sources chip -> the shared right rail shows the ranked sources.
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(2\)/ }));
   expect(screen.getByLabelText("Sources")).toBeInTheDocument();
   expect(screen.getByText(/100% . #1/)).toBeInTheDocument();
   expect(screen.getByText(/25% . #2/)).toBeInTheDocument();
   const meters = screen.getAllByRole("meter");
   expect(meters[0].getAttribute("aria-valuenow")).toBe("100");
 
-  // Clicking a source now opens the in-chat document drawer (M8 #9), not the full-page view.
+  // Clicking a source opens the FULL document card (app handler), not the in-chat rail.
   await userEvent.click(screen.getByRole("button", { name: /top\.pdf/ }));
-  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
+  expect(onOpen).toHaveBeenCalledWith("d2");
   // The inline [2] marker is clickable too.
   expect(screen.getByTitle("Open source [2]")).toBeInTheDocument();
 });
@@ -323,6 +327,8 @@ test("lists saved conversations and resumes one into the transcript", async () =
   await waitFor(() => expect(screen.getByText(/prior answer/)).toBeInTheDocument());
   // Persisted reasoning + sources are restored, not lost on resume.
   expect(screen.getByText(/I weighed the invoice rows\./)).toBeInTheDocument();
+  // The restored turn's sources are reachable via its Sources chip.
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
   expect(screen.getByRole("button", { name: /inv\.pdf/ })).toBeInTheDocument();
 });
 
@@ -618,7 +624,104 @@ test("each resumed question shows its own sources, not just the last", async () 
   render(<ChatPanel />);
   await waitFor(() => expect(screen.getByText("prior")).toBeInTheDocument());
   await userEvent.click(screen.getByText("prior"));
-  // Both questions' sources are shown (per-question), not only the last turn's.
-  await waitFor(() => expect(screen.getByRole("button", { name: /alpha\.pdf/ })).toBeInTheDocument());
+  // Each turn has its OWN Sources chip (per-question), not one shared set.
+  const chips = await screen.findAllByRole("button", { name: /Sources \(1\)/ });
+  expect(chips).toHaveLength(2);
+  // First turn's chip shows alpha.pdf in the rail...
+  await userEvent.click(chips[0]);
+  expect(screen.getByRole("button", { name: /alpha\.pdf/ })).toBeInTheDocument();
+  // ...the second turn's chip shows beta.pdf (its own sources).
+  await userEvent.click(chips[1]);
   expect(screen.getByRole("button", { name: /beta\.pdf/ })).toBeInTheDocument();
+});
+
+test("the right rail toggles sources and switches to preview and back", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer [1]." }),
+        frame("sources", {
+          citations: [
+            { index: 1, document_id: "dz", chunk_id: "cz", original_filename: "z.pdf", snippet: "z" },
+          ],
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/Answer/)).toBeInTheDocument());
+
+  const chip = screen.getByRole("button", { name: /Sources \(1\)/ });
+  // Toggle the rail open (sources) and shut again.
+  await userEvent.click(chip);
+  expect(screen.getByLabelText("Sources")).toBeInTheDocument();
+  await userEvent.click(chip);
+  expect(screen.queryByLabelText("Sources")).not.toBeInTheDocument();
+
+  // An inline [n] marker opens the document preview in the same rail; Back closes it.
+  await userEvent.click(screen.getByTitle("Open source [1]"));
+  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
+  await userEvent.click(screen.getByText(/Back to documents/));
+  expect(screen.queryByLabelText("Document preview")).not.toBeInTheDocument();
+});
+
+function stubResumeThread(onDelete: (url: string) => void) {
+  const messages = [
+    { id: "u1", role: "user", content: "first question", created_at: "2026-06-14T00:00:00Z" },
+    { id: "a1", role: "assistant", content: "first answer.", created_at: "2026-06-14T00:00:01Z" },
+    { id: "u2", role: "user", content: "second question", created_at: "2026-06-14T00:00:02Z" },
+    { id: "a2", role: "assistant", content: "second answer.", created_at: "2026-06-14T00:00:03Z" },
+  ];
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (init?.method === "DELETE" && url.includes("/messages/")) {
+      onDelete(url);
+      return new Response(null, { status: 204 });
+    }
+    if (url.includes("/threads/t/messages")) return new Response(JSON.stringify(messages), { status: 200 });
+    if (url.includes("/api/v1/chat/threads")) {
+      return new Response(
+        JSON.stringify([
+          { id: "t", title: "prior", created_at: "2026-06-14T00:00:00Z", updated_at: "2026-06-14T00:00:03Z", message_count: 4 },
+        ]),
+        { status: 200 },
+      );
+    }
+    return new Response("[]", { status: 200 });
+  });
+}
+
+test("delete a question truncates the thread from that turn", async () => {
+  const deletes: string[] = [];
+  vi.stubGlobal("fetch", stubResumeThread((u) => deletes.push(u)));
+  render(<ChatPanel />);
+  await waitFor(() => expect(screen.getByText("prior")).toBeInTheDocument());
+  await userEvent.click(screen.getByText("prior"));
+  await waitFor(() => expect(screen.getByText(/second question/)).toBeInTheDocument());
+
+  // Delete the second turn -> truncate from its user message; the first turn survives.
+  await userEvent.click(screen.getAllByRole("button", { name: /Delete this question/ })[1]);
+  await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
+  expect(screen.queryByText(/second question/)).not.toBeInTheDocument();
+  expect(screen.getByText(/first question/)).toBeInTheDocument();
+});
+
+test("edit a question truncates and loads it back into the input", async () => {
+  const deletes: string[] = [];
+  vi.stubGlobal("fetch", stubResumeThread((u) => deletes.push(u)));
+  render(<ChatPanel />);
+  await waitFor(() => expect(screen.getByText("prior")).toBeInTheDocument());
+  await userEvent.click(screen.getByText("prior"));
+  await waitFor(() => expect(screen.getByText(/second question/)).toBeInTheDocument());
+
+  await userEvent.click(screen.getAllByRole("button", { name: /Edit this question/ })[1]);
+  await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
+  // The edited question is loaded back into the ask box for editing + resubmission.
+  expect(screen.getByLabelText("Question")).toHaveValue("second question");
+  // ...and the second turn is gone from the transcript (only the question heading, not the answer).
+  expect(screen.queryByText("second answer.")).not.toBeInTheDocument();
 });

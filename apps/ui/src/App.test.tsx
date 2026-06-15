@@ -44,11 +44,12 @@ test("renders the DokTok NG shell with the Overview landing", async () => {
   );
 });
 
-test("Status tab shows backend health", async () => {
+test("the fixed status bar shows backend health (no Status tab)", async () => {
   mockRoutes();
   render(<App />);
-  await userEvent.click(screen.getByRole("button", { name: "Status" }));
-  await waitFor(() => expect(screen.getByText("doktok-ng-backend")).toBeInTheDocument());
+  // The status bar is always visible at the bottom - no tab to click.
+  expect(screen.queryByRole("button", { name: "Status" })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/doktok-ng-backend/)).toBeInTheDocument());
 });
 
 test("Ingestion tab shows the jobs view", async () => {
@@ -117,11 +118,11 @@ test("keeps the chat conversation when opening a cited document and going back",
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText(/The total is 42/)).toBeInTheDocument());
 
-  // Open the cited document in the in-chat drawer, then close it.
-  await userEvent.click(screen.getByRole("button", { name: /inv\.pdf/ }));
+  // Click the inline [1] citation to open the document in the in-chat right rail, then close it.
+  await userEvent.click(screen.getByTitle("Open source [1]"));
   await waitFor(() => expect(screen.getByText(/Back to documents/)).toBeInTheDocument());
   await userEvent.click(screen.getByText(/Back to documents/));
 
-  // The conversation survived opening the document (the drawer is in-chat; chat never unmounts).
+  // The conversation survived opening the document (the rail is in-chat; chat never unmounts).
   expect(screen.getByText(/The total is 42/)).toBeInTheDocument();
 });

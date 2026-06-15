@@ -21,6 +21,10 @@ class FixedWindowChunker:
         self._overlap = overlap
 
     def chunk(self, text: str) -> list[TextChunk]:
+        # Postgres text columns reject NUL (0x00) bytes (seen in some OCR'd PDFs); strip them so
+        # chunk storage never fails with indexing_error. Last line of defence behind extraction.
+        if "\x00" in text:
+            text = text.replace("\x00", "")
         if not text.strip():
             return []
         step = self._max_chars - self._overlap

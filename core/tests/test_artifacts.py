@@ -40,3 +40,11 @@ def test_content_pages_persists_ocr_geometry() -> None:
 def test_content_pages_handles_no_layouts() -> None:
     result = ExtractionResult("t", ["t"], "text", 1)  # page_layouts defaults to empty
     assert _content_pages(result) == [{"page_number": 1, "text": "t"}]
+
+
+def test_extraction_result_strips_nul_bytes() -> None:
+    # NUL (0x00) bytes from some OCR'd PDFs are stripped at the source so chunk/entity indexing
+    # does not fail with "PostgreSQL text fields cannot contain NUL".
+    result = ExtractionResult("a\x00b", ["pg1\x00", "clean"], "ocr", 2)
+    assert result.content_md == "ab"
+    assert result.pages == ["pg1", "clean"]

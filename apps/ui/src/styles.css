@@ -1330,16 +1330,46 @@ tr.row-selected {
 .chat-thread-item {
   flex: 1;
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 0.4rem;
   text-align: left;
   padding: 0.3rem 0.45rem;
   overflow: hidden;
 }
 .chat-thread-title {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Sidebar per-conversation status: spinner while generating in the background, dot when an answer
+   finished while you were on another conversation (M6.5). */
+.chat-thread-spinner {
+  flex: none;
+  width: 0.7em;
+  height: 0.7em;
+  border: 2px solid var(--border, #2a3342);
+  border-top-color: var(--accent, #4aa3ff);
+  border-radius: 50%;
+  animation: chat-spin 0.8s linear infinite;
+}
+@keyframes chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-thread-spinner {
+    animation: none;
+  }
+}
+.chat-thread-unread {
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  background: var(--accent, #4aa3ff);
+  border-radius: 50%;
 }
 .chat-thread-meta {
   flex-shrink: 0;

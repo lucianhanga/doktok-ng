@@ -321,6 +321,52 @@ test("lists saved conversations and resumes one into the transcript", async () =
   expect(screen.getByRole("button", { name: /inv\.pdf/ })).toBeInTheDocument();
 });
 
+test("a conversation finishing while you are away shows an unread badge", async () => {
+  const enc = new TextEncoder();
+  let streamCtrl!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      streamCtrl = c;
+    },
+  });
+  let threadList: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith("/api/v1/chat/threads") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ id: "thr-A", title: "", created_at: "x", updated_at: "x", message_count: 0 }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/chat/stream")) {
+        return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      if (url.includes("/api/v1/chat/threads")) {
+        return new Response(JSON.stringify(threadList), { status: 200 });
+      }
+      return new Response("[]", { status: 200 });
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "slow question");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  // The stream is open; switching to a new conversation must NOT abort it.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument());
+  threadList = [{ id: "thr-A", title: "slow question", created_at: "x", updated_at: "x", message_count: 1 }];
+  await userEvent.click(screen.getByRole("button", { name: "+ New conversation" }));
+
+  // Finish the background stream; the conversation should land as unread in the sidebar.
+  streamCtrl.enqueue(enc.encode(frame("token", { delta: "background answer [1]." })));
+  streamCtrl.enqueue(enc.encode(frame("sources", { citations: [] })));
+  streamCtrl.enqueue(enc.encode(frame("done", { grounded: true })));
+  streamCtrl.close();
+
+  await waitFor(() => expect(screen.getByLabelText("Unread reply")).toBeInTheDocument());
+});
+
 test("streams pipeline steps into the activity window", async () => {
   vi.stubGlobal(
     "fetch",

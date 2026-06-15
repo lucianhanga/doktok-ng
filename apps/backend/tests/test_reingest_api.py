@@ -170,8 +170,9 @@ def test_reingest_enhanced_routes_to_the_enhanced_ingest_folder(tmp_path: Path) 
         "/api/v1/documents/d1/reingest?profile=enhanced", headers=AUTH
     )
     assert resp.status_code == 200 and resp.json()["profile"] == "enhanced"
-    assert (tmp_path / TENANT / "ingest.enhanced" / "report.pdf").is_file()  # enhanced intake folder
-    assert not (tmp_path / TENANT / "ingest" / "report.pdf").exists()  # not the standard folder
+    # routed to the enhanced intake folder, not the standard one
+    assert (tmp_path / TENANT / "ingest.enhanced" / "report.pdf").is_file()
+    assert not (tmp_path / TENANT / "ingest" / "report.pdf").exists()
 
 
 def test_rotate_document_requeues_a_rotated_pdf(tmp_path: Path) -> None:

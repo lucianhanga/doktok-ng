@@ -1850,3 +1850,26 @@ class PostgresChatThreadRepository:
             updated_at=row["updated_at"],
             message_count=row["message_count"],
         )
+
+    def delete_messages_from(self, tenant_id: str, thread_id: str, message_id: str) -> int:
+        with self._db.connection() as conn, conn.transaction():
+            cur = conn.cursor(row_factory=dict_row)
+            target = cur.execute(
+                "SELECT created_at FROM chat_messages "
+                "WHERE id=%s AND thread_id=%s AND tenant_id=%s",
+                (message_id, thread_id, tenant_id),
+            ).fetchone()
+            if target is None:
+                return 0
+            # Delete the target + everything at/after it chronologically (id breaks ties).
+            cur.execute(
+                "DELETE FROM chat_messages WHERE thread_id=%s AND tenant_id=%s "
+                "AND (created_at, id) >= (%s, %s)",
+                (thread_id, tenant_id, target["created_at"], message_id),
+            )
+            removed = cur.rowcount
+            conn.execute(
+                "UPDATE chat_threads SET updated_at = now() WHERE id=%s AND tenant_id=%s",
+                (thread_id, tenant_id),
+            )
+        return removed

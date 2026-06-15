@@ -125,6 +125,31 @@ def test_rename_thread_sets_manual_title_and_stops_autoseed() -> None:
     assert threads[0]["title"] == "Tax stuff"
 
 
+def test_truncate_deletes_a_message_and_everything_after() -> None:
+    client = _client(FakeRagAnswerer())
+    h = {"Authorization": "Bearer tok-a"}
+    tid = client.post("/api/v1/chat/threads", headers=h).json()["id"]
+    client.post("/api/v1/chat", json={"question": "first", "thread_id": tid}, headers=h)
+    client.post("/api/v1/chat", json={"question": "second", "thread_id": tid}, headers=h)
+
+    msgs = client.get(f"/api/v1/chat/threads/{tid}/messages", headers=h).json()
+    assert [m["content"] for m in msgs] == [
+        "first",
+        "The total is 42 [1].",
+        "second",
+        "The total is 42 [1].",
+    ]
+    second_user = msgs[2]  # the "second" user turn
+
+    # Truncate from the second question -> it and its answer are removed; the first turn remains.
+    resp = client.delete(
+        f"/api/v1/chat/threads/{tid}/messages/{second_user['id']}/after", headers=h
+    )
+    assert resp.status_code == 204
+    after = client.get(f"/api/v1/chat/threads/{tid}/messages", headers=h).json()
+    assert [m["content"] for m in after] == ["first", "The total is 42 [1]."]
+
+
 def test_rename_validation_and_tenant_isolation() -> None:
     client = _client(FakeRagAnswerer())
     a = {"Authorization": "Bearer tok-a"}

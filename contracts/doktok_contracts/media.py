@@ -133,3 +133,26 @@ class ChatChunk:
 
     kind: str  # "answer" | "reasoning"
     text: str
+
+
+@dataclass
+class LlmUsage:
+    """Token counts and timing for one LLM call (M8). Exact when the provider reports them; else
+    estimated (character-based) with ``estimated=True``. ``wall_ms`` is measured by the provider
+    around the call; ``eval_ms`` is the model's own generation time when reported (None otherwise).
+
+    For Ollama, reasoning and answer tokens are not reported separately, so they are split from the
+    total ``eval_count`` by output character ratio (an estimate). OpenAI reasoning models report
+    ``reasoning_tokens`` exactly.
+    """
+
+    prompt_tokens: int = 0
+    answer_tokens: int = 0
+    reasoning_tokens: int = 0
+    wall_ms: int = 0
+    eval_ms: int | None = None
+    estimated: bool = False
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.answer_tokens + self.reasoning_tokens

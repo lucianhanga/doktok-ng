@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from doktok_contracts.media import ChatChunk
+from doktok_contracts.media import ChatChunk, LlmUsage
 
-from doktok_provider_openai.client import openai_chat
+from doktok_provider_openai.client import openai_chat_with_usage
 
 
 class OpenAiChatModelProvider:
@@ -26,9 +26,13 @@ class OpenAiChatModelProvider:
         self._base_url = base_url
         self._timeout = timeout
         self._reasoning_effort = reasoning_effort
+        self._last_usage: LlmUsage | None = None
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return self._last_usage
 
     def complete(self, prompt: str) -> str:
-        return openai_chat(
+        content, usage = openai_chat_with_usage(
             api_key=self._api_key,
             base_url=self._base_url,
             model=self._model,
@@ -36,7 +40,9 @@ class OpenAiChatModelProvider:
             user=prompt,
             timeout=self._timeout,
             reasoning_effort=self._reasoning_effort,
-        ).strip()
+        )
+        self._last_usage = usage
+        return content.strip()
 
     def stream_complete(self, prompt: str, *, think: bool | None = None) -> Iterator[ChatChunk]:
         # No token streaming for OpenAI here (and chat-completions exposes no reasoning); emit the

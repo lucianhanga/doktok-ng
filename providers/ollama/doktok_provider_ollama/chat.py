@@ -7,10 +7,26 @@ judge (M5.x) and RAG answering (M6).
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 
 import httpx
-from doktok_contracts.media import ChatChunk
+from doktok_contracts.media import ChatChunk, LlmUsage
+
+
+def _split_tokens(eval_count: int, reasoning_chars: int, answer_chars: int) -> tuple[int, int]:
+    """Split Ollama's combined ``eval_count`` into (reasoning, answer) tokens by output char ratio.
+    Ollama does not report the split, so this is an estimate that always sums to ``eval_count``."""
+    total = reasoning_chars + answer_chars
+    if total <= 0 or eval_count <= 0:
+        return 0, max(0, eval_count)
+    reasoning = round(eval_count * reasoning_chars / total)
+    return reasoning, eval_count - reasoning
+
+
+def _est_tokens(chars: int) -> int:
+    """Character-based token estimate (~3.5 chars/token) when no provider counter is available."""
+    return max(0, round(chars / 3.5))
 
 
 class OllamaChatModelProvider:
@@ -38,6 +54,11 @@ class OllamaChatModelProvider:
         # Whether the model reasons before answering (reasoning density off -> False). No structured
         # `format` here, so toggling think is always safe.
         self._think = think
+        # Token/timing of the most recent call (M8); read via get_last_usage() after the call.
+        self._last_usage: LlmUsage | None = None
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return self._last_usage
 
     def complete(self, prompt: str) -> str:
         options: dict[str, object] = {"temperature": 0}
@@ -54,9 +75,23 @@ class OllamaChatModelProvider:
         }
         if self._keep_alive is not None:
             payload["keep_alive"] = self._keep_alive
+        t0 = time.monotonic()
         response = httpx.post(f"{self._base_url}/api/generate", json=payload, timeout=self._timeout)
         response.raise_for_status()
-        return str(response.json().get("response", "")).strip()
+        wall_ms = round((time.monotonic() - t0) * 1000)
+        body = response.json()
+        text = str(body.get("response", "")).strip()
+        eval_count = body.get("eval_count")
+        eval_ns = body.get("eval_duration")
+        self._last_usage = LlmUsage(
+            prompt_tokens=body.get("prompt_eval_count") or 0,
+            answer_tokens=eval_count if eval_count is not None else _est_tokens(len(text)),
+            reasoning_tokens=0,  # /api/generate is non-streaming; reasoning isn't separable here
+            wall_ms=wall_ms,
+            eval_ms=round(eval_ns / 1_000_000) if eval_ns else None,
+            estimated=eval_count is None,
+        )
+        return text
 
     def stream_complete(self, prompt: str, *, think: bool | None = None) -> Iterator[ChatChunk]:
         """Stream the answer via /api/chat (NDJSON). Reasoning tokens (when reasoning is on) arrive
@@ -79,6 +114,11 @@ class OllamaChatModelProvider:
         }
         if self._keep_alive is not None:
             payload["keep_alive"] = self._keep_alive
+        self._last_usage = None
+        reasoning_chars = 0
+        answer_chars = 0
+        done: dict[str, object] = {}
+        t0 = time.monotonic()
         with httpx.stream(
             "POST", f"{self._base_url}/api/chat", json=payload, timeout=self._timeout
         ) as response:
@@ -86,10 +126,33 @@ class OllamaChatModelProvider:
             for line in response.iter_lines():
                 if not line:
                     continue
-                message = json.loads(line).get("message") or {}
+                obj = json.loads(line)
+                message = obj.get("message") or {}
                 reasoning = message.get("thinking")
                 if reasoning:
+                    reasoning_chars += len(reasoning)
                     yield ChatChunk(kind="reasoning", text=reasoning)
                 content = message.get("content")
                 if content:
+                    answer_chars += len(content)
                     yield ChatChunk(kind="answer", text=content)
+                if obj.get("done"):
+                    done = obj
+        wall_ms = round((time.monotonic() - t0) * 1000)
+        eval_count = done.get("eval_count")
+        eval_ns = done.get("eval_duration")
+        if eval_count is not None:
+            reasoning_tokens, answer_tokens = _split_tokens(
+                int(eval_count), reasoning_chars, answer_chars
+            )
+        else:
+            reasoning_tokens = _est_tokens(reasoning_chars)
+            answer_tokens = _est_tokens(answer_chars)
+        self._last_usage = LlmUsage(
+            prompt_tokens=done.get("prompt_eval_count") or 0,
+            answer_tokens=answer_tokens,
+            reasoning_tokens=reasoning_tokens,
+            wall_ms=wall_ms,
+            eval_ms=round(int(eval_ns) / 1_000_000) if eval_ns else None,
+            estimated=eval_count is None,
+        )

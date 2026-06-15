@@ -87,3 +87,67 @@ def test_stream_think_override_wins(monkeypatch: Any) -> None:
     provider = OllamaChatModelProvider("qwen", "http://localhost:11434", think=False)
     list(provider.stream_complete("hello", think=True))
     assert captured["json"]["think"] is True
+
+
+class _UsageResponse:
+    def raise_for_status(self) -> None: ...
+
+    def json(self) -> dict[str, Any]:
+        return {
+            "response": "the answer",
+            "prompt_eval_count": 120,
+            "eval_count": 30,
+            "eval_duration": 2_000_000_000,  # 2s in ns
+        }
+
+
+def test_complete_records_usage(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "doktok_provider_ollama.chat.httpx.post",
+        lambda url, *, json, timeout: _UsageResponse(),
+    )
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434")
+    provider.complete("hi")
+    usage = provider.get_last_usage()
+    assert usage is not None
+    assert usage.prompt_tokens == 120
+    assert usage.answer_tokens == 30
+    assert usage.reasoning_tokens == 0
+    assert usage.eval_ms == 2000
+    assert usage.estimated is False
+
+
+class _UsageStream:
+    def __enter__(self) -> _UsageStream:
+        return self
+
+    def __exit__(self, *args: Any) -> None: ...
+
+    def raise_for_status(self) -> None: ...
+
+    def iter_lines(self) -> list[str]:
+        # ~equal reasoning/answer chars -> ~half of eval_count each.
+        return [
+            '{"message": {"thinking": "think think think think"}}',
+            '{"message": {"content": "answer answer answer ans"}}',
+            '{"done": true, "prompt_eval_count": 50, "eval_count": 40,'
+            ' "eval_duration": 1000000000}',
+        ]
+
+
+def test_stream_records_split_usage(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "doktok_provider_ollama.chat.httpx.stream",
+        lambda method, url, *, json, timeout: _UsageStream(),
+    )
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434", think=True)
+    chunks = list(provider.stream_complete("hi"))
+    assert [c.kind for c in chunks] == ["reasoning", "answer"]
+    usage = provider.get_last_usage()
+    assert usage is not None
+    assert usage.prompt_tokens == 50
+    # eval_count (40) is split by output-char ratio and always sums back to 40.
+    assert usage.reasoning_tokens + usage.answer_tokens == 40
+    assert usage.reasoning_tokens > 0 and usage.answer_tokens > 0
+    assert usage.eval_ms == 1000
+    assert usage.estimated is False

@@ -8,9 +8,11 @@ format so the lenient core parsers can validate/normalize the result.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import httpx
+from doktok_contracts.media import LlmUsage
 
 
 def openai_chat(
@@ -52,6 +54,55 @@ def openai_chat(
     if not choices:
         return ""
     return str(choices[0].get("message", {}).get("content") or "")
+
+
+def openai_chat_with_usage(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    system: str,
+    user: str,
+    timeout: float = 120.0,
+    reasoning_effort: str | None = None,
+) -> tuple[str, LlmUsage]:
+    """Like ``openai_chat`` but also returns token/timing usage (M8). Reasoning models report exact
+    reasoning tokens via ``usage.completion_tokens_details.reasoning_tokens``."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
+    else:
+        payload["temperature"] = 0
+    t0 = time.monotonic()
+    response = httpx.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        json=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    wall_ms = round((time.monotonic() - t0) * 1000)
+    body = response.json()
+    choices = body.get("choices", [])
+    content = str(choices[0].get("message", {}).get("content") or "") if choices else ""
+    usage_obj = body.get("usage") or {}
+    details = usage_obj.get("completion_tokens_details") or {}
+    reasoning = int(details.get("reasoning_tokens") or 0)
+    completion = int(usage_obj.get("completion_tokens") or 0)
+    usage = LlmUsage(
+        prompt_tokens=int(usage_obj.get("prompt_tokens") or 0),
+        answer_tokens=max(0, completion - reasoning),
+        reasoning_tokens=reasoning,
+        wall_ms=wall_ms,
+        estimated=not usage_obj,
+    )
+    return content, usage
 
 
 def loads_object(content: str) -> dict[str, Any] | None:

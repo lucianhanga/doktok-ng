@@ -159,6 +159,43 @@ def test_delete_does_not_purge_another_documents_job(tmp_path: Path) -> None:
     assert docs.get(TENANT, "d2") is not None  # and so does the other document
 
 
+def test_rotate_document_requeues_a_rotated_pdf(tmp_path: Path) -> None:
+    import fitz
+
+    active_dir = tmp_path / TENANT / "docs.active" / "guid1"
+    active_dir.mkdir(parents=True)
+    doc = fitz.open()
+    doc.new_page()
+    (active_dir / "report.pdf").write_bytes(doc.tobytes())
+    doc.close()
+
+    docs = InMemoryDocumentRepository()
+    record = _failed_doc(str(active_dir), status=DocumentStatus.ACTIVE).model_copy(
+        update={"detected_mime": "application/pdf"}
+    )
+    docs.add(record)
+
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).post(
+        "/api/v1/documents/d1/rotate?degrees=90", headers=AUTH
+    )
+    assert resp.status_code == 200 and resp.json()["degrees"] == "90"
+
+    requeued = tmp_path / TENANT / "ingest" / "report.pdf"
+    assert requeued.is_file()
+    with fitz.open(stream=requeued.read_bytes(), filetype="pdf") as rotated:
+        assert rotated[0].rotation == 90  # the re-queued source renders upright for re-OCR
+    assert docs.get(TENANT, "d1") is None  # purged so the worker reprocesses it
+
+
+def test_rotate_requires_token(tmp_path: Path) -> None:
+    docs = InMemoryDocumentRepository()
+    docs.add(_failed_doc(str(tmp_path)))
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository()).post(
+        "/api/v1/documents/d1/rotate"
+    )
+    assert resp.status_code == 401
+
+
 def test_reingest_requires_token(tmp_path: Path) -> None:
     docs = InMemoryDocumentRepository()
     docs.add(_failed_doc(str(tmp_path)))

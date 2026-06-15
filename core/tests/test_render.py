@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+import pytest
 from doktok_contracts.media import OcrTextLine, RenderedPage
 from doktok_modalities_files import (
     PyMuPdfClassifier,
     PyMuPdfRenderer,
     SearchablePdfBuilder,
+    rotate_source,
 )
 
 
@@ -59,6 +62,31 @@ def test_searchable_pdf_positions_text_at_line_boxes(tmp_path: Path) -> None:
         x0, y0, _x1, _y1 = hits[0][:4]
         # Sits at the line box (image px == PDF points), not whole-page flowed at the top-left.
         assert 90 <= x0 <= 410 and 190 <= y0 <= 260
+
+
+def test_rotate_source_pdf_bumps_page_rotation(tmp_path: Path) -> None:
+    import fitz
+
+    data = Path(_make_pdf(tmp_path, "hello")).read_bytes()
+    rotated = rotate_source(data, "application/pdf", 90)
+    with fitz.open(stream=rotated, filetype="pdf") as doc:
+        assert doc[0].rotation == 90  # lossless /Rotate bump
+    assert rotate_source(data, "application/pdf", 0) == data  # no-op
+
+
+def test_rotate_source_image_swaps_dimensions() -> None:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 10), "white").save(buffer, format="PNG")
+    rotated = rotate_source(buffer.getvalue(), "image/png", 90)
+    with Image.open(io.BytesIO(rotated)) as image:
+        assert image.size == (10, 40)  # a 90deg turn swaps width/height
+
+
+def test_rotate_source_rejects_unsupported_type() -> None:
+    with pytest.raises(ValueError, match="cannot rotate"):
+        rotate_source(b"x", "text/plain", 90)
 
 
 def test_classifier_flags_full_page_image_and_ignores_plain_text(tmp_path: Path) -> None:

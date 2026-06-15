@@ -115,13 +115,13 @@ test("keeps the chat conversation when opening a cited document and going back",
   await userEvent.click(screen.getByRole("button", { name: "Chat" }));
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-  await waitFor(() => expect(screen.getByText("The total is 42 [1].")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/The total is 42/)).toBeInTheDocument());
 
-  // Open the cited document, then go back.
+  // Open the cited document in the in-chat drawer, then close it.
   await userEvent.click(screen.getByRole("button", { name: /inv\.pdf/ }));
   await waitFor(() => expect(screen.getByText(/Back to documents/)).toBeInTheDocument());
   await userEvent.click(screen.getByText(/Back to documents/));
 
-  // The conversation survived opening the document (the panel was hidden, not unmounted).
-  expect(screen.getByText("The total is 42 [1].")).toBeInTheDocument();
+  // The conversation survived opening the document (the drawer is in-chat; chat never unmounts).
+  expect(screen.getByText(/The total is 42/)).toBeInTheDocument();
 });

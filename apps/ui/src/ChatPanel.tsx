@@ -14,6 +14,7 @@ import {
   type QueryFilters,
   type RagAnswer,
 } from "./api";
+import { DocumentDetail } from "./DocumentDetail";
 import { Markdown } from "./Markdown";
 import { loadJSON, saveJSON } from "./persist";
 
@@ -200,10 +201,26 @@ function ActivityPanel({
   );
 }
 
-function AnswerBlock({ turn }: { turn: TurnView }) {
+function AnswerBlock({
+  turn,
+  onOpenDocument,
+}: {
+  turn: TurnView;
+  onOpenDocument?: (id: string) => void;
+}) {
   // While streaming, the caret sits in the activity window until answer tokens begin, then moves
   // to the answer below.
   const reasoningStreaming = turn.streaming && turn.answer.length === 0;
+  // Map citation index -> document, so a clicked [n] marker in the answer opens that document.
+  const citeMap = new Map(turn.citations.map((c) => [c.index, c.document_id]));
+  const citationIndices = new Set(turn.citations.map((c) => c.index));
+  const onCitationClick =
+    onOpenDocument && citeMap.size > 0
+      ? (index: number) => {
+          const docId = citeMap.get(index);
+          if (docId) onOpenDocument(docId);
+        }
+      : undefined;
   return (
     <div className="chat-answer-block">
       <p className="chat-question">{turn.question}</p>
@@ -226,7 +243,9 @@ function AnswerBlock({ turn }: { turn: TurnView }) {
         </p>
       )}
       <div className={turn.grounded || turn.streaming ? "answer" : "answer empty"}>
-        <Markdown>{turn.answer}</Markdown>
+        <Markdown citationIndices={citationIndices} onCitationClick={onCitationClick}>
+          {turn.answer}
+        </Markdown>
         {turn.streaming && turn.answer.length > 0 && (
           <span className="chat-caret" aria-hidden="true" />
         )}
@@ -493,6 +512,8 @@ export function ChatPanel({
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
     loadJSON(SIDEBAR_KEY, false),
   );
+  // The document opened from a citation, shown in the right-hand preview drawer (M8 #9).
+  const [drawerDocId, setDrawerDocId] = useState<string | null>(null);
   // Live accumulator + abort controller PER thread key, so a background stream survives a switch.
   const liveRef = useRef<Map<string, Streaming>>(new Map());
   const controllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -747,8 +768,15 @@ export function ChatPanel({
   }
   const lastIndex = turns.length - 1;
 
+  // Clicking a citation (a [n] marker, a source card, or an inline source) opens the document in
+  // the right-hand drawer instead of navigating away from the chat.
+  const openInDrawer = (id: string) => setDrawerDocId(id);
+
   return (
-    <section aria-label="Chat" className="panel chat-layout">
+    <section
+      aria-label="Chat"
+      className={`panel chat-layout${drawerDocId ? " chat-layout-drawer" : ""}`}
+    >
       <ThreadList
         threads={threads}
         activeId={threadId}
@@ -777,16 +805,16 @@ export function ChatPanel({
           if (i === lastIndex && turn.citations.length > 0) {
             return (
               <li key={i} className="chat-exchange chat-turn-body">
-                <AnswerBlock turn={turn} />
-                <SourcesColumn citations={turn.citations} onOpenDocument={onOpenDocument} />
+                <AnswerBlock turn={turn} onOpenDocument={openInDrawer} />
+                <SourcesColumn citations={turn.citations} onOpenDocument={openInDrawer} />
               </li>
             );
           }
           return (
             <li key={i} className="chat-exchange">
-              <AnswerBlock turn={turn} />
+              <AnswerBlock turn={turn} onOpenDocument={openInDrawer} />
               {turn.citations.length > 0 && (
-                <InlineCitations citations={turn.citations} onOpenDocument={onOpenDocument} />
+                <InlineCitations citations={turn.citations} onOpenDocument={openInDrawer} />
               )}
             </li>
           );
@@ -829,6 +857,16 @@ export function ChatPanel({
           </p>
         )}
       </div>
+      {drawerDocId && (
+        <aside className="chat-doc-drawer" aria-label="Document preview">
+          <DocumentDetail
+            key={drawerDocId}
+            id={drawerDocId}
+            onClose={() => setDrawerDocId(null)}
+            onOpenDocument={onOpenDocument}
+          />
+        </aside>
+      )}
     </section>
   );
 }

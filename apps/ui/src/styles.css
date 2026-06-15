@@ -1873,3 +1873,8 @@ tr.row-selected {
   opacity: 0.5;
   cursor: default;
 }
+
+.result-head-actions {
+  display: flex;
+  gap: 0.5rem;
+}

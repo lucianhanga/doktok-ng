@@ -10,7 +10,15 @@ import {
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import { loadJSON, removeKey, saveJSON } from "./persist";
+
+interface PersistedTableState {
+  sorting?: SortingState;
+  columnVisibility?: VisibilityState;
+  columnSizing?: ColumnSizingState;
+}
 
 export interface DataTableProps<T> {
   data: T[];
@@ -24,6 +32,10 @@ export interface DataTableProps<T> {
   /** Initial column visibility. */
   initialVisibility?: VisibilityState;
   emptyLabel?: string;
+  /** localStorage key: when set, sorting/visibility/sizing persist across mounts and reloads. */
+  persistKey?: string;
+  /** Bump this number to reset sorting/visibility/sizing to defaults and clear persistence. */
+  resetNonce?: number;
 }
 
 /**
@@ -60,12 +72,38 @@ export function DataTable<T>({
   renderDetail,
   initialVisibility,
   emptyLabel = "Nothing to show.",
+  persistKey,
+  resetNonce,
 }: DataTableProps<T>) {
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(initialVisibility ?? {});
-  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+  const persisted = useMemo<PersistedTableState>(
+    () => (persistKey ? loadJSON<PersistedTableState>(persistKey, {}) : {}),
+    [persistKey],
+  );
+  const [sorting, setSorting] = useState<SortingState>(persisted.sorting ?? []);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+    persisted.columnVisibility ?? initialVisibility ?? {},
+  );
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(persisted.columnSizing ?? {});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showColumns, setShowColumns] = useState(false);
+
+  // Persist table layout whenever it changes (best-effort).
+  useEffect(() => {
+    if (persistKey) saveJSON(persistKey, { sorting, columnVisibility, columnSizing });
+  }, [persistKey, sorting, columnVisibility, columnSizing]);
+
+  // Reset to factory defaults when the parent bumps resetNonce (skip the initial render).
+  const firstReset = useRef(true);
+  useEffect(() => {
+    if (firstReset.current) {
+      firstReset.current = false;
+      return;
+    }
+    setSorting([]);
+    setColumnVisibility(initialVisibility ?? {});
+    setColumnSizing({});
+    if (persistKey) removeKey(persistKey);
+  }, [resetNonce]);
 
   const table = useReactTable<T>({
     data,

@@ -257,6 +257,15 @@ class TextExtractor(Protocol):
 
 
 @runtime_checkable
+class DocumentNormalizer(Protocol):
+    """Convert an office/other document (docx/xlsx/pptx/...) to PDF bytes (M8.x #313), so it can
+    reuse the canonical PDF extraction/render/OCR/preview path. Runs locally (e.g. a Gotenberg/
+    LibreOffice container) - document content never leaves the host."""
+
+    def to_pdf(self, path: str, mime: str) -> bytes: ...
+
+
+@runtime_checkable
 class PdfClassifier(Protocol):
     def page_image_coverage(self, path: str) -> list[float]:
         """Per page, the fraction (0-1) of the page area covered by its largest embedded image."""

@@ -24,6 +24,7 @@ from pathlib import Path
 from doktok_contracts.media import OcrPageResult, PageLayout, RenderedPage
 from doktok_contracts.ports import (
     ChatModelProvider,
+    DocumentNormalizer,
     OcrExtractor,
     PdfClassifier,
     PdfRenderer,
@@ -38,6 +39,13 @@ from doktok_core.extraction.quality import text_quality
 MIME_TEXT = "text/plain"
 MIME_MARKDOWN = "text/markdown"
 MIME_PDF = "application/pdf"
+
+# Office formats converted to PDF (M8.x #313) so they reuse the whole PDF path. First milestone:
+# the OOXML trio. libmagic reports these mimes for .docx/.xlsx/.pptx.
+MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MIME_PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+OFFICE_MIMES: frozenset[str] = frozenset({MIME_DOCX, MIME_XLSX, MIME_PPTX})
 
 
 class NeedsOcrError(Exception):
@@ -90,11 +98,38 @@ def extract_document(
     max_pages: int = 0,
     ocr_concurrency: int = 1,
     ocr_dpi: int = 200,
+    normalizer: DocumentNormalizer | None = None,
 ) -> tuple[ExtractionResult, bytes | None]:
     if mime in (MIME_TEXT, MIME_MARKDOWN):
         text = text_extractor.extract(path)
         method = "markdown" if mime == MIME_MARKDOWN else "text"
         return ExtractionResult(text, [text], method, 1), None
+
+    if mime in OFFICE_MIMES:
+        # Convert the office document to PDF, then run the normal PDF path on it (#313). The
+        # original file is preserved by the caller; only extraction reads the converted PDF.
+        if normalizer is None:
+            raise NeedsOcrError(f"{mime} requires a document normalizer")
+        import tempfile
+
+        pdf_bytes = normalizer.to_pdf(path, mime)
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(pdf_bytes)
+            tmp.flush()
+            return _extract_pdf(
+                tmp.name,
+                pdf_extractor,
+                ocr,
+                renderer,
+                builder,
+                classifier,
+                ocr_image_coverage,
+                ocr_min_text_quality,
+                chat_model,
+                max_pages,
+                ocr_concurrency,
+                ocr_dpi,
+            )
 
     if mime == MIME_PDF:
         return _extract_pdf(

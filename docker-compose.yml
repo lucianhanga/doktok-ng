@@ -18,5 +18,14 @@ services:
       timeout: 5s
       retries: 10
 
+  # Office-document -> PDF conversion (M8.x #313). Gotenberg (MIT, Docker-published) wraps headless
+  # LibreOffice and runs entirely locally - document content never leaves the host.
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: doktok-gotenberg
+    ports:
+      - "${DOKTOK_GOTENBERG_PORT:-3000}:3000"
+    restart: unless-stopped
+
 volumes:
   doktok-pgdata:

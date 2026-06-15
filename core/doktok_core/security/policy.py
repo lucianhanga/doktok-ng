@@ -18,6 +18,10 @@ DEFAULT_ALLOWED_MIMES: frozenset[str] = frozenset(
         "image/jpeg",
         "image/tiff",
         "image/webp",
+        # Office OOXML (M8.x #313): converted to PDF on ingest via the document normalizer.
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     }
 )
 

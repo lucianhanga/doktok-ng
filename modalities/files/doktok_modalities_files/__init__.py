@@ -6,6 +6,7 @@ from doktok_modalities_files.extractors import (
     PyMuPdfTextExtractor,
 )
 from doktok_modalities_files.mime import LibmagicMimeDetector
+from doktok_modalities_files.normalize import GotenbergNormalizer
 from doktok_modalities_files.render import (
     PyMuPdfRenderer,
     PyMuPdfThumbnailer,
@@ -17,6 +18,7 @@ __version__ = "0.0.0"
 
 __all__ = [
     "DirectTextExtractor",
+    "GotenbergNormalizer",
     "LibmagicMimeDetector",
     "PyMuPdfClassifier",
     "PyMuPdfRenderer",

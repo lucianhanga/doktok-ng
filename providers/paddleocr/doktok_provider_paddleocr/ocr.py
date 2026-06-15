@@ -94,6 +94,14 @@ def _rotate_png(image_png: bytes, degrees: int) -> bytes:
         return buffer.getvalue()
 
 
+# Only rotate off upright when another orientation reads CLEARLY better. The Enhanced engine runs
+# textline-orientation, which flips individual upside-down lines, so an upright page and its 180
+# twin read about equally confidently - without this bias, noise can flip an already-upright page
+# upside down (and reverse its reading order). A genuinely sideways page reads far better upright,
+# clearing this margin; a genuine 180 page usually does too. (M8 bug fix)
+_ROTATE_MARGIN = 1.15
+
+
 def _score(page: OcrPageResult) -> float:
     """Rank an orientation: a correctly-upright page reads more confident text. Combine mean
     confidence with line count so a sideways page (few/low-confidence lines) loses."""
@@ -102,25 +110,34 @@ def _score(page: OcrPageResult) -> float:
     return page.confidence * len(page.lines)
 
 
+def _pick_orientation(scores: dict[int, float]) -> int:
+    """Choose the winning angle, biased toward upright (0): pick a non-zero angle only when it beats
+    upright by ``_ROTATE_MARGIN``. Pure, so the bias is unit-testable without an OCR engine."""
+    upright = scores.get(0, 0.0)
+    best = max(scores, key=lambda a: scores[a])
+    if best != 0 and scores[best] < upright * _ROTATE_MARGIN:
+        return 0
+    return best
+
+
 def _worker_ocr_vote(image_png: bytes) -> OcrPageResult:
     return _run_ocr_vote(_WORKER_ENGINE, image_png)
 
 
 def _run_ocr_vote(engine: Any, image_png: bytes) -> OcrPageResult:
     """4-way orientation vote (Enhanced): OCR the page at 0/90/180/270 and keep the orientation that
-    reads the most confident text. The winner's text/boxes are in that rotated frame; ``rotation``
-    records the angle so the searchable PDF + overlay can present it upright."""
-    best: OcrPageResult | None = None
-    best_angle = 0
-    best_score = -1.0
+    reads the most confident text (biased toward upright). The winner's text/boxes are in that
+    rotated frame; ``rotation`` records the angle so the PDF + overlay present it upright."""
+    pages: dict[int, OcrPageResult] = {}
+    scores: dict[int, float] = {}
     for angle in (0, 90, 180, 270):
         png = image_png if angle == 0 else _rotate_png(image_png, angle)
         page = _run_ocr(engine, png)
-        score = _score(page)
-        if score > best_score:
-            best, best_angle, best_score = page, angle, score
-    assert best is not None
-    best.rotation = best_angle
+        pages[angle] = page
+        scores[angle] = _score(page)
+    chosen = _pick_orientation(scores)
+    best = pages[chosen]
+    best.rotation = chosen
     return best
 
 

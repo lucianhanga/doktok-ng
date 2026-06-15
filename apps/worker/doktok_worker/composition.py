@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 
 from doktok_contracts.ports import (
     CategoryClassifier,
@@ -161,6 +162,19 @@ def build_services(
             num_predict=settings.ocr_num_predict,
             keep_alive=settings.ocr_keep_alive,
         )
+    # Enhanced re-OCR extractor (PaddleOCR only): heavier PP-OCRv6 medium models + the orientation/
+    # unwarp/textline preprocessors. Used for files dropped in ingest.enhanced/. Lazy pool (the
+    # models only load on first use), kept smaller since the medium models are heavier.
+    enhanced_ocr: PaddleOcr | None = None
+    if settings.ocr_engine == "paddleocr":
+        enhanced_ocr = PaddleOcr(
+            lang=settings.ocr_lang,
+            det_model=settings.ocr_enhanced_det_model,
+            rec_model=settings.ocr_enhanced_rec_model,
+            pool_size=max(1, ocr_concurrency // 2),
+            cpu_threads=settings.ocr_cpu_threads,
+            preprocess=True,
+        )
     # Live-reload OCR parallelism from Settings (M7.6): the worker calls this between ingest scans
     # (no OCR in flight) to resize the PaddleOCR pool without a restart. Paddle-only; the Ollama OCR
     # path has no predictor pool to resize.
@@ -171,11 +185,13 @@ def build_services(
         def ocr_reload() -> None:  # noqa: F811 - single definition, guarded by the isinstance
             paddle.reconfigure(app_settings.get_ocr_settings().ocr_concurrency)
 
-    # Graceful shutdown: tear down the PaddleOCR process pool so its spawn workers do not leak as
+    # Graceful shutdown: tear down the PaddleOCR process pools so their spawn workers do not leak as
     # ~1 GB launchd orphans on every worker restart. No-op for the Ollama OCR path.
     def cleanup() -> None:
         if isinstance(ocr_extractor, PaddleOcr):
             ocr_extractor.shutdown()
+        if enhanced_ocr is not None:
+            enhanced_ocr.shutdown()
 
     pdf_renderer = PyMuPdfRenderer()
     searchable_pdf_builder = SearchablePdfBuilder()
@@ -372,40 +388,55 @@ def build_services(
     for tenant_id in tenant_ids(settings):
         layout = FilesystemLayout(settings.files_root, tenant_id)
         layout.ensure()
-        services.append(
-            IngestionServices(
-                tenant_id=tenant_id,
-                job_repo=job_repo,
-                document_repo=document_repo,
-                file_storage=file_storage,
-                hash_service=hash_service,
-                mime_detector=mime_detector,
-                security_policy=security_policy,
-                quarantine_service=QuarantineService(layout),
-                text_extractor=text_extractor,
-                pdf_extractor=pdf_extractor,
-                layout=layout,
-                ocr_extractor=ocr_extractor,
-                pdf_renderer=pdf_renderer,
-                searchable_pdf_builder=searchable_pdf_builder,
-                pdf_classifier=pdf_classifier,
-                ocr_image_coverage=settings.ocr_image_coverage,
-                ocr_min_text_quality=settings.ocr_min_text_quality,
-                max_pages=settings.max_pages,
-                ocr_concurrency=ocr_concurrency,
-                ocr_dpi=settings.ocr_dpi,
-                chat_model=chat_model,
-                audit_log=audit_log,
-                chunker=chunker,
-                embedding_provider=embedding_provider,
-                chunk_repo=chunk_repo,
-                entity_extractor=entity_extractor,
-                entity_repo=entity_repo,
-                lexical_term_extractor=lexical_term_extractor,
-                lexical_terms_limit=settings.lexical_terms_limit,
-                feature_repo=feature_repo,
-                staged_ingestion=settings.staged_ingestion,
-                stage_ledger=stage_ledger,
-            )
+        std = IngestionServices(
+            tenant_id=tenant_id,
+            job_repo=job_repo,
+            document_repo=document_repo,
+            file_storage=file_storage,
+            hash_service=hash_service,
+            mime_detector=mime_detector,
+            security_policy=security_policy,
+            quarantine_service=QuarantineService(layout),
+            text_extractor=text_extractor,
+            pdf_extractor=pdf_extractor,
+            layout=layout,
+            ocr_extractor=ocr_extractor,
+            pdf_renderer=pdf_renderer,
+            searchable_pdf_builder=searchable_pdf_builder,
+            pdf_classifier=pdf_classifier,
+            ocr_image_coverage=settings.ocr_image_coverage,
+            ocr_min_text_quality=settings.ocr_min_text_quality,
+            max_pages=settings.max_pages,
+            ocr_concurrency=ocr_concurrency,
+            ocr_dpi=settings.ocr_dpi,
+            chat_model=chat_model,
+            audit_log=audit_log,
+            chunker=chunker,
+            embedding_provider=embedding_provider,
+            chunk_repo=chunk_repo,
+            entity_extractor=entity_extractor,
+            entity_repo=entity_repo,
+            lexical_term_extractor=lexical_term_extractor,
+            lexical_terms_limit=settings.lexical_terms_limit,
+            feature_repo=feature_repo,
+            staged_ingestion=settings.staged_ingestion,
+            stage_ledger=stage_ledger,
         )
+        services.append(std)
+        # Enhanced re-OCR bundle: same wiring, but a separate intake folder (ingest.enhanced/) and
+        # the heavier extractor + higher DPI. The worker scans every services' ingest folder, so no
+        # intake-loop change is needed.
+        if enhanced_ocr is not None:
+            enhanced_layout = FilesystemLayout(
+                settings.files_root, tenant_id, ingest_dir="ingest.enhanced"
+            )
+            enhanced_layout.ensure()
+            services.append(
+                replace(
+                    std,
+                    layout=enhanced_layout,
+                    ocr_extractor=enhanced_ocr,
+                    ocr_dpi=settings.ocr_enhanced_dpi,
+                )
+            )
     return services, reconciler, projection_runner, db, ocr_reload, cleanup

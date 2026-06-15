@@ -157,3 +157,23 @@ def test_executor_built_lazily_with_pool_size(monkeypatch: pytest.MonkeyPatch) -
     assert ocr._executor() is first  # built once, then reused
     assert captured["max_workers"] == 6
     assert captured["initargs"] == ("german", "PP-OCRv5_mobile_det", "latin_PP-OCRv5_mobile_rec", 1)
+
+
+def test_shutdown_tears_down_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    import doktok_provider_paddleocr.ocr as ocr_mod
+
+    calls: dict[str, object] = {}
+
+    class _FakePool:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def shutdown(self, wait: bool) -> None:
+            calls["wait"] = wait
+
+    monkeypatch.setattr(ocr_mod, "ProcessPoolExecutor", _FakePool)
+    ocr = PaddleOcr(pool_size=2)
+    ocr._executor()  # start the pool
+    ocr.shutdown()
+    assert calls["wait"] is True  # joined so spawn workers exit instead of orphaning
+    assert ocr._pool is None
+    ocr.shutdown()  # idempotent: safe with no pool running

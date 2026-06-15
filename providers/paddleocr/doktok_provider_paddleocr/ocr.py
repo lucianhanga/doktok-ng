@@ -136,6 +136,17 @@ class PaddleOcr:
             old.shutdown(wait=True)  # safe between scans: no page is being OCR'd
             logger.info("PaddleOCR pool resized to %d workers", target)
 
+    def shutdown(self) -> None:
+        """Tear down the worker pool so its model-laden spawn processes do not leak (become
+        launchd-owned orphans, ~1 GB each) when the worker stops. Call once on worker exit; safe
+        when no pool was ever started or an in-process engine is used."""
+        with self._lock:
+            pool = self._pool
+            self._pool = None
+        if pool is not None:
+            pool.shutdown(wait=True)
+            logger.info("PaddleOCR process pool shut down")
+
     def _executor(self) -> ProcessPoolExecutor:
         if self._pool is None:
             with self._lock:

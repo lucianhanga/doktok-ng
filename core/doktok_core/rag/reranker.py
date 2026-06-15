@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Generator
 
 from doktok_contracts.media import ChatChunk
 from doktok_contracts.ports import ChatModelProvider, StreamingChatModelProvider
@@ -73,7 +73,7 @@ class LlmReranker:
 
     def rerank_stream(
         self, query: str, hits: list[SearchHit], *, top_k: int, think: bool | None = None
-    ) -> Iterator[ChatChunk]:
+    ) -> Generator[ChatChunk, None, list[SearchHit]]:
         """Like ``rerank`` but streams the model's reasoning chunks (M8): yields ChatChunk(kind=
         'reasoning') as the model thinks, then RETURNS the reordered hits (via StopIteration.value).
         Falls back to retrieval order on any failure or a non-streaming model."""

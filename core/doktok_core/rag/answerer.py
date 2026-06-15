@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from datetime import date
 
 from doktok_contracts.media import ChatChunk, LlmUsage
@@ -218,7 +218,7 @@ class DefaultRagAnswerer:
 
     def _understand_stream(
         self, history: list[ChatTurn], question: str, reasoning: bool | None
-    ) -> Iterator[ChatEvent]:
+    ) -> Generator[ChatEvent, None, tuple[str, QueryFilters | None]]:
         """Streaming sibling of ``_understand`` (M8): yields the rewrite call's reasoning as it
         thinks, then RETURNS (standalone_query, filters) via StopIteration.value. Its JSON output is
         accumulated and parsed, never surfaced as answer tokens. Degrades to the plain question."""
@@ -318,7 +318,7 @@ class DefaultRagAnswerer:
 
     def _stream_rerank(
         self, question: str, candidates: list[SearchHit], limit: int, reasoning: bool | None
-    ) -> Iterator[ChatEvent]:
+    ) -> Generator[ChatEvent, None, list[SearchHit]]:
         """Rerank the candidates, streaming the reranker's reasoning as ChatEvents when it supports
         it (M8), then RETURN the reranked top-k via StopIteration.value."""
         if self._reranker is None:

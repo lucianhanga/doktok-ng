@@ -725,6 +725,9 @@ class AiSettingsResponse(AiSettings):
     # corpus. Not user-selectable - changing it would need a vector-dimension migration + re-index.
     embedding_model: str = ""
     embedding_num_ctx: int = 0
+    # True when a purpose is set to OpenAI AND egress is permitted, i.e. document content actually
+    # leaves the host. Drives a non-dismissable privacy indicator in the UI (APP-11).
+    egress_active: bool = False
 
 
 class AiSettingsUpdate(AiSettings):

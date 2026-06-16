@@ -17,6 +17,7 @@ from doktok_contracts.schemas import (
     ModelCatalog,
     OcrSettings,
 )
+from doktok_core.security.egress import openai_egress_allowed
 from doktok_core.settings.catalog import MODEL_CATALOG
 from fastapi import APIRouter, Depends, Request
 
@@ -29,11 +30,15 @@ Repo = Annotated[AppSettingsRepository, Depends(get_app_settings_repository)]
 
 def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> AiSettingsResponse:
     settings = request.app.state.settings
+    key = repo.get_openai_api_key() or settings.openai_api_key
+    remote_selected = "openai" in (ai.pipeline.provider, ai.rag.provider)
     return AiSettingsResponse(
         **ai.model_dump(),
         openai_api_key_set=bool(repo.get_openai_api_key()),
         embedding_model=settings.embedding_model,
         embedding_num_ctx=settings.embedding_num_ctx,
+        egress_active=remote_selected
+        and openai_egress_allowed(key=key, no_egress=settings.no_egress),
     )
 
 

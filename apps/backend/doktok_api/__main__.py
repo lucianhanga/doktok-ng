@@ -48,7 +48,9 @@ def seed_settings() -> int:
     settings = get_settings()
     db = Database(settings.database_url)
     try:
-        seeded = seed_ai_settings(PostgresAppSettingsRepository(db), settings)
+        seeded = seed_ai_settings(
+            PostgresAppSettingsRepository(db, secrets_key=settings.secrets_key), settings
+        )
     except Exception:  # noqa: BLE001 - surface any failure as a non-zero exit
         logger.exception("seed-settings failed")
         return 1

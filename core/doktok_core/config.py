@@ -115,6 +115,12 @@ class Settings(BaseSettings):
 
     no_egress: bool = True
 
+    # Master key for encrypting secrets at rest (the OpenAI key in app_settings; APP-8). When set,
+    # the key is stored Fernet-encrypted and decrypted only in-process; when empty, it is stored as
+    # plaintext (local-dev default). Keep this stable - rotating it makes an existing encrypted key
+    # undecryptable (re-enter the OpenAI key after changing it).
+    secrets_key: str = ""
+
     # OpenAI API key fallback for headless / bootstrap deploys. Precedence: the key set via the
     # Settings UI (persisted in app_settings) wins; this env var is used only when that DB value is
     # empty. Lets a fresh deployment provision the hybrid (remote pipeline/RAG) split headlessly.
@@ -136,6 +142,18 @@ class Settings(BaseSettings):
     # DSN); the tool surface is read-only by construction regardless.
     mcp_tenant: str = ""
     mcp_database_url: str = ""
+
+    # Allowed CORS origins (APP-10). Loopback dev origins by default; set to your UI origin(s) for a
+    # deployed UI served from another host. JSON list in env, e.g. '["https://docs.example.com"]'.
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+    )
+    # Reject request bodies larger than this many MB with 413 (APP-10). The API takes JSON only
+    # (documents are ingested via the filesystem watcher, not HTTP upload), so this is generous.
+    max_request_mb: int = 25
+    # Per-token request rate limit (requests/minute; APP-9). 0 = disabled (default). When set, each
+    # token gets a token-bucket of this size, refilled at this rate; /health and /ready are exempt.
+    rate_limit_per_minute: int = 0
 
     # API DB connection pool size. The default Database() pool is small (4); the API runs sync
     # routes in a threadpool and each holds a connection during a (possibly slow) Ollama call, so

@@ -95,7 +95,9 @@ def _get_database(request: Request) -> Database:
             from doktok_core.settings.bootstrap import seed_ai_settings
             from doktok_storage_postgres import PostgresAppSettingsRepository
 
-            seed_ai_settings(PostgresAppSettingsRepository(database), settings)
+            seed_ai_settings(
+                PostgresAppSettingsRepository(database, secrets_key=settings.secrets_key), settings
+            )
             request.app.state.database = database
     return database
 
@@ -363,7 +365,10 @@ def get_app_settings_repository(request: Request) -> AppSettingsRepository:
 
     from doktok_storage_postgres import PostgresAppSettingsRepository
 
-    repository = PostgresAppSettingsRepository(_get_database(request))
+    settings = request.app.state.settings
+    repository = PostgresAppSettingsRepository(
+        _get_database(request), secrets_key=settings.secrets_key
+    )
     registry.register(AppSettingsRepository, repository)
     return repository
 

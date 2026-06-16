@@ -77,18 +77,46 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.state.settings = settings
     app.state.registry = registry
 
-    # CORS restricted to loopback dev origins; the bearer token is the real control (ADR-0008).
-    # allow_credentials stays False (default): auth is header-based, so CORS is only a secondary
-    # control and cookie-based CSRF does not apply.
+    # CORS origins are configurable (APP-10; loopback dev origins by default). The bearer token is
+    # the real control (ADR-0008); allow_credentials stays False (header auth, no cookie CSRF).
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-        ],
+        allow_origins=list(settings.cors_origins),
         allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    # Per-token rate limiter (APP-9); only active when configured (>0).
+    from doktok_api.ratelimit import RateLimiter
+
+    app.state.rate_limiter = (
+        RateLimiter(settings.rate_limit_per_minute) if settings.rate_limit_per_minute > 0 else None
+    )
+    _max_body_bytes = settings.max_request_mb * 1024 * 1024
+    _exempt_paths = frozenset({"/health", "/ready"})
+
+    @app.middleware("http")
+    async def _limits(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Reject oversized bodies up front (APP-10).
+        cl = request.headers.get("Content-Length")
+        if cl is not None and cl.isdigit() and int(cl) > _max_body_bytes:
+            return JSONResponse(status_code=413, content={"detail": "request body too large"})
+        # Per-token rate limit (APP-9); health/ready are exempt so probes are never throttled.
+        limiter = request.app.state.rate_limiter
+        if limiter is not None and request.url.path not in _exempt_paths:
+            auth = request.headers.get("Authorization", "")
+            token = auth[7:] if auth.startswith("Bearer ") else ""
+            if token:
+                allowed, retry_after = limiter.allow(token)
+                if not allowed:
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "rate limit exceeded"},
+                        headers={"Retry-After": str(retry_after)},
+                    )
+        return await call_next(request)
 
     @app.middleware("http")
     async def _request_id(

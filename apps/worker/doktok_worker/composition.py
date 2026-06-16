@@ -127,7 +127,7 @@ def build_services(
     migrate(db)
 
     # Effective AI model selection (Settings tab > AI section), persisted; applied at startup.
-    app_settings = PostgresAppSettingsRepository(db)
+    app_settings = PostgresAppSettingsRepository(db, secrets_key=settings.secrets_key)
     # Headless bootstrap: seed the provider split from env on a fresh DB (APP-2; no-op if saved).
     seed_ai_settings(app_settings, settings)
     heartbeat = app_settings.set_worker_heartbeat  # liveness signal for the backend probe (APP-5)

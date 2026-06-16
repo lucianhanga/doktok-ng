@@ -25,12 +25,17 @@ yet, the guide gives the manual equivalent that works today.
 | Setting the provider split + OpenAI key via the **Settings UI** | Shipped |
 | Local dev `docker-compose.yml` (db + gotenberg only) | Shipped |
 | N95 tuning settings (`DOKTOK_OCR_CONCURRENCY`, `OPENAI_RECONCILE_CONCURRENCY`, ...) | Shipped |
-| **Production compose** (backend + worker + ollama-embedder + db + gotenberg + Caddy) | Planned (M11) |
-| **Dockerfiles** for backend and worker images | Planned (M11) |
-| **Headless / scripted seeding** of the AI settings + OpenAI key | Planned (M11: APP-2) |
-| **`DOKTOK_NO_EGRESS` actually blocking OpenAI** (today it only checks the Ollama URL) | Planned (M11: APP-3) |
-| **Encrypted OpenAI key at rest** (today it is plaintext in `app_settings`) | Planned (M11: APP-8) |
-| **Deploy CI / image publishing** | Planned (M11) |
+| **Production compose** (backend + worker + ollama-embedder + db + gotenberg + Caddy) | Shipped (M11: #318) |
+| **Dockerfiles** for backend, worker, and ui images | Shipped (M11: #317) |
+| Per-container resource limits + restart policies | Shipped (M11: #323) |
+| Caddy TLS (domain auto-HTTPS or LAN `tls internal`) + edge token injection | Shipped (M11: #321) |
+| **Headless / scripted seeding** of the AI settings + OpenAI key | Shipped (M11: APP-2/#325) |
+| **`DOKTOK_NO_EGRESS` blocking OpenAI** | Shipped (M11: APP-3/#326) |
+| OpenAI key env fallback (`DOKTOK_OPENAI_API_KEY`) | Shipped (M11: APP-7/#320) |
+| `migrate` command + advisory-locked migration | Shipped (M11: APP-1/#319) |
+| **Encrypted OpenAI key at rest** (today it is plaintext in `app_settings`) | Planned (M11: APP-8/#331) |
+| **Outbound firewall to OpenAI only** (example provided; apply on the host) | Partly (M11: #322) |
+| **Deploy CI / image publishing** | Planned (M11: #338/#339) |
 
 The M11 epic owns the full ticket list; this guide references it rather than duplicating it.
 
@@ -109,9 +114,10 @@ and set via the Settings UI (next section).
 ### Hybrid split and egress
 
 ```env
-# Leave egress enabled: the box must reach OpenAI. (NO_EGRESS only validates that the Ollama URL is
-# loopback today; it does NOT block OpenAI — see ADR-0020 and APP-3. With NO_EGRESS=true and a
-# loopback Ollama URL the app still starts, but the flag's name overstates what it enforces.)
+# Egress MUST be enabled for the hybrid split: the box sends content to OpenAI. As of APP-3 the gate
+# is enforced - if a purpose is set to OpenAI while NO_EGRESS=true, the app refuses to egress, logs a
+# warning naming the setting, and falls back to the local model. So this must be false here
+# (ADR-0006/ADR-0020). The actual outbound traffic is then restricted to OpenAI at the host firewall.
 DOKTOK_NO_EGRESS=false
 
 # Embeddings stay local on this box; point at the local embedder.
@@ -119,10 +125,19 @@ DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 DOKTOK_EMBEDDING_MODEL=qwen3-embedding:0.6b   # 1024-dim; do NOT change (would force a re-index)
 DOKTOK_EMBEDDING_NUM_CTX=1024
 DOKTOK_EMBEDDING_KEEP_ALIVE=30m               # keep the tiny embedder resident
+
+# OpenAI key fallback (APP-7) and headless provider-split seeding (APP-2) for a fresh DB, so the
+# hybrid can be provisioned without the Settings UI. Seeding is seed-if-absent (never overwrites UI
+# edits). Both are optional; the Settings UI remains the live-editable surface.
+DOKTOK_OPENAI_API_KEY=sk-...
+DOKTOK_PIPELINE_PROVIDER=openai
+DOKTOK_PIPELINE_MODEL=gpt-4o-mini
+DOKTOK_RAG_PROVIDER=openai
+DOKTOK_RAG_MODEL=gpt-4o-mini
 ```
 
-The OpenAI **API key** and the **pipeline/RAG provider+model selection** are not env settings — they
-live in the database and are set through the Settings UI (see below).
+The OpenAI **API key** and the **pipeline/RAG provider+model selection** live in the database and are
+set through the Settings UI (next section) or seeded once from the env above on a fresh deployment.
 
 ### N95 throughput tuning
 
@@ -213,10 +228,28 @@ OCR text, chunks, and embeddings are computed and stored **locally**; pgvector a
 leave the box. But the enrichment and chat paths do egress. Communicate this to stakeholders before
 ingesting sensitive material, and review OpenAI's data-handling terms for your account.
 
-`DOKTOK_NO_EGRESS=true` does **not** prevent this egress today — it only validates that the Ollama URL
-is loopback (APP-3, M11, will make the flag actually gate OpenAI). If on-premises content
-confidentiality is a hard requirement, prefer the **separate LAN Ollama host** alternative in ADR-0020
-instead of OpenAI.
+As of APP-3, `DOKTOK_NO_EGRESS` **does** gate OpenAI: with it `true`, selecting OpenAI is refused and
+the app falls back to the local model. The hybrid therefore requires `DOKTOK_NO_EGRESS=false` as the
+explicit opt-in. If on-premises content confidentiality is a hard requirement, prefer the **separate
+LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
+
+## Secrets, TLS, and the outbound firewall
+
+- **Secrets.** Tenant tokens (`DOKTOK_TENANT_TOKENS`), the Caddy edge token (`DOKTOK_API_TOKEN`, which
+  must be one of the tenant tokens), and the DB password come from an untracked `.env.production`
+  (gitignored) or Docker secrets — never the `dev-token-*` defaults. The OpenAI key is entered via the
+  Settings UI (persisted in Postgres) or seeded once from `DOKTOK_OPENAI_API_KEY`; rotating it is a
+  Settings change + restart (or re-seed), and backups that include `app_settings` carry it (encrypt
+  them; at-rest encryption is APP-8).
+- **TLS.** Caddy terminates TLS. Set `DOKTOK_SITE_ADDRESS` to a public domain for automatic
+  Let's Encrypt certificates, or to an `https://` LAN host and uncomment `tls internal` in
+  `apps/ui/Caddyfile` for a self-signed cert. Caddy injects the bearer token at the edge, so the
+  token-free SPA never holds it. Only Caddy's 80/443 are published; all other services are
+  internal-only.
+- **Outbound firewall.** `DOKTOK_NO_EGRESS` gates the *app*, not the *host*. Restrict the box's
+  outbound traffic to OpenAI (and DNS) with a default-deny policy — see the example at
+  [`deploy/firewall-openai-only.example.nft`](../../deploy/firewall-openai-only.example.nft). This is
+  the real enforcement that content leaves the host only for OpenAI.
 
 ## Related
 

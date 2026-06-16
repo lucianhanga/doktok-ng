@@ -126,7 +126,8 @@ def build_services(
     # Effective AI model selection (Settings tab > AI section), persisted; applied at startup.
     app_settings = PostgresAppSettingsRepository(db)
     pipeline = app_settings.get_ai_settings().pipeline
-    openai_key = app_settings.get_openai_api_key()
+    # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
+    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     # OCR parallelism comes from the Settings DB (live-reloaded by the worker), env is the fallback
     # default. This is the number of OCR worker processes directly - if more documents ingest at
     # once than this, their pages just share the pool (the process pool queues the extra work).

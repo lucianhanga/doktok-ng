@@ -173,7 +173,8 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
     settings = request.app.state.settings
     app_settings = get_app_settings_repository(request)
     rag = app_settings.get_ai_settings().rag
-    openai_key = app_settings.get_openai_api_key()
+    # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
+    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     model_provider: ChatModelProvider
     if rag.provider == "openai" and openai_key:
         from doktok_provider_openai import OpenAiChatModelProvider
@@ -225,7 +226,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     # Effective RAG model selection (Settings tab > AI section), persisted; applied at startup.
     app_settings = get_app_settings_repository(request)
     rag = app_settings.get_ai_settings().rag
-    openai_key = app_settings.get_openai_api_key()
+    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     chat_model = _build_rag_chat_model(request)
     rerank_model: ChatModelProvider
     if rag.provider == "openai" and openai_key:

@@ -30,6 +30,15 @@ def test_settings_read_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.no_egress is False
 
 
+def test_openai_api_key_defaults_empty_and_reads_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _settings_without_env_file().openai_api_key == ""
+
+    monkeypatch.setenv("DOKTOK_OPENAI_API_KEY", "sk-test-123")
+    assert _settings_without_env_file().openai_api_key == "sk-test-123"
+
+
 def test_registry_is_empty_at_m0() -> None:
     registry = build_registry()
     assert isinstance(registry, Registry)

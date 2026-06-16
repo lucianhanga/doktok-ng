@@ -64,6 +64,18 @@ def test_no_egress_allows_remote_when_disabled(monkeypatch: pytest.MonkeyPatch) 
     assert settings.no_egress is False and "10.0.0.5" in settings.ollama_base_url
 
 
+def test_openai_egress_allowed_requires_key_and_no_egress_off() -> None:
+    from doktok_core.security.egress import openai_egress_allowed
+
+    # Usable only when a key is set AND egress is permitted (no_egress=False).
+    assert openai_egress_allowed(key="sk-x", no_egress=False) is True
+    # No-egress on => refuse even with a key (the security gate, APP-3).
+    assert openai_egress_allowed(key="sk-x", no_egress=True) is False
+    # No key => never usable, regardless of egress.
+    assert openai_egress_allowed(key="", no_egress=False) is False
+    assert openai_egress_allowed(key="", no_egress=True) is False
+
+
 def test_loopback_url_detection() -> None:
     from doktok_core.security.egress import is_loopback_url
 

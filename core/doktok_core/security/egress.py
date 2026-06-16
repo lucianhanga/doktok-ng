@@ -25,3 +25,15 @@ def is_loopback_url(url: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+def openai_egress_allowed(*, key: str, no_egress: bool) -> bool:
+    """Whether the OpenAI provider may be used: a key is configured AND egress is permitted.
+
+    Selecting OpenAI sends document content off the host, so it is refused while no-egress is on
+    (``DOKTOK_NO_EGRESS``) - the loopback check only covers the local Ollama endpoint, not OpenAI.
+    Set ``DOKTOK_NO_EGRESS=false`` to opt into remote enrichment/RAG (ADR-0006; the hybrid
+    deployment topology in ADR-0020). Callers that select OpenAI but get ``False`` here must fall
+    back to the local default rather than silently egressing.
+    """
+    return bool(key) and not no_egress

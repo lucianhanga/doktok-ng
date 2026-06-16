@@ -120,6 +120,16 @@ class Settings(BaseSettings):
     # empty. Lets a fresh deployment provision the hybrid (remote pipeline/RAG) split headlessly.
     openai_api_key: str = ""
 
+    # Headless bootstrap of the AI provider split (APP-2). When a provider is set here and NO AI
+    # settings have been saved yet (fresh DB), these seed app_settings on startup so a deployment
+    # gets the hybrid split without the Settings UI. Empty = leave the stored/default selection. The
+    # model is optional (the catalog's default for that provider is used when omitted). Operator
+    # edits via the UI are never overwritten (seed-if-absent).
+    pipeline_provider: str = ""  # '' | 'ollama' | 'openai'
+    pipeline_model: str = ""
+    rag_provider: str = ""  # '' | 'ollama' | 'openai'
+    rag_model: str = ""
+
     # Read-only MCP server (ADR-0008). The tenant it serves (must be one of DOKTOK_TENANT_TOKENS'
     # tenants; if empty and exactly one tenant is configured, that one is used). For real read-only
     # enforcement, point mcp_database_url at a Postgres role with only SELECT (defaults to the main

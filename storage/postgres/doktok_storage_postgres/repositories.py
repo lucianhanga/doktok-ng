@@ -1537,6 +1537,9 @@ class PostgresAppSettingsRepository:
     def set_ai_settings(self, settings: AiSettings) -> None:
         self._set("ai_settings", settings.model_dump())
 
+    def has_ai_settings(self) -> bool:
+        return self._get("ai_settings") is not None
+
     def get_openai_api_key(self) -> str:
         raw = self._get("openai_api_key")
         return str(raw) if raw else ""

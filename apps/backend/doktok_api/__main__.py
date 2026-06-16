@@ -1,8 +1,10 @@
 """Backend entrypoint.
 
-- ``python -m doktok_api``          -> run the API server (binds settings.bind_host)
-- ``python -m doktok_api migrate``  -> apply pending DB migrations, then exit (a fail-fast,
+- ``python -m doktok_api``               -> run the API server (binds settings.bind_host)
+- ``python -m doktok_api migrate``       -> apply pending DB migrations, then exit (a fail-fast,
   pre-traffic deploy step so the first request never pays migration latency; APP-1)
+- ``python -m doktok_api seed-settings`` -> seed the AI provider split from env on a fresh DB
+  (no-op if AI settings are already saved; APP-2)
 """
 
 from __future__ import annotations
@@ -38,6 +40,24 @@ def migrate() -> int:
     return 0
 
 
+def seed_settings() -> int:
+    """Seed the AI provider split from env on a fresh DB; no-op if already saved (APP-2)."""
+    from doktok_core.settings.bootstrap import seed_ai_settings
+    from doktok_storage_postgres import Database, PostgresAppSettingsRepository
+
+    settings = get_settings()
+    db = Database(settings.database_url)
+    try:
+        seeded = seed_ai_settings(PostgresAppSettingsRepository(db), settings)
+    except Exception:  # noqa: BLE001 - surface any failure as a non-zero exit
+        logger.exception("seed-settings failed")
+        return 1
+    finally:
+        db.close()
+    logger.info("AI settings seeded" if seeded else "AI settings unchanged (already set or no env)")
+    return 0
+
+
 def serve() -> None:
     settings = get_settings()
     uvicorn.run(
@@ -49,8 +69,11 @@ def serve() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    if len(sys.argv) > 1 and sys.argv[1] == "migrate":
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    if command == "migrate":
         sys.exit(migrate())
+    if command == "seed-settings":
+        sys.exit(seed_settings())
     serve()
 
 

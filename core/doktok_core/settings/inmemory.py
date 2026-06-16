@@ -8,6 +8,7 @@ from doktok_contracts.schemas import AiSettings, OcrSettings
 class InMemoryAppSettingsRepository:
     def __init__(self) -> None:
         self._ai = AiSettings()
+        self._ai_set = False
         self._ocr = OcrSettings()
         self._openai_key = ""
 
@@ -16,6 +17,10 @@ class InMemoryAppSettingsRepository:
 
     def set_ai_settings(self, settings: AiSettings) -> None:
         self._ai = settings.model_copy(deep=True)
+        self._ai_set = True
+
+    def has_ai_settings(self) -> bool:
+        return self._ai_set
 
     def get_openai_api_key(self) -> str:
         return self._openai_key

@@ -48,3 +48,22 @@ Negative:
 - audit log
 - explicit permission for future write tools
 - explicit configuration for any remote provider
+
+## Remote AI providers and the no-egress gate (M11, APP-3)
+
+`DOKTOK_NO_EGRESS` was originally enforced only against the local model endpoint: startup refuses a
+non-loopback `DOKTOK_OLLAMA_BASE_URL`. That check does not cover remote AI providers, so selecting
+OpenAI for the enrichment pipeline or RAG (ADR-0014) would send document content off the host even
+with no-egress on.
+
+To keep the posture coherent, selecting OpenAI is now gated on egress being permitted:
+
+- The OpenAI provider is used only when an API key is configured **and** `DOKTOK_NO_EGRESS=false`
+  (`openai_egress_allowed()`).
+- If a purpose is set to OpenAI while `DOKTOK_NO_EGRESS=true`, the system refuses to egress, logs a
+  clear warning naming the setting, and falls back to the local default model rather than silently
+  sending content to OpenAI.
+
+The hybrid deployment topology (ADR-0020) therefore requires `DOKTOK_NO_EGRESS=false` as the
+explicit opt-in to remote enrichment/RAG, and restricts the actual outbound traffic to the OpenAI
+endpoint at the host firewall.

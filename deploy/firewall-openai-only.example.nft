@@ -1,0 +1,43 @@
+#!/usr/sbin/nft -f
+#
+# Example host outbound firewall for the hybrid DokTok NG deployment (M11 #322 / DEVOPS-5).
+#
+# DOKTOK_NO_EGRESS only gates the app's model calls; it does not constrain the host. With the hybrid
+# split the box must reach OpenAI but nothing else - enforce that here with a default-deny outbound
+# policy that allows only DNS and HTTPS to api.openai.com. Review and adapt before applying; an
+# overly strict ruleset can lock you out (keep an SSH/console path open).
+#
+# Apply:   sudo nft -f deploy/firewall-openai-only.example.nft
+# Inspect: sudo nft list ruleset
+#
+# Notes:
+# - nftables cannot match on DNS names directly; resolve the OpenAI endpoint to its current IP set
+#   and pin them, or front the egress with a filtering proxy. The `define` below is a starting point;
+#   refresh it from `dig api.openai.com` (the addresses change) or use a proxy/allowlist resolver.
+# - This filters OUTPUT only. Inbound is handled separately (only Caddy's 80/443 should be exposed).
+
+define OPENAI_IPS = { 0.0.0.0/32 }   # REPLACE with the resolved api.openai.com addresses
+
+table inet doktok_egress {
+	chain output {
+		type filter hook output priority 0; policy drop;
+
+		# Loopback + established/related return traffic.
+		oif "lo" accept
+		ct state established,related accept
+
+		# DNS (so name resolution still works).
+		udp dport 53 accept
+		tcp dport 53 accept
+
+		# Local container/LAN traffic (adjust to your Docker/LAN subnets).
+		ip daddr 172.16.0.0/12 accept
+		ip daddr 192.168.0.0/16 accept
+
+		# The only allowed internet egress: HTTPS to OpenAI.
+		ip daddr $OPENAI_IPS tcp dport 443 accept
+
+		# Everything else outbound is dropped by the policy above.
+		log prefix "doktok-egress-drop " counter
+	}
+}

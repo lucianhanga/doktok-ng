@@ -814,6 +814,7 @@ name = "doktok-storage-postgres"
 version = "0.0.0"
 source = { editable = "storage/postgres" }
 dependencies = [
+    { name = "cryptography" },
     { name = "doktok-contracts" },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
@@ -821,6 +822,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "doktok-contracts", editable = "contracts" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "psycopg-pool", specifier = ">=3.2" },

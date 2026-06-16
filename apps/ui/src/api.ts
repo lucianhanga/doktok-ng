@@ -360,6 +360,8 @@ export interface AiSettings {
   // Read-only: the embedding model + context that indexes the corpus (not user-selectable).
   embedding_model?: string;
   embedding_num_ctx?: number;
+  // True when a remote provider is active and content actually egresses to OpenAI (APP-11).
+  egress_active?: boolean;
 }
 
 export interface ModelOption {

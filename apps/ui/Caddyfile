@@ -1,0 +1,32 @@
+# Caddy config for the DokTok NG UI image (M11 #317/#318/#321).
+# Serves the built SPA and reverse-proxies the API, injecting the bearer token so the token-free
+# bundle can call /api (mirrors the Vite dev proxy).
+#
+# TLS (#321): the site address comes from DOKTOK_SITE_ADDRESS.
+#   - ":80"               -> plain HTTP (default; put behind a trusted LAN or an external TLS proxy)
+#   - "docs.example.com"  -> automatic HTTPS via Let's Encrypt (the box must be reachable on 443)
+#   - LAN host, no public domain -> set DOKTOK_SITE_ADDRESS to an https:// host and uncomment the
+#     `tls internal` line below for a self-signed (Caddy local CA) certificate.
+{
+	admin off
+}
+
+{$DOKTOK_SITE_ADDRESS::80} {
+	encode zstd gzip
+	# tls internal   # uncomment for a self-signed cert on a LAN host without a public domain
+
+	# API + health endpoints -> backend, with the tenant bearer token injected from the environment.
+	@api path /api/* /health /ready
+	handle @api {
+		reverse_proxy {$DOKTOK_BACKEND_URL:backend:8000} {
+			header_up Authorization "Bearer {$DOKTOK_API_TOKEN}"
+		}
+	}
+
+	# Everything else is the SPA (client-side routing -> index.html fallback).
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

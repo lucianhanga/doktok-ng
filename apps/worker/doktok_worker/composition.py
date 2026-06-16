@@ -31,7 +31,9 @@ from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.extract_stage import ExtractStage
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
+from doktok_core.security.egress import openai_egress_allowed
 from doktok_core.security.policy import DefaultSecurityPolicy
+from doktok_core.settings.bootstrap import seed_ai_settings
 from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
 from doktok_core.visualizations.service import ProjectionRunner, ProjectionService
 from doktok_modalities_files import (
@@ -103,6 +105,7 @@ def build_services(
     Database,
     Callable[[], None] | None,
     Callable[[], None],
+    Callable[[], None],
 ]:
     """Build per-tenant ingestion services, the feature reconciler, and a shared database handle.
 
@@ -124,16 +127,30 @@ def build_services(
     migrate(db)
 
     # Effective AI model selection (Settings tab > AI section), persisted; applied at startup.
-    app_settings = PostgresAppSettingsRepository(db)
+    app_settings = PostgresAppSettingsRepository(db, secrets_key=settings.secrets_key)
+    # Headless bootstrap: seed the provider split from env on a fresh DB (APP-2; no-op if saved).
+    seed_ai_settings(app_settings, settings)
+    heartbeat = app_settings.set_worker_heartbeat  # liveness signal for the backend probe (APP-5)
     pipeline = app_settings.get_ai_settings().pipeline
-    openai_key = app_settings.get_openai_api_key()
+    # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
+    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     # OCR parallelism comes from the Settings DB (live-reloaded by the worker), env is the fallback
     # default. This is the number of OCR worker processes directly - if more documents ingest at
     # once than this, their pages just share the pool (the process pool queues the extra work).
     ocr_concurrency = app_settings.get_ocr_settings().ocr_concurrency
-    use_openai_pipeline = pipeline.provider == "openai" and bool(openai_key)
-    if pipeline.provider == "openai" and not openai_key:
-        logger.warning("pipeline set to OpenAI but no API key configured; using Ollama defaults")
+    use_openai_pipeline = pipeline.provider == "openai" and openai_egress_allowed(
+        key=openai_key, no_egress=settings.no_egress
+    )
+    if pipeline.provider == "openai" and not use_openai_pipeline:
+        if openai_key and settings.no_egress:
+            logger.warning(
+                "pipeline is set to OpenAI but DOKTOK_NO_EGRESS is true; refusing to egress "
+                "document content - using Ollama defaults. Set DOKTOK_NO_EGRESS=false to enable it."
+            )
+        else:
+            logger.warning(
+                "pipeline set to OpenAI but no API key configured; using Ollama defaults"
+            )
 
     job_repo = PostgresIngestionJobRepository(db)
     document_repo = PostgresDocumentRepository(db)
@@ -445,4 +462,4 @@ def build_services(
                     ocr_dpi=settings.ocr_enhanced_dpi,
                 )
             )
-    return services, reconciler, projection_runner, db, ocr_reload, cleanup
+    return services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat

@@ -8,11 +8,98 @@ format so the lenient core parsers can validate/normalize the result.
 from __future__ import annotations
 
 import json
+import logging
+import random
 import time
 from typing import Any
 
 import httpx
 from doktok_contracts.media import LlmUsage
+
+logger = logging.getLogger("doktok.provider.openai")
+
+_MAX_RETRIES = 3
+_BACKOFF_BASE = 0.5  # seconds; doubled per attempt, plus jitter
+
+
+class OpenAiError(RuntimeError):
+    """An OpenAI request failed. Base class for the classified errors below."""
+
+
+class OpenAiAuthError(OpenAiError):
+    """Authentication/authorization failed (HTTP 401/403) - a bad or missing key. Not retryable."""
+
+
+class OpenAiRateLimitError(OpenAiError):
+    """Rate limited (HTTP 429) and still failing after retries."""
+
+
+class OpenAiTimeoutError(OpenAiError):
+    """The request timed out."""
+
+
+class OpenAiServerError(OpenAiError):
+    """OpenAI returned a 5xx after retries."""
+
+
+def _backoff(attempt: int) -> float:
+    return _BACKOFF_BASE * (2**attempt) + random.uniform(0, 0.25)
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return float(raw)  # seconds form; HTTP-date form falls back to plain backoff
+    except ValueError:
+        return None
+
+
+def _post_with_retry(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout: float,
+    max_retries: int = _MAX_RETRIES,
+) -> httpx.Response:
+    """POST with bounded exponential backoff + jitter, honoring Retry-After. Retries 429/5xx and
+    timeouts; fails fast on auth errors; raises a classified ``OpenAiError`` when out of retries."""
+    last_error: OpenAiError = OpenAiError("OpenAI request failed")
+    for attempt in range(max_retries + 1):
+        delay: float | None = None
+        try:
+            response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+        except httpx.TimeoutException:
+            last_error = OpenAiTimeoutError(f"OpenAI request timed out after {timeout}s")
+            delay = _backoff(attempt)
+        except httpx.HTTPError as exc:
+            last_error = OpenAiError(f"OpenAI request failed: {exc}")
+            delay = _backoff(attempt)
+        else:
+            status = response.status_code
+            if status < 400:
+                return response
+            if status in (401, 403):
+                raise OpenAiAuthError(
+                    f"OpenAI authentication failed (HTTP {status}); check the API key"
+                )
+            if status == 429:
+                last_error = OpenAiRateLimitError("OpenAI rate limit exceeded (HTTP 429)")
+                delay = _retry_after(response) or _backoff(attempt)
+            elif status >= 500:
+                last_error = OpenAiServerError(f"OpenAI server error (HTTP {status})")
+                delay = _backoff(attempt)
+            else:
+                raise OpenAiError(f"OpenAI request failed (HTTP {status}): {response.text[:200]}")
+        if attempt >= max_retries or delay is None:
+            break
+        logger.warning(
+            "%s; retrying in %.1fs (attempt %d/%d)", last_error, delay, attempt + 1, max_retries
+        )
+        time.sleep(delay)
+    raise last_error
 
 
 def openai_chat(
@@ -43,13 +130,12 @@ def openai_chat(
             "type": "json_schema",
             "json_schema": {"name": schema_name, "schema": json_schema, "strict": False},
         }
-    response = httpx.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        json=payload,
+    response = _post_with_retry(
+        url=f"{base_url.rstrip('/')}/chat/completions",
+        payload=payload,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         timeout=timeout,
     )
-    response.raise_for_status()
     choices = response.json().get("choices", [])
     if not choices:
         return ""
@@ -80,13 +166,12 @@ def openai_chat_with_usage(
     else:
         payload["temperature"] = 0
     t0 = time.monotonic()
-    response = httpx.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        json=payload,
+    response = _post_with_retry(
+        url=f"{base_url.rstrip('/')}/chat/completions",
+        payload=payload,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         timeout=timeout,
     )
-    response.raise_for_status()
     wall_ms = round((time.monotonic() - t0) * 1000)
     body = response.json()
     choices = body.get("choices", [])

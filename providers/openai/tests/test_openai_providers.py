@@ -5,12 +5,16 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import httpx
+import pytest
 from doktok_contracts.schemas import EntityType
 from doktok_provider_openai import (
+    OpenAiAuthError,
     OpenAiChatModelProvider,
     OpenAiEntityNerExtractor,
     OpenAiMetadataExtractor,
+    OpenAiRateLimitError,
     OpenAiRecordExtractor,
+    OpenAiServerError,
 )
 
 
@@ -20,6 +24,58 @@ def _resp(content: str) -> httpx.Response:
         json={"choices": [{"message": {"content": content}}]},
         request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
     )
+
+
+def _status(code: int, *, headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(
+        code,
+        json={"error": {"message": f"http {code}"}},
+        headers=headers or {},
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+    )
+
+
+def test_retries_429_then_succeeds() -> None:
+    # 429 (with Retry-After) then 200 -> one retry, eventual success. Sleep is patched out.
+    with (
+        patch("doktok_provider_openai.client.time.sleep") as sleep,
+        patch(
+            "doktok_provider_openai.client.httpx.post",
+            side_effect=[_status(429, headers={"Retry-After": "0"}), _resp("ok")],
+        ) as post,
+    ):
+        out = OpenAiChatModelProvider("gpt-4o-mini", "k").complete("hi")
+    assert out == "ok"
+    assert post.call_count == 2 and sleep.call_count == 1
+
+
+def test_auth_error_fails_fast_without_retry() -> None:
+    with (
+        patch("doktok_provider_openai.client.time.sleep") as sleep,
+        patch("doktok_provider_openai.client.httpx.post", return_value=_status(401)) as post,
+        pytest.raises(OpenAiAuthError),
+    ):
+        OpenAiChatModelProvider("gpt-4o-mini", "bad-key").complete("hi")
+    assert post.call_count == 1 and sleep.call_count == 0  # no retries on auth failure
+
+
+def test_server_error_retries_then_raises_classified() -> None:
+    with (
+        patch("doktok_provider_openai.client.time.sleep"),
+        patch("doktok_provider_openai.client.httpx.post", return_value=_status(503)) as post,
+        pytest.raises(OpenAiServerError),
+    ):
+        OpenAiChatModelProvider("gpt-4o-mini", "k").complete("hi")
+    assert post.call_count == 4  # initial + 3 retries
+
+
+def test_persistent_429_raises_rate_limit_error() -> None:
+    with (
+        patch("doktok_provider_openai.client.time.sleep"),
+        patch("doktok_provider_openai.client.httpx.post", return_value=_status(429)),
+        pytest.raises(OpenAiRateLimitError),
+    ):
+        OpenAiChatModelProvider("gpt-4o-mini", "k").complete("hi")
 
 
 def test_chat_non_reasoning_uses_temperature() -> None:

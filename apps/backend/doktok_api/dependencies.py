@@ -32,6 +32,7 @@ from doktok_contracts.ports import (
 )
 from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_tenant
+from doktok_core.security.egress import openai_egress_allowed
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
@@ -68,6 +69,9 @@ def require_tenant(
             detail="invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    from doktok_core.logging_setup import tenant_id_var
+
+    tenant_id_var.set(tenant_id)  # correlate log lines by tenant (APP-12)
     return TenantContext(tenant_id=tenant_id)
 
 
@@ -90,6 +94,13 @@ def _get_database(request: Request) -> Database:
             # slow Ollama call, so the default (4) starves under a handful of concurrent requests.
             database = Database(settings.database_url, max_size=settings.api_db_pool_size)
             migrate(database)
+            # Headless bootstrap: seed the AI provider split from env on a fresh DB (APP-2).
+            from doktok_core.settings.bootstrap import seed_ai_settings
+            from doktok_storage_postgres import PostgresAppSettingsRepository
+
+            seed_ai_settings(
+                PostgresAppSettingsRepository(database, secrets_key=settings.secrets_key), settings
+            )
             request.app.state.database = database
     return database
 
@@ -173,9 +184,11 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
     settings = request.app.state.settings
     app_settings = get_app_settings_repository(request)
     rag = app_settings.get_ai_settings().rag
-    openai_key = app_settings.get_openai_api_key()
+    # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
+    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
+    use_openai = openai_egress_allowed(key=openai_key, no_egress=settings.no_egress)
     model_provider: ChatModelProvider
-    if rag.provider == "openai" and openai_key:
+    if rag.provider == "openai" and use_openai:
         from doktok_provider_openai import OpenAiChatModelProvider
 
         effort = openai_reasoning_effort(rag.reasoning, rag.model)
@@ -186,10 +199,16 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
         from doktok_provider_ollama import OllamaChatModelProvider
 
         if rag.provider == "openai":
+            reason = (
+                "DOKTOK_NO_EGRESS is true; refusing to egress"
+                if openai_key and settings.no_egress
+                else "no API key is configured"
+            )
             logger.warning(
-                "Document interrogation is set to OpenAI %s but no API key is configured; "
+                "Document interrogation is set to OpenAI %s but %s; "
                 "falling back to the local default model %s",
                 rag.model,
+                reason,
                 settings.default_model,
             )
         model = rag.model if rag.provider == "ollama" else settings.default_model
@@ -225,10 +244,11 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     # Effective RAG model selection (Settings tab > AI section), persisted; applied at startup.
     app_settings = get_app_settings_repository(request)
     rag = app_settings.get_ai_settings().rag
-    openai_key = app_settings.get_openai_api_key()
+    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
+    use_openai = openai_egress_allowed(key=openai_key, no_egress=settings.no_egress)
     chat_model = _build_rag_chat_model(request)
     rerank_model: ChatModelProvider
-    if rag.provider == "openai" and openai_key:
+    if rag.provider == "openai" and use_openai:
         rerank_model = chat_model  # same remote model; the prompt already caps the rerank output
     else:
         from doktok_provider_ollama import OllamaChatModelProvider
@@ -348,7 +368,10 @@ def get_app_settings_repository(request: Request) -> AppSettingsRepository:
 
     from doktok_storage_postgres import PostgresAppSettingsRepository
 
-    repository = PostgresAppSettingsRepository(_get_database(request))
+    settings = request.app.state.settings
+    repository = PostgresAppSettingsRepository(
+        _get_database(request), secrets_key=settings.secrets_key
+    )
     registry.register(AppSettingsRepository, repository)
     return repository
 

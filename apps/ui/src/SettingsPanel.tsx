@@ -159,6 +159,12 @@ export function SettingsPanel() {
       ) : (
         <div className="settings-section">
           <h3>AI models</h3>
+          {ai.egress_active && (
+            <p className="status-error" role="status">
+              Privacy: a remote (OpenAI) model is active, so document content and chat context are
+              sent to api.openai.com. Switch both purposes to a local model to keep data on this host.
+            </p>
+          )}
           <p className="muted">
             Choose the local (or remote) model used for each AI purpose. The chat/RAG model applies
             immediately on Save; the pipeline model applies on the next worker reconcile.

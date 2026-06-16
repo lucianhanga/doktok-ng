@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from doktok_contracts.errors import DuplicateActiveDocumentError
@@ -48,6 +48,7 @@ from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from doktok_storage_postgres.crypto import decrypt_secret, encrypt_secret
 from doktok_storage_postgres.db import Database
 
 
@@ -1513,8 +1514,9 @@ class PostgresRecordRepository:
 class PostgresAppSettingsRepository:
     """Global app settings backed by the ``app_settings`` key -> JSON table (not tenant-scoped)."""
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, secrets_key: str = "") -> None:
         self._db = db
+        self._secrets_key = secrets_key  # master key for at-rest secret encryption (APP-8)
 
     def _get(self, key: str) -> Any:
         with self._db.connection() as conn:
@@ -1537,12 +1539,16 @@ class PostgresAppSettingsRepository:
     def set_ai_settings(self, settings: AiSettings) -> None:
         self._set("ai_settings", settings.model_dump())
 
+    def has_ai_settings(self) -> bool:
+        return self._get("ai_settings") is not None
+
     def get_openai_api_key(self) -> str:
         raw = self._get("openai_api_key")
-        return str(raw) if raw else ""
+        return decrypt_secret(str(raw), self._secrets_key) if raw else ""
 
     def set_openai_api_key(self, key: str) -> None:
-        self._set("openai_api_key", key)
+        # Encrypt at rest when a master key is configured (APP-8); otherwise stored plaintext.
+        self._set("openai_api_key", encrypt_secret(key, self._secrets_key))
 
     def get_ocr_settings(self) -> OcrSettings:
         raw = self._get("ocr_settings")
@@ -1550,6 +1556,18 @@ class PostgresAppSettingsRepository:
 
     def set_ocr_settings(self, settings: OcrSettings) -> None:
         self._set("ocr_settings", settings.model_dump())
+
+    def set_worker_heartbeat(self) -> None:
+        self._set("worker_heartbeat", datetime.now(UTC).isoformat())
+
+    def get_worker_heartbeat(self) -> datetime | None:
+        raw = self._get("worker_heartbeat")
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(str(raw))
+        except ValueError:
+            return None
 
 
 _PROJECTION_HEADER_COLS = "algorithm, version, input_fingerprint, n_points, truncated, computed_at"

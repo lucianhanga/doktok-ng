@@ -47,6 +47,8 @@ class IngestionWorker:
         projection_interval: float = 5.0,
         ocr_reload: Callable[[], None] | None = None,
         ocr_reload_interval: float = 15.0,
+        heartbeat: Callable[[], None] | None = None,
+        heartbeat_interval: float = 15.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         # One IngestionServices per tenant (each carries that tenant's layout + tenant_id).
@@ -63,6 +65,9 @@ class IngestionWorker:
         # Live OCR-pool resize from Settings (M7.6): invoked between ingest scans.
         self._ocr_reload = ocr_reload
         self._ocr_reload_interval = ocr_reload_interval
+        # Liveness heartbeat (APP-5): stamped periodically so an external probe can spot a dead one.
+        self._heartbeat = heartbeat
+        self._heartbeat_interval = heartbeat_interval
         self._clock = clock
 
     def run_projections(self) -> int:
@@ -182,11 +187,25 @@ class IngestionWorker:
         for thread in threads:
             thread.start()
         try:
+            last_heartbeat = 0.0
             while not stop.is_set():
+                if self._heartbeat is not None and self._clock() - last_heartbeat >= (
+                    self._heartbeat_interval
+                ):
+                    self._safe_heartbeat()
+                    last_heartbeat = self._clock()
                 time.sleep(1.0)
         except KeyboardInterrupt:
             logger.info("worker stopping")
             stop.set()
+
+    def _safe_heartbeat(self) -> None:  # pragma: no cover - long-running loop helper
+        if self._heartbeat is None:
+            return
+        try:
+            self._heartbeat()
+        except Exception:  # noqa: BLE001 - a heartbeat write must never take down the worker
+            logger.exception("worker heartbeat failed")
 
     def _ingest_loop(self, stop: threading.Event) -> None:  # pragma: no cover - long-running loop
         # Recover anything a prior worker abandoned mid-pipeline before processing the live queue.

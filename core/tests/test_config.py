@@ -35,8 +35,10 @@ def test_openai_api_key_defaults_empty_and_reads_from_env(
 ) -> None:
     assert _settings_without_env_file().openai_api_key == ""
 
-    monkeypatch.setenv("DOKTOK_OPENAI_API_KEY", "sk-test-123")
-    assert _settings_without_env_file().openai_api_key == "sk-test-123"
+    monkeypatch.setenv("DOKTOK_OPENAI_API_KEY", "sk-test-123")  # pragma: allowlist secret
+    assert (
+        _settings_without_env_file().openai_api_key == "sk-test-123"  # pragma: allowlist secret
+    )
 
 
 def test_registry_is_empty_at_m0() -> None:

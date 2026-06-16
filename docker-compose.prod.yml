@@ -28,11 +28,22 @@ x-app-env: &app-env
   # would otherwise refuse to start). Outbound egress is restricted at the host firewall (#322).
   DOKTOK_NO_EGRESS: "false"
   DOKTOK_OPENAI_API_KEY: ${DOKTOK_OPENAI_API_KEY:-}
+  # Encrypt the OpenAI key at rest (APP-8) + structured logs (APP-12).
+  DOKTOK_SECRETS_KEY: ${DOKTOK_SECRETS_KEY:-}
+  DOKTOK_LOG_FORMAT: ${DOKTOK_LOG_FORMAT:-json}
+  DOKTOK_LOG_LEVEL: ${DOKTOK_LOG_LEVEL:-INFO}
   # Headless AI provider split (APP-2); seeded only on a fresh DB, never overwrites UI edits.
   DOKTOK_PIPELINE_PROVIDER: ${DOKTOK_PIPELINE_PROVIDER:-}
   DOKTOK_PIPELINE_MODEL: ${DOKTOK_PIPELINE_MODEL:-}
   DOKTOK_RAG_PROVIDER: ${DOKTOK_RAG_PROVIDER:-}
   DOKTOK_RAG_MODEL: ${DOKTOK_RAG_MODEL:-}
+
+# Bounded container logs so they survive restarts without filling the SSD (#335 DEVOPS-8).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
   db:
@@ -49,6 +60,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging: *logging
     # Resource caps for the 8 GB box (#323). Limits ~ db .75g + gotenberg 1g + ollama 2g +
     # backend .75g + worker 1.5g + caddy .25g = ~6.25g, leaving headroom for the OS.
     deploy:
@@ -61,6 +73,7 @@ services:
   gotenberg:
     image: gotenberg/gotenberg:8
     container_name: doktok-prod-gotenberg
+    logging: *logging
     deploy:
       resources:
         limits:
@@ -82,6 +95,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
+    logging: *logging
     deploy:
       resources:
         limits:
@@ -93,7 +107,7 @@ services:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-backend:latest
+    image: ghcr.io/lucianhanga/doktok-ng-backend:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-backend
     depends_on:
       db:
@@ -106,8 +120,20 @@ services:
       <<: *app-env
       DOKTOK_BIND_HOST: 0.0.0.0
       DOKTOK_TENANT_TOKENS: ${DOKTOK_TENANT_TOKENS:?set DOKTOK_TENANT_TOKENS}
+      # Limited-prod hardening (APP-9/APP-10).
+      DOKTOK_RATE_LIMIT_PER_MINUTE: ${DOKTOK_RATE_LIMIT_PER_MINUTE:-0}
+      DOKTOK_MAX_REQUEST_MB: ${DOKTOK_MAX_REQUEST_MB:-25}
+      DOKTOK_CORS_ORIGINS: ${DOKTOK_CORS_ORIGINS:-[]}
     volumes:
       - doktok-files:/data/files
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *logging
     deploy:
       resources:
         limits:
@@ -119,7 +145,7 @@ services:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-worker:latest
+    image: ghcr.io/lucianhanga/doktok-ng-worker:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-worker
     depends_on:
       db:
@@ -132,12 +158,13 @@ services:
       <<: *app-env
       # N95 tuning (#324 DEVOPS-4): OCR on CPU with bounded parallelism; enrichment is remote so the
       # reconciler can fan out, but each reconcile also hits the local embedder - keep it moderate.
-      DOKTOK_OCR_CONCURRENCY: "2"
-      DOKTOK_OCR_CPU_THREADS: "1"
-      DOKTOK_INGEST_CONCURRENCY: "2"
-      DOKTOK_OPENAI_RECONCILE_CONCURRENCY: "6"
+      DOKTOK_OCR_CONCURRENCY: ${DOKTOK_OCR_CONCURRENCY:-2}
+      DOKTOK_OCR_CPU_THREADS: ${DOKTOK_OCR_CPU_THREADS:-1}
+      DOKTOK_INGEST_CONCURRENCY: ${DOKTOK_INGEST_CONCURRENCY:-2}
+      DOKTOK_OPENAI_RECONCILE_CONCURRENCY: ${DOKTOK_OPENAI_RECONCILE_CONCURRENCY:-6}
     volumes:
       - doktok-files:/data/files
+    logging: *logging
     deploy:
       resources:
         limits:
@@ -151,7 +178,7 @@ services:
     build:
       context: .
       dockerfile: apps/ui/Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-ui:latest
+    image: ghcr.io/lucianhanga/doktok-ng-ui:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-caddy
     depends_on:
       backend:
@@ -169,6 +196,7 @@ services:
     ports:
       - "${DOKTOK_HTTP_PORT:-80}:80"
       - "${DOKTOK_HTTPS_PORT:-443}:443"
+    logging: *logging
     deploy:
       resources:
         limits:

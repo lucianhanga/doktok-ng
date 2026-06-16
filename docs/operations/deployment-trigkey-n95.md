@@ -33,9 +33,13 @@ yet, the guide gives the manual equivalent that works today.
 | **`DOKTOK_NO_EGRESS` blocking OpenAI** | Shipped (M11: APP-3/#326) |
 | OpenAI key env fallback (`DOKTOK_OPENAI_API_KEY`) | Shipped (M11: APP-7/#320) |
 | `migrate` command + advisory-locked migration | Shipped (M11: APP-1/#319) |
-| **Encrypted OpenAI key at rest** (today it is plaintext in `app_settings`) | Planned (M11: APP-8/#331) |
-| **Outbound firewall to OpenAI only** (example provided; apply on the host) | Partly (M11: #322) |
-| **Deploy CI / image publishing** | Planned (M11: #338/#339) |
+| Encrypted OpenAI key at rest (`DOKTOK_SECRETS_KEY`) | Shipped (M11: APP-8/#331) |
+| Rate limiting, configurable CORS, body-size limit | Shipped (M11: APP-9/#332, APP-10/#333) |
+| Egress/privacy indicator in the Settings UI | Shipped (M11: APP-11/#334) |
+| Structured JSON logs + `/metrics`; dependency-aware `/ready`; worker heartbeat | Shipped (M11: #336/#337/#328/#329) |
+| Image build/publish to GHCR + SBOM; deploy + rollback workflow | Shipped (M11: #338/#339) |
+| Staging/production env profiles + security runbook | Shipped (M11: #340/#341) |
+| **Outbound firewall to OpenAI only** (example provided; apply it on the host) | Partly (M11: #322) |
 
 The M11 epic owns the full ticket list; this guide references it rather than duplicating it.
 
@@ -244,8 +248,9 @@ LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
   must be one of the tenant tokens), and the DB password come from an untracked `.env.production`
   (gitignored) or Docker secrets — never the `dev-token-*` defaults. The OpenAI key is entered via the
   Settings UI (persisted in Postgres) or seeded once from `DOKTOK_OPENAI_API_KEY`; rotating it is a
-  Settings change + restart (or re-seed), and backups that include `app_settings` carry it (encrypt
-  them; at-rest encryption is APP-8).
+  Settings change + restart (or re-seed). Set `DOKTOK_SECRETS_KEY` so the key is encrypted at rest
+  (APP-8); backups that include `app_settings` still carry it (the encrypted form), so keep backups
+  protected. See the [security runbook](security-runbook.md) for the full exposure checklist.
 - **TLS.** Caddy terminates TLS. Set `DOKTOK_SITE_ADDRESS` to a public domain for automatic
   Let's Encrypt certificates, or to an `https://` LAN host and uncomment `tls internal` in
   `apps/ui/Caddyfile` for a self-signed cert. Caddy injects the bearer token at the edge, so the
@@ -258,6 +263,7 @@ LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
 
 ## Related
 
+- [Limited-production security & privacy runbook](security-runbook.md)
 - [ADR-0020 — Hybrid deployment topology](../adr/ADR-0020-hybrid-deployment-topology.md)
 - [ADR-0006 — Local-first, no-egress security](../adr/ADR-0006-local-first-no-egress-security.md)
 - [ADR-0014 — Runtime AI model selection](../adr/ADR-0014-runtime-ai-model-selection.md)

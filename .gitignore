@@ -25,6 +25,8 @@ build/
 .env
 .env.*
 !.env.example
+!.env.staging.example
+!.env.production.example
 
 # DokTok runtime storage (never commit ingested documents).
 # Per-tenant lifecycle folders live under storage/files/{tenant}/..., so ignore the whole tree.

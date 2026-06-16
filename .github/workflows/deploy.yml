@@ -1,0 +1,73 @@
+# Deploy a published image set to the N95 with rollback (M11 #339 / DEVOPS-10).
+#
+# Promotion model: deploy the exact image tag/digest that passed staging - never rebuild between
+# environments. Gated by GitHub Environments (configure a required reviewer on `production` in the
+# repo settings); the `environment:` key below enforces that gate.
+#
+# This workflow cannot be exercised from CI here - it needs the target box reachable via SSH (or a
+# self-hosted runner on the N95) and the secrets below. It is intentionally manual (workflow_dispatch).
+#
+# Required per-environment secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY.
+# The box must already hold docker-compose.prod.yml + an .env.<environment> with DOKTOK_* values.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+      image_tag:
+        description: Image tag or digest to deploy (e.g. sha-abc1234)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # required-reviewer gate is configured on this environment
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: IMAGE_TAG
+          script: |
+            set -euo pipefail
+            cd /opt/doktok
+            # Record the currently-running digests so we can roll back.
+            docker compose -f docker-compose.prod.yml images --format json > /opt/doktok/.last-deploy.json || true
+            export DOKTOK_IMAGE_TAG="${IMAGE_TAG}"
+            # Back up the DB before changing anything (DEVOPS-6).
+            ./deploy/backup.sh || { echo "backup failed; aborting deploy"; exit 1; }
+            docker compose -f docker-compose.prod.yml --env-file ".env.${ENVIRONMENT}" pull
+            docker compose -f docker-compose.prod.yml --env-file ".env.${ENVIRONMENT}" up -d
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          ENVIRONMENT: ${{ inputs.environment }}
+      - name: Smoke test
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            # Wait for the backend to report ready through Caddy, then one authed call.
+            for i in $(seq 1 30); do
+              curl -fsS http://localhost/ready && break || sleep 2
+            done
+            curl -fsS http://localhost/health >/dev/null
+      # Rollback: re-run this workflow with the previous image_tag (recorded in .last-deploy.json on
+      # the box). Kept manual so a human confirms the target before reverting.

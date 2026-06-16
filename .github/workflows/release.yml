@@ -1,0 +1,80 @@
+# Build and publish the backend/worker/ui images to GHCR + an SBOM (M11 #338 / DEVOPS-9).
+# Additive to ci.yml (which still gates correctness); this only runs on main / version tags.
+# Note: actions are referenced by tag here to match ci.yml; pin them to commit SHAs as a
+# supply-chain hardening follow-up.
+name: Release images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    name: Build ${{ matrix.name }} image
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { name: backend, dockerfile: apps/backend/Dockerfile }
+          - { name: worker, dockerfile: apps/worker/Dockerfile }
+          - { name: ui, dockerfile: apps/ui/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.name }}
+          tags: |
+            type=sha
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Vulnerability scan (informational)
+        uses: aquasecurity/trivy-action@0.24.0
+        continue-on-error: true
+        with:
+          image-ref: ghcr.io/${{ github.repository }}-${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          format: table
+          ignore-unfixed: true
+
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Generate CycloneDX SBOM
+        run: make sbom
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/python.cdx.json
+          if-no-files-found: warn

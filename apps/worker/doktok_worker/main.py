@@ -7,6 +7,7 @@ import signal
 from types import FrameType
 
 from doktok_core.config import get_settings
+from doktok_core.logging_setup import configure_logging
 
 from doktok_worker.composition import build_services
 from doktok_worker.worker import IngestionWorker
@@ -24,11 +25,9 @@ def _install_sigterm_handler() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
-    _install_sigterm_handler()
     settings = get_settings()
+    configure_logging(json_format=settings.log_format == "json", level=settings.log_level)
+    _install_sigterm_handler()
     log = logging.getLogger("doktok.worker")
     services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat = build_services(
         settings

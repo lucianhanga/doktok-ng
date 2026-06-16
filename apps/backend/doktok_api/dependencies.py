@@ -69,6 +69,9 @@ def require_tenant(
             detail="invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    from doktok_core.logging_setup import tenant_id_var
+
+    tenant_id_var.set(tenant_id)  # correlate log lines by tenant (APP-12)
     return TenantContext(tenant_id=tenant_id)
 
 

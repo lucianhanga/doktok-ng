@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from doktok_api import __version__
+from doktok_api.dependencies import Tenant
 from doktok_api.routers import (
     aggregate,
     audit,
@@ -61,6 +62,10 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     settings = settings or get_settings()
     registry = registry or build_registry()
 
+    from doktok_core.logging_setup import configure_logging
+
+    configure_logging(json_format=settings.log_format == "json", level=settings.log_level)
+
     # Fail-closed: never expose a non-loopback bind without configured tokens (ADR-0008).
     if settings.bind_host not in _LOOPBACK_HOSTS and not settings.tenant_tokens:
         raise RuntimeError(
@@ -87,13 +92,15 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     )
 
     # Per-token rate limiter (APP-9); only active when configured (>0).
+    from doktok_api.metrics import Metrics
     from doktok_api.ratelimit import RateLimiter
 
     app.state.rate_limiter = (
         RateLimiter(settings.rate_limit_per_minute) if settings.rate_limit_per_minute > 0 else None
     )
+    app.state.metrics = Metrics()  # APP-13
     _max_body_bytes = settings.max_request_mb * 1024 * 1024
-    _exempt_paths = frozenset({"/health", "/ready"})
+    _exempt_paths = frozenset({"/health", "/ready", "/metrics"})
 
     @app.middleware("http")
     async def _limits(
@@ -103,7 +110,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         cl = request.headers.get("Content-Length")
         if cl is not None and cl.isdigit() and int(cl) > _max_body_bytes:
             return JSONResponse(status_code=413, content={"detail": "request body too large"})
-        # Per-token rate limit (APP-9); health/ready are exempt so probes are never throttled.
+        # Per-token rate limit (APP-9); health/ready/metrics are exempt so probes aren't throttled.
         limiter = request.app.state.rate_limiter
         if limiter is not None and request.url.path not in _exempt_paths:
             auth = request.headers.get("Authorization", "")
@@ -116,7 +123,15 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
                         content={"detail": "rate limit exceeded"},
                         headers={"Retry-After": str(retry_after)},
                     )
-        return await call_next(request)
+        # Record request metrics (APP-13).
+        import time as _time
+
+        t0 = _time.monotonic()
+        response = await call_next(request)
+        request.app.state.metrics.observe(
+            request.method, response.status_code, _time.monotonic() - t0
+        )
+        return response
 
     @app.middleware("http")
     async def _request_id(
@@ -124,8 +139,11 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     ) -> Response:
         # Correlation id: echo the caller's X-Request-ID or mint one, so logs/responses can be tied
         # together. (Logging hookup can consume request.state.request_id later.)
+        from doktok_core.logging_setup import request_id_var
+
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
         request.state.request_id = request_id
+        request_id_var.set(request_id)  # correlate log lines for this request (APP-12)
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response
@@ -221,6 +239,27 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             status_code=200 if ready_ok else 503,
             content={"status": "ready" if ready_ok else "unavailable", "checks": checks},
         )
+
+    @app.get("/metrics", tags=["system"])
+    def metrics(request: Request, tenant: Tenant) -> Response:
+        # Token-gated (APP-13). Request counters/latency + worker heartbeat age + uptime, in the
+        # Prometheus text format. Exempt from rate limiting; scrapers poll it frequently.
+        _ = tenant
+        from datetime import UTC, datetime
+
+        from doktok_api.dependencies import get_app_settings_repository
+
+        m = request.app.state.metrics
+        gauges: dict[str, float] = {"doktok_uptime_seconds": round(m.uptime_seconds(), 1)}
+        try:
+            beat = get_app_settings_repository(request).get_worker_heartbeat()
+            if beat is not None:
+                gauges["doktok_worker_heartbeat_age_seconds"] = round(
+                    (datetime.now(UTC) - beat).total_seconds(), 1
+                )
+        except Exception:  # noqa: BLE001 - metrics must never raise
+            pass
+        return Response(content=m.render(gauges), media_type="text/plain; version=0.0.4")
 
     app.include_router(ingestion.router)
     app.include_router(documents.router)

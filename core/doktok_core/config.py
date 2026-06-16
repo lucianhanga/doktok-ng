@@ -115,6 +115,11 @@ class Settings(BaseSettings):
 
     no_egress: bool = True
 
+    # Logging (APP-12). "json" emits structured logs (request_id + tenant_id correlation, secret
+    # redaction) for a log pipeline; "text" is the human-readable dev format. log_level is the root.
+    log_format: str = "text"  # 'text' | 'json'
+    log_level: str = "INFO"
+
     # Master key for encrypting secrets at rest (the OpenAI key in app_settings; APP-8). When set,
     # the key is stored Fernet-encrypted and decrypted only in-process; when empty, it is stored as
     # plaintext (local-dev default). Keep this stable - rotating it makes an existing encrypted key

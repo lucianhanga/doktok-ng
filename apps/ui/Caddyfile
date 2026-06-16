@@ -1,0 +1,27 @@
+# Caddy config for the DokTok NG UI image (M11 #317/#318).
+# Serves the built SPA and reverse-proxies the API, injecting the bearer token so the token-free
+# bundle can call /api (mirrors the Vite dev proxy). TLS termination and hardened secret handling
+# are added in #321 (DEVOPS-3); this serves plain HTTP on :80 behind that.
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	encode zstd gzip
+
+	# API + health endpoints -> backend, with the tenant bearer token injected from the environment.
+	@api path /api/* /health /ready
+	handle @api {
+		reverse_proxy {$DOKTOK_BACKEND_URL:backend:8000} {
+			header_up Authorization "Bearer {$DOKTOK_API_TOKEN}"
+		}
+	}
+
+	# Everything else is the SPA (client-side routing -> index.html fallback).
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,0 +1,136 @@
+# Production stack for the hybrid N95 deployment (M11 #318). Runs the full app as containers:
+# Postgres+pgvector, Gotenberg, Ollama (embedder only), backend, worker, and the Caddy UI/proxy.
+# Only Caddy publishes a host port; everything else is reachable only on the internal network.
+# See docs/operations/deployment-trigkey-n95.md and ADR-0020.
+#
+# Hybrid AI split: OCR + embeddings run locally (PaddleOCR + the Ollama embedder); the enrichment
+# pipeline and RAG chat run on OpenAI. The provider selection + OpenAI key live in the DB
+# (Settings UI), or are seeded from env (DOKTOK_OPENAI_API_KEY fallback, APP-7; headless seeding of
+# the provider selection is APP-2/#325).
+#
+# Not yet layered in: TLS on Caddy (#321 DEVOPS-3), per-container resource limits (#323 DEVOPS-7),
+# backups (#330 DEVOPS-6). After first start, pull the embedder once:
+#   docker compose -f docker-compose.prod.yml exec ollama ollama pull qwen3-embedding:0.6b
+#
+# Required env (e.g. an untracked .env.production; see #340 DEVOPS-11):
+#   DOKTOK_DB_PASSWORD, DOKTOK_TENANT_TOKENS (JSON), DOKTOK_API_TOKEN (one of the tenant tokens),
+#   and optionally DOKTOK_OPENAI_API_KEY.
+
+name: doktok-prod
+
+x-app-env: &app-env
+  DOKTOK_DATABASE_URL: postgresql://doktok:${DOKTOK_DB_PASSWORD}@db:5432/doktok
+  DOKTOK_OLLAMA_BASE_URL: http://ollama:11434
+  DOKTOK_GOTENBERG_URL: http://gotenberg:3000
+  DOKTOK_FILES_ROOT: /data/files
+  # Service-name Ollama URL is not loopback, so NO_EGRESS must be false (the loopback validator
+  # would otherwise refuse to start). Outbound egress is restricted at the host firewall (#322).
+  DOKTOK_NO_EGRESS: "false"
+  DOKTOK_OPENAI_API_KEY: ${DOKTOK_OPENAI_API_KEY:-}
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: doktok-prod-db
+    environment:
+      POSTGRES_USER: doktok
+      POSTGRES_PASSWORD: ${DOKTOK_DB_PASSWORD:?set DOKTOK_DB_PASSWORD}
+      POSTGRES_DB: doktok
+    volumes:
+      - doktok-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doktok -d doktok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: doktok-prod-gotenberg
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: doktok-prod-ollama
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "2"
+      OLLAMA_KEEP_ALIVE: "60m"
+    volumes:
+      - doktok-ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama ps >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    image: ghcr.io/lucianhanga/doktok-ng-backend:latest
+    container_name: doktok-prod-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+    environment:
+      <<: *app-env
+      DOKTOK_BIND_HOST: 0.0.0.0
+      DOKTOK_TENANT_TOKENS: ${DOKTOK_TENANT_TOKENS:?set DOKTOK_TENANT_TOKENS}
+    volumes:
+      - doktok-files:/data/files
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: ghcr.io/lucianhanga/doktok-ng-worker:latest
+    container_name: doktok-prod-worker
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+    environment:
+      <<: *app-env
+      # N95 tuning (#324 DEVOPS-4): OCR on CPU with bounded parallelism; enrichment is remote so the
+      # reconciler can fan out, but each reconcile also hits the local embedder - keep it moderate.
+      DOKTOK_OCR_CONCURRENCY: "2"
+      DOKTOK_OCR_CPU_THREADS: "1"
+      DOKTOK_INGEST_CONCURRENCY: "2"
+      DOKTOK_OPENAI_RECONCILE_CONCURRENCY: "6"
+    volumes:
+      - doktok-files:/data/files
+    # Long enough for the SIGTERM -> PaddleOCR pool teardown to finish.
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: .
+      dockerfile: apps/ui/Dockerfile
+    image: ghcr.io/lucianhanga/doktok-ng-ui:latest
+    container_name: doktok-prod-caddy
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      DOKTOK_BACKEND_URL: backend:8000
+      DOKTOK_API_TOKEN: ${DOKTOK_API_TOKEN:?set DOKTOK_API_TOKEN (must be one of DOKTOK_TENANT_TOKENS)}
+    ports:
+      - "${DOKTOK_HTTP_PORT:-80}:80"
+    restart: unless-stopped
+
+volumes:
+  doktok-pgdata:
+  doktok-ollama:
+  doktok-files:

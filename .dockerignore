@@ -1,0 +1,19 @@
+# Keep image build contexts small and free of secrets/data (M11 #317).
+.git
+.github
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.venv
+**/.venv
+node_modules
+**/node_modules
+apps/ui/dist
+dist
+build
+# Local data + secrets must never enter an image.
+storage/files
+.env
+.env.*
+*.log

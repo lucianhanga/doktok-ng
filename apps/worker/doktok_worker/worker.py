@@ -49,6 +49,7 @@ class IngestionWorker:
         ocr_reload_interval: float = 15.0,
         heartbeat: Callable[[], None] | None = None,
         heartbeat_interval: float = 15.0,
+        is_quiesced: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         # One IngestionServices per tenant (each carries that tenant's layout + tenant_id).
@@ -68,7 +69,23 @@ class IngestionWorker:
         # Liveness heartbeat (APP-5): stamped periodically so an external probe can spot a dead one.
         self._heartbeat = heartbeat
         self._heartbeat_interval = heartbeat_interval
+        # Quiesce/maintenance gate (APP-C3): when on, start no new ingestion/reconcile work so a
+        # backup can capture a still DB + files_root pair; in-flight work finishes normally.
+        self._is_quiesced = is_quiesced
+        self._quiesced_state = False
         self._clock = clock
+
+    def _quiesced(self) -> bool:
+        if self._is_quiesced is None:
+            return False
+        try:
+            q = self._is_quiesced()
+        except Exception:  # noqa: BLE001 - a quiesce-check failure must never stop the worker
+            return False
+        if q != self._quiesced_state:
+            logger.info("maintenance mode %s", "ON - pausing new work" if q else "OFF - resuming")
+            self._quiesced_state = q
+        return q
 
     def run_projections(self) -> int:
         """Drain the embedding-projection recompute queue (Insights tab, ADR-0016)."""
@@ -78,7 +95,7 @@ class IngestionWorker:
 
     def reconcile(self) -> int:
         """Drive active documents toward having every registered feature processed (ADR-0009)."""
-        if self._reconciler is None:
+        if self._reconciler is None or self._quiesced():
             return 0
         return self._reconciler.reconcile()
 
@@ -100,6 +117,8 @@ class IngestionWorker:
 
     def run_once(self) -> list[IngestionJob]:
         """Scan every tenant's ingest folder once; ingest files that have become stable."""
+        if self._quiesced():  # maintenance mode: start no new ingestion (APP-C3)
+            return []
         now = self._clock()
         # Stability checks + tracker mutations happen single-threaded; collect ready files first.
         pending: list[_Pending] = []

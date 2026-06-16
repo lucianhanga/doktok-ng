@@ -1569,6 +1569,12 @@ class PostgresAppSettingsRepository:
         except ValueError:
             return None
 
+    def set_maintenance_mode(self, *, enabled: bool) -> None:
+        self._set("maintenance_mode", bool(enabled))
+
+    def get_maintenance_mode(self) -> bool:
+        return bool(self._get("maintenance_mode"))
+
 
 _PROJECTION_HEADER_COLS = "algorithm, version, input_fingerprint, n_points, truncated, computed_at"
 

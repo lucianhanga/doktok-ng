@@ -227,6 +227,15 @@ class AppSettingsRepository(Protocol):
         """The last worker heartbeat time, or None if the worker has never beaten."""
         ...
 
+    def set_maintenance_mode(self, *, enabled: bool) -> None:
+        """Toggle quiesce/maintenance mode (APP-C3). While on, the worker starts no new ingestion or
+        reconcile work, letting a backup capture a still DB + files_root pair."""
+        ...
+
+    def get_maintenance_mode(self) -> bool:
+        """Whether quiesce/maintenance mode is on. The worker reads this each loop."""
+        ...
+
 
 @runtime_checkable
 class AuditLogRepository(Protocol):

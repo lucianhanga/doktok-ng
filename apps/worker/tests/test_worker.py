@@ -122,6 +122,36 @@ def test_reconcile_stream_drains_while_work_exists_then_stops() -> None:
     assert len(calls) >= 3
 
 
+def test_quiesce_pauses_ingest_and_reconcile(tmp_path: Path) -> None:
+    """While quiesced (APP-C3): run_once starts no ingestion and reconcile() claims no work."""
+
+    class FakeReconciler:
+        def reconcile(self) -> int:
+            return 7  # would claim work if allowed to run
+
+    repo = InMemoryIngestionJobRepository()
+    services, layout = _services(tmp_path, "t", repo)
+    (layout.ingest / "doc.txt").write_text("hello")
+    quiesced = {"on": True}
+    worker = IngestionWorker(
+        [services],
+        stability_seconds=0,
+        reconciler=FakeReconciler(),  # type: ignore[arg-type]
+        is_quiesced=lambda: quiesced["on"],
+        clock=_clock([0.0, 1.0, 2.0]),
+    )
+
+    # Quiesced: no ingestion starts and reconcile is gated to 0 even though work exists.
+    assert worker.run_once() == [] and worker.run_once() == []
+    assert worker.reconcile() == 0
+
+    # Resume: reconcile runs and ingestion proceeds.
+    quiesced["on"] = False
+    assert worker.reconcile() == 7
+    assert worker.run_once() == []  # first pass observes the file
+    assert len(worker.run_once()) == 1  # second pass: stable -> ingested
+
+
 def test_ingest_stream_scans_until_stopped() -> None:
     """The ingest loop scans repeatedly, independently of reconciliation, until stopped."""
     import threading

@@ -106,6 +106,7 @@ def build_services(
     Callable[[], None] | None,
     Callable[[], None],
     Callable[[], None],
+    Callable[[], bool],
 ]:
     """Build per-tenant ingestion services, the feature reconciler, and a shared database handle.
 
@@ -131,6 +132,7 @@ def build_services(
     # Headless bootstrap: seed the provider split from env on a fresh DB (APP-2; no-op if saved).
     seed_ai_settings(app_settings, settings)
     heartbeat = app_settings.set_worker_heartbeat  # liveness signal for the backend probe (APP-5)
+    is_quiesced = app_settings.get_maintenance_mode  # quiesce gate read each loop (APP-C3)
     pipeline = app_settings.get_ai_settings().pipeline
     # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
     openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
@@ -462,4 +464,4 @@ def build_services(
                     ocr_dpi=settings.ocr_enhanced_dpi,
                 )
             )
-    return services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat
+    return services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat, is_quiesced

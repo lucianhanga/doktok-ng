@@ -24,12 +24,14 @@ def _install_sigterm_handler() -> None:
     signal.signal(signal.SIGTERM, _handle)
 
 
-def repair(*, dry_run: bool) -> int:
+def repair(*, dry_run: bool, check_hashes: bool = False) -> int:
     """Reconcile active documents against on-disk artifacts (APP-C2), re-queuing re-derivable gaps
-    and reporting unrecoverable ones. Builds only the DB repos (no OCR pools)."""
+    and reporting unrecoverable ones. With check_hashes, also verify each original's sha256 against
+    the row (APP-D2). Builds only the DB repos (no OCR pools)."""
     from pathlib import Path
 
     from doktok_core.documents.repair import repair_documents
+    from doktok_storage_filesystem import Sha256HashService
     from doktok_storage_postgres import (
         Database,
         PostgresDocumentRepository,
@@ -41,7 +43,8 @@ def repair(*, dry_run: bool) -> int:
     log = logging.getLogger("doktok.worker")
     settings = get_settings()
     db = Database(settings.database_url)
-    unrecoverable = 0
+    hasher = Sha256HashService().sha256 if check_hashes else None
+    problems = 0
     try:
         doc_repo = PostgresDocumentRepository(db)
         feat_repo = PostgresFeatureRepository(db)
@@ -52,20 +55,40 @@ def repair(*, dry_run: bool) -> int:
                 exists=lambda p: Path(p).exists(),
                 tenant_id=tenant,
                 dry_run=dry_run,
+                compute_sha256=hasher,
             )
             log.info("repair[%s]%s %s", tenant, " (dry-run)" if dry_run else "", report.summary())
-            if report.unrecoverable:
-                unrecoverable += len(report.unrecoverable)
-                log.warning(
-                    "repair[%s]: %d document(s) have a MISSING ORIGINAL (unrecoverable): %s",
-                    tenant,
-                    len(report.unrecoverable),
-                    ", ".join(report.unrecoverable),
-                )
+            for label, ids in (
+                ("MISSING ORIGINAL", report.unrecoverable),
+                ("CORRUPTED", report.corrupted),
+            ):
+                if ids:
+                    problems += len(ids)
+                    log.warning(
+                        "repair[%s]: %d document(s) %s: %s", tenant, len(ids), label, ", ".join(ids)
+                    )
     finally:
         db.close()
-    # Non-zero exit if anything is unrecoverable, so an operator/automation notices.
-    return 1 if unrecoverable else 0
+    # Non-zero exit if anything is unrecoverable/corrupted, so an operator/automation notices.
+    return 1 if problems else 0
+
+
+def quiesce(*, enabled: bool) -> int:
+    """Toggle maintenance/quiesce mode (APP-C3): the running worker stops starting new ingestion +
+    reconcile work while on. Use around a backup: `quiesce` -> snapshot -> `quiesce --off`."""
+    from doktok_storage_postgres import Database, PostgresAppSettingsRepository
+
+    log = logging.getLogger("doktok.worker")
+    settings = get_settings()
+    db = Database(settings.database_url)
+    try:
+        PostgresAppSettingsRepository(db, secrets_key=settings.secrets_key).set_maintenance_mode(
+            enabled=enabled
+        )
+    finally:
+        db.close()
+    log.info("maintenance mode set %s", "ON (worker pausing new work)" if enabled else "OFF")
+    return 0
 
 
 def main() -> None:
@@ -73,12 +96,17 @@ def main() -> None:
 
     settings = get_settings()
     configure_logging(json_format=settings.log_format == "json", level=settings.log_level)
-    if len(sys.argv) > 1 and sys.argv[1] == "repair":
-        raise SystemExit(repair(dry_run="--dry-run" in sys.argv))
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    if command == "repair":
+        raise SystemExit(
+            repair(dry_run="--dry-run" in sys.argv, check_hashes="--check-hashes" in sys.argv)
+        )
+    if command == "quiesce":
+        raise SystemExit(quiesce(enabled="--off" not in sys.argv))
     _install_sigterm_handler()
     log = logging.getLogger("doktok.worker")
-    services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat = build_services(
-        settings
+    services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat, is_quiesced = (
+        build_services(settings)
     )
     if not services:
         log.warning(
@@ -93,6 +121,7 @@ def main() -> None:
         projection_runner=projection_runner,
         ocr_reload=ocr_reload,
         heartbeat=heartbeat,
+        is_quiesced=is_quiesced,
     )
     if settings.ingest_concurrency > 1:
         log.info("processing up to %d documents in parallel", settings.ingest_concurrency)

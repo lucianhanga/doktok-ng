@@ -14,6 +14,7 @@ class InMemoryAppSettingsRepository:
         self._ocr = OcrSettings()
         self._openai_key = ""
         self._heartbeat: datetime | None = None
+        self._maintenance = False
 
     def get_ai_settings(self) -> AiSettings:
         return self._ai.model_copy(deep=True)
@@ -42,3 +43,9 @@ class InMemoryAppSettingsRepository:
 
     def get_worker_heartbeat(self) -> datetime | None:
         return self._heartbeat
+
+    def set_maintenance_mode(self, *, enabled: bool) -> None:
+        self._maintenance = enabled
+
+    def get_maintenance_mode(self) -> bool:
+        return self._maintenance

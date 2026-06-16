@@ -45,3 +45,6 @@ sbom/*.json
 
 # Agent scratch memory (not part of the project)
 .claude/
+
+# Local backup staging repository (M12; staged here before offsite sync)
+backups/

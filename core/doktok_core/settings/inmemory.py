@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from doktok_contracts.schemas import AiSettings, OcrSettings
 
 
@@ -11,6 +13,7 @@ class InMemoryAppSettingsRepository:
         self._ai_set = False
         self._ocr = OcrSettings()
         self._openai_key = ""
+        self._heartbeat: datetime | None = None
 
     def get_ai_settings(self) -> AiSettings:
         return self._ai.model_copy(deep=True)
@@ -33,3 +36,9 @@ class InMemoryAppSettingsRepository:
 
     def set_ocr_settings(self, settings: OcrSettings) -> None:
         self._ocr = settings.model_copy(deep=True)
+
+    def set_worker_heartbeat(self) -> None:
+        self._heartbeat = datetime.now(UTC)
+
+    def get_worker_heartbeat(self) -> datetime | None:
+        return self._heartbeat

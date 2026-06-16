@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from doktok_contracts.errors import DuplicateActiveDocumentError
@@ -1553,6 +1553,18 @@ class PostgresAppSettingsRepository:
 
     def set_ocr_settings(self, settings: OcrSettings) -> None:
         self._set("ocr_settings", settings.model_dump())
+
+    def set_worker_heartbeat(self) -> None:
+        self._set("worker_heartbeat", datetime.now(UTC).isoformat())
+
+    def get_worker_heartbeat(self) -> datetime | None:
+        raw = self._get("worker_heartbeat")
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(str(raw))
+        except ValueError:
+            return None
 
 
 _PROJECTION_HEADER_COLS = "algorithm, version, input_fingerprint, n_points, truncated, computed_at"

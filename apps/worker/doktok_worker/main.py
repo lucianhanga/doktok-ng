@@ -30,7 +30,9 @@ def main() -> None:
     _install_sigterm_handler()
     settings = get_settings()
     log = logging.getLogger("doktok.worker")
-    services, reconciler, projection_runner, db, ocr_reload, cleanup = build_services(settings)
+    services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat = build_services(
+        settings
+    )
     if not services:
         log.warning(
             "no tenants configured (DOKTOK_TENANT_TOKENS is empty); the worker has nothing to watch"
@@ -43,6 +45,7 @@ def main() -> None:
         stale_job_minutes=settings.stale_job_minutes,
         projection_runner=projection_runner,
         ocr_reload=ocr_reload,
+        heartbeat=heartbeat,
     )
     if settings.ingest_concurrency > 1:
         log.info("processing up to %d documents in parallel", settings.ingest_concurrency)

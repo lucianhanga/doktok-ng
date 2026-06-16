@@ -62,6 +62,29 @@ def test_ok_degraded_and_unrecoverable_are_classified() -> None:
     assert all(f.status.value == "pending" for f in feats.list_for_document(TENANT, "degraded"))
 
 
+def test_check_hashes_flags_corrupted_original() -> None:
+    docs, feats = _setup()
+    present = _all_artifacts("good") | _all_artifacts("degraded") | _all_artifacts("lost")
+    present.discard("/files/lost/original.pdf")
+
+    # 'good' hashes to its recorded sha; 'degraded' returns a different hash -> corrupted.
+    def fake_sha(path: str) -> str:
+        doc_id = path.split("/")[2]  # /files/<id>/original.pdf
+        return ("good" + "a" * 64)[:64] if doc_id == "good" else "deadbeef"
+
+    report = repair_documents(
+        document_repo=docs,
+        feature_repo=feats,
+        exists=present.__contains__,
+        tenant_id=TENANT,
+        compute_sha256=fake_sha,
+    )
+
+    assert report.ok == 1  # good
+    assert report.corrupted == ["degraded"]  # original present but wrong bytes
+    assert report.unrecoverable == ["lost"]
+
+
 def test_dry_run_reports_without_resetting() -> None:
     docs, feats = _setup()
     present = _all_artifacts("good") | _all_artifacts("degraded") | _all_artifacts("lost")

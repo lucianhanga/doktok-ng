@@ -33,11 +33,12 @@ class RepairReport:
     ok: int = 0
     repaired: list[str] = field(default_factory=list)  # doc ids re-queued for re-derivation
     unrecoverable: list[str] = field(default_factory=list)  # doc ids whose original is gone
+    corrupted: list[str] = field(default_factory=list)  # original present but sha256 mismatch (D2)
 
     def summary(self) -> str:
         return (
             f"checked={self.checked} ok={self.ok} repaired={len(self.repaired)} "
-            f"unrecoverable={len(self.unrecoverable)}"
+            f"unrecoverable={len(self.unrecoverable)} corrupted={len(self.corrupted)}"
         )
 
 
@@ -53,8 +54,14 @@ def repair_documents(
     exists: Callable[[str], bool],
     tenant_id: str,
     dry_run: bool = False,
+    compute_sha256: Callable[[str], str] | None = None,
 ) -> RepairReport:
-    """Reconcile active documents against their on-disk artifacts. Returns a RepairReport."""
+    """Reconcile active documents against their on-disk artifacts. Returns a RepairReport.
+
+    When ``compute_sha256`` is given (APP-D2), each surviving original is hashed and checked against
+    the row's ``sha256`` (the DB is the manifest); a mismatch is reported as ``corrupted`` (the
+    bytes are wrong - re-derivation can't fix it, so it is left for an operator like a missing one).
+    """
     report = RepairReport()
     cursor = None
     while True:
@@ -70,6 +77,12 @@ def repair_documents(
 
             if not original_path or not exists(original_path):
                 report.unrecoverable.append(doc.id)  # original gone -> cannot re-derive
+                continue
+
+            if compute_sha256 and doc.sha256 and compute_sha256(original_path) != doc.sha256:
+                report.corrupted.append(
+                    doc.id
+                )  # wrong bytes -> operator decision, not re-derivable
                 continue
 
             missing = [p for p in _artifact_paths(base, original_rel, system_doc) if not exists(p)]

@@ -145,6 +145,15 @@ For throughput tuning see [performance-and-ollama.md](performance-and-ollama.md)
 | Office (`.docx`/`.xlsx`/`.pptx`) ingestion fails with `needs_ocr` | Gotenberg container not running or unreachable | Run `make db` (starts `doktok-gotenberg`); confirm with `docker ps`. Check `DOKTOK_GOTENBERG_URL` / `DOKTOK_GOTENBERG_PORT`. |
 | UI loads but API calls are unauthorized | UI started without the dev proxy | Start the UI via `make run-ui` so the proxy injects the bearer token. |
 
+## Deploying to a small server (hybrid)
+
+This page covers the local single-machine workflow. To deploy DokTok NG to small hardware (a TRIGKEY
+N95: 4 cores, 8 GB, no GPU) for staging and limited production — where the local LLMs do not fit, so
+enrichment and chat run on OpenAI while OCR and embeddings stay local — see the operator guide
+[deployment-trigkey-n95.md](deployment-trigkey-n95.md) and its founding decision
+[ADR-0020](../adr/ADR-0020-hybrid-deployment-topology.md). That guide also flags which deployment
+pieces are shipped today versus planned in the M11 epic.
+
 ## Future option
 
 Nothing here requires a single start command. If the per-terminal flow ever becomes tedious, a thin

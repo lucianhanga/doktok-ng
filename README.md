@@ -214,6 +214,12 @@ rescans each tenant's `ingest/` folder, so ingestion continues where it left off
 Full detail - persistence model, worker auto-resume, prerequisites, and troubleshooting - is in
 [docs/operations/running.md](docs/operations/running.md).
 
+**Deploying to a small server.** To run DokTok NG on small hardware (a TRIGKEY N95: 4 cores, 8 GB, no
+GPU) for staging / limited production, the local LLMs do not fit, so it uses a hybrid split - OCR and
+embeddings stay local while enrichment and chat run on OpenAI (ADR-0020). See the operator guide
+[docs/operations/deployment-trigkey-n95.md](docs/operations/deployment-trigkey-n95.md). The production
+packaging (compose, Dockerfiles, headless seeding, deploy CI) is M11 work and marked planned there.
+
 ## Authentication and multi-tenancy
 
 DokTok NG is multi-tenant and the API is token-protected (ADR-0007, ADR-0008). HTTP routes are

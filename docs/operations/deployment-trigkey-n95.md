@@ -208,6 +208,11 @@ Two things hold state; back both up:
    OCR/normalized output under each tenant's `docs.active/`, plus in-flight folders. Back this up as a
    normal filesystem backup.
 
+Scripts for both are provided: [`deploy/backup.sh`](../../deploy/backup.sh) (writes a timestamped
+`db.sql.gz` + `files.tar.gz`) and [`deploy/restore.sh`](../../deploy/restore.sh) (restores from such a
+backup; destructive). Run a periodic `backup.sh` via cron, store the output encrypted and off-box, and
+**test `restore.sh` against a staging stack** so you know the restore path works before you need it.
+
 > **Do not run `docker compose down -v`.** The `-v` flag deletes named volumes, including
 > `doktok-pgdata` — that wipes the entire database (documents, embeddings, settings, the key). Use
 > `make db-down` (`docker compose down`, no `-v`) to stop the database while keeping the volume. Only

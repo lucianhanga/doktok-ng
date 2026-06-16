@@ -24,9 +24,57 @@ def _install_sigterm_handler() -> None:
     signal.signal(signal.SIGTERM, _handle)
 
 
+def repair(*, dry_run: bool) -> int:
+    """Reconcile active documents against on-disk artifacts (APP-C2), re-queuing re-derivable gaps
+    and reporting unrecoverable ones. Builds only the DB repos (no OCR pools)."""
+    from pathlib import Path
+
+    from doktok_core.documents.repair import repair_documents
+    from doktok_storage_postgres import (
+        Database,
+        PostgresDocumentRepository,
+        PostgresFeatureRepository,
+    )
+
+    from doktok_worker.composition import tenant_ids
+
+    log = logging.getLogger("doktok.worker")
+    settings = get_settings()
+    db = Database(settings.database_url)
+    unrecoverable = 0
+    try:
+        doc_repo = PostgresDocumentRepository(db)
+        feat_repo = PostgresFeatureRepository(db)
+        for tenant in tenant_ids(settings):
+            report = repair_documents(
+                document_repo=doc_repo,
+                feature_repo=feat_repo,
+                exists=lambda p: Path(p).exists(),
+                tenant_id=tenant,
+                dry_run=dry_run,
+            )
+            log.info("repair[%s]%s %s", tenant, " (dry-run)" if dry_run else "", report.summary())
+            if report.unrecoverable:
+                unrecoverable += len(report.unrecoverable)
+                log.warning(
+                    "repair[%s]: %d document(s) have a MISSING ORIGINAL (unrecoverable): %s",
+                    tenant,
+                    len(report.unrecoverable),
+                    ", ".join(report.unrecoverable),
+                )
+    finally:
+        db.close()
+    # Non-zero exit if anything is unrecoverable, so an operator/automation notices.
+    return 1 if unrecoverable else 0
+
+
 def main() -> None:
+    import sys
+
     settings = get_settings()
     configure_logging(json_format=settings.log_format == "json", level=settings.log_level)
+    if len(sys.argv) > 1 and sys.argv[1] == "repair":
+        raise SystemExit(repair(dry_run="--dry-run" in sys.argv))
     _install_sigterm_handler()
     log = logging.getLogger("doktok.worker")
     services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat = build_services(

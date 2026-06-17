@@ -7,6 +7,7 @@ write-only: it is never returned, only set/cleared, and GET reports only whether
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from doktok_contracts.ports import AppSettingsRepository, ChatModelProvider, RagAnswerer
@@ -14,6 +15,10 @@ from doktok_contracts.schemas import (
     AiSettings,
     AiSettingsResponse,
     AiSettingsUpdate,
+    BackupLegStatus,
+    DrpConfig,
+    DrpStatus,
+    DrpStatusResponse,
     ModelCatalog,
     OcrSettings,
 )
@@ -90,3 +95,51 @@ def put_ocr_settings(update: OcrSettings, tenant: Tenant, repo: Repo) -> OcrSett
     _ = tenant
     repo.set_ocr_settings(update)
     return update
+
+
+def _leg_status(raw: dict[str, object] | None, rpo_seconds: int, now: datetime) -> BackupLegStatus:
+    """Derive a read-only leg status from a sentinel dict (DRP, #368). Missing -> unknown (neutral);
+    ok:false -> failed; age > 3x RPO -> stale; else ok. Mirrors the worker-heartbeat tolerance."""
+    if not raw or not raw.get("last_run_at"):
+        return BackupLegStatus(state="unknown", detail=str(raw.get("detail", "")) if raw else "")
+    try:
+        ts = datetime.fromisoformat(str(raw["last_run_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        return BackupLegStatus(state="unknown")
+    age = int((now - ts).total_seconds())
+    detail = str(raw.get("detail", ""))
+    if raw.get("ok") is False:
+        state = "failed"
+    elif age > 3 * rpo_seconds:
+        state = "stale"
+    else:
+        state = "ok"
+    return BackupLegStatus(state=state, last_run_at=ts, age_seconds=age, detail=detail)
+
+
+@router.get("/drp", response_model=DrpStatusResponse)
+def get_drp(request: Request, tenant: Tenant, repo: Repo) -> DrpStatusResponse:
+    """Read-only Disaster Recovery Plan status + config (#368): backup freshness from the host
+    sentinels (outside the DB) plus static targets/config. Never returns a secret value."""
+    _ = tenant
+    settings = request.app.state.settings
+    raw = repo.get_backup_status()
+    cfg = DrpConfig()  # defaults carry the RPO/RTO targets
+    now = datetime.now(UTC)
+    status = DrpStatus(status_source_available=raw is not None)
+    if raw is not None:
+        status.files = _leg_status(raw.get("files"), cfg.rpo_files_seconds, now)
+        status.pg = _leg_status(raw.get("pg"), cfg.rpo_pg_seconds, now)
+        status.offsite = _leg_status(raw.get("offsite"), cfg.rpo_offsite_seconds, now)
+        status.drill = _leg_status(raw.get("drill"), 3_024_000, now)  # ~35 days
+        wal = (raw.get("pg") or {}).get("wal_lag_s")
+        status.wal_lag_seconds = int(wal) if isinstance(wal, int | float) else None
+    config = DrpConfig(
+        repo_location=settings.backup_dir,
+        azure_container=settings.azure_container,
+        immutability_enabled=settings.azure_immutable,
+        encryption_keys_configured=bool(settings.restic_password)
+        and bool(settings.pgbackrest_cipher_pass),
+        azure_credentials_configured=bool(settings.azure_sas),
+    )
+    return DrpStatusResponse(status=status, config=config)

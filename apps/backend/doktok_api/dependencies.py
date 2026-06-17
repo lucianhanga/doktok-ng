@@ -370,7 +370,9 @@ def get_app_settings_repository(request: Request) -> AppSettingsRepository:
 
     settings = request.app.state.settings
     repository = PostgresAppSettingsRepository(
-        _get_database(request), secrets_key=settings.secrets_key
+        _get_database(request),
+        secrets_key=settings.secrets_key,
+        backup_status_dir=f"{settings.backup_dir.rstrip('/')}/status",
     )
     registry.register(AppSettingsRepository, repository)
     return repository

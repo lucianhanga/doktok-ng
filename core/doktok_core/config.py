@@ -115,6 +115,16 @@ class Settings(BaseSettings):
 
     no_egress: bool = True
 
+    # Backup / DRP (M12 #368). The local backup repo dir (status sentinels live in <dir>/status,
+    # read by the read-only DRP settings panel + /metrics). azure_* + the *_password presence drive
+    # the DRP "configured" booleans (presence only - the values are never returned).
+    backup_dir: str = "./backups"
+    azure_container: str = ""
+    azure_immutable: bool = False
+    restic_password: str = ""
+    pgbackrest_cipher_pass: str = ""
+    azure_sas: str = ""
+
     # Logging (APP-12). "json" emits structured logs (request_id + tenant_id correlation, secret
     # redaction) for a log pipeline; "text" is the human-readable dev format. log_level is the root.
     log_format: str = "text"  # 'text' | 'json'

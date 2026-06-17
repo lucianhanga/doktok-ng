@@ -423,6 +423,45 @@ export async function putOcrSettings(body: OcrSettings): Promise<OcrSettings> {
   return (await response.json()) as OcrSettings;
 }
 
+// Disaster Recovery Plan (read-only; #368).
+export interface BackupLegStatus {
+  state: string; // ok | stale | failed | unknown
+  last_run_at: string | null;
+  age_seconds: number | null;
+  detail: string;
+}
+
+export interface DrpStatus {
+  files: BackupLegStatus;
+  pg: BackupLegStatus;
+  offsite: BackupLegStatus;
+  drill: BackupLegStatus;
+  wal_lag_seconds: number | null;
+  status_source_available: boolean;
+}
+
+export interface DrpConfig {
+  rpo_files_seconds: number;
+  rpo_pg_seconds: number;
+  rpo_offsite_seconds: number;
+  rto_seconds: number;
+  repo_location: string;
+  azure_container: string;
+  immutability_enabled: boolean;
+  encryption_keys_configured: boolean;
+  azure_credentials_configured: boolean;
+}
+
+export interface DrpStatusResponse {
+  status: DrpStatus;
+  config: DrpConfig;
+  read_only: boolean;
+}
+
+export function fetchDrpStatus(signal?: AbortSignal): Promise<DrpStatusResponse> {
+  return getJson<DrpStatusResponse>("/api/v1/settings/drp", signal);
+}
+
 export interface FeatureCatalogEntry {
   name: string;
   version: number;

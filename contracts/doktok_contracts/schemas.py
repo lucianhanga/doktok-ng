@@ -737,6 +737,50 @@ class AiSettingsUpdate(AiSettings):
     openai_api_key: str | None = None
 
 
+class BackupLegStatus(BaseModel):
+    """Freshness of one backup leg, derived from the host-written sentinel (DRP, M12 #368).
+    ``state`` is 'unknown' when the sentinel is missing/never-run - the UI shows that neutrally."""
+
+    state: str = "unknown"  # ok | stale | failed | unknown
+    last_run_at: datetime | None = None
+    age_seconds: int | None = None
+    detail: str = ""  # short human note (backup type, snapshot id) - never a secret
+
+
+class DrpStatus(BaseModel):
+    """Live freshness of each backup leg + the last restore drill (read from the sentinel files)."""
+
+    files: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    pg: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    offsite: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    drill: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    wal_lag_seconds: int | None = None
+    status_source_available: bool = False
+
+
+class DrpConfig(BaseModel):
+    """Static DR config (host/account owned; read-only in the UI). Secrets are presence-only."""
+
+    rpo_files_seconds: int = 900
+    rpo_pg_seconds: int = 60
+    rpo_offsite_seconds: int = 3600
+    rto_seconds: int = 14400
+    repo_location: str = ""
+    azure_container: str = ""
+    immutability_enabled: bool = False
+    encryption_keys_configured: bool = False  # restic + pgBackRest cipher pass present (bools only)
+    azure_credentials_configured: bool = False
+
+
+class DrpStatusResponse(BaseModel):
+    """The DRP (Disaster Recovery Plan) Settings panel payload: live freshness + static config.
+    Entirely read-only - nothing here is editable via the API (#368)."""
+
+    status: DrpStatus = Field(default_factory=DrpStatus)
+    config: DrpConfig = Field(default_factory=DrpConfig)
+    read_only: bool = True
+
+
 class ModelOption(BaseModel):
     """A selectable model for a purpose, with its allowed context sizes."""
 

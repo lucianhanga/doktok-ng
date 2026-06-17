@@ -252,11 +252,26 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         m = request.app.state.metrics
         gauges: dict[str, float] = {"doktok_uptime_seconds": round(m.uptime_seconds(), 1)}
         try:
-            beat = get_app_settings_repository(request).get_worker_heartbeat()
+            repo = get_app_settings_repository(request)
+            beat = repo.get_worker_heartbeat()
             if beat is not None:
                 gauges["doktok_worker_heartbeat_age_seconds"] = round(
                     (datetime.now(UTC) - beat).total_seconds(), 1
                 )
+            # Backup freshness from the same sentinels the DRP panel reads (#368/#357).
+            backup = repo.get_backup_status()
+            gauges["doktok_backup_status_source_available"] = 1.0 if backup is not None else 0.0
+            for leg in ("files", "pg", "offsite", "drill"):
+                raw = (backup or {}).get(leg) or {}
+                ts = raw.get("last_run_at")
+                if isinstance(ts, str):
+                    try:
+                        beat_at = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        gauges[f"doktok_backup_{leg}_age_seconds"] = round(
+                            (datetime.now(UTC) - beat_at).total_seconds(), 1
+                        )
+                    except ValueError:
+                        pass
         except Exception:  # noqa: BLE001 - metrics must never raise
             pass
         return Response(content=m.render(gauges), media_type="text/plain; version=0.0.4")

@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 
 import {
   fetchAiSettings,
+  fetchDrpStatus,
   fetchModelCatalog,
   fetchOcrSettings,
   putAiSettings,
   putOcrSettings,
   type AiPurposeSettings,
   type AiSettings,
+  type BackupLegStatus,
+  type DrpStatusResponse,
   type ModelCatalog,
   type ModelOption,
   type OcrSettings,
@@ -15,6 +18,117 @@ import {
 
 function ctxLabel(n: number): string {
   return n % 1024 === 0 ? `${n / 1024}k` : String(n);
+}
+
+function relAge(seconds: number | null): string {
+  if (seconds == null) return "never";
+  if (seconds < 90) return `${seconds}s ago`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 172800) return `${Math.round(seconds / 3600)} h ago`;
+  return `${Math.round(seconds / 86400)} d ago`;
+}
+
+// Read-only Disaster Recovery Plan section (#368). Surfaces backup freshness + config; recovery is
+// performed on the host (this never runs backups or exposes secrets).
+function DrpSection() {
+  const [drp, setDrp] = useState<DrpStatusResponse | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      fetchDrpStatus()
+        .then((d) => active && (setDrp(d), setErr(false)))
+        .catch(() => active && setErr(true));
+    };
+    load();
+    const id = setInterval(load, 45000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const leg = (label: string, s: BackupLegStatus | undefined, target: string) => (
+    <div className="settings-row" key={label}>
+      <span>{label}</span>
+      <span className={`drp-state drp-${s?.state ?? "unknown"}`}>{s?.state ?? "unknown"}</span>
+      <span className="muted">
+        {relAge(s?.age_seconds ?? null)} · target {target}
+      </span>
+    </div>
+  );
+
+  const yn = (b: boolean) => (b ? "configured" : "not configured");
+
+  return (
+    <div className="settings-section">
+      <h3>DRP — Disaster Recovery Plan</h3>
+      <p className="muted">
+        How this deployment is backed up and recovered. Backups are staged locally and shipped offsite
+        to Azure; configuration and recovery are managed on the host, so this view is read-only. To
+        restore, see the backup-and-recovery runbook and the <code>doktok-worker repair</code> /{" "}
+        <code>quiesce</code> tools.
+      </p>
+      {err && (
+        <p role="alert" className="status-error">
+          Could not load DRP status.
+        </p>
+      )}
+      {drp && !drp.status.status_source_available && (
+        <p role="status" className="muted">
+          No backup status reported yet (the backup jobs have not run, or the status source is
+          unavailable).
+        </p>
+      )}
+      {drp && (
+        <>
+          <h4>Status</h4>
+          <div className="settings-purpose">
+            {leg("Files (restic)", drp.status.files, "15 min")}
+            {leg("Postgres (pgBackRest)", drp.status.pg, "1 min")}
+            {leg("Offsite (Azure)", drp.status.offsite, "1 h")}
+            {leg("Last restore drill", drp.status.drill, "monthly")}
+            <div className="settings-row">
+              <span>WAL shipping lag</span>
+              <span className="muted">
+                {drp.status.wal_lag_seconds == null ? "unknown" : `${drp.status.wal_lag_seconds}s`}
+              </span>
+            </div>
+          </div>
+          <h4>Targets &amp; configuration</h4>
+          <div className="settings-purpose">
+            <div className="settings-row">
+              <span>RPO / RTO</span>
+              <span className="muted">
+                files {Math.round(drp.config.rpo_files_seconds / 60)} min · Postgres{" "}
+                {drp.config.rpo_pg_seconds}s · RTO ~{Math.round(drp.config.rto_seconds / 3600)} h
+              </span>
+            </div>
+            <div className="settings-row">
+              <span>Local repository</span>
+              <span className="muted">{drp.config.repo_location || "—"}</span>
+            </div>
+            <div className="settings-row">
+              <span>Azure container</span>
+              <span className="muted">
+                {drp.config.azure_container || "—"} ·{" "}
+                {drp.config.immutability_enabled ? "immutable" : "not immutable"}
+              </span>
+            </div>
+            <div className="settings-row">
+              <span>Encryption keys</span>
+              <span className="muted">{yn(drp.config.encryption_keys_configured)}</span>
+            </div>
+            <div className="settings-row">
+              <span>Azure credentials</span>
+              <span className="muted">{yn(drp.config.azure_credentials_configured)}</span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function PurposeEditor({
@@ -273,6 +387,8 @@ export function SettingsPanel() {
           </div>
         </div>
       )}
+
+      <DrpSection />
     </section>
   );
 }

@@ -15,6 +15,7 @@ class InMemoryAppSettingsRepository:
         self._openai_key = ""
         self._heartbeat: datetime | None = None
         self._maintenance = False
+        self.backup_status: dict[str, dict[str, object]] | None = None  # DRP test fixture (#368)
 
     def get_ai_settings(self) -> AiSettings:
         return self._ai.model_copy(deep=True)
@@ -49,3 +50,6 @@ class InMemoryAppSettingsRepository:
 
     def get_maintenance_mode(self) -> bool:
         return self._maintenance
+
+    def get_backup_status(self) -> dict[str, dict[str, object]] | None:
+        return self.backup_status

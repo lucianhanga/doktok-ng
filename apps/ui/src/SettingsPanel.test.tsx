@@ -22,6 +22,28 @@ const AI = {
   rag: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 32768, reasoning: "off" },
   openai_api_key_set: false,
 };
+const DRP = {
+  read_only: true,
+  status: {
+    files: { state: "ok", last_run_at: "2026-06-17T00:00:00Z", age_seconds: 60, detail: "restic" },
+    pg: { state: "ok", last_run_at: "2026-06-17T00:00:00Z", age_seconds: 30, detail: "diff" },
+    offsite: { state: "stale", last_run_at: "2026-06-16T00:00:00Z", age_seconds: 99999, detail: "" },
+    drill: { state: "unknown", last_run_at: null, age_seconds: null, detail: "" },
+    wal_lag_seconds: 40,
+    status_source_available: true,
+  },
+  config: {
+    rpo_files_seconds: 900,
+    rpo_pg_seconds: 60,
+    rpo_offsite_seconds: 3600,
+    rto_seconds: 14400,
+    repo_location: "/var/lib/doktok/backups",
+    azure_container: "doktok-backups",
+    immutability_enabled: true,
+    encryption_keys_configured: true,
+    azure_credentials_configured: false,
+  },
+};
 
 function mockApi() {
   const calls: { url: string; method: string; body?: string }[] = [];
@@ -36,6 +58,8 @@ function mockApi() {
         return new Response(JSON.stringify(AI), { status: 200 });
       if (url.endsWith("/settings/ocr") && method === "GET")
         return new Response(JSON.stringify({ ocr_concurrency: 4 }), { status: 200 });
+      if (url.endsWith("/settings/drp") && method === "GET")
+        return new Response(JSON.stringify(DRP), { status: 200 });
       if (url.endsWith("/settings/ocr") && method === "PUT")
         return new Response(init?.body as string, { status: 200 }); // echo
       // PUT /settings/ai echoes back the body with the key masked.
@@ -89,4 +113,17 @@ test("changing parallel OCR processes saves the OCR setting", async () => {
     expect(put).toBeTruthy();
     expect(JSON.parse(put!.body!).ocr_concurrency).toBe(6);
   });
+});
+
+test("shows the read-only DRP section with backup status and config", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /Disaster Recovery Plan/i })).toBeInTheDocument(),
+  );
+  // Leg states + config surfaced; secrets shown as presence only.
+  expect(screen.getByText("stale")).toBeInTheDocument(); // offsite leg
+  expect(screen.getByText("/var/lib/doktok/backups")).toBeInTheDocument();
+  expect(screen.getByText(/doktok-backups · immutable/)).toBeInTheDocument();
+  expect(screen.getByText("not configured")).toBeInTheDocument(); // azure creds
 });

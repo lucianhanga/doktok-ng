@@ -26,6 +26,7 @@ Shared `[Service]` hardening (every backup service): `Nice=10`, `IOSchedulingCla
 |---|---|---|
 | doktok-backup-files | every 15 min | `deploy/backup-files.sh` |
 | doktok-backup-pg | hourly (diff) + weekly full | `deploy/backup-pg.sh diff` / `full` |
+| doktok-backup-pg-logical | weekly | `deploy/backup-pg-logical.sh` (portable logical safety-net) |
 | doktok-azure-sync | hourly | `deploy/azure-sync.sh` |
 | doktok-check-backup | every 30 min | `deploy/check-backup-freshness.sh` |
 | doktok-restore-drill | monthly | `deploy/restore-drill.sh` |

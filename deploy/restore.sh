@@ -1,31 +1,19 @@
 #!/usr/bin/env bash
 #
-# Restore the DokTok NG production stack from a backup made by backup.sh (M11 #330 / DEVOPS-6).
-# DESTRUCTIVE: overwrites the current database and files_root. Test this against a staging stack.
+# Orchestrate a full restore from the local repository (M12 #363): Postgres (pgBackRest, optional
+# PITR) + files_root (restic). DESTRUCTIVE. Restore the DB to a point AT OR BEFORE the files restore
+# point (files must be >= the DB restore point), then run `doktok-worker repair` to reconcile.
 #
-# Usage:  ./deploy/restore.sh <backup-dir>      (the dir containing db.sql.gz + files.tar.gz)
+# Usage:  ./deploy/restore.sh <files-target-dir> ["YYYY-MM-DD HH:MM:SS+00"]
 set -euo pipefail
+cd "$(dirname "$0")/.."
+source deploy/lib.sh
 
-GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; NC='\033[0m'
-ok()   { printf "${GREEN}%s${NC}\n" "$*"; }
-warn() { printf "${YELLOW}%s${NC}\n" "$*"; }
-err()  { printf "${RED}%s${NC}\n" "$*" >&2; }
-trap 'err "restore FAILED"; exit 1' ERR
+files_target="${1:?usage: restore.sh <files-target-dir> [pitr-time]}"
+pitr="${2:-}"
 
-src="${1:?usage: restore.sh <backup-dir>}"
-[ -f "$src/db.sql.gz" ] || { err "no db.sql.gz in $src"; exit 1; }
-[ -f "$src/files.tar.gz" ] || { err "no files.tar.gz in $src"; exit 1; }
-
-COMPOSE=(docker compose -f docker-compose.prod.yml)
-
-warn "This OVERWRITES the current database and files_root from $src. Ctrl-C within 5s to abort."
+warn "this restores Postgres (stop it first) and files_root. Ctrl-C within 5s to abort."
 sleep 5
-
-echo "Restoring Postgres (the dump drops + recreates objects via --clean --if-exists)..."
-gunzip -c "$src/db.sql.gz" | "${COMPOSE[@]}" exec -T db psql -U doktok -d doktok
-
-echo "Restoring files_root..."
-"${COMPOSE[@]}" run --rm --no-deps -T -v "$(pwd)/$src:/backup" --entrypoint sh worker \
-  -c "rm -rf /data/files && tar xzf /backup/files.tar.gz -C /data"
-
-ok "Restore complete. Restart the stack: docker compose -f docker-compose.prod.yml up -d"
+./deploy/restore-pg.sh "$pitr"
+./deploy/restore-files.sh "$files_target"
+ok "restore complete - start the stack, then run: doktok-worker repair"

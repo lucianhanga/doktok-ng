@@ -29,6 +29,17 @@ CONF
     chmod 600 "$conf"
 fi
 
+# Version-match guard (#356): a physical restore requires the SAME PostgreSQL major version, and the
+# pgvector extension must be present/compatible on the target (the logical dump is the only
+# cross-major path; HNSW is rebuilt only on that logical path, not here).
+db_ver="$(pgbackrest --config="$conf" --stanza=doktok info --output=json 2>/dev/null \
+    | grep -oE '"version"[ :]*"[0-9]+' | grep -oE '[0-9]+$' | head -1 || true)"
+if [ -n "$db_ver" ] && [ "$db_ver" != "17" ]; then
+    err "backup is PostgreSQL ${db_ver}; the restore target must be the SAME major (pg17). Aborting."
+    exit 1
+fi
+warn "ensure the target image is pgvector/pgvector:pg17 (matching pgvector); physical restore is not cross-version"
+
 target="${1:-}"
 args=(--config="$conf" --stanza=doktok restore --delta)
 if [ -n "$target" ]; then

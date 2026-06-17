@@ -14,7 +14,7 @@ require restic
 : "${DOKTOK_RESTIC_PASSWORD:?set DOKTOK_RESTIC_PASSWORD (and store it OFF the box)}"
 export RESTIC_REPOSITORY="$FILES_REPO"
 export RESTIC_PASSWORD="$DOKTOK_RESTIC_PASSWORD"
-trap 'err "files backup FAILED"; exit 1' ERR
+trap 'write_status files false "backup failed"; err "files backup FAILED"; exit 1' ERR
 
 mkdir -p "$FILES_REPO"
 if ! restic cat config >/dev/null 2>&1; then
@@ -27,5 +27,6 @@ restic backup "$FILES_ROOT" --tag files_root --host doktok
 # Keep a sensible history; prune unreferenced data so the local repo stays small.
 restic forget --tag files_root --keep-daily 14 --keep-weekly 8 --keep-monthly 6 --prune >/dev/null
 
+write_status files true "restic snapshot"
 ok "files_root snapshot complete"
 restic snapshots --latest 1

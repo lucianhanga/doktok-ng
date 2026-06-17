@@ -71,6 +71,23 @@ Wrap with the quiesce hook for a still snapshot: `doktok-worker quiesce` -> back
 4. Start the stack, then `doktok-worker repair` to reconcile DB <-> files and re-queue any
    re-derivable gaps (the reconciler backfills derived artifacts).
 
+## Box-side: scheduling, monitoring, offsite
+
+- **WAL archiving:** the prod `db` image (`deploy/docker/db.Dockerfile`) bundles pgBackRest; the
+  compose `db` service sets `archive_command=pgbackrest --stanza=doktok archive-push %p` so WAL ships
+  continuously into the local repo (`deploy/pgbackrest/pgbackrest.conf`, cipher pass from env).
+- **Scheduling:** host systemd timers run the scripts capped (`Nice`/`idle` IO/`MemoryMax=512M`) so
+  they never starve OCR/ingest - see `deploy/systemd/README.md` (files 15 min, pg hourly+weekly,
+  azure-sync hourly, freshness 30 min, restore-drill monthly).
+- **Freshness/monitoring:** each script writes a per-leg sentinel `$DOKTOK_BACKUP_DIR/status/<leg>.json`
+  (outside Postgres, so a DB restore can't roll status back). `deploy/check-backup-freshness.sh`
+  alerts on stale/failed legs; the same sentinels feed the `/metrics` gauges and the DRP settings
+  panel; `.github/workflows/backup-watchdog.yml` is an independent off-box watchdog.
+- **Restore drills:** `deploy/restore-drill.sh` restores the latest files snapshot + runs the
+  Postgres PITR proof into throwaway locations and records the result (monthly timer).
+- **Azure offsite:** provision once with `deploy/azure-provision.sh` (account + container + versioning
+  + time-based immutability); `azure-sync.sh` pushes the local repo. Keep recent backups Hot/Cool.
+
 ## Secrets
 
 `DOKTOK_RESTIC_PASSWORD` and `DOKTOK_PGBACKREST_CIPHER_PASS` encrypt the repos - **store them off the

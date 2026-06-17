@@ -47,14 +47,34 @@ x-logging: &logging
 
 services:
   db:
-    image: pgvector/pgvector:pg17
+    # Built image adds pgBackRest for WAL archiving / PITR (M12 DB-A1).
+    build:
+      context: .
+      dockerfile: deploy/docker/db.Dockerfile
+    image: ghcr.io/lucianhanga/doktok-ng-db:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-db
+    # Continuous WAL archiving: archive_command runs pgBackRest archive-push inside this container.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=doktok archive-push %p
+      - -c
+      - max_wal_size=2GB
     environment:
       POSTGRES_USER: doktok
       POSTGRES_PASSWORD: ${DOKTOK_DB_PASSWORD:?set DOKTOK_DB_PASSWORD}
       POSTGRES_DB: doktok
+      # Repo encryption pass for pgBackRest (M12); set from .env, stored off-box. No key in any file.
+      PGBACKREST_REPO1_CIPHER_PASS: ${DOKTOK_PGBACKREST_CIPHER_PASS:?set DOKTOK_PGBACKREST_CIPHER_PASS}
     volumes:
       - doktok-pgdata:/var/lib/postgresql/data
+      - ./deploy/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      # Local-first repo: also visible to the host so azure-sync.sh can ship it offsite.
+      - ${DOKTOK_BACKUP_DIR:-./backups}/pg:/var/lib/doktok/pg
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U doktok -d doktok"]
       interval: 10s

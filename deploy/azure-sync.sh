@@ -16,7 +16,7 @@ source deploy/lib.sh
 require az
 : "${DOKTOK_AZURE_ACCOUNT:?set DOKTOK_AZURE_ACCOUNT}"
 : "${DOKTOK_AZURE_CONTAINER:?set DOKTOK_AZURE_CONTAINER}"
-trap 'err "azure sync FAILED"; exit 1' ERR
+trap 'write_status offsite false "azure sync failed"; err "azure sync FAILED"; exit 1' ERR
 
 [ -d "$BACKUP_DIR" ] || {
     err "no local backup repository at $BACKUP_DIR - run a backup first"
@@ -34,4 +34,5 @@ az storage blob sync \
     --source "$BACKUP_DIR" \
     "${extra[@]}"
 
+[ "${1:-}" = "--dry-run" ] || write_status offsite true "azure blob sync"
 ok "offsite sync complete (restic + pgBackRest repos are ciphertext, so Azure only sees encrypted data)"

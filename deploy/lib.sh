@@ -24,9 +24,25 @@ PG_WAL_DIR="${PG_DIR}/wal"
 FILES_ROOT="${DOKTOK_FILES_ROOT:-./storage/files}"
 DATABASE_URL="${DOKTOK_DATABASE_URL:-postgresql://doktok:doktok@localhost:5432/doktok}"
 
+# Freshness sentinels (M12 DEVOPS-D1): one JSON file per backup leg, written outside the database
+# (so a Postgres restore can't roll backup status back). The backend's DRP panel + /metrics read
+# these. Per-leg files avoid concurrent-write races between legs.
+STATUS_DIR="${BACKUP_DIR}/status"
+
 require() {
     command -v "$1" >/dev/null 2>&1 || {
         err "required tool not found: $1"
         exit 1
     }
+}
+
+# write_status <leg> <true|false> [detail] - atomic per-leg freshness sentinel.
+write_status() {
+    local leg="$1" ok="$2" detail="${3:-}"
+    mkdir -p "$STATUS_DIR"
+    local tmp
+    tmp="$(mktemp "${STATUS_DIR}/.${leg}.XXXXXX")"
+    printf '{"leg":"%s","ok":%s,"last_run_at":"%s","detail":"%s"}\n' \
+        "$leg" "$ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$detail" >"$tmp"
+    mv -f "$tmp" "${STATUS_DIR}/${leg}.json"
 }

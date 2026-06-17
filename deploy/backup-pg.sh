@@ -17,7 +17,7 @@ source deploy/lib.sh
 require pgbackrest
 : "${DOKTOK_PGDATA:?set DOKTOK_PGDATA (the Postgres data directory pgBackRest can read)}"
 : "${DOKTOK_PGBACKREST_CIPHER_PASS:?set DOKTOK_PGBACKREST_CIPHER_PASS (and store it off the box)}"
-trap 'err "postgres backup FAILED"; exit 1' ERR
+trap 'write_status pg false "backup failed"; err "postgres backup FAILED"; exit 1' ERR
 
 mkdir -p "$PG_DIR"
 conf="${BACKUP_DIR}/pgbackrest.conf"
@@ -40,5 +40,6 @@ type="${1:-incr}"
 pgbackrest --config="$conf" --stanza=doktok stanza-create 2>/dev/null || true
 pgbackrest --config="$conf" --stanza=doktok check
 pgbackrest --config="$conf" --stanza=doktok backup --type="$type"
+write_status pg true "pgbackrest ${type}"
 ok "pgBackRest ${type} backup complete -> ${PG_DIR}"
 pgbackrest --config="$conf" --stanza=doktok info

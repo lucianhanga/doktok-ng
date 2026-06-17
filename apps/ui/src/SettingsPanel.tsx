@@ -219,6 +219,7 @@ export function SettingsPanel() {
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [openaiKey, setOpenaiKey] = useState("");
+  const [tab, setTab] = useState<"settings" | "drp">("settings");
 
   useEffect(() => {
     const c = new AbortController();
@@ -263,15 +264,36 @@ export function SettingsPanel() {
   return (
     <section className="panel" aria-label="Settings">
       <h2>Settings</h2>
+      <div className="tabs" role="tablist" aria-label="Settings tabs">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "settings"}
+          className={tab === "settings" ? "active" : ""}
+          onClick={() => setTab("settings")}
+        >
+          Settings
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "drp"}
+          className={tab === "drp" ? "active" : ""}
+          onClick={() => setTab("drp")}
+        >
+          DRP
+        </button>
+      </div>
       {error && (
         <p role="alert" className="status-error">
           {error}
         </p>
       )}
-      {!catalog || !ai || !ocr ? (
-        <p role="status">Loading settings…</p>
-      ) : (
-        <div className="settings-section">
+      {tab === "settings" &&
+        (!catalog || !ai || !ocr ? (
+          <p role="status">Loading settings…</p>
+        ) : (
+          <div className="settings-section">
           <h3>AI models</h3>
           {ai.egress_active && (
             <p className="status-error" role="status">
@@ -386,9 +408,9 @@ export function SettingsPanel() {
             )}
           </div>
         </div>
-      )}
+        ))}
 
-      <DrpSection />
+      {tab === "drp" && <DrpSection />}
     </section>
   );
 }

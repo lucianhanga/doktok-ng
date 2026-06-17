@@ -118,6 +118,9 @@ test("changing parallel OCR processes saves the OCR setting", async () => {
 test("shows the read-only DRP section with backup status and config", async () => {
   mockApi();
   render(<SettingsPanel />);
+  // DRP lives on its own sub-tab now (keeps the Save button out of the middle).
+  await waitFor(() => expect(screen.getByRole("tab", { name: "DRP" })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("tab", { name: "DRP" }));
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: /Disaster Recovery Plan/i })).toBeInTheDocument(),
   );

@@ -842,6 +842,7 @@ class DrpConfig(BaseModel):
     rpo_pg_seconds: int = 60
     rpo_offsite_seconds: int = 3600
     rto_seconds: int = 14400
+    deploy_mode: str = "host"  # host | compose - the topology backups run in (M12 #377)
     repo_location: str = ""
     azure_container: str = ""
     immutability_enabled: bool = False

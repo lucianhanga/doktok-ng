@@ -112,7 +112,10 @@ function DrpSection() {
             </div>
             <div className="settings-row">
               <span>Local repository</span>
-              <span className="muted">{drp.config.repo_location || "—"}</span>
+              <span className="muted">
+                {drp.config.repo_location || "—"}
+                {drp.config.deploy_mode ? ` · ${drp.config.deploy_mode} mode` : ""}
+              </span>
             </div>
             <div className="settings-row">
               <span>Azure container</span>

@@ -148,8 +148,15 @@ services:
       DOKTOK_RATE_LIMIT_PER_MINUTE: ${DOKTOK_RATE_LIMIT_PER_MINUTE:-0}
       DOKTOK_MAX_REQUEST_MB: ${DOKTOK_MAX_REQUEST_MB:-25}
       DOKTOK_CORS_ORIGINS: ${DOKTOK_CORS_ORIGINS:-[]}
+      # DRP (M12 #377): read the backup freshness sentinels written by the backup orchestrator.
+      DOKTOK_BACKUP_DIR: /var/lib/doktok/backups
+      DOKTOK_DEPLOY_MODE: ${DOKTOK_DEPLOY_MODE:-compose}
+      DOKTOK_AZURE_CONTAINER: ${DOKTOK_AZURE_CONTAINER:-}
+      DOKTOK_AZURE_SAS: ${DOKTOK_AZURE_SAS:-}
     volumes:
       - doktok-files:/data/files
+      # Read-only view of the host backup dir so the DRP panel can read status/ sentinels (M12 #377).
+      - ${DOKTOK_BACKUP_DIR:-./backups}:/var/lib/doktok/backups:ro
     healthcheck:
       test:
         - CMD-SHELL
@@ -229,6 +236,25 @@ services:
           memory: 256m
           cpus: "0.5"
     restart: unless-stopped
+
+  # Backup runner (M12 #377): on-demand container with restic + the deploy scripts, mounting the
+  # files volume (ro) and the host backup dir (rw). The compose-mode orchestrator runs the SAME
+  # backup-files.sh here that runs on the host in dev. Not started by default (profile "tools");
+  # invoked via `docker compose run --rm backup-runner deploy/<script>` from deploy/backup.sh.
+  backup-runner:
+    build:
+      context: .
+      dockerfile: deploy/docker/backup-runner.Dockerfile
+    image: ghcr.io/lucianhanga/doktok-ng-backup-runner:${DOKTOK_IMAGE_TAG:-latest}
+    profiles: ["tools"]
+    environment:
+      DOKTOK_BACKUP_DIR: /backups
+      DOKTOK_FILES_ROOT: /data/files
+      DOKTOK_RESTIC_PASSWORD: ${DOKTOK_RESTIC_PASSWORD:?set DOKTOK_RESTIC_PASSWORD}
+    volumes:
+      - doktok-files:/data/files:ro
+      - ${DOKTOK_BACKUP_DIR:-./backups}:/backups
+    logging: *logging
 
 volumes:
   doktok-pgdata:

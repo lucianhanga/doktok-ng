@@ -21,10 +21,13 @@ if [ "$mode" = "compose" ]; then
     # there), then the runner records the pg sentinel into the shared backup dir.
     compose=(docker compose -f docker-compose.prod.yml --env-file .env.production)
     "${compose[@]}" run --rm backup-runner deploy/backup-files.sh
-    "${compose[@]}" exec -T db pgbackrest --stanza=doktok backup --type="$type"
+    # Run pgbackrest as the postgres user (the WAL archive_command runs as that uid), so the repo
+    # files - notably archive.info - stay owned by postgres and remain readable by archive-push.
+    # `exec` defaults to root, which would write root-owned files and break WAL archiving (#377).
+    "${compose[@]}" exec -u postgres -T db pgbackrest --stanza=doktok backup --type="$type"
     # Capture pg metrics (repo size, db size, backup label) for the DRP (M12 #380). pgbackrest emits
     # JSON; parse it on the host (the db image has no python). Best-effort: empty extra on any failure.
-    pg_extra="$("${compose[@]}" exec -T db pgbackrest --stanza=doktok info --output=json 2>/dev/null \
+    pg_extra="$("${compose[@]}" exec -u postgres -T db pgbackrest --stanza=doktok info --output=json 2>/dev/null \
         | pg_backup_extra || true)"
     "${compose[@]}" run --rm backup-runner deploy/write-status.sh pg true "pgbackrest $type" "$pg_extra"
 else

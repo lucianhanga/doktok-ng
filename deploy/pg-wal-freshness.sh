@@ -63,8 +63,9 @@ prev="${STATUS_DIR}/pg.json"
 psize=""
 pid=""
 if [ -f "$prev" ]; then
-    psize="$(grep -oE '"size":"[^"]*"' "$prev" | head -1 | sed -E 's/"size":"(.*)"/\1/')"
-    pid="$(grep -oE '"backup_id":"[^"]*"' "$prev" | head -1 | sed -E 's/"backup_id":"(.*)"/\1/')"
+    # `|| true`: the field may be absent (e.g. before the first base backup); pipefail would abort.
+    psize="$(grep -oE '"size":"[^"]*"' "$prev" | head -1 | sed -E 's/"size":"(.*)"/\1/' || true)"
+    pid="$(grep -oE '"backup_id":"[^"]*"' "$prev" | head -1 | sed -E 's/"backup_id":"(.*)"/\1/' || true)"
 fi
 
 # Healthy unless the most recent archive attempt failed (last failure newer than last success).

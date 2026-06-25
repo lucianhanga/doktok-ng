@@ -68,6 +68,7 @@ def test_config_booleans_no_secret_values() -> None:
     client = _client(
         repo,
         backup_dir="/var/lib/doktok/backups",
+        deploy_mode="compose",
         azure_container="doktok-backups",
         azure_immutable=True,
         restic_password="rp",  # pragma: allowlist secret
@@ -78,6 +79,7 @@ def test_config_booleans_no_secret_values() -> None:
     body = resp.json()
     cfg = body["config"]
     assert cfg["repo_location"] == "/var/lib/doktok/backups"
+    assert cfg["deploy_mode"] == "compose"
     assert cfg["azure_container"] == "doktok-backups" and cfg["immutability_enabled"] is True
     assert cfg["encryption_keys_configured"] is True and cfg["azure_credentials_configured"] is True
     # The actual secret value must never appear anywhere in the response - only the boolean.

@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     # read by the read-only DRP settings panel + /metrics). azure_* + the *_password presence drive
     # the DRP "configured" booleans (presence only - the values are never returned).
     backup_dir: str = "./backups"
+    # Deployment topology for backups/DRP (M12 #377): "host" (dev/test run directly on the host) or
+    # "compose" (staging/prod containerized). The orchestrator runs backups accordingly; the DRP
+    # panel surfaces this so it is honest about what's wired per environment.
+    deploy_mode: str = "host"
     azure_container: str = ""
     azure_immutable: bool = False
     restic_password: str = ""

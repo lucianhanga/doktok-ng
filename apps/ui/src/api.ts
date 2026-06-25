@@ -523,6 +523,7 @@ export interface DrpConfig {
   rpo_pg_seconds: number;
   rpo_offsite_seconds: number;
   rto_seconds: number;
+  deploy_mode?: string;
   repo_location: string;
   azure_container: string;
   immutability_enabled: boolean;

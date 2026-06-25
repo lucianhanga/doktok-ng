@@ -325,6 +325,7 @@ def get_drp(request: Request, tenant: Tenant, repo: Repo) -> DrpStatusResponse:
         wal = (raw.get("pg") or {}).get("wal_lag_s")
         status.wal_lag_seconds = int(wal) if isinstance(wal, int | float) else None
     config = DrpConfig(
+        deploy_mode=settings.deploy_mode,
         repo_location=settings.backup_dir,
         azure_container=settings.azure_container,
         immutability_enabled=settings.azure_immutable,

@@ -11,6 +11,21 @@ cd "$(dirname "$0")/.."
 source deploy/lib.sh
 
 warn "backups are secret-bearing (encrypted) - store the repo + keys off the box"
-./deploy/backup-files.sh
-./deploy/backup-pg.sh "${1:-incr}"
-ok "backup complete -> ${BACKUP_DIR}"
+
+type="${1:-incr}"
+mode="${DOKTOK_DEPLOY_MODE:-host}"
+
+if [ "$mode" = "compose" ]; then
+    # Containerized (staging/prod): same scripts, run where the tools + data are (M12 #377). Files
+    # run in the backup-runner (restic + mounts); pg runs inside the db container (pgbackrest lives
+    # there), then the runner records the pg sentinel into the shared backup dir.
+    compose=(docker compose -f docker-compose.prod.yml --env-file .env.production)
+    "${compose[@]}" run --rm backup-runner deploy/backup-files.sh
+    "${compose[@]}" exec -T db pgbackrest --stanza=doktok backup --type="$type"
+    "${compose[@]}" run --rm backup-runner deploy/write-status.sh pg true "pgbackrest $type"
+else
+    # Host (dev/test): tools installed on the host, host file paths.
+    ./deploy/backup-files.sh
+    ./deploy/backup-pg.sh "$type"
+fi
+ok "backup complete (mode=$mode) -> ${BACKUP_DIR}"

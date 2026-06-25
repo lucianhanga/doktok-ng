@@ -63,6 +63,36 @@ def test_states_derived_from_sentinels() -> None:
     assert s["drill"]["state"] == "unknown"  # absent leg
 
 
+def test_backup_metrics_surfaced_from_sentinel() -> None:
+    """size/file_count/backup_id captured by the backup scripts pass through to the DRP (#380)."""
+    now = datetime.now(UTC)
+    repo = InMemoryAppSettingsRepository()
+    repo.backup_status = {
+        "files": {
+            "ok": True,
+            "last_run_at": _iso(now),
+            "detail": "restic snapshot",
+            "size": "662 MiB",
+            "file_count": 287,
+            "backup_id": "a1b2c3d4e5f60718",
+        },
+        "pg": {
+            "ok": True,
+            "last_run_at": _iso(now),
+            "detail": "pgbackrest full",
+            "size": "1.2 GiB",
+            "backup_id": "20260625-120000F",
+        },
+    }
+    s = _client(repo).get("/api/v1/settings/drp", headers=AUTH).json()["status"]
+    assert s["files"]["size"] == "662 MiB"
+    assert s["files"]["file_count"] == 287
+    assert s["files"]["backup_id"] == "a1b2c3d4e5f60718"
+    assert s["pg"]["size"] == "1.2 GiB"
+    assert s["pg"]["file_count"] is None  # pg has no file count
+    assert s["pg"]["backup_id"] == "20260625-120000F"
+
+
 def test_config_booleans_no_secret_values() -> None:
     repo = InMemoryAppSettingsRepository()
     client = _client(

@@ -822,6 +822,10 @@ class BackupLegStatus(BaseModel):
     last_run_at: datetime | None = None
     age_seconds: int | None = None
     detail: str = ""  # short human note (backup type, snapshot id) - never a secret
+    # Backup metrics captured into the sentinel (M12 #380); all optional/best-effort.
+    size: str = ""  # human-readable backup/snapshot size, e.g. "662 MiB"
+    file_count: int | None = None
+    backup_id: str = ""  # restic snapshot id / pgBackRest backup label
 
 
 class DrpStatus(BaseModel):

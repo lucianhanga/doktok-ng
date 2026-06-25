@@ -54,15 +54,50 @@ function DrpSection() {
     };
   }, []);
 
-  const leg = (label: string, s: BackupLegStatus | undefined, target: string) => (
-    <div className="settings-row" key={label}>
-      <span>{label}</span>
-      <span className={`drp-state drp-${s?.state ?? "unknown"}`}>{s?.state ?? "unknown"}</span>
-      <span className="muted">
-        {relAge(s?.age_seconds ?? null)} · target {target}
-      </span>
-    </div>
-  );
+  // restic snapshot ids are long hex hashes — show the short form (like git) but keep the full id
+  // in the tooltip. pgBackRest labels (e.g. 20260625-120000F) are already short, so leave them.
+  const shortId = (id: string) => (/^[0-9a-f]{12,}$/.test(id) ? id.slice(0, 8) : id);
+
+  const legCard = (label: string, s: BackupLegStatus | undefined, target: string) => {
+    const state = s?.state ?? "unknown";
+    const hasMetrics = !!(s && (s.size || s.file_count != null || s.backup_id));
+    return (
+      <div className={`drp-card drp-card-${state}`} key={label}>
+        <div className="drp-card-head">
+          <span className="drp-card-title">{label}</span>
+          <span className={`drp-badge drp-${state}`}>{state}</span>
+        </div>
+        <div className="drp-card-age">{relAge(s?.age_seconds ?? null)}</div>
+        <dl className="drp-metrics">
+          {s?.size ? (
+            <>
+              <dt>Size</dt>
+              <dd>{s.size}</dd>
+            </>
+          ) : null}
+          {s?.file_count != null ? (
+            <>
+              <dt>Files</dt>
+              <dd>{s.file_count.toLocaleString()}</dd>
+            </>
+          ) : null}
+          {s?.backup_id ? (
+            <>
+              <dt>ID</dt>
+              <dd className="drp-mono" title={s.backup_id}>
+                {shortId(s.backup_id)}
+              </dd>
+            </>
+          ) : null}
+          <dt>Target RPO</dt>
+          <dd>{target}</dd>
+        </dl>
+        {!hasMetrics && state !== "unknown" ? (
+          <div className="drp-card-detail muted">{s?.detail || "no metrics reported"}</div>
+        ) : null}
+      </div>
+    );
+  };
 
   const yn = (b: boolean) => (b ? "configured" : "not configured");
 
@@ -88,19 +123,19 @@ function DrpSection() {
       )}
       {drp && (
         <>
-          <h4>Status</h4>
-          <div className="settings-purpose">
-            {leg("Files (restic)", drp.status.files, "15 min")}
-            {leg("Postgres (pgBackRest)", drp.status.pg, "1 min")}
-            {leg("Offsite (Azure)", drp.status.offsite, "1 h")}
-            {leg("Last restore drill", drp.status.drill, "monthly")}
-            <div className="settings-row">
-              <span>WAL shipping lag</span>
-              <span className="muted">
-                {drp.status.wal_lag_seconds == null ? "unknown" : `${drp.status.wal_lag_seconds}s`}
-              </span>
-            </div>
+          <h4>Backup status</h4>
+          <div className="drp-grid">
+            {legCard("Files (restic)", drp.status.files, "15 min")}
+            {legCard("Postgres (pgBackRest)", drp.status.pg, "1 min")}
+            {legCard("Offsite (Azure)", drp.status.offsite, "1 h")}
+            {legCard("Last restore drill", drp.status.drill, "monthly")}
           </div>
+          {drp.status.wal_lag_seconds != null && (
+            <p className="drp-wal muted">
+              WAL shipping lag: <strong>{drp.status.wal_lag_seconds}s</strong> (continuous archiving
+              keeps Postgres recoverable to within this window)
+            </p>
+          )}
           <h4>Targets &amp; configuration</h4>
           <div className="settings-purpose">
             <div className="settings-row">

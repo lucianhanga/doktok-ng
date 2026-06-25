@@ -22,7 +22,11 @@ if [ "$mode" = "compose" ]; then
     compose=(docker compose -f docker-compose.prod.yml --env-file .env.production)
     "${compose[@]}" run --rm backup-runner deploy/backup-files.sh
     "${compose[@]}" exec -T db pgbackrest --stanza=doktok backup --type="$type"
-    "${compose[@]}" run --rm backup-runner deploy/write-status.sh pg true "pgbackrest $type"
+    # Capture pg metrics (repo size, db size, backup label) for the DRP (M12 #380). pgbackrest emits
+    # JSON; parse it on the host (the db image has no python). Best-effort: empty extra on any failure.
+    pg_extra="$("${compose[@]}" exec -T db pgbackrest --stanza=doktok info --output=json 2>/dev/null \
+        | pg_backup_extra || true)"
+    "${compose[@]}" run --rm backup-runner deploy/write-status.sh pg true "pgbackrest $type" "$pg_extra"
 else
     # Host (dev/test): tools installed on the host, host file paths.
     ./deploy/backup-files.sh

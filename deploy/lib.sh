@@ -45,4 +45,6 @@ write_status() {
     printf '{"leg":"%s","ok":%s,"last_run_at":"%s","detail":"%s"}\n' \
         "$leg" "$ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$detail" >"$tmp"
     mv -f "$tmp" "${STATUS_DIR}/${leg}.json"
+    # Non-secret status; must be readable by the backend (a different uid in compose). (M12 #377)
+    chmod 0644 "${STATUS_DIR}/${leg}.json"
 }

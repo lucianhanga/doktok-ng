@@ -41,7 +41,8 @@ require() {
 # the db container has none, so this runs host-side). Prints nothing if parsing fails.
 pg_backup_extra() {
     command -v python3 >/dev/null 2>&1 || return 0
-    python3 - <<'PY' || true
+    # Pass the program via -c (not a heredoc) so stdin stays bound to the piped JSON, not the script.
+    python3 -c '
 import sys, json
 def human(n):
     n = float(n)
@@ -57,10 +58,10 @@ try:
     b = backups[-1]
     size = human(b["info"]["size"])
     label = b["label"]
-    print(f'"size":"{size}","backup_id":"{label}"', end="")
+    print(f"\"size\":\"{size}\",\"backup_id\":\"{label}\"", end="")
 except Exception:
     pass
-PY
+' || true
 }
 
 # write_status <leg> <true|false> [detail] - atomic per-leg freshness sentinel.

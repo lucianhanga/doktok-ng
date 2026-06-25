@@ -203,6 +203,7 @@ def test_executor_built_lazily_with_pool_size(monkeypatch: pytest.MonkeyPatch) -
         "latin_PP-OCRv5_mobile_rec",
         1,
         False,  # preprocess off by default (standard profile)
+        True,  # enable_mkldnn default (M13 deploy work)
     )
 
 

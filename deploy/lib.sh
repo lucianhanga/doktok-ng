@@ -22,7 +22,7 @@ PG_WAL_DIR="${PG_DIR}/wal"
 
 # What we back up.
 FILES_ROOT="${DOKTOK_FILES_ROOT:-./storage/files}"
-DATABASE_URL="${DOKTOK_DATABASE_URL:-postgresql://doktok:doktok@localhost:5432/doktok}"
+DATABASE_URL="${DOKTOK_DATABASE_URL:-postgresql://doktok:doktok@localhost:5432/doktok}"  # pragma: allowlist secret
 
 # Freshness sentinels (M12 DEVOPS-D1): one JSON file per backup leg, written outside the database
 # (so a Postgres restore can't roll backup status back). The backend's DRP panel + /metrics read

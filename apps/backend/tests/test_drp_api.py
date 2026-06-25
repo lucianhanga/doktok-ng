@@ -70,7 +70,7 @@ def test_config_booleans_no_secret_values() -> None:
         backup_dir="/var/lib/doktok/backups",
         azure_container="doktok-backups",
         azure_immutable=True,
-        restic_password="rp",
+        restic_password="rp",  # pragma: allowlist secret
         pgbackrest_cipher_pass="pp",
         azure_sas="sas-value",
     )

@@ -1514,9 +1514,10 @@ class PostgresRecordRepository:
 class PostgresAppSettingsRepository:
     """Global app settings backed by the ``app_settings`` key -> JSON table (not tenant-scoped)."""
 
-    def __init__(self, db: Database, *, secrets_key: str = "") -> None:
+    def __init__(self, db: Database, *, secrets_key: str = "", backup_status_dir: str = "") -> None:
         self._db = db
         self._secrets_key = secrets_key  # master key for at-rest secret encryption (APP-8)
+        self._backup_status_dir = backup_status_dir  # per-leg backup sentinels dir (DRP, #368)
 
     def _get(self, key: str) -> Any:
         with self._db.connection() as conn:
@@ -1568,6 +1569,32 @@ class PostgresAppSettingsRepository:
             return datetime.fromisoformat(str(raw))
         except ValueError:
             return None
+
+    def set_maintenance_mode(self, *, enabled: bool) -> None:
+        self._set("maintenance_mode", bool(enabled))
+
+    def get_maintenance_mode(self) -> bool:
+        return bool(self._get("maintenance_mode"))
+
+    def get_backup_status(self) -> dict[str, dict[str, object]] | None:
+        # Read per-leg sentinel JSON files from the shared backup volume (NOT the DB, so a restore
+        # can't roll status back). Missing dir / unreadable leg -> omit that leg; None if no dir.
+        import json
+        from pathlib import Path
+
+        base = Path(self._backup_status_dir) if self._backup_status_dir else None
+        if base is None or not base.is_dir():
+            return None
+        out: dict[str, dict[str, object]] = {}
+        for leg in ("files", "pg", "offsite", "drill"):
+            f = base / f"{leg}.json"
+            if not f.is_file():
+                continue
+            try:
+                out[leg] = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+        return out
 
 
 _PROJECTION_HEADER_COLS = "algorithm, version, input_fingerprint, n_points, truncated, computed_at"

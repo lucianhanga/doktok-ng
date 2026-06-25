@@ -20,7 +20,31 @@ const CATALOG = {
 const AI = {
   pipeline: { provider: "ollama", model: "qwen3:14b", num_ctx: 8192, reasoning: "off" },
   rag: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 32768, reasoning: "off" },
+  embedding: { ollama_base_url: null },
+  ollama_base_url_default: "http://localhost:11434",
   openai_api_key_set: false,
+};
+const DRP = {
+  read_only: true,
+  status: {
+    files: { state: "ok", last_run_at: "2026-06-17T00:00:00Z", age_seconds: 60, detail: "restic" },
+    pg: { state: "ok", last_run_at: "2026-06-17T00:00:00Z", age_seconds: 30, detail: "diff" },
+    offsite: { state: "stale", last_run_at: "2026-06-16T00:00:00Z", age_seconds: 99999, detail: "" },
+    drill: { state: "unknown", last_run_at: null, age_seconds: null, detail: "" },
+    wal_lag_seconds: 40,
+    status_source_available: true,
+  },
+  config: {
+    rpo_files_seconds: 900,
+    rpo_pg_seconds: 60,
+    rpo_offsite_seconds: 3600,
+    rto_seconds: 14400,
+    repo_location: "/var/lib/doktok/backups",
+    azure_container: "doktok-backups",
+    immutability_enabled: true,
+    encryption_keys_configured: true,
+    azure_credentials_configured: false,
+  },
 };
 
 function mockApi() {
@@ -32,10 +56,27 @@ function mockApi() {
       calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
       const method = init?.method ?? "GET";
       if (url.endsWith("/catalog")) return new Response(JSON.stringify(CATALOG), { status: 200 });
+      if (url.endsWith("/test-ollama"))
+        return new Response(
+          JSON.stringify({ ok: true, detail: "reachable - 2 model(s) installed", url: "x" }),
+          { status: 200 },
+        );
+      if (url.endsWith("/test-openai"))
+        return new Response(
+          JSON.stringify({ ok: true, detail: "valid - 50 models available" }),
+          { status: 200 },
+        );
       if (url.endsWith("/settings/ai") && method === "GET")
         return new Response(JSON.stringify(AI), { status: 200 });
+      if (url.endsWith("/settings/ocr/recommendation"))
+        return new Response(
+          JSON.stringify({ engine: "rapidocr", concurrency: 2, reason: "Intel CPU - OpenVINO." }),
+          { status: 200 },
+        );
       if (url.endsWith("/settings/ocr") && method === "GET")
         return new Response(JSON.stringify({ ocr_concurrency: 4 }), { status: 200 });
+      if (url.endsWith("/settings/drp") && method === "GET")
+        return new Response(JSON.stringify(DRP), { status: 200 });
       if (url.endsWith("/settings/ocr") && method === "PUT")
         return new Response(init?.body as string, { status: 200 }); // echo
       // PUT /settings/ai echoes back the body with the key masked.
@@ -74,6 +115,65 @@ test("changing a model and saving PUTs the new selection", async () => {
   expect(JSON.parse(put!.body!).pipeline.model).toBe("qwen3.6:35b-a3b");
 });
 
+test("per-purpose Ollama URL override saves, and reset-to-default clears it", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+
+  // The override field is shown for an Ollama purpose; default URL is the placeholder.
+  const url = screen.getByLabelText("Data pipeline Ollama URL") as HTMLInputElement;
+  expect(url.placeholder).toBe("http://localhost:11434");
+
+  fireEvent.change(url, { target: { value: "http://gpu-box:11434" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => {
+    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
+    expect(JSON.parse(put!.body!).pipeline.ollama_base_url).toBe("http://gpu-box:11434");
+  });
+
+  // Reset clears the override back to "" (inherit the default). The pipeline field is the first of
+  // the per-purpose URL fields (pipeline, rag, embedding).
+  fireEvent.click(screen.getAllByRole("button", { name: "Reset to default" })[0]);
+  expect((screen.getByLabelText("Data pipeline Ollama URL") as HTMLInputElement).value).toBe("");
+});
+
+test("the Test button probes the Ollama URL and shows the result", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+
+  // Pipeline is on Ollama in the mock, so it has a Test button (the first one).
+  fireEvent.click(screen.getAllByRole("button", { name: "Test" })[0]);
+  await waitFor(() =>
+    expect(screen.getByText(/Connected — reachable - 2 model/i)).toBeInTheDocument(),
+  );
+  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/test-ollama"))).toBe(true);
+});
+
+test("the OpenAI Test button validates the entered key and shows the result", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+
+  // The OpenAI Test button is enabled once a key is typed.
+  fireEvent.change(screen.getByLabelText("OpenAI API key"), { target: { value: "sk-test" } });
+  const openaiTest = screen.getAllByRole("button", { name: "Test" }).at(-1)!; // last Test = OpenAI
+  fireEvent.click(openaiTest);
+  await waitFor(() =>
+    expect(screen.getByText(/Valid — valid - 50 models/i)).toBeInTheDocument(),
+  );
+  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/test-openai"))).toBe(true);
+});
+
+test("shows the device-aware OCR recommendation hint", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() =>
+    expect(screen.getByText(/Recommended for this device/i)).toBeInTheDocument(),
+  );
+  expect(screen.getByText(/rapidocr @ 2 parallel/i)).toBeInTheDocument();
+});
+
 test("changing parallel OCR processes saves the OCR setting", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
@@ -89,4 +189,20 @@ test("changing parallel OCR processes saves the OCR setting", async () => {
     expect(put).toBeTruthy();
     expect(JSON.parse(put!.body!).ocr_concurrency).toBe(6);
   });
+});
+
+test("shows the read-only DRP section with backup status and config", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  // DRP lives on its own sub-tab now (keeps the Save button out of the middle).
+  await waitFor(() => expect(screen.getByRole("tab", { name: "DRP" })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("tab", { name: "DRP" }));
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /Disaster Recovery Plan/i })).toBeInTheDocument(),
+  );
+  // Leg states + config surfaced; secrets shown as presence only.
+  expect(screen.getByText("stale")).toBeInTheDocument(); // offsite leg
+  expect(screen.getByText("/var/lib/doktok/backups")).toBeInTheDocument();
+  expect(screen.getByText(/doktok-backups · immutable/)).toBeInTheDocument();
+  expect(screen.getByText("not configured")).toBeInTheDocument(); // azure creds
 });

@@ -6,6 +6,7 @@ registry. Document, search, and chat routes arrive in later milestones.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -18,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from doktok_api import __version__
-from doktok_api.dependencies import Tenant
+from doktok_api.dependencies import Tenant, get_app_settings_repository
 from doktok_api.routers import (
     aggregate,
     audit,
@@ -37,6 +38,7 @@ from doktok_api.routers import (
     settings as settings_router,
 )
 
+logger = logging.getLogger("doktok.api")
 SERVICE_NAME = "doktok-ng-backend"
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 # A worker heartbeat older than this marks the worker as stale in /ready (APP-5). The worker beats
@@ -46,11 +48,41 @@ _WORKER_STALE_SECONDS = 120
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _record_service_started(app, actor="backend")
     yield
     # Close a lazily-created database pool, if one was opened during the app's lifetime.
     database = getattr(app.state, "database", None)
     if database is not None:
         database.close()
+
+
+def _record_service_started(app: FastAPI, *, actor: str) -> None:
+    """Append a 'service.started' activity row per tenant on startup (M15 #373). Best-effort: a
+    brief connection just for this write, skipped under tests; failures never block startup."""
+    settings = app.state.settings
+    if settings.env == "test":
+        return
+    try:
+        from doktok_contracts.schemas import AuditEventType
+        from doktok_core.audit.logger import record_activity
+        from doktok_storage_postgres import Database, PostgresAuditLogRepository
+
+        db = Database(settings.database_url)
+        try:
+            repo = PostgresAuditLogRepository(db)
+            for tenant in dict.fromkeys(settings.tenant_tokens.values()):
+                record_activity(
+                    repo,
+                    tenant,
+                    AuditEventType.SERVICE_STARTED,
+                    actor=actor,
+                    actor_kind="system",
+                    description=f"{actor.capitalize()} started",
+                )
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - a startup activity row must never block the service
+        logger.warning("failed to record service-started activity", exc_info=True)
 
 
 def create_app(settings: Settings | None = None, registry: Registry | None = None) -> FastAPI:
@@ -166,7 +198,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         import httpx
         from doktok_core.security.egress import openai_egress_allowed
 
-        from doktok_api.dependencies import _get_database, get_app_settings_repository
+        from doktok_api.dependencies import _get_database
 
         checks: list[dict[str, object]] = []
 
@@ -200,8 +232,17 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         except Exception as exc:  # noqa: BLE001
             _record("database", True, False, str(exc))
 
-        # Local Ollama embedder (hard - both ingest and RAG retrieval need it)
-        ok, detail = _http_ok(f"{settings.ollama_base_url.rstrip('/')}/api/tags")
+        # Embedding Ollama endpoint (hard - ingest + RAG retrieval need it). Check the *effective*
+        # endpoint (per-purpose override or default), so offloaded embeddings stay green and a
+        # stopped local Ollama (when unused, M16 #374) does not fail readiness.
+        try:
+            embedding_url = (
+                get_app_settings_repository(request).get_ai_settings().embedding.ollama_base_url
+                or settings.ollama_base_url
+            )
+        except Exception:  # noqa: BLE001 - fall back to the default if settings can't be read
+            embedding_url = settings.ollama_base_url
+        ok, detail = _http_ok(f"{embedding_url.rstrip('/')}/api/tags")
         _record("ollama", True, ok, detail)
 
         # Gotenberg (soft - only office-doc ingest needs it)
@@ -247,16 +288,29 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         _ = tenant
         from datetime import UTC, datetime
 
-        from doktok_api.dependencies import get_app_settings_repository
-
         m = request.app.state.metrics
         gauges: dict[str, float] = {"doktok_uptime_seconds": round(m.uptime_seconds(), 1)}
         try:
-            beat = get_app_settings_repository(request).get_worker_heartbeat()
+            repo = get_app_settings_repository(request)
+            beat = repo.get_worker_heartbeat()
             if beat is not None:
                 gauges["doktok_worker_heartbeat_age_seconds"] = round(
                     (datetime.now(UTC) - beat).total_seconds(), 1
                 )
+            # Backup freshness from the same sentinels the DRP panel reads (#368/#357).
+            backup = repo.get_backup_status()
+            gauges["doktok_backup_status_source_available"] = 1.0 if backup is not None else 0.0
+            for leg in ("files", "pg", "offsite", "drill"):
+                raw = (backup or {}).get(leg) or {}
+                ts = raw.get("last_run_at")
+                if isinstance(ts, str):
+                    try:
+                        beat_at = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        gauges[f"doktok_backup_{leg}_age_seconds"] = round(
+                            (datetime.now(UTC) - beat_at).total_seconds(), 1
+                        )
+                    except ValueError:
+                        pass
         except Exception:  # noqa: BLE001 - metrics must never raise
             pass
         return Response(content=m.render(gauges), media_type="text/plain; version=0.0.4")

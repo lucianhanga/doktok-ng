@@ -1,6 +1,6 @@
 [project]
 name = "doktok-ng"
-version = "0.0.0"
+version = "0.1.0"
 description = "Local-first, AI-enabled document-intelligence system"
 requires-python = ">=3.12"
 readme = "README.md"
@@ -32,6 +32,7 @@ members = [
     "providers/ollama",
     "providers/openai",
     "providers/paddleocr",
+    "providers/rapidocr",
     "providers/projection",
     "storage/postgres",
     "storage/filesystem",
@@ -50,6 +51,7 @@ doktok-mcp = { workspace = true }
 doktok-provider-ollama = { workspace = true }
 doktok-provider-openai = { workspace = true }
 doktok-provider-paddleocr = { workspace = true }
+doktok-provider-rapidocr = { workspace = true }
 doktok-provider-projection = { workspace = true }
 doktok-storage-postgres = { workspace = true }
 doktok-storage-filesystem = { workspace = true }

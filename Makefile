@@ -1,5 +1,5 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend run-worker run-ui clean-tenant rag-eval enrich-eval ocr-paddle projection-engine db db-down \
+        run-backend run-worker run-ui clean-tenant rag-eval enrich-eval ocr-paddle ocr-rapid ocr-rapid-openvino projection-engine db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks
 
@@ -53,6 +53,12 @@ enrich-eval: ## Run the document-enrichment eval against real Ollama (needs `mak
 
 ocr-paddle: ## Install the PaddleOCR runtime (the DOKTOK_OCR_ENGINE=paddleocr extra)
 	uv pip install paddleocr paddlepaddle pillow numpy
+
+ocr-rapid: ## Install the RapidOCR runtime (the DOKTOK_OCR_ENGINE=rapidocr extra; ~6x faster on weak CPUs)
+	uv pip install rapidocr-onnxruntime pillow numpy
+
+ocr-rapid-openvino: ## Install RapidOCR + the OpenVINO backend (Intel; ~20x vs Paddle on N95). Needs openvino<2025.
+	uv pip install rapidocr-openvino "openvino<2025" pillow numpy
 
 projection-engine: ## Install the embedding-projection runtime (PCA/UMAP/HDBSCAN for the Insights tab)
 	uv pip install umap-learn scikit-learn hdbscan numpy

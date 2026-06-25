@@ -351,15 +351,26 @@ export interface AiPurposeSettings {
   model: string;
   num_ctx: number;
   reasoning: string;
+  // Per-purpose Ollama server URL override (M13). null/"" = inherit the default. Only used for
+  // ollama providers.
+  ollama_base_url?: string | null;
+}
+
+export interface AiEmbeddingSettings {
+  // Ollama server URL override for embeddings (M13). null/"" = inherit the default.
+  ollama_base_url?: string | null;
 }
 
 export interface AiSettings {
   pipeline: AiPurposeSettings;
   rag: AiPurposeSettings;
+  embedding: AiEmbeddingSettings;
   openai_api_key_set?: boolean;
   // Read-only: the embedding model + context that indexes the corpus (not user-selectable).
   embedding_model?: string;
   embedding_num_ctx?: number;
+  // The effective default Ollama URL, shown as the placeholder + reset target (M13).
+  ollama_base_url_default?: string;
   // True when a remote provider is active and content actually egresses to OpenAI (APP-11).
   egress_active?: boolean;
 }
@@ -386,6 +397,59 @@ export function fetchModelCatalog(signal?: AbortSignal): Promise<ModelCatalog> {
   return getJson<ModelCatalog>("/api/v1/settings/ai/catalog", signal);
 }
 
+export interface OllamaTestResult {
+  ok: boolean;
+  detail: string;
+  url: string;
+}
+
+/** Probe an Ollama server (the override, or the default if url is null/"") before saving (M13). */
+export async function testOllamaUrl(url: string | null): Promise<OllamaTestResult> {
+  const response = await fetch("/api/v1/settings/ai/test-ollama", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as OllamaTestResult;
+}
+
+export interface OpenAiTestResult {
+  ok: boolean;
+  detail: string;
+}
+
+/** Validate an OpenAI key (the typed one, or the stored one if null/"") before saving (M13). */
+export async function testOpenAiKey(apiKey: string | null): Promise<OpenAiTestResult> {
+  const response = await fetch("/api/v1/settings/ai/test-openai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as OpenAiTestResult;
+}
+
+export interface IngestUploadResult {
+  accepted: string[];
+  rejected: string[];
+}
+
+/** Upload documents for ingestion (M14): written into the tenant ingest folder for the worker. */
+export async function uploadDocuments(files: File[]): Promise<IngestUploadResult> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const response = await fetch("/api/v1/ingestion/upload", { method: "POST", body: form });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as IngestUploadResult;
+}
+
 /** Persist AI settings. openai_api_key: omit/null = unchanged, "" = clear, value = set. */
 export async function putAiSettings(
   body: AiSettings & { openai_api_key?: string | null },
@@ -405,10 +469,24 @@ export async function putAiSettings(
 
 export interface OcrSettings {
   ocr_concurrency: number;
+  engine?: string; // "" inherits the server default; "paddleocr" | "rapidocr" | "glm-ocr" (M17)
 }
+
+export const OCR_ENGINES = ["paddleocr", "rapidocr", "glm-ocr"] as const;
 
 export function fetchOcrSettings(signal?: AbortSignal): Promise<OcrSettings> {
   return getJson<OcrSettings>("/api/v1/settings/ocr", signal);
+}
+
+export interface OcrRecommendation {
+  engine: string;
+  concurrency: number;
+  reason: string;
+}
+
+/** Device-aware OCR suggestion for this host (M17): engine + concurrency + a short why. */
+export function fetchOcrRecommendation(signal?: AbortSignal): Promise<OcrRecommendation> {
+  return getJson<OcrRecommendation>("/api/v1/settings/ocr/recommendation", signal);
 }
 
 export async function putOcrSettings(body: OcrSettings): Promise<OcrSettings> {
@@ -421,6 +499,45 @@ export async function putOcrSettings(body: OcrSettings): Promise<OcrSettings> {
     throw friendlyHttpError(response.status);
   }
   return (await response.json()) as OcrSettings;
+}
+
+// Disaster Recovery Plan (read-only; #368).
+export interface BackupLegStatus {
+  state: string; // ok | stale | failed | unknown
+  last_run_at: string | null;
+  age_seconds: number | null;
+  detail: string;
+}
+
+export interface DrpStatus {
+  files: BackupLegStatus;
+  pg: BackupLegStatus;
+  offsite: BackupLegStatus;
+  drill: BackupLegStatus;
+  wal_lag_seconds: number | null;
+  status_source_available: boolean;
+}
+
+export interface DrpConfig {
+  rpo_files_seconds: number;
+  rpo_pg_seconds: number;
+  rpo_offsite_seconds: number;
+  rto_seconds: number;
+  repo_location: string;
+  azure_container: string;
+  immutability_enabled: boolean;
+  encryption_keys_configured: boolean;
+  azure_credentials_configured: boolean;
+}
+
+export interface DrpStatusResponse {
+  status: DrpStatus;
+  config: DrpConfig;
+  read_only: boolean;
+}
+
+export function fetchDrpStatus(signal?: AbortSignal): Promise<DrpStatusResponse> {
+  return getJson<DrpStatusResponse>("/api/v1/settings/drp", signal);
 }
 
 export interface FeatureCatalogEntry {

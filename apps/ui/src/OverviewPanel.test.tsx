@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { OverviewPanel } from "./OverviewPanel";
@@ -94,4 +94,37 @@ test("shows the duplicates count and opens a recent-activity entry in the Activi
   expect(screen.getByText("report.pdf")).toBeInTheDocument();
   await screen.getByText("report.pdf").click();
   expect(onOpenActivity).toHaveBeenCalledWith("ev9");
+});
+
+test("dropping/selecting documents uploads them for ingestion and shows feedback", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      if (url.includes("/api/v1/ingestion/upload")) {
+        return new Response(JSON.stringify({ accepted: ["a.pdf"], rejected: [] }), { status: 200 });
+      }
+      if (url.includes("/api/v1/stats")) {
+        return new Response(
+          JSON.stringify({
+            documents: 0,
+            jobs: {},
+            entities: 0,
+            pending_ingest: 0,
+            documents_pending_features: 0,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+  const { container } = render(<OverviewPanel />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  const file = new File(["hello"], "a.pdf", { type: "application/pdf" });
+  fireEvent.change(input, { target: { files: [file] } });
+  await waitFor(() => expect(screen.getByText(/queued for ingestion/i)).toBeInTheDocument());
+  expect(calls.some((u) => u.includes("/api/v1/ingestion/upload"))).toBe(true);
 });

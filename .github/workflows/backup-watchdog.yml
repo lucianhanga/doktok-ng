@@ -1,0 +1,46 @@
+# External backup-freshness watchdog (M12 DEVOPS-D6). A second, independent check OUTSIDE the box:
+# scrape the backend's token-gated /metrics and fail loudly if any backup leg is stale - so a silent
+# on-box monitoring failure still gets noticed. Review-grade: needs the box reachable + repo secrets.
+#
+# Secrets: BACKUP_WATCH_URL (e.g. https://docs.example.com), BACKUP_WATCH_TOKEN (a tenant token).
+name: Backup watchdog
+
+on:
+  schedule:
+    - cron: "17 */6 * * *" # every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert backup legs are fresh
+        env:
+          URL: ${{ secrets.BACKUP_WATCH_URL }}
+          TOKEN: ${{ secrets.BACKUP_WATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${URL:-}" ] || [ -z "${TOKEN:-}" ]; then
+            echo "BACKUP_WATCH_URL / BACKUP_WATCH_TOKEN not configured; skipping"; exit 0
+          fi
+          m="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/metrics")"
+          # Thresholds in seconds, ~3x the RPO target.
+          declare -A MAX=( [files]=2700 [pg]=300 [offsite]=7200 )
+          fail=0
+          # status source must be available, else we are flying blind.
+          if echo "$m" | grep -q '^doktok_backup_status_source_available 0'; then
+            echo "::error::backup status source unavailable on the box"; fail=1
+          fi
+          for leg in files pg offsite; do
+            age="$(echo "$m" | awk -v k="doktok_backup_${leg}_age_seconds" '$1==k{print int($2)}')"
+            if [ -z "$age" ]; then echo "::error::no metric for $leg"; fail=1; continue; fi
+            if [ "$age" -gt "${MAX[$leg]}" ]; then
+              echo "::error::$leg backup STALE: ${age}s (max ${MAX[$leg]}s)"; fail=1
+            else
+              echo "$leg fresh: ${age}s"
+            fi
+          done
+          exit "$fail"

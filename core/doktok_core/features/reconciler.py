@@ -57,6 +57,16 @@ class FeatureReconciler:
         self._concurrency = max(1, int(concurrency))
         self._clock = clock
 
+    def set_processors(self, processors: Sequence[FeatureProcessor]) -> None:
+        """Swap the processor set in place (live AI-settings reload, M13 #371). The reconcile loop
+        calls this between passes (no feature in flight), so a plain reassignment is safe. Feature
+        names/versions are unchanged across a reload - only the underlying AI clients differ."""
+        self._processors = {p.name: p for p in processors}
+        self._registered = [(p.name, p.version) for p in processors]
+        self._dependencies = tuple(
+            (p.name, prereq) for p in processors for prereq in getattr(p, "dependencies", ())
+        )
+
     def reconcile(self) -> int:
         """One pass over all tenants. Returns how many feature runs completed this pass."""
         processed = 0

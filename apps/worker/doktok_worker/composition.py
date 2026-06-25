@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from doktok_contracts.ports import (
     CategoryClassifier,
+    ChatModelProvider,
+    EmbeddingProvider,
     EntityNerExtractor,
     FeatureProcessor,
     MetadataExtractor,
@@ -63,6 +65,7 @@ from doktok_provider_openai import (
 )
 from doktok_provider_paddleocr import PaddleOcr
 from doktok_provider_projection import SklearnEmbeddingProjector
+from doktok_provider_rapidocr import RapidOcr
 from doktok_storage_filesystem import (
     LocalFileStorage,
     QuarantineService,
@@ -96,6 +99,20 @@ def tenant_ids(settings: Settings) -> list[str]:
     return list(seen)
 
 
+@dataclass
+class _AiClients:
+    """The AI-settings-derived clients used by enrichment + the OCR judge (M13 #371). Rebuilt on a
+    live settings change; ``signature`` is the change-detection key."""
+
+    embedding: EmbeddingProvider
+    judge: ChatModelProvider
+    metadata: MetadataExtractor
+    category: CategoryClassifier
+    record: RecordExtractor
+    ner: EntityNerExtractor
+    signature: tuple[object, ...]
+
+
 def build_services(
     settings: Settings,
 ) -> tuple[
@@ -106,6 +123,8 @@ def build_services(
     Callable[[], None] | None,
     Callable[[], None],
     Callable[[], None],
+    Callable[[], None],
+    Callable[[], bool],
 ]:
     """Build per-tenant ingestion services, the feature reconciler, and a shared database handle.
 
@@ -131,13 +150,20 @@ def build_services(
     # Headless bootstrap: seed the provider split from env on a fresh DB (APP-2; no-op if saved).
     seed_ai_settings(app_settings, settings)
     heartbeat = app_settings.set_worker_heartbeat  # liveness signal for the backend probe (APP-5)
+    is_quiesced = app_settings.get_maintenance_mode  # quiesce gate read each loop (APP-C3)
     pipeline = app_settings.get_ai_settings().pipeline
     # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
+    # (These startup values drive the reconciler concurrency + the warning below; the enrichment
+    # clients themselves are (re)built from the *current* settings in build_ai_clients, M13 #371.)
     openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     # OCR parallelism comes from the Settings DB (live-reloaded by the worker), env is the fallback
     # default. This is the number of OCR worker processes directly - if more documents ingest at
     # once than this, their pages just share the pool (the process pool queues the extra work).
-    ocr_concurrency = app_settings.get_ocr_settings().ocr_concurrency
+    _ocr_settings = app_settings.get_ocr_settings()
+    ocr_concurrency = _ocr_settings.ocr_concurrency
+    # OCR engine: the Settings DB value wins, env (DOKTOK_OCR_ENGINE) is the fallback (M17 #375).
+    # An engine change applies on the next worker restart (the pool/extractor is built once here).
+    ocr_engine = _ocr_settings.engine or settings.ocr_engine
     use_openai_pipeline = pipeline.provider == "openai" and openai_egress_allowed(
         key=openai_key, no_egress=settings.no_egress
     )
@@ -164,13 +190,23 @@ def build_services(
     pdf_extractor = PyMuPdfTextExtractor()
     timeout = settings.ollama_timeout_seconds
     ocr_extractor: OcrExtractor
-    if settings.ocr_engine == "paddleocr":
+    if ocr_engine == "paddleocr":
         # `ocr_concurrency` independent predictors = the number of pages OCR'd in parallel across
         # the whole worker (PaddleOCR is CPU-bound, ~1 core each). Set directly by the OCR setting.
         ocr_extractor = PaddleOcr(
             lang=settings.ocr_lang,
             pool_size=ocr_concurrency,
             cpu_threads=settings.ocr_cpu_threads,
+            enable_mkldnn=settings.ocr_enable_mkldnn,
+        )
+    elif ocr_engine == "rapidocr":
+        # Same PP-OCR models via ONNXRuntime (OpenVINO on Intel) - faster + lighter on weak CPUs and
+        # immune to the Paddle oneDNN crash (M17 #375). Same process-pool model as PaddleOCR.
+        ocr_extractor = RapidOcr(
+            lang=settings.ocr_lang,
+            pool_size=ocr_concurrency,
+            cpu_threads=settings.ocr_cpu_threads,
+            backend=settings.ocr_rapid_backend,
         )
     else:
         ocr_extractor = OllamaVisionOcr(
@@ -185,7 +221,7 @@ def build_services(
     # unwarp/textline preprocessors. Used for files dropped in ingest.enhanced/. Lazy pool (the
     # models only load on first use), kept smaller since the medium models are heavier.
     enhanced_ocr: PaddleOcr | None = None
-    if settings.ocr_engine == "paddleocr":
+    if ocr_engine == "paddleocr":
         enhanced_ocr = PaddleOcr(
             lang=settings.ocr_lang,
             det_model=settings.ocr_enhanced_det_model,
@@ -194,21 +230,22 @@ def build_services(
             cpu_threads=settings.ocr_cpu_threads,
             preprocess=True,
             orient_vote=True,  # reliable 4-way 90/180/270 orientation (slower, ~4x per page)
+            enable_mkldnn=settings.ocr_enable_mkldnn,
         )
     # Live-reload OCR parallelism from Settings (M7.6): the worker calls this between ingest scans
     # (no OCR in flight) to resize the PaddleOCR pool without a restart. Paddle-only; the Ollama OCR
     # path has no predictor pool to resize.
     ocr_reload: Callable[[], None] | None = None
-    if isinstance(ocr_extractor, PaddleOcr):
-        paddle = ocr_extractor
+    if isinstance(ocr_extractor, PaddleOcr | RapidOcr):
+        resizable = ocr_extractor
 
         def ocr_reload() -> None:  # noqa: F811 - single definition, guarded by the isinstance
-            paddle.reconfigure(app_settings.get_ocr_settings().ocr_concurrency)
+            resizable.reconfigure(app_settings.get_ocr_settings().ocr_concurrency)
 
-    # Graceful shutdown: tear down the PaddleOCR process pools so their spawn workers do not leak as
-    # ~1 GB launchd orphans on every worker restart. No-op for the Ollama OCR path.
+    # Graceful shutdown: tear down the OCR process pools so their model-laden workers do not leak as
+    # orphans on every worker restart. No-op for the Ollama OCR path.
     def cleanup() -> None:
-        if isinstance(ocr_extractor, PaddleOcr):
+        if isinstance(ocr_extractor, PaddleOcr | RapidOcr):
             ocr_extractor.shutdown()
         if enhanced_ocr is not None:
             enhanced_ocr.shutdown()
@@ -218,158 +255,187 @@ def build_services(
     thumbnailer = PyMuPdfThumbnailer()
     pdf_classifier = PyMuPdfClassifier()
     chunker = FixedWindowChunker()
-    embedding_provider = OllamaEmbeddingProvider(
-        settings.embedding_model,
-        settings.ollama_base_url,
-        timeout=timeout,
-        keep_alive=settings.embedding_keep_alive,
-        num_ctx=settings.embedding_num_ctx,
-    )
+    # AI-independent adapters: built once and shared across live AI reloads.
     chunk_repo = PostgresChunkRepository(db)
     entity_extractor = RegexEntityExtractor()
     entity_repo = PostgresEntityRepository(db)
     lexical_term_extractor = PostgresLexicalTermExtractor(db)
     feature_repo = PostgresFeatureRepository(db)
-    # The worker's chat model serves only the OCR-quality judge. Point it at the SAME model (and
-    # context) the pipeline/enrichment uses, so the worker keeps a single large model resident
-    # instead of loading a second one and thrashing GPU memory under a tight budget - which evicts
-    # the in-use model and stalls the single-threaded reconciler. When the pipeline runs on OpenAI
-    # (remote), the judge stays on the local judge model.
-    judge_model = (
-        settings.judge_model
-        if use_openai_pipeline
-        else (pipeline.model if pipeline.provider == "ollama" else settings.enrich_model)
-    )
-    judge_num_ctx = settings.judge_num_ctx if use_openai_pipeline else pipeline.num_ctx
-    # The judge is a plain completion (no structured `format`), so reasoning follows the configured
-    # pipeline density directly. structured=False keeps think off when the user set reasoning 'off'.
-    judge_think = ollama_think_for(pipeline.reasoning, judge_model, structured=False)
-    chat_model = OllamaChatModelProvider(
-        judge_model,
-        settings.ollama_base_url,
-        timeout=timeout,
-        num_ctx=judge_num_ctx,
-        keep_alive=settings.enrich_keep_alive,
-        think=judge_think,
-    )
-    metadata_extractor: MetadataExtractor
-    category_classifier: CategoryClassifier
-    record_extractor: RecordExtractor
-    ner_extractor: EntityNerExtractor
-    if use_openai_pipeline:
-        logger.info(
-            "pipeline extraction via OpenAI %s (egress enabled by AI settings)", pipeline.model
-        )
-        effort = openai_reasoning_effort(pipeline.reasoning, pipeline.model)
-        metadata_extractor = OpenAiMetadataExtractor(
-            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
-        )
-        category_classifier = OpenAiCategoryClassifier(
-            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
-        )
-        record_extractor = OpenAiRecordExtractor(
-            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
-        )
-        ner_extractor = OpenAiEntityNerExtractor(
-            pipeline.model, openai_key, timeout=timeout, reasoning_effort=effort
-        )
-    else:
-        # Ollama path: the selected Ollama model, or the env default if OpenAI lacks a key.
-        p_model = pipeline.model if pipeline.provider == "ollama" else settings.enrich_model
-        p_ctx = pipeline.num_ctx if pipeline.provider == "ollama" else settings.enrich_num_ctx
-        p_think = ollama_think_for(pipeline.reasoning, p_model, structured=True)
-        # JSON-repair runs on the SAME configured model (no surprise second LLM): keeps a single
-        # model resident, and the repair call is MoE-safe (it chooses think per the repair model).
-        p_repair = p_model
-        metadata_extractor = OllamaMetadataExtractor(
-            p_model,
-            p_repair,
-            settings.ollama_base_url,
-            timeout=timeout,
-            num_ctx=p_ctx,
-            think=p_think,
-            keep_alive=settings.enrich_keep_alive,
-        )
-        category_classifier = OllamaCategoryClassifier(
-            p_model,
-            p_repair,
-            settings.ollama_base_url,
-            timeout=timeout,
-            num_ctx=p_ctx,
-            think=p_think,
-            keep_alive=settings.enrich_keep_alive,
-        )
-        record_extractor = OllamaRecordExtractor(
-            p_model,
-            p_repair,
-            settings.ollama_base_url,
-            timeout=timeout,
-            num_ctx=p_ctx,
-            think=p_think,
-            keep_alive=settings.enrich_keep_alive,
-        )
-        ner_extractor = OllamaEntityNerExtractor(
-            p_model,
-            p_repair,
-            settings.ollama_base_url,
-            timeout=timeout,
-            num_ctx=p_ctx,
-            think=p_think,
-            keep_alive=settings.enrich_keep_alive,
-        )
     category_repo = PostgresCategoryRepository(db)
     record_repo = PostgresRecordRepository(db)
 
-    # Reconciler processors re-derive from stored artifacts, so they share the same adapters.
-    processors: list[FeatureProcessor] = [
-        ChunkEmbedFeature(document_repo, file_storage, chunker, embedding_provider, chunk_repo),
-        EntitiesFeature(
-            document_repo,
-            file_storage,
-            entity_extractor,
-            lexical_term_extractor,
-            entity_repo,
-            lexical_terms_limit=settings.lexical_terms_limit,
-        ),
-        NerFeature(document_repo, file_storage, ner_extractor, entity_repo),
-        DocMetadataFeature(document_repo, file_storage, metadata_extractor),
-        DocClassifyFeature(document_repo, file_storage, category_classifier, category_repo),
-        StructuredRecordsFeature(document_repo, file_storage, record_extractor, record_repo),
-        ThumbnailFeature(document_repo, file_storage, thumbnailer),
-    ]
-
-    # Staged ingestion (ADR-0015): the `extract` stage runs OCR/extraction + activation in the
-    # reconciler. Register it ahead of the feature stages when enabled; the stage ledger (seeded at
-    # intake) is exactly the registered stages, so they all get a row and the dependency gate orders
-    # extract -> features.
-    def _extract(mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
-        return extract_document(
-            mime,
-            path,
-            text_extractor=text_extractor,
-            pdf_extractor=pdf_extractor,
-            ocr=ocr_extractor,
-            renderer=pdf_renderer,
-            builder=searchable_pdf_builder,
-            classifier=pdf_classifier,
-            ocr_image_coverage=settings.ocr_image_coverage,
-            ocr_min_text_quality=settings.ocr_min_text_quality,
-            chat_model=chat_model,
-            max_pages=settings.max_pages,
-            ocr_concurrency=ocr_concurrency,
-            ocr_dpi=settings.ocr_dpi,
-            normalizer=document_normalizer,
+    # The enrichment clients (embedding, judge, and the metadata/category/record/NER extractors) and
+    # the processors that wrap them are rebuilt from the *current* AI settings on demand (M13 #371),
+    # so a Settings change (model/provider/per-purpose Ollama URL) applies without a worker restart.
+    # ``signature`` captures every field that affects a client; ai_reload() rebuilds only on change.
+    def build_ai_clients() -> _AiClients:
+        ai = app_settings.get_ai_settings()
+        pl = ai.pipeline
+        pl_url = pl.ollama_base_url or settings.ollama_base_url  # per-purpose override (M13 #369)
+        emb_url = ai.embedding.ollama_base_url or settings.ollama_base_url
+        key = app_settings.get_openai_api_key() or settings.openai_api_key
+        use_openai = pl.provider == "openai" and openai_egress_allowed(
+            key=key, no_egress=settings.no_egress
+        )
+        embedding = OllamaEmbeddingProvider(
+            settings.embedding_model,
+            emb_url,
+            timeout=timeout,
+            keep_alive=settings.embedding_keep_alive,
+            num_ctx=settings.embedding_num_ctx,
+        )
+        # The worker's chat model serves only the OCR-quality judge; point it at the SAME model the
+        # pipeline uses so the worker keeps a single large model resident (avoids GPU thrash). When
+        # the pipeline runs on OpenAI, the judge stays on the local judge model.
+        judge_model = (
+            settings.judge_model
+            if use_openai
+            else (pl.model if pl.provider == "ollama" else settings.enrich_model)
+        )
+        judge_num_ctx = settings.judge_num_ctx if use_openai else pl.num_ctx
+        judge_think = ollama_think_for(pl.reasoning, judge_model, structured=False)
+        judge = OllamaChatModelProvider(
+            judge_model,
+            pl_url,
+            timeout=timeout,
+            num_ctx=judge_num_ctx,
+            keep_alive=settings.enrich_keep_alive,
+            think=judge_think,
+        )
+        metadata_extractor: MetadataExtractor
+        category_classifier: CategoryClassifier
+        record_extractor: RecordExtractor
+        ner_extractor: EntityNerExtractor
+        if use_openai:
+            logger.info("pipeline extraction via OpenAI %s (egress per AI settings)", pl.model)
+            effort = openai_reasoning_effort(pl.reasoning, pl.model)
+            metadata_extractor = OpenAiMetadataExtractor(
+                pl.model, key, timeout=timeout, reasoning_effort=effort
+            )
+            category_classifier = OpenAiCategoryClassifier(
+                pl.model, key, timeout=timeout, reasoning_effort=effort
+            )
+            record_extractor = OpenAiRecordExtractor(
+                pl.model, key, timeout=timeout, reasoning_effort=effort
+            )
+            ner_extractor = OpenAiEntityNerExtractor(
+                pl.model, key, timeout=timeout, reasoning_effort=effort
+            )
+        else:
+            # Ollama path: the selected Ollama model, or the env default if OpenAI lacks a key.
+            p_model = pl.model if pl.provider == "ollama" else settings.enrich_model
+            p_ctx = pl.num_ctx if pl.provider == "ollama" else settings.enrich_num_ctx
+            p_think = ollama_think_for(pl.reasoning, p_model, structured=True)
+            p_repair = p_model  # JSON-repair on the same model: keeps a single model resident
+            metadata_extractor = OllamaMetadataExtractor(
+                p_model,
+                p_repair,
+                pl_url,
+                timeout=timeout,
+                num_ctx=p_ctx,
+                think=p_think,
+                keep_alive=settings.enrich_keep_alive,
+            )
+            category_classifier = OllamaCategoryClassifier(
+                p_model,
+                p_repair,
+                pl_url,
+                timeout=timeout,
+                num_ctx=p_ctx,
+                think=p_think,
+                keep_alive=settings.enrich_keep_alive,
+            )
+            record_extractor = OllamaRecordExtractor(
+                p_model,
+                p_repair,
+                pl_url,
+                timeout=timeout,
+                num_ctx=p_ctx,
+                think=p_think,
+                keep_alive=settings.enrich_keep_alive,
+            )
+            ner_extractor = OllamaEntityNerExtractor(
+                p_model,
+                p_repair,
+                pl_url,
+                timeout=timeout,
+                num_ctx=p_ctx,
+                think=p_think,
+                keep_alive=settings.enrich_keep_alive,
+            )
+        signature: tuple[object, ...] = (
+            pl.provider,
+            pl.model,
+            pl.num_ctx,
+            pl.reasoning,
+            pl.ollama_base_url,
+            ai.embedding.ollama_base_url,
+            bool(key),
+            use_openai,
+        )
+        return _AiClients(
+            embedding=embedding,
+            judge=judge,
+            metadata=metadata_extractor,
+            category=category_classifier,
+            record=record_extractor,
+            ner=ner_extractor,
+            signature=signature,
         )
 
-    if settings.staged_ingestion:
-        processors.insert(
-            0, ExtractStage(document_repo, file_storage, settings.files_root, _extract)
-        )
+    def build_processors(clients: _AiClients) -> list[FeatureProcessor]:
+        procs: list[FeatureProcessor] = [
+            ChunkEmbedFeature(document_repo, file_storage, chunker, clients.embedding, chunk_repo),
+            EntitiesFeature(
+                document_repo,
+                file_storage,
+                entity_extractor,
+                lexical_term_extractor,
+                entity_repo,
+                lexical_terms_limit=settings.lexical_terms_limit,
+            ),
+            NerFeature(document_repo, file_storage, clients.ner, entity_repo),
+            DocMetadataFeature(document_repo, file_storage, clients.metadata),
+            DocClassifyFeature(document_repo, file_storage, clients.category, category_repo),
+            StructuredRecordsFeature(document_repo, file_storage, clients.record, record_repo),
+            ThumbnailFeature(document_repo, file_storage, thumbnailer),
+        ]
+
+        # Staged ingestion (ADR-0015): the `extract` stage runs OCR/extraction + activation in the
+        # reconciler. The judge model it uses is rebuilt here too, so it tracks AI settings.
+        def _extract(mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
+            return extract_document(
+                mime,
+                path,
+                text_extractor=text_extractor,
+                pdf_extractor=pdf_extractor,
+                ocr=ocr_extractor,
+                renderer=pdf_renderer,
+                builder=searchable_pdf_builder,
+                classifier=pdf_classifier,
+                ocr_image_coverage=settings.ocr_image_coverage,
+                ocr_min_text_quality=settings.ocr_min_text_quality,
+                chat_model=clients.judge,
+                max_pages=settings.max_pages,
+                ocr_concurrency=ocr_concurrency,
+                ocr_dpi=settings.ocr_dpi,
+                normalizer=document_normalizer,
+            )
+
+        if settings.staged_ingestion:
+            procs.insert(
+                0, ExtractStage(document_repo, file_storage, settings.files_root, _extract)
+            )
+        return procs
+
+    ai_clients = build_ai_clients()
+    processors = build_processors(ai_clients)
+    ai_signature = ai_clients.signature
     stage_ledger = [(p.name, p.version) for p in processors]
 
     # Fan the reconciler wider when the pipeline is remote (OpenAI): its enrichment features are
     # network-bound and the API parallelizes well, whereas the local Ollama path thrashes a single
-    # GPU under high concurrency.
+    # GPU. (Concurrency is set at startup; a live provider switch keeps this value - see ai_reload.)
     reconcile_concurrency = (
         settings.openai_reconcile_concurrency
         if use_openai_pipeline
@@ -386,6 +452,17 @@ def build_services(
         concurrency=reconcile_concurrency,
         audit_log=audit_log,
     )
+
+    # Live AI-settings reload (M13 #371): between reconcile passes (no feature in flight), rebuild
+    # the enrichment clients if the AI settings changed, so model/provider/Ollama-URL edits apply
+    # without a worker restart. Cheap when unchanged (only a settings read + a signature compare).
+    def ai_reload() -> None:
+        nonlocal ai_signature
+        clients = build_ai_clients()
+        if clients.signature != ai_signature:
+            reconciler.set_processors(build_processors(clients))
+            ai_signature = clients.signature
+            logger.info("AI settings changed; rebuilt enrichment clients live (no restart)")
 
     # Insights embedding map (ADR-0016, M7.1): a tenant-aggregate projection job, drained from the
     # recompute queue. The reducer reuses the chunk repo's embeddings; projections are cached.
@@ -432,10 +509,10 @@ def build_services(
             max_pages=settings.max_pages,
             ocr_concurrency=ocr_concurrency,
             ocr_dpi=settings.ocr_dpi,
-            chat_model=chat_model,
+            chat_model=ai_clients.judge,
             audit_log=audit_log,
             chunker=chunker,
-            embedding_provider=embedding_provider,
+            embedding_provider=ai_clients.embedding,
             chunk_repo=chunk_repo,
             entity_extractor=entity_extractor,
             entity_repo=entity_repo,
@@ -462,4 +539,14 @@ def build_services(
                     ocr_dpi=settings.ocr_enhanced_dpi,
                 )
             )
-    return services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat
+    return (
+        services,
+        reconciler,
+        projection_runner,
+        db,
+        ocr_reload,
+        ai_reload,
+        cleanup,
+        heartbeat,
+        is_quiesced,
+    )

@@ -227,6 +227,21 @@ class AppSettingsRepository(Protocol):
         """The last worker heartbeat time, or None if the worker has never beaten."""
         ...
 
+    def set_maintenance_mode(self, *, enabled: bool) -> None:
+        """Toggle quiesce/maintenance mode (APP-C3). While on, the worker starts no new ingestion or
+        reconcile work, letting a backup capture a still DB + files_root pair."""
+        ...
+
+    def get_maintenance_mode(self) -> bool:
+        """Whether quiesce/maintenance mode is on. The worker reads this each loop."""
+        ...
+
+    def get_backup_status(self) -> dict[str, dict[str, object]] | None:
+        """Per-leg backup freshness from the host-written sentinels (DRP, #368), keyed by leg
+        (files/pg/offsite/drill). Read-only and sourced OUTSIDE the database (a file on the shared
+        backup volume) so a Postgres restore can't roll backup status back. None if unavailable."""
+        ...
+
 
 @runtime_checkable
 class AuditLogRepository(Protocol):

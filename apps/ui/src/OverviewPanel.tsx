@@ -1,14 +1,83 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   fetchActivity,
   fetchCategories,
   fetchStats,
+  uploadDocuments,
   type AuditEvent,
   type CategorySummary,
   type Stats,
 } from "./api";
 import { useInterval } from "./hooks";
+
+// Drag-and-drop (or click-to-browse) document upload (M14 #370). Dropped files are sent to the
+// backend, which writes them into the tenant ingest folder; the normal worker pipeline takes over.
+function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function send(files: File[]) {
+    if (files.length === 0) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await uploadDocuments(files);
+      const parts: string[] = [];
+      if (res.accepted.length) parts.push(`${res.accepted.length} file(s) queued for ingestion`);
+      if (res.rejected.length) parts.push(`${res.rejected.length} rejected: ${res.rejected.join("; ")}`);
+      setMessage({ ok: res.rejected.length === 0, text: parts.join(" · ") || "Nothing to upload" });
+      onUploaded();
+    } catch (e) {
+      setMessage({ ok: false, text: e instanceof Error ? e.message : "upload failed" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className={`upload-dropzone${dragging ? " is-dragging" : ""}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        void send(Array.from(e.dataTransfer.files));
+      }}
+      onClick={() => inputRef.current?.click()}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
+      }}
+      aria-label="Upload documents for ingestion"
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          void send(Array.from(e.target.files ?? []));
+          e.target.value = "";
+        }}
+      />
+      <strong>{busy ? "Uploading…" : "Drag documents here to ingest"}</strong>
+      <span className="muted">or click to browse — they appear in Documents as they process</span>
+      {message && (
+        <span role="status" className={message.ok ? "upload-ok" : "upload-fail"}>
+          {message.text}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function activityLabel(ev: AuditEvent): string {
   return ev.doc_title || ev.doc_filename || (ev.document_id ? ev.document_id.slice(0, 8) : "");
@@ -75,6 +144,7 @@ export function OverviewPanel({
           Could not load overview: {error}
         </p>
       )}
+      <UploadDropZone onUploaded={load} />
       <div className="cards">
         <div className="card">
           <div className="card-value">{stats?.documents ?? "-"}</div>

@@ -70,6 +70,9 @@ class AuditEventType(StrEnum):
     DOCUMENT_REINGESTED = "document.reingested"
     DOCUMENT_DELETED = "document.deleted"
     DOCUMENT_VIEWED = "document.viewed"
+    # System-level (non-document) events (M15 #373): configuration + service lifecycle.
+    SETTINGS_CHANGED = "settings.changed"
+    SERVICE_STARTED = "service.started"
 
 
 class EntityType(StrEnum):
@@ -690,6 +693,17 @@ class AiPurposeSettings(BaseModel):
     model: str
     num_ctx: int
     reasoning: str = "off"  # 'off' | 'low' | 'medium' | 'high' (ignored by non-reasoning models)
+    # Per-purpose Ollama server URL override (M13 #369). None = inherit DOKTOK_OLLAMA_BASE_URL.
+    # Only used when provider == "ollama"; lets a purpose target a different Ollama host.
+    ollama_base_url: str | None = None
+
+
+class AiEmbeddingSettings(BaseModel):
+    """Embedding configuration (M13 #369). The model is fixed (changing it needs a re-index), but
+    the Ollama server URL can be overridden so embeddings run on a different host. None = inherit
+    DOKTOK_OLLAMA_BASE_URL."""
+
+    ollama_base_url: str | None = None
 
 
 def _default_pipeline() -> AiPurposeSettings:
@@ -705,16 +719,24 @@ class AiSettings(BaseModel):
 
     pipeline: AiPurposeSettings = Field(default_factory=_default_pipeline)
     rag: AiPurposeSettings = Field(default_factory=_default_rag)
+    embedding: AiEmbeddingSettings = Field(default_factory=AiEmbeddingSettings)
 
 
 class OcrSettings(BaseModel):
-    """OCR processing settings (Settings tab > OCR, M7.6).
+    """OCR processing settings (Settings tab > OCR, M7.6 / M17 #375).
 
-    ``ocr_concurrency`` is the number of OCR pages processed in parallel and sizes the PaddleOCR
+    ``ocr_concurrency`` is the number of OCR pages processed in parallel and sizes the OCR
     worker-process pool. The worker live-reloads it (no restart) between ingest scans.
+    ``engine`` selects the OCR engine ("paddleocr" | "rapidocr" | "glm-ocr"); empty inherits the
+    DOKTOK_OCR_ENGINE default. An engine change applies on the next worker restart (M17).
     """
 
     ocr_concurrency: int = Field(default=4, ge=1, le=32)
+    engine: str = ""
+
+
+# Selectable OCR engines surfaced in the Settings UI (M17 #375).
+OCR_ENGINES: tuple[str, ...] = ("paddleocr", "rapidocr", "glm-ocr")
 
 
 class AiSettingsResponse(AiSettings):
@@ -725,6 +747,9 @@ class AiSettingsResponse(AiSettings):
     # corpus. Not user-selectable - changing it would need a vector-dimension migration + re-index.
     embedding_model: str = ""
     embedding_num_ctx: int = 0
+    # The effective default Ollama URL (DOKTOK_OLLAMA_BASE_URL) so the UI can show it as the
+    # placeholder and "reset to default" target for each per-purpose override (M13 #369).
+    ollama_base_url_default: str = ""
     # True when a purpose is set to OpenAI AND egress is permitted, i.e. document content actually
     # leaves the host. Drives a non-dismissable privacy indicator in the UI (APP-11).
     egress_active: bool = False
@@ -735,6 +760,102 @@ class AiSettingsUpdate(AiSettings):
     "" clears it, a value sets it."""
 
     openai_api_key: str | None = None
+
+
+class OllamaTestRequest(BaseModel):
+    """Probe an Ollama server before saving (M13 #369). ``url`` None/"" tests the default."""
+
+    url: str | None = None
+
+
+class OllamaTestResult(BaseModel):
+    """Result of an Ollama reachability probe: whether it answered + a short human detail."""
+
+    ok: bool
+    detail: str
+    url: str  # the effective URL that was probed (the override, or the default when blank)
+
+
+class OpenAiTestRequest(BaseModel):
+    """Validate an OpenAI API key before saving (M13). ``api_key`` None/"" tests the stored key."""
+
+    api_key: str | None = None
+
+
+class OpenAiTestResult(BaseModel):
+    """Result of an OpenAI key validation: whether it works + a short detail (no key echoed)."""
+
+    ok: bool
+    detail: str
+
+
+class OllamaStatus(BaseModel):
+    """Whether the in-stack Ollama container is needed (M16 #374). A host timer stops/starts the
+    container to match, reclaiming its memory when every Ollama consumer is offloaded."""
+
+    local_ollama_needed: bool
+    embedding_url: str  # the effective embedding endpoint (per-purpose override or the default)
+
+
+class OcrRecommendation(BaseModel):
+    """Device-aware OCR suggestion (M17 #375): the engine + parallelism that best fit the detected
+    host, with a short rationale shown as a hint in Settings."""
+
+    engine: str  # paddleocr | rapidocr | glm-ocr
+    concurrency: int
+    reason: str
+
+
+class IngestUploadResult(BaseModel):
+    """Result of a UI document upload (M14 #370): files written into the tenant's ingest folder for
+    the worker to pick up. ``rejected`` entries are "name: reason" strings."""
+
+    accepted: list[str] = []
+    rejected: list[str] = []
+
+
+class BackupLegStatus(BaseModel):
+    """Freshness of one backup leg, derived from the host-written sentinel (DRP, M12 #368).
+    ``state`` is 'unknown' when the sentinel is missing/never-run - the UI shows that neutrally."""
+
+    state: str = "unknown"  # ok | stale | failed | unknown
+    last_run_at: datetime | None = None
+    age_seconds: int | None = None
+    detail: str = ""  # short human note (backup type, snapshot id) - never a secret
+
+
+class DrpStatus(BaseModel):
+    """Live freshness of each backup leg + the last restore drill (read from the sentinel files)."""
+
+    files: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    pg: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    offsite: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    drill: BackupLegStatus = Field(default_factory=BackupLegStatus)
+    wal_lag_seconds: int | None = None
+    status_source_available: bool = False
+
+
+class DrpConfig(BaseModel):
+    """Static DR config (host/account owned; read-only in the UI). Secrets are presence-only."""
+
+    rpo_files_seconds: int = 900
+    rpo_pg_seconds: int = 60
+    rpo_offsite_seconds: int = 3600
+    rto_seconds: int = 14400
+    repo_location: str = ""
+    azure_container: str = ""
+    immutability_enabled: bool = False
+    encryption_keys_configured: bool = False  # restic + pgBackRest cipher pass present (bools only)
+    azure_credentials_configured: bool = False
+
+
+class DrpStatusResponse(BaseModel):
+    """The DRP (Disaster Recovery Plan) Settings panel payload: live freshness + static config.
+    Entirely read-only - nothing here is editable via the API (#368)."""
+
+    status: DrpStatus = Field(default_factory=DrpStatus)
+    config: DrpConfig = Field(default_factory=DrpConfig)
+    read_only: bool = True
 
 
 class ModelOption(BaseModel):

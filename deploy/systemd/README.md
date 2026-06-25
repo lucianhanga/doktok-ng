@@ -6,6 +6,7 @@ RAM free except for the few seconds a job runs. Review-grade: install these on t
 
 Secrets/config come from `/etc/doktok/backup.env` (root-owned, `chmod 600`):
 ```
+DOKTOK_DEPLOY_MODE=compose          # compose (containerized box) or host (dev/test)
 DOKTOK_BACKUP_DIR=/var/lib/doktok/backups
 DOKTOK_FILES_ROOT=/var/lib/doktok/files
 DOKTOK_RESTIC_PASSWORD=...
@@ -14,8 +15,33 @@ DOKTOK_AZURE_ACCOUNT=...   DOKTOK_AZURE_CONTAINER=...   DOKTOK_AZURE_SAS=...
 ```
 (The restic/pgBackRest passphrases must ALSO be stored off the box - a repo is useless without them.)
 
-Install: copy the unit blocks below into `/etc/systemd/system/`, set `WorkingDirectory` to the repo
-checkout, then `systemctl daemon-reload && systemctl enable --now doktok-backup-files.timer …`.
+## Install (shipped units)
+
+The core timers ship as real unit files in this directory and are installed by
+`deploy/install-systemd.sh` (run as root on the box, after writing `/etc/doktok/backup.env`):
+
+```
+sudo ./deploy/install-systemd.sh
+systemctl list-timers 'doktok-*'
+```
+
+It installs `doktok-backup-diff.timer` (hourly), `doktok-backup-full.timer` (weekly), and
+`doktok-pg-wal-freshness.timer` (every minute). All run from `WorkingDirectory=/opt/doktok` and read
+`/etc/doktok/backup.env`, so they honour `DOKTOK_DEPLOY_MODE`: in **compose** mode the backup units
+call the mode-aware `deploy/backup.sh` (files via the `backup-runner` container + pg via
+`docker compose exec db pgbackrest`); in **host** mode the same script runs the host backup tools.
+They run as **root** because compose mode needs Docker access and the status sentinels are
+root-owned. The azure-sync / check-backup / restore-drill / ollama-autostop units are documented
+below and installed the same way (copy the example unit blocks into `/etc/systemd/system/`).
+
+### pg WAL-freshness (DRP)
+
+The pg leg's RPO is ~60s (continuous WAL archiving), but base backups only run hourly/weekly, so the
+pg sentinel would flap "stale" between them. `doktok-pg-wal-freshness.timer` runs
+`deploy/pg-wal-freshness.sh` every minute: it stamps the pg sentinel's `last_run_at` to the last
+archived WAL time (the real recovery point) and records `wal_lag_s`, preserving the base backup's
+`size`/`backup_id` metrics. `archive_timeout=60` on the db (set in `docker-compose.prod.yml`) forces
+a WAL switch each minute so an idle DB still keeps the recovery point fresh.
 
 Shared `[Service]` hardening (every backup service): `Nice=10`, `IOSchedulingClass=idle`,
 `CPUQuota=100%`, `MemoryMax=512M`, `EnvironmentFile=/etc/doktok/backup.env`, `Type=oneshot`,
@@ -24,8 +50,11 @@ Shared `[Service]` hardening (every backup service): `Nice=10`, `IOSchedulingCla
 ## Cadence
 | Timer | Schedule | Runs |
 |---|---|---|
-| doktok-backup-files | every 15 min | `deploy/backup-files.sh` |
-| doktok-backup-pg | hourly (diff) + weekly full | `deploy/backup-pg.sh diff` / `full` |
+| doktok-backup-diff | hourly | `deploy/backup.sh diff` (files + pg differential, mode-aware) |
+| doktok-backup-full | weekly (Sun 03:00) | `deploy/backup.sh full` (files + pg full, mode-aware) |
+| doktok-pg-wal-freshness | every 1 min | `deploy/pg-wal-freshness.sh` (stamps the pg WAL recovery point) |
+| doktok-backup-files | every 15 min | `deploy/backup-files.sh` (host-mode only; compose uses backup-diff) |
+| doktok-backup-pg | hourly (diff) + weekly full | `deploy/backup-pg.sh diff` / `full` (host-mode only) |
 | doktok-backup-pg-logical | weekly | `deploy/backup-pg-logical.sh` (portable logical safety-net) |
 | doktok-azure-sync | hourly | `deploy/azure-sync.sh` |
 | doktok-check-backup | every 30 min | `deploy/check-backup-freshness.sh` |

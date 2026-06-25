@@ -1,0 +1,10 @@
+[Unit]
+Description=Stamp the DokTok pg WAL recovery point every minute
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

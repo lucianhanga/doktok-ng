@@ -66,6 +66,10 @@ services:
       - -c
       - archive_command=pgbackrest --stanza=doktok archive-push %p
       - -c
+      # Force a WAL segment switch at least every 60s so an idle DB still ships WAL on the ~60s pg
+      # RPO - keeps the DRP pg recovery point fresh instead of flapping "stale" (M12 #377).
+      - archive_timeout=60
+      - -c
       - max_wal_size=2GB
     environment:
       POSTGRES_USER: doktok

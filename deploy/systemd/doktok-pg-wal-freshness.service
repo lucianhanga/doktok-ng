@@ -1,0 +1,13 @@
+[Unit]
+Description=DokTok pg WAL recovery-point stamp (DRP freshness)
+Documentation=https://github.com/lucianhanga/doktok-ng/blob/main/deploy/systemd/README.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/doktok
+EnvironmentFile=/etc/doktok/backup.env
+ExecStart=/opt/doktok/deploy/pg-wal-freshness.sh
+Nice=10
+MemoryMax=128M

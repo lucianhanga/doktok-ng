@@ -37,6 +37,8 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.DOCUMENT_REINGESTED.value: ("user", "info", "Document re-ingested by user"),
     AuditEventType.DOCUMENT_DELETED.value: ("delete", "info", "Document deleted by user"),
     AuditEventType.DOCUMENT_VIEWED.value: ("view", "info", "Document viewed"),
+    AuditEventType.SETTINGS_CHANGED.value: ("user", "info", "Settings changed"),
+    AuditEventType.SERVICE_STARTED.value: ("system", "info", "Service started"),
 }
 
 

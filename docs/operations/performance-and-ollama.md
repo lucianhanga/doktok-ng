@@ -26,11 +26,37 @@ work (scanned/OCR documents). To make the model calls actually overlap, raise `O
 By default DokTok uses **two** Ollama models - chat `DOKTOK_DEFAULT_MODEL` and embeddings
 `DOKTOK_EMBEDDING_MODEL` - because the default OCR engine is **PaddleOCR** (`DOKTOK_OCR_ENGINE=paddleocr`),
 which runs locally on CPU and loads **no** Ollama model. If you switch to the legacy vision-OCR engine
-(`DOKTOK_OCR_ENGINE=ollama`, model `DOKTOK_OCR_MODEL`, e.g. `glm-ocr:latest`) that adds a third Ollama
+(`DOKTOK_OCR_ENGINE=glm-ocr`, model `DOKTOK_OCR_MODEL`, e.g. `glm-ocr:latest`) that adds a third Ollama
 model. Keep `OLLAMA_MAX_LOADED_MODELS` at least equal to the number of Ollama models in use (2 by
 default, 3 with Ollama OCR) so the pipeline does not unload/reload a model every time it switches steps.
 
 Rule of thumb: set `OLLAMA_NUM_PARALLEL` to roughly `DOKTOK_INGEST_CONCURRENCY`, bounded by memory.
+
+## PaddleOCR (default engine) performance
+
+PaddleOCR runs locally on CPU and loads no Ollama model, so it sits outside the Ollama-parallelism
+budget above. It has its own knobs:
+
+- **`DOKTOK_OCR_CONCURRENCY`** sizes a pool of PaddleOCR worker **processes** (~1 core and ~1-1.5 GB
+  RAM each). PaddleOCR is GIL-serialized, so processes — not threads — give real cross-page
+  parallelism. The pool resizes live from Settings between ingest scans.
+- **`DOKTOK_OCR_CPU_THREADS`** caps math-library threads per process. Keep
+  `OCR_CONCURRENCY * OCR_CPU_THREADS <= physical cores` so the processes don't oversubscribe the CPU.
+- **`DOKTOK_OCR_DPI`** (default 200) is the rasterization DPI. OCR is recognition-bound, not
+  pixel-bound, so lowering it saves little (~5%) and can reduce confidence; lower only to save RAM.
+- **`DOKTOK_OCR_ENABLE_MKLDNN`** (default `true`) enables oneDNN (MKL-DNN) CPU kernels for speed. It
+  **must be `false` on Intel N95 / Alder Lake-N**, where PaddlePaddle's oneDNN kernels crash under the
+  PIR executor (`Unimplemented ... onednn_instruction.cc`). Leave it `true` where oneDNN works.
+
+**Memory / OOM:** each PaddleOCR process uses ~1-1.5 GB. In a containerized deployment the **worker
+container's memory cap** (not host RAM) bounds safe concurrency — exceeding it OOM-kills a child,
+surfacing as `BrokenProcessPool` / "a child process terminated abruptly". Fix by lowering
+`DOKTOK_OCR_CONCURRENCY` or raising the worker `memory:` cap. (On the N95: `OCR_CONCURRENCY=2`, worker
+capped ~2.5 GB.) See [ADR-0010](../adr/ADR-0010-paddleocr-default-ocr-engine.md) and
+[deployment-trigkey-n95.md](deployment-trigkey-n95.md).
+
+A **device-aware recommendation** (`GET /api/v1/settings/ocr/recommendation`, shown in the Settings UI)
+suggests an engine + concurrency for the detected host; a RapidOCR adapter is planned (ADR-0021).
 
 ## Configuring the Ollama server
 
@@ -95,7 +121,7 @@ Weights (resident, independent of parallelism):
 | `qwen3.6:35b-a3b` (chat/RAG) | 36B MoE (3B active) | Q4_K_M | ~23 GB |
 | `qwen3-embedding:0.6b` (embeddings) | 0.6B | F16 | ~0.7 GB |
 | **Both loaded (default)** | | | **~24 GB** |
-| `glm-ocr:latest` (OCR, vision) - only with `DOKTOK_OCR_ENGINE=ollama` | 1.1B | F16 | ~2.2 GB |
+| `glm-ocr:latest` (OCR, vision) - only with `DOKTOK_OCR_ENGINE=glm-ocr` | 1.1B | F16 | ~2.2 GB |
 
 The default OCR engine is PaddleOCR (CPU), which loads no Ollama model; the OCR row applies only if
 you switch to the Ollama vision-OCR engine.
@@ -155,7 +181,7 @@ The whole **ingestion path runs on one dense model** so it stays well under the 
 | Ingestion role | Model | ~Resident |
 |---|---|---|
 | OCR (default) | PaddleOCR (CPU, local) | ~0 GB GPU/Ollama |
-| OCR (`DOKTOK_OCR_ENGINE=ollama`) | `glm-ocr` (`DOKTOK_OCR_NUM_CTX=8192`) | ~3 GB |
+| OCR (`DOKTOK_OCR_ENGINE=glm-ocr`) | `glm-ocr` (`DOKTOK_OCR_NUM_CTX=8192`) | ~3 GB |
 | OCR-quality judge | `qwen3:14b` (`DOKTOK_JUDGE_MODEL`) | shared with enrichment |
 | Enrichment (metadata + classify) | `qwen3:14b` (`DOKTOK_ENRICH_MODEL`, 4k ctx) | ~12 GB |
 | Embeddings | `qwen3-embedding:0.6b` | ~0.7 GB |

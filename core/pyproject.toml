@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doktok-core"
-version = "0.0.0"
+version = "0.1.0"
 description = "DokTok NG core domain logic and configuration"
 requires-python = ">=3.12"
 dependencies = [

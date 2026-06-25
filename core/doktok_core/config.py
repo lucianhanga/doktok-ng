@@ -37,9 +37,13 @@ class Settings(BaseSettings):
     # evicted first and then unable to reload while the 24 GB chat model is pinned - which hangs
     # chunk_embed and stalls the single-threaded reconciler. "-1" pins it forever.
     embedding_keep_alive: str = "30m"
-    # OCR engine: "paddleocr" (detect+recognize, no repeat-loops, native confidence) or "glm-ocr"
-    # (Ollama vision model). PaddleOCR needs its extra: uv pip install paddleocr paddlepaddle.
+    # OCR engine: "paddleocr" (detect+recognize, native confidence), "rapidocr" (same PP-OCR models
+    # via ONNX/OpenVINO - faster+lighter on CPU, M17 #375), or "glm-ocr" (Ollama vision). The paddle
+    # extra: `make ocr-paddle`; the rapid extra: `make ocr-rapid`.
     ocr_engine: str = "paddleocr"
+    # RapidOCR execution backend when ocr_engine="rapidocr": "onnxruntime" (any CPU) or "openvino"
+    # (faster on Intel; needs the rapidocr-openvino extra).
+    ocr_rapid_backend: str = "onnxruntime"
     # PaddleOCR recognizer language; 'german' selects the Latin model (German/English/European).
     ocr_lang: str = "german"
     # glm-ocr vision model (used when ocr_engine="glm-ocr"; configurable, ADR-0003).
@@ -57,6 +61,10 @@ class Settings(BaseSettings):
     # `ocr_concurrency` workers from oversubscribing: real parallelism comes from the process pool.
     # Rule of thumb: ocr_concurrency * ocr_cpu_threads <= physical cores.
     ocr_cpu_threads: int = 1
+    # oneDNN (MKL-DNN) acceleration for PaddleOCR. Default on (faster). Set false on CPUs where
+    # PaddlePaddle's oneDNN kernels abort under the PIR executor ("Unimplemented ...
+    # onednn_instruction.cc") - notably Intel N95 / Alder Lake-N. DOKTOK_OCR_ENABLE_MKLDNN=false.
+    ocr_enable_mkldnn: bool = True
     # Enhanced re-OCR profile (opt-in, slower, better): higher DPI + heavier PP-OCRv6 medium models
     # + the doc-orientation/unwarp/textline-orientation preprocessors (fixes rotated/curved scans).
     # Routed via the ingest.enhanced/ folder; files dropped there use these instead of the defaults.

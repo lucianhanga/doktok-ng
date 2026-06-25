@@ -239,3 +239,19 @@ def test_concurrent_drain_processes_every_row_exactly_once() -> None:
     assert processed == 12
     assert len(done) == 12 and set(done) == {f"f{i}" for i in range(12)}  # each row once
     assert len(proc.calls) == 12 and set(proc.calls) == {f"d{i}" for i in range(12)}
+
+
+def test_set_processors_swaps_the_active_processor() -> None:
+    # Live AI-settings reload (M13 #371): set_processors replaces the processor set used by later
+    # passes (e.g. rebuilt enrichment clients) without recreating the reconciler.
+    repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
+    old = FakeProcessor()
+    rec = FeatureReconciler(repo, [old], ["t1"], clock=lambda: BASE)
+    new = FakeProcessor()
+    rec.set_processors([new])
+
+    processed = rec.reconcile()
+
+    assert processed == 1
+    assert old.calls == []  # the replaced processor is no longer used
+    assert new.calls == ["d1"]  # the swapped-in processor handled the feature

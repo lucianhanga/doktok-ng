@@ -2,7 +2,8 @@ import os
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import AppSettingsRepository
+from doktok_contracts.ports import AppSettingsRepository, AuditLogRepository
+from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
 from doktok_core.registry import build_registry
 from doktok_core.settings.inmemory import InMemoryAppSettingsRepository
@@ -18,11 +19,17 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
-def _client() -> TestClient:
+def _client_with_audit() -> tuple[TestClient, InMemoryAuditLogRepository]:
     registry = build_registry()
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
+    audit = InMemoryAuditLogRepository()
+    registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
-    return TestClient(create_app(settings=settings, registry=registry))
+    return TestClient(create_app(settings=settings, registry=registry)), audit
+
+
+def _client() -> TestClient:
+    return _client_with_audit()[0]
 
 
 AUTH = {"Authorization": "Bearer tok-a"}
@@ -78,6 +85,172 @@ def test_get_defaults_and_update_roundtrip() -> None:
     assert again["pipeline"]["num_ctx"] == 16384 and again["openai_api_key_set"] is True
 
 
+def test_per_purpose_ollama_url_default_and_override_roundtrip() -> None:
+    # M13 #369: GET exposes the effective default URL; per-purpose + embedding overrides round-trip.
+    client = _client()
+    defaults = client.get("/api/v1/settings/ai", headers=AUTH).json()
+    assert defaults["ollama_base_url_default"] == "http://localhost:11434"
+    assert defaults["pipeline"]["ollama_base_url"] is None
+    assert defaults["embedding"]["ollama_base_url"] is None
+
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json={
+            "pipeline": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 8192,
+                "reasoning": "off",
+                "ollama_base_url": "http://gpu-box:11434",
+            },
+            "rag": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 32768,
+                "reasoning": "off",
+            },
+            "embedding": {"ollama_base_url": "http://embed-host:11434"},
+        },
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    again = client.get("/api/v1/settings/ai", headers=AUTH).json()
+    assert again["pipeline"]["ollama_base_url"] == "http://gpu-box:11434"
+    assert again["embedding"]["ollama_base_url"] == "http://embed-host:11434"
+    assert again["rag"]["ollama_base_url"] is None  # left unset -> inherits the default
+
+
+def test_invalid_ollama_url_is_rejected() -> None:
+    client = _client()
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json={
+            "pipeline": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 8192,
+                "reasoning": "off",
+                "ollama_base_url": "not-a-url",
+            },
+            "rag": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 32768,
+                "reasoning": "off",
+            },
+        },
+        headers=AUTH,
+    )
+    assert resp.status_code == 422
+
+
+def test_test_ollama_rejects_bad_url() -> None:
+    client = _client()
+    resp = client.post("/api/v1/settings/ai/test-ollama", json={"url": "not-a-url"}, headers=AUTH)
+    assert resp.status_code == 422
+
+
+def test_test_ollama_reports_unreachable() -> None:
+    # A closed port returns ok:false with a detail (never raises), and echoes the probed URL.
+    client = _client()
+    resp = client.post(
+        "/api/v1/settings/ai/test-ollama",
+        json={"url": "http://127.0.0.1:1"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False and body["url"] == "http://127.0.0.1:1" and body["detail"]
+
+
+def test_saving_settings_records_a_non_secret_activity_event() -> None:
+    # M15 #373: a settings change is recorded in the activity log, without the OpenAI key.
+    client, audit = _client_with_audit()
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json={
+            "pipeline": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 8192,
+                "reasoning": "off",
+            },
+            "rag": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "num_ctx": 32768,
+                "reasoning": "off",
+            },
+            "openai_api_key": "sk-super-secret",  # pragma: allowlist secret
+        },
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    events = audit.list_events("tenant-a")
+    changed = [e for e in events if e.event_type == "settings.changed"]
+    assert len(changed) == 1
+    assert changed[0].document_id is None and changed[0].actor_kind == "user"
+    # The key must never appear in the activity row (description or metadata).
+    assert "sk-super-secret" not in (changed[0].description + str(changed[0].metadata))
+    # OCR settings changes are recorded too.
+    client.put("/api/v1/settings/ocr", json={"ocr_concurrency": 3}, headers=AUTH)
+    ocr_events = [e for e in audit.list_events("tenant-a") if "OCR" in e.description]
+    assert ocr_events and "3" in ocr_events[0].description
+
+
+def test_ocr_recommendation_returns_a_valid_suggestion() -> None:
+    # M17 #375: probes this host and returns a usable engine + concurrency (auth-gated).
+    client = _client()
+    assert client.get("/api/v1/settings/ocr/recommendation").status_code == 401
+    rec = client.get("/api/v1/settings/ocr/recommendation", headers=AUTH).json()
+    assert rec["engine"] in {"paddleocr", "rapidocr", "glm-ocr"}
+    assert rec["concurrency"] >= 1 and rec["reason"]
+
+
+def test_ollama_status_reflects_offloading() -> None:
+    # M16 #374: default embedding keeps local Ollama needed; offloading all of it flips the flag.
+    client = _client()
+    s = client.get("/api/v1/settings/ollama-status", headers=AUTH).json()
+    assert s["local_ollama_needed"] is True  # default embedding uses the in-stack Ollama
+    # Offload everything: OpenAI pipeline/RAG + a remote embedding URL.
+    client.put(
+        "/api/v1/settings/ai",
+        json={
+            "pipeline": {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "num_ctx": 8192,
+                "reasoning": "off",
+            },
+            "rag": {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "num_ctx": 8192,
+                "reasoning": "off",
+            },
+            "embedding": {"ollama_base_url": "http://10.0.0.22:11434"},
+        },
+        headers=AUTH,
+    )
+    s2 = client.get("/api/v1/settings/ollama-status", headers=AUTH).json()
+    assert s2["local_ollama_needed"] is False
+    assert s2["embedding_url"] == "http://10.0.0.22:11434"
+
+
+def test_test_openai_reports_when_no_key_is_available() -> None:
+    # M13 #372: with no candidate key and none stored, the probe reports failure (no network call).
+    client = _client()
+    resp = client.post("/api/v1/settings/ai/test-openai", json={"api_key": ""}, headers=AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False and "no API key" in body["detail"]
+
+
+def test_test_openai_requires_a_token() -> None:
+    resp = _client().post("/api/v1/settings/ai/test-openai", json={"api_key": "sk-x"})
+    assert resp.status_code == 401
+
+
 def test_ocr_settings_default_and_update() -> None:
     client = _client()
     assert client.get("/api/v1/settings/ocr", headers=AUTH).json()["ocr_concurrency"] == 4
@@ -105,6 +278,7 @@ def test_saving_ai_settings_clears_cached_providers() -> None:
 
     registry = build_registry()
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     registry.register(ChatModelProvider, object())
     registry.register(RagAnswerer, object())
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]

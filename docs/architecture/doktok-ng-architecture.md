@@ -190,12 +190,26 @@ rather than producing ungrounded answers.
 
 OCR runs on the configurable engine `DOKTOK_OCR_ENGINE` — default `paddleocr` (PP-OCRv5: a
 deterministic, CPU-only detection+recognition pipeline with native per-line confidence; ADR-0010); the
-legacy local Ollama vision model `glm-ocr` remains selectable. A PDF page is OCR'd when it has no
+legacy local Ollama vision model `glm-ocr` remains selectable (any value other than `paddleocr` routes
+to the vision adapter). A PDF page is OCR'd when it has no
 embedded text **or** its largest image covers at least `DOKTOK_OCR_IMAGE_COVERAGE` of the page (a
 full-page scan). In the latter case any existing embedded text layer is **dropped and re-OCR'd**, so
 pages OCR'd by a weaker engine are redone. Born-digital pages (real text, only small figures) keep
 their embedded text; mixed PDFs combine both per page. Fully-OCR'd documents also get a derived
 `normalized/searchable.pdf` (page images + an invisible OCR text layer) as the system document.
+
+PaddleOCR is GIL-serialized, so the worker runs it in a `ProcessPoolExecutor` of
+`DOKTOK_OCR_CONCURRENCY` processes (each ~1 core, ~1-1.5 GB RAM) for real cross-page parallelism;
+`DOKTOK_OCR_CPU_THREADS` caps math-library threads per process (keep `concurrency * cpu_threads <=
+cores`). The pool resizes live from Settings between ingest scans. Files dropped in `ingest.enhanced/`
+use a heavier PP-OCRv6 medium profile with a 4-way orientation vote. CPU acceleration via oneDNN
+(`DOKTOK_OCR_ENABLE_MKLDNN`, default on) **must be disabled on Intel N95 / Alder Lake-N**, where
+PaddlePaddle's oneDNN kernels crash (ADR-0010).
+
+OCR is moving toward a **pluggable, device-aware** model (ADR-0021): a host probe drives
+`GET /api/v1/settings/ocr/recommendation` (`{engine, concurrency, reason}`, shown as a Settings hint —
+shipped, M17), and a RapidOCR (ONNX/OpenVINO) adapter plus live in-UI engine selection are planned.
+PaddleOCR remains the default until RapidOCR is benchmarked on the N95.
 
 ## 11. Entity extraction
 

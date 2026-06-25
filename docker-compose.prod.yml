@@ -24,6 +24,9 @@ x-app-env: &app-env
   DOKTOK_OLLAMA_BASE_URL: http://ollama:11434
   DOKTOK_GOTENBERG_URL: http://gotenberg:3000
   DOKTOK_FILES_ROOT: /data/files
+  # The worker derives the tenants it watches from this token map (one ingest tree per tenant), and
+  # the backend authenticates requests against it - BOTH services need it, so it lives in the anchor.
+  DOKTOK_TENANT_TOKENS: ${DOKTOK_TENANT_TOKENS:?set DOKTOK_TENANT_TOKENS}
   # Service-name Ollama URL is not loopback, so NO_EGRESS must be false (the loopback validator
   # would otherwise refuse to start). Outbound egress is restricted at the host firewall (#322).
   DOKTOK_NO_EGRESS: "false"
@@ -81,8 +84,9 @@ services:
       timeout: 5s
       retries: 10
     logging: *logging
-    # Resource caps for the 8 GB box (#323). Limits ~ db .75g + gotenberg 1g + ollama 2g +
-    # backend .75g + worker 1.5g + caddy .25g = ~6.25g, leaving headroom for the OS.
+    # Resource caps for the 8 GB box (#323). Limits ~ db .75g + gotenberg .5g + ollama 1.75g +
+    # backend .75g + worker 2.5g + caddy .25g = ~6.5g, leaving ~1g for the OS. The worker cap holds
+    # two PaddleOCR processes (~1g each) so OCR_CONCURRENCY=2 is viable on this box.
     deploy:
       resources:
         limits:
@@ -97,7 +101,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          memory: 512m
           cpus: "1.0"
     restart: unless-stopped
 
@@ -119,7 +123,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 1792m
           cpus: "2.0"
     restart: unless-stopped
 
@@ -139,7 +143,7 @@ services:
     environment:
       <<: *app-env
       DOKTOK_BIND_HOST: 0.0.0.0
-      DOKTOK_TENANT_TOKENS: ${DOKTOK_TENANT_TOKENS:?set DOKTOK_TENANT_TOKENS}
+      # DOKTOK_TENANT_TOKENS now comes from the shared anchor (worker needs it too).
       # Limited-prod hardening (APP-9/APP-10).
       DOKTOK_RATE_LIMIT_PER_MINUTE: ${DOKTOK_RATE_LIMIT_PER_MINUTE:-0}
       DOKTOK_MAX_REQUEST_MB: ${DOKTOK_MAX_REQUEST_MB:-25}
@@ -180,6 +184,8 @@ services:
       # reconciler can fan out, but each reconcile also hits the local embedder - keep it moderate.
       DOKTOK_OCR_CONCURRENCY: ${DOKTOK_OCR_CONCURRENCY:-2}
       DOKTOK_OCR_CPU_THREADS: ${DOKTOK_OCR_CPU_THREADS:-1}
+      # Disable on N95/Alder Lake-N (oneDNN PIR crash); harmless to leave true on capable CPUs.
+      DOKTOK_OCR_ENABLE_MKLDNN: ${DOKTOK_OCR_ENABLE_MKLDNN:-true}
       DOKTOK_INGEST_CONCURRENCY: ${DOKTOK_INGEST_CONCURRENCY:-2}
       DOKTOK_OPENAI_RECONCILE_CONCURRENCY: ${DOKTOK_OPENAI_RECONCILE_CONCURRENCY:-6}
     volumes:
@@ -188,7 +194,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536m
+          memory: 2560m
           cpus: "2.0"
     # Long enough for the SIGTERM -> PaddleOCR pool teardown to finish.
     stop_grace_period: 60s

@@ -105,9 +105,17 @@ def main() -> None:
         raise SystemExit(quiesce(enabled="--off" not in sys.argv))
     _install_sigterm_handler()
     log = logging.getLogger("doktok.worker")
-    services, reconciler, projection_runner, db, ocr_reload, cleanup, heartbeat, is_quiesced = (
-        build_services(settings)
-    )
+    (
+        services,
+        reconciler,
+        projection_runner,
+        db,
+        ocr_reload,
+        ai_reload,
+        cleanup,
+        heartbeat,
+        is_quiesced,
+    ) = build_services(settings)
     if not services:
         log.warning(
             "no tenants configured (DOKTOK_TENANT_TOKENS is empty); the worker has nothing to watch"
@@ -120,11 +128,30 @@ def main() -> None:
         stale_job_minutes=settings.stale_job_minutes,
         projection_runner=projection_runner,
         ocr_reload=ocr_reload,
+        ai_reload=ai_reload,
         heartbeat=heartbeat,
         is_quiesced=is_quiesced,
     )
     if settings.ingest_concurrency > 1:
         log.info("processing up to %d documents in parallel", settings.ingest_concurrency)
+    # Activity log (M15 #373): a 'service.started' row per tenant so a restart is visible.
+    try:
+        from doktok_contracts.schemas import AuditEventType
+        from doktok_core.audit.logger import record_activity
+        from doktok_storage_postgres import PostgresAuditLogRepository
+
+        audit_repo = PostgresAuditLogRepository(db)
+        for tenant in dict.fromkeys(settings.tenant_tokens.values()):
+            record_activity(
+                audit_repo,
+                tenant,
+                AuditEventType.SERVICE_STARTED,
+                actor="worker",
+                actor_kind="system",
+                description="Worker started",
+            )
+    except Exception:  # noqa: BLE001 - a startup activity row must never block the worker
+        log.warning("failed to record worker-started activity", exc_info=True)
     try:
         worker.run_forever()
     except KeyboardInterrupt:  # pragma: no cover

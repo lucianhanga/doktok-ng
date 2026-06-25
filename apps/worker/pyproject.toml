@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doktok-worker"
-version = "0.0.0"
+version = "0.1.0"
 description = "DokTok NG ingestion worker"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
     "doktok-modalities-files",
     "doktok-provider-ollama",
     "doktok-provider-paddleocr",
+    "doktok-provider-rapidocr",
     "doktok-provider-projection",
 ]
 

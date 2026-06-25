@@ -50,7 +50,12 @@ def _cap_cpu_threads(n: int) -> None:
 
 
 def _worker_init(
-    lang: str, det_model: str, rec_model: str, cpu_threads: int, preprocess: bool
+    lang: str,
+    det_model: str,
+    rec_model: str,
+    cpu_threads: int,
+    preprocess: bool,
+    enable_mkldnn: bool = True,
 ) -> None:
     global _WORKER_ENGINE
     _cap_cpu_threads(cpu_threads)
@@ -66,6 +71,10 @@ def _worker_init(
     # ~triple per-page latency). The Enhanced path enables them to fix curved/upside-down scans.
     # Page orientation (90/180/270) is handled by the explicit 4-way vote, not PaddleOCR's own
     # doc-orientation classifier (which proved unreliable), so that model stays off.
+    # enable_mkldnn=False is required on some CPUs (e.g. Intel N95 / Alder Lake-N) where
+    # PaddlePaddle's oneDNN kernels under the PIR executor abort with
+    # "Unimplemented ... onednn_instruction.cc". Default True (faster where it works); the worker
+    # sets it from DOKTOK_OCR_ENABLE_MKLDNN.
     _WORKER_ENGINE = PaddleOCR(
         lang=lang,
         text_detection_model_name=det_model,
@@ -73,6 +82,7 @@ def _worker_init(
         use_doc_orientation_classify=False,
         use_doc_unwarping=preprocess,
         use_textline_orientation=preprocess,
+        enable_mkldnn=enable_mkldnn,
     )
 
 
@@ -189,6 +199,7 @@ class PaddleOcr:
         cpu_threads: int = 1,
         preprocess: bool = False,
         orient_vote: bool = False,
+        enable_mkldnn: bool = True,
     ) -> None:
         # ``lang='german'`` selects the Latin recognizer (German/English/most European scripts). The
         # mobile det+rec models are ~40% faster than the medium defaults at ~0.98 confidence.
@@ -203,6 +214,7 @@ class PaddleOcr:
         # Enhanced path: unwarp + textline-orientation models, and the 4-way orientation vote.
         self._preprocess = preprocess
         self._orient_vote = orient_vote
+        self._enable_mkldnn = enable_mkldnn
         self._closed = False  # set by shutdown(); blocks pool rebuild after a graceful stop
         self._pool: ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # guards lazy pool creation
@@ -251,6 +263,7 @@ class PaddleOcr:
                         self._rec_model,
                         self._cpu_threads,
                         self._preprocess,
+                        self._enable_mkldnn,
                     ),
                 )
             return self._pool

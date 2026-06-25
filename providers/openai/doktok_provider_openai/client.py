@@ -43,7 +43,7 @@ class OpenAiServerError(OpenAiError):
 
 
 def _backoff(attempt: int) -> float:
-    return _BACKOFF_BASE * (2**attempt) + random.uniform(0, 0.25)
+    return float(_BACKOFF_BASE * (2**attempt) + random.uniform(0, 0.25))
 
 
 def _retry_after(response: httpx.Response) -> float | None:

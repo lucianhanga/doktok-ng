@@ -47,6 +47,8 @@ class IngestionWorker:
         projection_interval: float = 5.0,
         ocr_reload: Callable[[], None] | None = None,
         ocr_reload_interval: float = 15.0,
+        ai_reload: Callable[[], None] | None = None,
+        ai_reload_interval: float = 15.0,
         heartbeat: Callable[[], None] | None = None,
         heartbeat_interval: float = 15.0,
         is_quiesced: Callable[[], bool] | None = None,
@@ -66,6 +68,10 @@ class IngestionWorker:
         # Live OCR-pool resize from Settings (M7.6): invoked between ingest scans.
         self._ocr_reload = ocr_reload
         self._ocr_reload_interval = ocr_reload_interval
+        # Live AI-settings reload (M13 #371): invoked between reconcile passes, rebuilds the
+        # enrichment clients if the AI model/provider/Ollama-URL settings changed (no restart).
+        self._ai_reload = ai_reload
+        self._ai_reload_interval = ai_reload_interval
         # Liveness heartbeat (APP-5): stamped periodically so an external probe can spot a dead one.
         self._heartbeat = heartbeat
         self._heartbeat_interval = heartbeat_interval
@@ -260,6 +266,14 @@ class IngestionWorker:
         except Exception:  # noqa: BLE001 - an OCR-resize failure must not stop ingestion
             logger.exception("OCR pool reload failed")
 
+    def _safe_ai_reload(self) -> None:  # pragma: no cover - long-running loop helper
+        if self._ai_reload is None:
+            return
+        try:
+            self._ai_reload()
+        except Exception:  # noqa: BLE001 - an AI-settings reload failure must not stop reconciling
+            logger.exception("AI settings reload failed")
+
     def _recover_features(self) -> None:  # pragma: no cover - long-running loop helper
         if self._reconciler is None:
             return
@@ -276,12 +290,18 @@ class IngestionWorker:
         # Recover features left mid-flight by a prior worker before draining the live backlog, so a
         # restart doesn't leave them stuck for the full lease window.
         self._recover_features()
+        last_ai_reload = 0.0
         while not stop.is_set():
             processed = 0
             try:
                 processed = self.reconcile()
             except Exception:  # noqa: BLE001 - keep the stream alive across unexpected errors
                 logger.exception("reconcile pass failed")
+            # Apply an AI-settings change here: reconcile() has returned, so no enrichment is in
+            # flight and the reconciler's processors can be safely swapped. Throttled (cheap read).
+            if self._clock() - last_ai_reload >= self._ai_reload_interval:
+                self._safe_ai_reload()
+                last_ai_reload = self._clock()
             # Keep draining while there is work; back off to a poll cadence when idle.
             stop.wait(0.1 if processed else self._reconcile_interval)
 

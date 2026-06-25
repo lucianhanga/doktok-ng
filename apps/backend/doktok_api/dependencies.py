@@ -162,11 +162,14 @@ def get_retriever(request: Request) -> Retriever:
     from doktok_retrieval_hybrid import HybridPostgresRetriever
 
     settings = request.app.state.settings
+    # Per-purpose Ollama URL override (M13 #369): embeddings can target a different Ollama host.
+    embedding = get_app_settings_repository(request).get_ai_settings().embedding
+    embedding_url = embedding.ollama_base_url or settings.ollama_base_url
     retriever = HybridPostgresRetriever(
         _get_database(request),
         OllamaEmbeddingProvider(
             settings.embedding_model,
-            settings.ollama_base_url,
+            embedding_url,
             timeout=settings.rag_timeout_seconds,
             keep_alive=settings.embedding_keep_alive,
             num_ctx=settings.embedding_num_ctx,
@@ -214,7 +217,7 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
         model = rag.model if rag.provider == "ollama" else settings.default_model
         model_provider = OllamaChatModelProvider(
             model,
-            settings.ollama_base_url,
+            rag.ollama_base_url or settings.ollama_base_url,  # per-purpose override (M13 #369)
             timeout=settings.rag_timeout_seconds,
             num_ctx=rag.num_ctx,
             keep_alive=settings.chat_keep_alive,
@@ -258,7 +261,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
         model = rag.model if rag.provider == "ollama" else settings.default_model
         rerank_model = OllamaChatModelProvider(
             settings.rerank_model or model,
-            settings.ollama_base_url,
+            rag.ollama_base_url or settings.ollama_base_url,  # per-purpose override (M13 #369)
             timeout=settings.rag_timeout_seconds,
             num_ctx=rag.num_ctx,
             num_predict=settings.rerank_num_predict,

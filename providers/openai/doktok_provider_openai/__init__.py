@@ -13,7 +13,7 @@ from doktok_provider_openai.metadata import OpenAiMetadataExtractor
 from doktok_provider_openai.ner import OpenAiEntityNerExtractor
 from doktok_provider_openai.records import OpenAiRecordExtractor
 
-__version__ = "0.0.0"
+__version__ = "0.1.0"
 
 __all__ = [
     "OpenAiAuthError",

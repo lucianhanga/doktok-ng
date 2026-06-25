@@ -4,15 +4,20 @@ import {
   fetchAiSettings,
   fetchDrpStatus,
   fetchModelCatalog,
+  fetchOcrRecommendation,
   fetchOcrSettings,
   putAiSettings,
   putOcrSettings,
+  testOllamaUrl,
+  testOpenAiKey,
+  OCR_ENGINES,
   type AiPurposeSettings,
   type AiSettings,
   type BackupLegStatus,
   type DrpStatusResponse,
   type ModelCatalog,
   type ModelOption,
+  type OcrRecommendation,
   type OcrSettings,
 } from "./api";
 
@@ -131,12 +136,91 @@ function DrpSection() {
   );
 }
 
+// Per-purpose Ollama server URL override with reset-to-default + a pre-save reachability test
+// (M13 #369). Blank field = inherit the default (shown as the placeholder). The test goes through the
+// backend (the Ollama host is typically not reachable from the browser) and probes the override, or
+// the default when blank.
+function OllamaUrlField({
+  label,
+  value,
+  defaultUrl,
+  onChange,
+}: {
+  label: string;
+  value: string | null | undefined;
+  defaultUrl: string;
+  onChange: (next: string | null) => void;
+}) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  async function runTest() {
+    setTesting(true);
+    setResult(null);
+    try {
+      const r = await testOllamaUrl(value ?? null);
+      setResult({ ok: r.ok, detail: r.detail });
+    } catch (e) {
+      setResult({ ok: false, detail: e instanceof Error ? e.message : "test failed" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="settings-row settings-url-row">
+      <label>
+        Ollama server URL{" "}
+        <input
+          type="text"
+          className="settings-url-input"
+          aria-label={label}
+          placeholder={defaultUrl || "http://localhost:11434"}
+          value={value ?? ""}
+          onChange={(e) => {
+            onChange(e.target.value.trim() || null);
+            setResult(null); // the edited URL is untested again
+          }}
+        />
+      </label>
+      <button
+        type="button"
+        className="settings-test"
+        disabled={testing}
+        onClick={runTest}
+      >
+        {testing ? "Testing…" : "Test"}
+      </button>
+      <button
+        type="button"
+        className="settings-reset"
+        disabled={!value}
+        onClick={() => {
+          onChange(null);
+          setResult(null);
+        }}
+      >
+        Reset to default
+      </button>
+      {result && (
+        <span
+          role="status"
+          className={result.ok ? "settings-test-ok" : "settings-test-fail"}
+        >
+          {result.ok ? "Connected" : "Failed"} — {result.detail}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function PurposeEditor({
   title,
   description,
   options,
   value,
   reasoningLevels,
+  ollamaUrlDefault,
   onChange,
 }: {
   title: string;
@@ -144,6 +228,7 @@ function PurposeEditor({
   options: ModelOption[];
   value: AiPurposeSettings;
   reasoningLevels: string[];
+  ollamaUrlDefault: string;
   onChange: (next: AiPurposeSettings) => void;
 }) {
   const selected =
@@ -207,6 +292,14 @@ function PurposeEditor({
           </select>
         </label>
       </div>
+      {value.provider === "ollama" && (
+        <OllamaUrlField
+          label={`${title} Ollama URL`}
+          value={value.ollama_base_url}
+          defaultUrl={ollamaUrlDefault}
+          onChange={(ollama_base_url) => onChange({ ...value, ollama_base_url })}
+        />
+      )}
     </div>
   );
 }
@@ -215,10 +308,13 @@ export function SettingsPanel() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
   const [ocr, setOcr] = useState<OcrSettings | null>(null);
+  const [ocrRec, setOcrRec] = useState<OcrRecommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [openaiKey, setOpenaiKey] = useState("");
+  const [openaiTesting, setOpenaiTesting] = useState(false);
+  const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
   const [tab, setTab] = useState<"settings" | "drp">("settings");
 
   useEffect(() => {
@@ -237,6 +333,10 @@ export function SettingsPanel() {
         if (c.signal.aborted) return;
         setError(err instanceof Error ? err.message : "unknown error");
       });
+    // The device-aware OCR recommendation is best-effort: a probe failure must not break Settings.
+    fetchOcrRecommendation(c.signal)
+      .then(setOcrRec)
+      .catch(() => undefined);
     return () => c.abort();
   }, []);
 
@@ -248,7 +348,12 @@ export function SettingsPanel() {
     // Persist AI + OCR together. The AI model applies immediately for chat/RAG; OCR parallelism is
     // live-reloaded by the worker within ~15s. Send the OpenAI key only if the user typed one.
     Promise.all([
-      putAiSettings({ pipeline: ai.pipeline, rag: ai.rag, openai_api_key: openaiKey || null }),
+      putAiSettings({
+        pipeline: ai.pipeline,
+        rag: ai.rag,
+        embedding: ai.embedding,
+        openai_api_key: openaiKey || null,
+      }),
       putOcrSettings(ocr),
     ])
       .then(([savedAi, savedOcr]) => {
@@ -311,6 +416,7 @@ export function SettingsPanel() {
             options={catalog.pipeline}
             value={ai.pipeline}
             reasoningLevels={catalog.reasoning_levels}
+            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
             onChange={(pipeline) => setAi({ ...ai, pipeline })}
           />
           <PurposeEditor
@@ -319,6 +425,7 @@ export function SettingsPanel() {
             options={catalog.rag}
             value={ai.rag}
             reasoningLevels={catalog.reasoning_levels}
+            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
             onChange={(rag) => setAi({ ...ai, rag })}
           />
           <div className="settings-purpose">
@@ -349,6 +456,14 @@ export function SettingsPanel() {
                 />
               </label>
             </div>
+            <OllamaUrlField
+              label="Embedding Ollama URL"
+              value={ai.embedding?.ollama_base_url}
+              defaultUrl={ai.ollama_base_url_default ?? ""}
+              onChange={(ollama_base_url) =>
+                setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
+              }
+            />
           </div>
           <div className="settings-purpose">
             <h4>OpenAI</h4>
@@ -365,20 +480,68 @@ export function SettingsPanel() {
                   type="password"
                   aria-label="OpenAI API key"
                   value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
+                  onChange={(e) => {
+                    setOpenaiKey(e.target.value);
+                    setOpenaiTest(null);
+                  }}
                   placeholder={ai.openai_api_key_set ? "configured - type to replace" : "Enter key"}
                 />
               </label>
+              <button
+                type="button"
+                className="settings-test"
+                disabled={openaiTesting || (!openaiKey && !ai.openai_api_key_set)}
+                onClick={async () => {
+                  setOpenaiTesting(true);
+                  setOpenaiTest(null);
+                  try {
+                    const r = await testOpenAiKey(openaiKey || null);
+                    setOpenaiTest({ ok: r.ok, detail: r.detail });
+                  } catch (e) {
+                    setOpenaiTest({
+                      ok: false,
+                      detail: e instanceof Error ? e.message : "test failed",
+                    });
+                  } finally {
+                    setOpenaiTesting(false);
+                  }
+                }}
+              >
+                {openaiTesting ? "Testing…" : "Test"}
+              </button>
+              {openaiTest && (
+                <span
+                  role="status"
+                  className={openaiTest.ok ? "settings-test-ok" : "settings-test-fail"}
+                >
+                  {openaiTest.ok ? "Valid" : "Failed"} — {openaiTest.detail}
+                </span>
+              )}
             </div>
           </div>
 
           <h3>OCR</h3>
           <p className="muted">
-            How many document pages are OCR'd in parallel (the size of the PaddleOCR worker-process
-            pool). Higher uses more CPU cores; the worker applies a change live, within ~15 seconds.
+            The OCR engine and how many pages are OCR'd in parallel. Parallelism applies live
+            (~15 s); an <strong>engine change applies on the next worker restart</strong>.
           </p>
           <div className="settings-purpose">
             <div className="settings-row">
+              <label>
+                Engine{" "}
+                <select
+                  aria-label="OCR engine"
+                  value={ocr.engine ?? ""}
+                  onChange={(e) => setOcr({ ...ocr, engine: e.target.value })}
+                >
+                  <option value="">(server default)</option>
+                  {OCR_ENGINES.map((en) => (
+                    <option key={en} value={en}>
+                      {en}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label>
                 Parallel OCR processes{" "}
                 <input
@@ -389,16 +552,32 @@ export function SettingsPanel() {
                   value={ocr.ocr_concurrency}
                   onChange={(e) =>
                     setOcr({
+                      ...ocr,
                       ocr_concurrency: Math.max(1, Math.min(32, Number(e.target.value) || 1)),
                     })
                   }
                 />
               </label>
             </div>
+            {ocrRec && (
+              <p className="ocr-recommendation" role="note">
+                <strong>Recommended for this device:</strong> {ocrRec.engine} @ {ocrRec.concurrency}{" "}
+                parallel — {ocrRec.reason}
+                {ocr.ocr_concurrency !== ocrRec.concurrency && (
+                  <button
+                    type="button"
+                    className="settings-reset"
+                    onClick={() => setOcr({ ocr_concurrency: ocrRec.concurrency })}
+                  >
+                    Use {ocrRec.concurrency}
+                  </button>
+                )}
+              </p>
+            )}
           </div>
 
           <div className="settings-actions">
-            <button type="button" onClick={save} disabled={saving}>
+            <button type="button" className="settings-save" onClick={save} disabled={saving}>
               {saving ? "Saving…" : "Save"}
             </button>
             {notice && (

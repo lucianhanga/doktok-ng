@@ -151,6 +151,11 @@ set through the Settings UI (next section) or seeded once from the env above on 
 DOKTOK_OCR_CONCURRENCY=2          # 2 OCR worker processes (pages OCR'd in parallel)
 DOKTOK_OCR_CPU_THREADS=1          # 1 math thread per worker (avoid oversubscription)
 
+# REQUIRED on the N95 / Alder Lake-N: PaddlePaddle's oneDNN kernels crash under the PIR executor here
+# ("Unimplemented ... onednn_instruction.cc"), failing every OCR page. Disabling oneDNN fixes it
+# (slightly slower). Leave it true (default) only on CPUs where oneDNN works.
+DOKTOK_OCR_ENABLE_MKLDNN=false
+
 # How many documents flow through intake/extraction at once. Keep modest on 4 cores.
 DOKTOK_INGEST_CONCURRENCY=2
 
@@ -161,6 +166,26 @@ DOKTOK_OPENAI_RECONCILE_CONCURRENCY=6   # 6-8 for this box
 
 `DOKTOK_OCR_CONCURRENCY` is live-reloaded from the Settings DB between ingest scans; the env value is
 the startup default.
+
+**oneDNN crash on the N95.** `DOKTOK_OCR_ENABLE_MKLDNN=false` is not optional on this box. PaddleOCR's
+PaddlePaddle backend uses oneDNN (MKL-DNN) CPU kernels by default; on Intel N95 / Alder Lake-N they
+abort under the PIR executor (`Unimplemented ... onednn_instruction.cc`) and every OCR page fails.
+With oneDNN disabled, PaddleOCR reads pages correctly (validated). See
+[ADR-0010](../adr/ADR-0010-paddleocr-default-ocr-engine.md).
+
+**OCR memory and OOM.** PaddleOCR runs as a pool of `DOKTOK_OCR_CONCURRENCY` worker **processes**, each
+using ~1-1.5 GB RAM (it is GIL-serialized, so processes — not threads — give parallelism). When the
+worker runs in a memory-capped container, the **worker container's `memory:` cap (not host RAM)** is
+what bounds safe concurrency: exceeding it OOM-kills a child, which surfaces as `BrokenProcessPool` /
+"a child process terminated abruptly". Fix by lowering `DOKTOK_OCR_CONCURRENCY` or raising the worker
+`memory:` cap. On this box the validated combination is `DOKTOK_OCR_CONCURRENCY=2` with the worker
+capped at ~2.5 GB. (At 8 GB total, also leave room for Postgres, the embedder, and the OS.)
+
+**Device-aware sizing hint.** `GET /api/v1/settings/ocr/recommendation` probes this host (CPU vendor,
+cores, RAM, GPU) and returns a suggested engine + concurrency; the Settings UI shows it as a one-click
+hint. On the N95 it suggests a CPU-appropriate concurrency. A lighter RapidOCR engine that avoids the
+oneDNN issue is planned (ADR-0021); until it is benchmarked here, PaddleOCR with oneDNN disabled is the
+engine to run.
 
 ### Local Ollama server (embeddings only)
 
@@ -265,6 +290,9 @@ LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
 
 - [Limited-production security & privacy runbook](security-runbook.md)
 - [ADR-0020 — Hybrid deployment topology](../adr/ADR-0020-hybrid-deployment-topology.md)
+- [ADR-0010 — PaddleOCR as the default OCR engine](../adr/ADR-0010-paddleocr-default-ocr-engine.md)
+  (the oneDNN/memory caveats that bite on this box)
+- [ADR-0021 — Pluggable OCR engines + device-aware recommendation](../adr/ADR-0021-pluggable-ocr-engines-and-device-aware-recommendation.md)
 - [ADR-0006 — Local-first, no-egress security](../adr/ADR-0006-local-first-no-egress-security.md)
 - [ADR-0014 — Runtime AI model selection](../adr/ADR-0014-runtime-ai-model-selection.md)
 - [Running locally / starting after a reboot](running.md)
@@ -273,7 +301,7 @@ LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
 
 ## Last updated notes
 
-2026-06-16. Reflects the hybrid split as buildable today (per-purpose provider via Settings UI; local
-OCR + embeddings hardwired). Production compose, Dockerfiles, headless seeding (APP-2), egress flag
-reconciliation (APP-3), encrypted key (APP-8), and deploy CI are M11 work and are flagged as planned,
-not shipped.
+2026-06-25. Reflects the hybrid split as buildable today (per-purpose provider via Settings UI; local
+OCR + embeddings hardwired). OCR section expanded: the required `DOKTOK_OCR_ENABLE_MKLDNN=false` on this
+CPU (oneDNN crash), OCR worker-process memory / OOM tuning, and the device-aware OCR recommendation.
+A RapidOCR engine and live in-UI engine selection are planned (ADR-0021), not shipped.

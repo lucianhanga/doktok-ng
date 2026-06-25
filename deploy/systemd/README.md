@@ -30,6 +30,7 @@ Shared `[Service]` hardening (every backup service): `Nice=10`, `IOSchedulingCla
 | doktok-azure-sync | hourly | `deploy/azure-sync.sh` |
 | doktok-check-backup | every 30 min | `deploy/check-backup-freshness.sh` |
 | doktok-restore-drill | monthly | `deploy/restore-drill.sh` |
+| doktok-ollama-autostop | every 2 min | `deploy/ollama-autostop.sh` (stop/start the Ollama container by need, M16 #374) |
 
 ## Example unit (files snapshot) — the rest follow the same shape
 
@@ -65,6 +66,9 @@ Other services swap `Description`/`ExecStart`:
 - `doktok-azure-sync.service` -> `ExecStart=/opt/doktok/deploy/azure-sync.sh` (timer `OnCalendar=hourly`)
 - `doktok-check-backup.service` -> `ExecStart=/opt/doktok/deploy/check-backup-freshness.sh` (timer `OnCalendar=*:0/30`)
 - `doktok-restore-drill.service` -> `ExecStart=/opt/doktok/deploy/restore-drill.sh` (timer `OnCalendar=monthly`)
+- `doktok-ollama-autostop.service` -> `ExecStart=/opt/doktok/deploy/ollama-autostop.sh` (timer
+  `OnCalendar=*:0/2`). Needs Docker access (run as a user in the `docker` group, not the sandboxed
+  `doktok` user) since it runs `docker compose start/stop ollama`.
 
 `doktok-backup-alert@.service` is a oneshot that sends a notification (email/webhook) for any failed
 backup unit, e.g. `ExecStart=/opt/doktok/deploy/notify.sh "%i failed"`.

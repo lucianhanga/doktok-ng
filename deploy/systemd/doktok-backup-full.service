@@ -1,0 +1,15 @@
+[Unit]
+Description=DokTok backup (files + Postgres full)
+Documentation=https://github.com/lucianhanga/doktok-ng/blob/main/deploy/systemd/README.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/doktok
+EnvironmentFile=/etc/doktok/backup.env
+ExecStart=/opt/doktok/deploy/backup.sh full
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=100%
+MemoryMax=512M

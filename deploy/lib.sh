@@ -68,11 +68,14 @@ write_status() {
     # write_status <leg> <true|false> [detail] [extra-json]
     # extra-json is an optional JSON fragment of metric fields, e.g. '"size":"662 MiB","file_count":287'
     local leg="$1" ok="$2" detail="${3:-}" extra="${4:-}"
+    # WRITE_STATUS_TS lets a caller stamp an explicit recovery-point time instead of "now" - the pg
+    # WAL-freshness updater uses it so last_run_at reflects the last archived WAL, not the run time.
+    local ts="${WRITE_STATUS_TS:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
     mkdir -p "$STATUS_DIR"
     local tmp
     tmp="$(mktemp "${STATUS_DIR}/.${leg}.XXXXXX")"
     printf '{"leg":"%s","ok":%s,"last_run_at":"%s","detail":"%s"%s}\n' \
-        "$leg" "$ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$detail" "${extra:+,$extra}" >"$tmp"
+        "$leg" "$ok" "$ts" "$detail" "${extra:+,$extra}" >"$tmp"
     mv -f "$tmp" "${STATUS_DIR}/${leg}.json"
     # Non-secret status; must be readable by the backend (a different uid in compose). (M12 #377)
     chmod 0644 "${STATUS_DIR}/${leg}.json"

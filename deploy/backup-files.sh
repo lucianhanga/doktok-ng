@@ -23,10 +23,16 @@ if ! restic cat config >/dev/null 2>&1; then
 fi
 
 echo "snapshotting $FILES_ROOT -> $FILES_REPO"
-restic backup "$FILES_ROOT" --tag files_root --host doktok
+out="$(restic backup "$FILES_ROOT" --tag files_root --host doktok 2>&1)"
+printf '%s\n' "$out"
 # Keep a sensible history; prune unreferenced data so the local repo stays small.
 restic forget --tag files_root --keep-daily 14 --keep-weekly 8 --keep-monthly 6 --prune >/dev/null
 
-write_status files true "restic snapshot"
-ok "files_root snapshot complete"
+# Parse restic's summary for the DRP metrics (M12 #380; no jq dependency).
+fcount="$(printf '%s' "$out" | grep -oE 'processed [0-9]+ files' | grep -oE '[0-9]+' | head -1)"
+fsize="$(printf '%s' "$out" | grep -oE 'processed [0-9]+ files, [0-9.]+ [KMGTP]?i?B' | sed -E 's/.*files, //' | head -1)"
+snap="$(printf '%s' "$out" | grep -oE 'snapshot [0-9a-f]+ saved' | grep -oE '[0-9a-f]+' | head -1)"
+write_status files true "restic snapshot" \
+    "\"size\":\"${fsize}\",\"file_count\":${fcount:-0},\"backup_id\":\"${snap}\""
+ok "files_root snapshot complete (${fcount:-?} files, ${fsize:-?})"
 restic snapshots --latest 1

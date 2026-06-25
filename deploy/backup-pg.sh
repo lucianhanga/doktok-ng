@@ -40,6 +40,8 @@ type="${1:-incr}"
 pgbackrest --config="$conf" --stanza=doktok stanza-create 2>/dev/null || true
 pgbackrest --config="$conf" --stanza=doktok check
 pgbackrest --config="$conf" --stanza=doktok backup --type="$type"
-write_status pg true "pgbackrest ${type}"
+# Capture pg metrics (db size, backup label) for the DRP (M12 #380); best-effort.
+pg_extra="$(pgbackrest --config="$conf" --stanza=doktok info --output=json 2>/dev/null | pg_backup_extra || true)"
+write_status pg true "pgbackrest ${type}" "$pg_extra"
 ok "pgBackRest ${type} backup complete -> ${PG_DIR}"
 pgbackrest --config="$conf" --stanza=doktok info

@@ -507,6 +507,9 @@ export interface BackupLegStatus {
   last_run_at: string | null;
   age_seconds: number | null;
   detail: string;
+  size: string; // human-readable backup/snapshot size, e.g. "662 MiB"
+  file_count: number | null;
+  backup_id: string; // restic snapshot id / pgBackRest backup label
 }
 
 export interface DrpStatus {

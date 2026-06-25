@@ -1258,6 +1258,99 @@ tr.row-selected {
   font-size: 0.85rem;
 }
 
+/* ---- DRP tab: per-leg backup status cards (M12 #380) ---- */
+.drp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.85rem;
+  margin: 0.7rem 0 0.5rem;
+}
+.drp-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+}
+/* Colour the left edge by leg state: green ok, amber stale, red failed, grey unknown. */
+.drp-card-ok {
+  border-left-color: var(--success);
+}
+.drp-card-stale {
+  border-left-color: var(--warning);
+}
+.drp-card-failed {
+  border-left-color: var(--danger);
+}
+.drp-card-unknown {
+  border-left-color: var(--border-strong);
+}
+.drp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.drp-card-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.drp-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  line-height: 1.4;
+}
+.drp-badge.drp-ok {
+  color: var(--success);
+}
+.drp-badge.drp-stale {
+  color: var(--warning);
+}
+.drp-badge.drp-failed {
+  color: var(--danger);
+}
+.drp-badge.drp-unknown {
+  color: var(--muted);
+}
+.drp-card-age {
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.drp-metrics {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0.6rem 0 0;
+}
+.drp-metrics dt {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.drp-metrics dd {
+  margin: 0;
+  font-size: 0.82rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.drp-mono {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.78rem;
+}
+.drp-card-detail {
+  margin-top: 0.55rem;
+  font-size: 0.78rem;
+}
+.drp-wal {
+  font-size: 0.82rem;
+  margin: 0.1rem 0 0.3rem;
+}
+
 /* ---- Documents tab: shared toolbar + List/Thumbnails views ---- */
 .docs-subtabs {
   margin-left: auto;

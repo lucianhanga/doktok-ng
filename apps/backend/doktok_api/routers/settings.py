@@ -304,7 +304,16 @@ def _leg_status(raw: dict[str, object] | None, rpo_seconds: int, now: datetime) 
         state = "stale"
     else:
         state = "ok"
-    return BackupLegStatus(state=state, last_run_at=ts, age_seconds=age, detail=detail)
+    fc = raw.get("file_count")
+    return BackupLegStatus(
+        state=state,
+        last_run_at=ts,
+        age_seconds=age,
+        detail=detail,
+        size=str(raw.get("size", "")),
+        file_count=int(fc) if isinstance(fc, int | float) else None,
+        backup_id=str(raw.get("backup_id", "")),
+    )
 
 
 @router.get("/drp", response_model=DrpStatusResponse)

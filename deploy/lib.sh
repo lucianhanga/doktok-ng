@@ -36,14 +36,43 @@ require() {
     }
 }
 
+# pg_backup_extra - read `pgbackrest info --output=json` from stdin and emit a JSON metric fragment
+# (size + backup_id) for write_status's 4th arg (M12 #380). Parsed with python3 (always on the host;
+# the db container has none, so this runs host-side). Prints nothing if parsing fails.
+pg_backup_extra() {
+    command -v python3 >/dev/null 2>&1 || return 0
+    python3 - <<'PY' || true
+import sys, json
+def human(n):
+    n = float(n)
+    for u in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or u == "TiB":
+            return f"{n:.1f} {u}"
+        n /= 1024
+try:
+    data = json.load(sys.stdin)
+    backups = data[0]["backup"]
+    if not backups:
+        sys.exit(0)
+    b = backups[-1]
+    size = human(b["info"]["size"])
+    label = b["label"]
+    print(f'"size":"{size}","backup_id":"{label}"', end="")
+except Exception:
+    pass
+PY
+}
+
 # write_status <leg> <true|false> [detail] - atomic per-leg freshness sentinel.
 write_status() {
-    local leg="$1" ok="$2" detail="${3:-}"
+    # write_status <leg> <true|false> [detail] [extra-json]
+    # extra-json is an optional JSON fragment of metric fields, e.g. '"size":"662 MiB","file_count":287'
+    local leg="$1" ok="$2" detail="${3:-}" extra="${4:-}"
     mkdir -p "$STATUS_DIR"
     local tmp
     tmp="$(mktemp "${STATUS_DIR}/.${leg}.XXXXXX")"
-    printf '{"leg":"%s","ok":%s,"last_run_at":"%s","detail":"%s"}\n' \
-        "$leg" "$ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$detail" >"$tmp"
+    printf '{"leg":"%s","ok":%s,"last_run_at":"%s","detail":"%s"%s}\n' \
+        "$leg" "$ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$detail" "${extra:+,$extra}" >"$tmp"
     mv -f "$tmp" "${STATUS_DIR}/${leg}.json"
     # Non-secret status; must be readable by the backend (a different uid in compose). (M12 #377)
     chmod 0644 "${STATUS_DIR}/${leg}.json"

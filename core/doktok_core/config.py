@@ -132,6 +132,11 @@ class Settings(BaseSettings):
     # from backup_dir, which the backend mounts read-only (it only reads the DRP status sentinels
     # there). Empty => default to "<backup_dir>/exports". Staged archives are 0600 and TTL-swept.
     backup_export_dir: str = ""
+    # Portable RESTORE upload cap (M12 portable restore Phase 2). The restore preview streams a
+    # multi-GB encrypted archive to disk, so it is EXEMPT from the global max_request_mb body-size
+    # limit and is instead capped here (reject larger uploads with 413). Generous by default; the
+    # archive is the size of db.dump + the whole files_root.
+    max_restore_gb: int = 50
     # Deployment topology for backups/DRP (M12 #377): "host" (dev/test run directly on the host) or
     # "compose" (staging/prod containerized). The orchestrator runs backups accordingly; the DRP
     # panel surfaces this so it is honest about what's wired per environment.

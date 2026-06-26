@@ -62,6 +62,9 @@ class ExportPaths:
     database_url: str
     secrets_key: str
     app_version: str
+    # The DB schema/migration generation this deployment ships (latest migration number). Stamped
+    # into the manifest so a later restore can refuse a NEWER archive. 0 = unknown (omit the gate).
+    app_schema_version: int = 0
 
 
 def _read_status(path: Path) -> BackupExportInfo | None:
@@ -280,6 +283,7 @@ def _assemble_archive(
         created_at=created,
         app_version=paths.app_version,
         pg_version=_pg_version(paths.database_url),
+        app_schema_version=paths.app_schema_version,
         members=members,
         manifest_hmac=_manifest_hmac(paths.secrets_key, members),
         secrets_key_fingerprint=secrets_key_fingerprint(paths.secrets_key),

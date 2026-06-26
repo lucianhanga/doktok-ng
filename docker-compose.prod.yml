@@ -165,7 +165,13 @@ services:
       - doktok-files:/data/files
       # Read-only view of the host backup dir so the DRP panel can read status/ sentinels (M12 #377).
       - ${DOKTOK_BACKUP_DIR:-./backups}:/var/lib/doktok/backups:ro
-      # Writable staging for portable backup exports (M12 Phase 1); kept off the read-only backup dir.
+      # WRITABLE view of just status/requests/ so the backend can drop the on-demand drill + portable
+      # restore request files (M12 #377 / portable restore Phase 2). The rest of the backup dir stays
+      # read-only above; this narrow rw bind only carries argument-free request files the root
+      # path-units consume (the backend never execs anything destructive itself).
+      - ${DOKTOK_BACKUP_DIR:-./backups}/status/requests:/var/lib/doktok/backups/status/requests
+      # Writable staging for portable backup exports (M12 Phase 1) + restore uploads (Phase 2);
+      # kept off the read-only backup dir.
       - doktok-exports:/var/lib/doktok/exports
     healthcheck:
       test:

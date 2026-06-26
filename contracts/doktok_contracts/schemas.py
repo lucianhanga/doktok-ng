@@ -79,6 +79,12 @@ class AuditEventType(StrEnum):
     BACKUP_COMPLETED = "backup.completed"
     BACKUP_FAILED = "backup.failed"
     DRILL_COMPLETED = "drill.completed"
+    # Portable restore lifecycle (M12 portable restore Phase 2). Restoring the whole system from an
+    # uploaded archive is the most destructive operation in the app, so every step is audited.
+    RESTORE_PREVIEWED = "restore.previewed"
+    RESTORE_REQUESTED = "restore.requested"
+    RESTORE_COMPLETED = "restore.completed"
+    RESTORE_FAILED = "restore.failed"
 
 
 class EntityType(StrEnum):
@@ -1047,6 +1053,11 @@ class BackupManifest(BaseModel):
     created_at: datetime
     app_version: str
     pg_version: str
+    # The DB schema/migration generation the archive was produced at (the latest applied migration
+    # number, M12 portable restore Phase 2). A restore refuses an archive NEWER than the running
+    # code (restoring a newer dump into older code is unsafe); older-or-equal is migrated forward.
+    # 0 means "unknown" (a Phase-1 archive predating this field) -> treated as compatible.
+    app_schema_version: int = 0
     members: list[BackupManifestMember] = Field(default_factory=list)
     # HMAC-SHA256 (hex) over the sorted "name:sha256" member lines; integrity check on restore.
     manifest_hmac: str = ""
@@ -1070,6 +1081,59 @@ class BackupExportInfo(BaseModel):
     pg_version: str = ""
     member_count: int = 0
     error: str = ""  # short, non-secret failure summary when status='failed'
+
+
+class RestorePreview(BaseModel):
+    """Result of POST /backup/restore/preview (M12 portable restore Phase 2): the NON-destructive
+    validation verdict for an uploaded encrypted archive.
+
+    The preview streams the upload to disk, decrypts it (passphrase on stdin only), safely extracts
+    it to a staging dir, recomputes every member checksum + the manifest HMAC, and checks version
+    compatibility. ``ok`` is True only when the archive is intact AND compatible; only then may the
+    apply step proceed against this ``staged_id`` (retained briefly under a TTL). NO secret, no
+    passphrase, no DSN, and no host path is ever returned."""
+
+    staged_id: str  # opaque id of the validated staging dir; passed to /apply
+    ok: bool  # True only when there are no hard errors (intact + compatible)
+    compatible: bool  # version-compatibility verdict (pg major + app schema generation)
+    app_version: str = ""  # the app version stamped in the archive's manifest
+    pg_version: str = ""  # the Postgres server version stamped in the archive's manifest
+    created_at: datetime | None = None  # when the archive was produced
+    member_count: int = 0  # number of archive members (db.dump + each files/ entry)
+    total_bytes: int = 0  # total uncompressed size across members
+    secrets_key_match: bool = False  # archive's secrets_key_fingerprint == this box's
+    warnings: list[str] = Field(default_factory=list)  # non-fatal (e.g. secrets-key mismatch)
+    errors: list[str] = Field(default_factory=list)  # hard failures; apply is refused when present
+
+
+class RestoreApplyRequest(BaseModel):
+    """Body of POST /backup/restore/{staged_id}/apply. ``confirm`` MUST be true - a destructive,
+    whole-system restore is never triggered implicitly (422 otherwise; confirm-to-destroy)."""
+
+    confirm: bool = False
+
+
+class RestoreResult(BaseModel):
+    """Result of POST /backup/restore/{staged_id}/apply. The apply runs ASYNCHRONOUSLY out-of-band
+    (a root host helper does the destruction; the backend only drops a request file), so this just
+    acknowledges acceptance. The client then polls GET /backup/restore/status."""
+
+    accepted: bool  # True once the restore request has been queued for the host helper
+    restore_id: str = ""  # opaque id correlating the request, status, and history events
+    detail: str = ""  # short, non-secret human message
+
+
+class RestoreStatus(BaseModel):
+    """Result of GET /backup/restore/status (M12 portable restore Phase 2): the current restore
+    state, sourced from a sentinel OUTSIDE Postgres (the DB is rewritten mid-restore, so a DB-backed
+    status would be unreadable/rolled-back). Never carries a secret/path/DSN."""
+
+    state: str = "idle"  # idle | validating | applying | done | failed
+    step: str = ""  # short label of the current/last phase (e.g. "snapshot", "db", "files")
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    detail: str = ""  # short, non-secret human message (e.g. a failure summary)
+    restore_id: str = ""  # opaque id correlating the request and history events
 
 
 class ModelOption(BaseModel):

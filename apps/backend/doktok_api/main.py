@@ -46,6 +46,24 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _WORKER_STALE_SECONDS = 120
 
 
+def _maintenance_active(settings: Settings) -> bool:
+    """True iff the host-written maintenance sentinel exists (M12 portable restore Phase 2).
+
+    The destructive restore helper (deploy/restore-import.sh) drops
+    ``<backup_dir>/status/maintenance.flag`` before it touches the DB/files and removes it on
+    success (a failed restore leaves it ON until a human clears it - fail safe). The flag is a FILE,
+    not the DB ``maintenance_mode`` row, because the DB is being rewritten mid-restore and a
+    DB-backed flag would be unreadable / rolled back. Best-effort: any error -> not in maintenance,
+    so a stat failure can never wedge the whole API closed."""
+    from pathlib import Path
+
+    try:
+        flag = Path(f"{settings.backup_dir.rstrip('/')}/status/maintenance.flag")
+        return flag.exists()
+    except OSError:
+        return False
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _record_service_started(app, actor="backend")
@@ -133,14 +151,34 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.state.metrics = Metrics()  # APP-13
     _max_body_bytes = settings.max_request_mb * 1024 * 1024
     _exempt_paths = frozenset({"/health", "/ready", "/metrics"})
+    # The portable-restore preview streams a multi-GB encrypted archive to disk, so it is EXEMPT
+    # from the global JSON body-size cap and is instead bounded by DOKTOK_MAX_RESTORE_GB inside the
+    # route (a 413 there). This is the ONLY upload endpoint and is Tenant-bearer gated + audited.
+    _restore_preview_path = "/api/v1/settings/backup/restore/preview"
 
     @app.middleware("http")
     async def _limits(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        # Reject oversized bodies up front (APP-10).
+        # Maintenance mode (M12 portable restore Phase 2): while a destructive restore is applying,
+        # a host-written sentinel file (OUTSIDE Postgres, since the DB is being rewritten) parks all
+        # mutating requests with a 503 so nothing writes into a half-restored system. Read-only GETs
+        # and the restore status poll itself stay available.
+        if request.method not in ("GET", "HEAD", "OPTIONS") and _maintenance_active(settings):
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "service is in maintenance (a restore is in progress)"},
+                headers={"Retry-After": "30"},
+            )
+        # Reject oversized bodies up front (APP-10) - except the restore preview upload, which is
+        # capped by DOKTOK_MAX_RESTORE_GB inside the route instead.
         cl = request.headers.get("Content-Length")
-        if cl is not None and cl.isdigit() and int(cl) > _max_body_bytes:
+        if (
+            request.url.path != _restore_preview_path
+            and cl is not None
+            and cl.isdigit()
+            and int(cl) > _max_body_bytes
+        ):
             return JSONResponse(status_code=413, content={"detail": "request body too large"})
         # Per-token rate limit (APP-9); health/ready/metrics are exempt so probes aren't throttled.
         limiter = request.app.state.rate_limiter

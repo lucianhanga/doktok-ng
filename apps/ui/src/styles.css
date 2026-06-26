@@ -1043,6 +1043,77 @@ tr.row-selected {
   font-size: 0.85rem;
 }
 
+/* Per-document processing telemetry (detail card aside). The summary strip reuses .drp-metrics;
+   the step rows extend .proc-list with an outcome (glyph + word + colour) and compact metrics. */
+.proc-summary {
+  margin: 0 0 0.7rem;
+}
+.proc-steps {
+  margin-top: 0.2rem;
+}
+.proc-steps li {
+  display: block; /* allow <details> to expand below the row */
+}
+.proc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.proc-row .proc-label {
+  flex: 1;
+}
+.proc-outcome {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.proc-metric {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.proc-ok {
+  color: var(--success);
+}
+.proc-fail {
+  color: var(--danger);
+}
+.proc-run {
+  color: var(--warning);
+}
+.proc-pending,
+.proc-neutral {
+  color: var(--muted);
+}
+/* Deep/rare fields tucked behind a native <details>; the summary row keeps its flex layout. */
+.proc-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.proc-details > summary::-webkit-details-marker {
+  display: none;
+}
+.proc-details[open] > summary {
+  margin-bottom: 0.3rem;
+}
+.proc-deep {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  margin: 0 0 0.2rem 0.6rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border);
+}
+.proc-deep dt {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.proc-deep dd {
+  margin: 0;
+  font-size: 0.74rem;
+  word-break: break-word;
+}
+
 /* Settings tab: AI model + OCR config. Constrained width + themed controls (the app otherwise
    relies on native form controls, which look unfinished on the dark surface). */
 .settings-section {

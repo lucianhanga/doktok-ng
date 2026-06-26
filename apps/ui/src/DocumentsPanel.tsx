@@ -7,6 +7,7 @@ import {
   fetchDocuments,
   fetchFeatureCatalog,
   fetchFeatures,
+  processingRollup,
   reingestDocument,
   retryDocumentFeature,
   suggestTokens,
@@ -15,6 +16,7 @@ import {
   type DocumentSort,
   type DokDocument,
   type FeatureCatalogEntry,
+  type ProcessingSummary,
   type SortDir,
   type TokenMatch,
 } from "./api";
@@ -26,6 +28,8 @@ type DocsState =
       kind: "ok";
       docs: DokDocument[];
       features: Map<string, DocumentFeature[]>;
+      // Per-document processing rollups for the chip tooltip (sidecar map; may be absent per doc).
+      processing: Record<string, ProcessingSummary>;
       total: number;
       hasMore: boolean;
     }
@@ -94,17 +98,21 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   thumbnail: "Thumbnail — first-page preview image for the document card and grid/list views",
 };
 
-function featureTooltip(f: DocumentFeature): string {
+/** Per-feature tooltip body. When a document-level processing rollup is known it is prepended as a
+ * concise first line so the whole-document outcome is visible without opening the card. */
+function featureTooltip(f: DocumentFeature, rollup?: string | null): string {
   const desc = FEATURE_DESCRIPTIONS[f.feature] ?? f.feature;
-  if (f.last_error) return `${desc}\nfailed: ${f.last_error}`;
-  return `${desc}\nstatus: ${f.status}`;
+  const line = f.last_error ? `${desc}\nfailed: ${f.last_error}` : `${desc}\nstatus: ${f.status}`;
+  return rollup ? `${rollup}\n\n${line}` : line;
 }
 
 function FeatureChips({
   features,
+  rollup,
   onReprocess,
 }: {
   features: DocumentFeature[];
+  rollup?: string | null;
   onReprocess?: (feature: string) => void;
 }) {
   if (features.length === 0) return <span className="muted">-</span>;
@@ -116,7 +124,7 @@ function FeatureChips({
         const glyph = f.status === "done" ? "✓" : f.status === "failed" ? "✗" : "…";
         if (!onReprocess) {
           return (
-            <span key={f.feature} className={`chip feat-${f.status}`} title={featureTooltip(f)}>
+            <span key={f.feature} className={`chip feat-${f.status}`} title={featureTooltip(f, rollup)}>
               {label} {glyph}
             </span>
           );
@@ -126,7 +134,7 @@ function FeatureChips({
             key={f.feature}
             type="button"
             className={`chip chip-button feat-${f.status}`}
-            title={`${featureTooltip(f)}\n(click to reprocess)`}
+            title={`${featureTooltip(f, rollup)}\n(click to reprocess)`}
             onClick={(e) => {
               e.stopPropagation(); // don't open the document; just reprocess this feature
               onReprocess(f.feature);
@@ -153,6 +161,7 @@ function mimeGlyph(mime: string | null): string {
 function DocumentCard({
   doc,
   features,
+  rollup,
   selected,
   onToggle,
   onOpen,
@@ -160,6 +169,7 @@ function DocumentCard({
 }: {
   doc: DokDocument;
   features: DocumentFeature[];
+  rollup?: string | null;
   selected: boolean;
   onToggle: (id: string, shiftKey: boolean) => void;
   onOpen?: (id: string) => void;
@@ -209,6 +219,7 @@ function DocumentCard({
           <div className="doc-card-badges">
             <FeatureChips
               features={features}
+              rollup={rollup}
               onReprocess={
                 onReprocessFeature
                   ? (feat) => onReprocessFeature(doc.id, feat, doc.original_filename)
@@ -476,12 +487,14 @@ export function DocumentsPanel({
       let total = 0;
       let cursor: string | undefined;
       let next: string | null = null;
+      const processing: Record<string, ProcessingSummary> = {};
       do {
         const page = await fetchDocuments({ ...filters, cursor, limit: PAGE_SIZE }, ctrl.signal);
         items = items.concat(page.items);
         total = page.total;
         next = page.next_cursor;
         cursor = next ?? undefined;
+        Object.assign(processing, page.processing ?? {});
       } while (next && items.length < windowSize);
       // Scope badges to the loaded documents, not the whole tenant (whose ledger is row-capped and
       // would silently drop the newest documents' badges once a tenant has many documents).
@@ -495,6 +508,7 @@ export function DocumentsPanel({
         total,
         hasMore: next !== null,
         features: groupByDocument(features),
+        processing,
       });
     })().catch((err: unknown) => {
       if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
@@ -925,6 +939,7 @@ export function DocumentsPanel({
                 <td className="cell-processing">
                   <FeatureChips
                     features={state.features.get(doc.id) ?? []}
+                    rollup={processingRollup(state.processing[doc.id])}
                     onReprocess={(feat) =>
                       reprocessOne(doc.id, feat, doc.original_filename)
                     }
@@ -955,6 +970,7 @@ export function DocumentsPanel({
                 key={doc.id}
                 doc={doc}
                 features={state.features.get(doc.id) ?? []}
+                rollup={processingRollup(state.processing[doc.id])}
                 selected={selected.has(doc.id)}
                 onToggle={toggle}
                 onOpen={onOpenDocument}

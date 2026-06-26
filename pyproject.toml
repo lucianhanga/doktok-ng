@@ -1,6 +1,6 @@
 [project]
 name = "doktok-ng"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first, AI-enabled document-intelligence system"
 requires-python = ">=3.12"
 readme = "README.md"

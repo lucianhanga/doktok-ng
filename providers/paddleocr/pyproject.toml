@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doktok-provider-paddleocr"
-version = "0.1.0"
+version = "0.2.0"
 description = "PaddleOCR (PP-OCRv5/v6) adapter for the OcrExtractor port"
 requires-python = ">=3.12"
 dependencies = ["doktok-contracts"]

@@ -43,9 +43,14 @@ archived WAL time (the real recovery point) and records `wal_lag_s`, preserving 
 `size`/`backup_id` metrics. `archive_timeout=60` on the db (set in `docker-compose.prod.yml`) forces
 a WAL switch each minute so an idle DB still keeps the recovery point fresh.
 
-Shared `[Service]` hardening (every backup service): `Nice=10`, `IOSchedulingClass=idle`,
-`CPUQuota=100%`, `MemoryMax=512M`, `EnvironmentFile=/etc/doktok/backup.env`, `Type=oneshot`,
-`User=doktok`, `OnFailure=doktok-backup-alert@%n.service`.
+Shared `[Service]` shape of the shipped backup units (`doktok-backup-diff`/`doktok-backup-full`):
+`Type=oneshot`, `WorkingDirectory=/opt/doktok`, `EnvironmentFile=/etc/doktok/backup.env`, `Nice=10`,
+`IOSchedulingClass=idle`, `CPUQuota=100%`, `MemoryMax=512M`, and `After=/Requires=docker.service`.
+They run as **root** (no `User=`) because compose mode needs Docker access and the status sentinels
+are written `0644` by root. The per-minute `doktok-pg-wal-freshness` service is lighter
+(`Nice=10`, `MemoryMax=128M`, no `CPUQuota`/IO cap - it only runs a single `psql` query). The
+example units further below add a `User=doktok` / `OnFailure=doktok-backup-alert@%n.service` pattern
+for the host-mode / optional timers; the shipped compose-mode units omit both.
 
 ## Cadence
 | Timer | Schedule | Runs |

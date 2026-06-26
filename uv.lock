@@ -546,7 +546,7 @@ wheels = [
 
 [[package]]
 name = "doktok-api"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "apps/backend" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -573,12 +573,12 @@ requires-dist = [
 
 [[package]]
 name = "doktok-contracts"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "contracts" }
 
 [[package]]
 name = "doktok-core"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "core" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -597,7 +597,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-mcp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "apps/mcp" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -620,7 +620,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-modalities-files"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "modalities/files" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -639,7 +639,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-ng"
-version = "0.1.0"
+version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "doktok-api" },
@@ -698,7 +698,7 @@ dev = [
 
 [[package]]
 name = "doktok-provider-ollama"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "providers/ollama" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -713,7 +713,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-provider-openai"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "providers/openai" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -728,7 +728,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-provider-paddleocr"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "providers/paddleocr" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -754,7 +754,7 @@ provides-extras = ["engine"]
 
 [[package]]
 name = "doktok-provider-projection"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "providers/projection" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -780,7 +780,7 @@ provides-extras = ["engine"]
 
 [[package]]
 name = "doktok-provider-rapidocr"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "providers/rapidocr" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -810,7 +810,7 @@ provides-extras = ["engine", "openvino"]
 
 [[package]]
 name = "doktok-retrieval-hybrid"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "retrieval/hybrid" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -827,7 +827,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-storage-filesystem"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "storage/filesystem" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -842,7 +842,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-storage-postgres"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "storage/postgres" }
 dependencies = [
     { name = "cryptography" },
@@ -861,7 +861,7 @@ requires-dist = [
 
 [[package]]
 name = "doktok-tools-builtin"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "tools/builtin" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -872,7 +872,7 @@ requires-dist = [{ name = "doktok-contracts", editable = "contracts" }]
 
 [[package]]
 name = "doktok-tools-mcp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "tools/mcp" }
 dependencies = [
     { name = "doktok-contracts" },
@@ -883,7 +883,7 @@ requires-dist = [{ name = "doktok-contracts", editable = "contracts" }]
 
 [[package]]
 name = "doktok-worker"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "apps/worker" }
 dependencies = [
     { name = "doktok-contracts" },

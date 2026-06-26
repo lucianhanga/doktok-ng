@@ -31,15 +31,26 @@ COMPOSE="docker compose -f docker-compose.prod.yml --env-file .env.production"
 
 warn "deploying $(git rev-parse --short HEAD 2>/dev/null || echo 'working tree') -> ${HOST}:${DIR}"
 
-# Pre-flight: the box's secrets file is a one-time manual bootstrap (it is gitignored and rsync skips
-# it, so this script can never create it). Fail fast with a clear pointer if it is missing, rather
-# than letting `docker compose --env-file .env.production` blow up cryptically later.
-if ! ssh -i "$KEY" "$HOST" "test -f '${DIR}/.env.production'"; then
+# Pre-flight: probe the box once and distinguish three outcomes from a single SSH call - reachable +
+# file present (proceed), reachable + file absent (the one-time secrets bootstrap is missing), or
+# unreachable (network/host/key). A bare `ssh ... test -f` cannot tell "connection failed" from
+# "file not found" (both exit non-zero), which misreports an offline box as a missing .env.production.
+probe="$(ssh -i "$KEY" -o ConnectTimeout=10 -o BatchMode=yes "$HOST" \
+    "test -f '${DIR}/.env.production' && echo __ENV_PRESENT__ || echo __ENV_ABSENT__" 2>/dev/null || true)"
+case "$probe" in
+*__ENV_PRESENT__*) ;; # reachable and bootstrapped - go
+*__ENV_ABSENT__*)
     err "missing ${HOST}:${DIR}/.env.production"
     err "create it once on the box (cp .env.production.example .env.production; fill secrets; chmod 600)"
     err "see docs/operations/deploy-fresh-box-runbook.md section 3"
     exit 1
-fi
+    ;;
+*)
+    err "cannot reach ${HOST} over SSH (no response)."
+    err "check the box is powered on and on the network, the host/key are right, then retry."
+    exit 1
+    ;;
+esac
 
 # 1. Sync source. Ship code only; never clobber the box's secrets (.env.production) or its document
 #    store (storage/files). storage/ itself MUST ship (storage/{filesystem,postgres} are packages).

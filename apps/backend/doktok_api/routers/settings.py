@@ -157,7 +157,7 @@ def put_ai_settings(
 def _probe_ollama(url: str) -> tuple[bool, str, list[str]]:
     """Ping an Ollama server's /api/tags (M13 #369). Returns (ok, short detail, installed model
     names); never raises. Connection/timeout failures get an actionable hint instead of a raw errno
-    so the UI can tell "server unreachable" from "model missing". /api/tags does NOT load a model."""
+    so the UI tells "unreachable" from "model missing". /api/tags does NOT load a model."""
     import httpx
 
     base = url.rstrip("/")
@@ -177,7 +177,7 @@ def _probe_ollama(url: str) -> tuple[bool, str, list[str]]:
 
 def _model_installed(model: str, names: list[str]) -> bool:
     """Whether ``model`` is among the installed Ollama model names. Exact match wins; a name with no
-    explicit ``:tag`` also matches any installed tag of that repo (e.g. 'qwen3' -> 'qwen3:latest')."""
+    explicit ``:tag`` matches any installed tag of that repo (e.g. 'qwen3' -> 'qwen3:latest')."""
     wanted = model.strip()
     if not wanted:
         return False

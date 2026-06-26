@@ -858,7 +858,7 @@ class OllamaTestRequest(BaseModel):
 
 class OllamaTestResult(BaseModel):
     """Result of an Ollama reachability probe: whether it answered + a short human detail. When a
-    ``model`` was supplied, ``model_present`` reports whether it is installed (None = not checked)."""
+    ``model`` was supplied, ``model_present`` says whether it is installed (None = not checked)."""
 
     ok: bool
     detail: str

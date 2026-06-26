@@ -25,6 +25,8 @@ $DOKTOK_BACKUP_DIR/            # default ./backups (gitignored); on the box a re
   pg/                         # pgBackRest repo (base + WAL, aes-256-cbc)
   pgbackrest.conf             # generated from env (chmod 600)
   status/                     # per-leg freshness sentinels (JSON, chmod 0644) - see below
+    history.jsonl             # append-only, tamper-evident backup-event history (chmod 0644)
+    requests/drill.request    # on-demand drill request file (dropped by the backend, consumed by a root path-unit)
 ```
 
 ## Freshness sentinels (the DRP source of truth)
@@ -58,6 +60,51 @@ Schema (common fields plus optional per-leg metrics captured during the backup, 
   in `deploy/lib.sh`): `size` (database size), `backup_id` (backup label), plus `wal_lag_s` (seconds
   since the last archived WAL) added by `pg-wal-freshness.sh`.
 
+## Backup-event history (append-only, tamper-evident)
+
+The sentinels answer "**is the latest backup of each leg fresh?**" (a latest-state snapshot, overwritten
+each run). They cannot answer "**what happened over time?**" - a failed run that is later retried
+overwrites the failure. That timeline lives in a separate, append-only history file:
+
+```
+$DOKTOK_BACKUP_DIR/status/history.jsonl       # one JSON object per line, newest at the bottom
+$DOKTOK_BACKUP_DIR/status/history.jsonl.1     # previous segment after rotation (~5000 lines)
+```
+
+`log_event` in `deploy/lib.sh` appends one line per event (the compose-mode wrapper is
+`deploy/log-event.sh`, used when a step runs inside the `backup-runner` container). Like the
+sentinels, the history lives **outside Postgres** (same dir, `chmod 0644`) so a DB restore cannot roll
+the timeline back, and it is shipped offsite with the rest of the repo.
+
+**Who emits events:** `backup-files.sh` and `backup-pg.sh` (per leg: `start`, then `success` with
+metrics, or `failure`; plus a `prune` event after retention), `backup.sh` (the compose pre-deploy path
+records a `pg success`), and `restore-drill.sh` (`drill_pass` / `drill_fail`).
+
+Line schema (fields are **whitelisted** - only `detail` is free text, and it is JSON-escaped and
+truncated to ~200 chars host-side; no secrets, command lines, raw stderr, filenames, or tenant /
+document content ever enter it):
+
+```json
+{"schema":1,"seq":42,"prev_sha256":"<hex>","ts":"2026-06-25T20:00:00Z","leg":"files","event":"success","ok":true,"size":"662 MiB","item_count":287,"backup_id":"a1b2c3d4","duration_ms":48213,"detail":"restic snapshot"}
+```
+
+- `leg`: `files` | `pg` | `offsite` | `drill` | `prune`
+- `event`: `start` | `success` | `failure` | `prune` | `drill_pass` | `drill_fail`
+- `seq` + `prev_sha256` form a **tamper-evident hash chain**: each line carries a monotonically
+  increasing sequence number and the SHA-256 of the **previous** line. A reader that recomputes the
+  chain can detect any edited, reordered, deleted, or truncated line - that is what the API's
+  `integrity_ok=false` (below) signals. `seq` continues across rotation so the counter never resets.
+- **Rotation:** when the file passes ~5000 lines (`DOKTOK_HISTORY_MAX_LINES`) it is rolled to
+  `history.jsonl.1` and a fresh file is started whose first line chains off the last archived line, so
+  the chain is unbroken across the rotation boundary.
+- **Concurrency:** appends are serialized with `flock` (when available) so two legs running at once
+  cannot interleave and corrupt the chain; otherwise a single `O_APPEND` write is the best-effort
+  fallback.
+
+The sentinels and the history are complementary: **sentinels = "is the latest backup fresh"**
+(source of truth for the DRP state badges and `/metrics`); **history = "what happened over time"**
+(source of truth for the timeline, see the API and the activity-log mirror below).
+
 ## Scripts (`deploy/`)
 
 | Script | Purpose |
@@ -68,6 +115,8 @@ Schema (common fields plus optional per-leg metrics captured during the backup, 
 | `restore-pg.sh ["<time>"]` | pgBackRest restore / PITR into `$DOKTOK_PGDATA` |
 | `azure-sync.sh [--dry-run]` | push the local repo to Azure Blob (offsite leg) |
 | `test-pitr.sh` | self-contained proof that folder-based WAL+base+PITR works (throwaway containers) |
+| `restore-drill.sh` | live restore drill into throwaway dirs/containers; asserts row counts + records RPO/RTO (drill sentinel + history) |
+| `log-event.sh` | compose-mode wrapper to append one history event (`log_event`) from inside `backup-runner` |
 | `backup.sh` / `restore.sh` | the dependency-light pre-deploy snapshot (pg_dump + tar), called by deploy.yml |
 
 `backup.sh` (M11/DEVOPS-6) is the simple, Docker-only **pre-deploy snapshot**; the restic/pgBackRest
@@ -129,7 +178,8 @@ Wrap with the quiesce hook for a still snapshot: `doktok-worker quiesce` -> back
   `/metrics` gauges and the Settings -> DRP panel; `.github/workflows/backup-watchdog.yml` is an
   independent off-box watchdog.
 - **Restore drills:** `deploy/restore-drill.sh` restores the latest files snapshot + runs the
-  Postgres PITR proof into throwaway locations and records the result (monthly timer).
+  Postgres PITR proof into throwaway locations, asserts row counts, and records measured RPO/RTO.
+  Scheduled weekly and triggerable on demand - see [Recovery drills](#recovery-drills) below.
 - **Azure offsite:** provision once with `deploy/azure-provision.sh` (account + container + versioning
   + time-based immutability); `azure-sync.sh` pushes the local repo. Keep recent backups Hot/Cool.
 
@@ -152,6 +202,92 @@ one status **card** per leg - **Files (restic)**, **Postgres (pgBackRest)**, **O
 
 A **WAL shipping lag** note under the grid surfaces `wal_lag_seconds` (from the pg sentinel's
 `wal_lag_s`), and a configuration block shows the repo location, deploy mode, and Azure container.
+
+### Backup-history window + API
+
+`GET /api/v1/settings/drp/history?limit=&leg=` (`apps/backend/doktok_api/routers/settings.py`,
+returning `DrpHistoryResponse` in `contracts/doktok_contracts/schemas.py`) is a **read-only window**
+over `history.jsonl`. The reader is a bounded tail read in the Postgres repo adapter (behind the
+`AppSettingsRepository` port): newest-first, capped by `limit` (default 100, max 500), optionally
+filtered by `leg`, skipping malformed lines and **never returning 500** even if the file is missing or
+unreadable.
+
+Response fields:
+
+- `events`: the projected `BackupEvent[]` (the wire model exposes `ts`/`leg`/`event`/`ok`/`size`/
+  `item_count`/`backup_id`/`duration_ms`/`detail`/`seq`; the chain fields `prev_sha256`/`schema` are
+  **deliberately not exposed** - only `seq` is, so a consumer can see ordering).
+- `source_available`: false when the history file does not exist yet (a never-backed-up box).
+- `total_returned`: number of events in this window.
+- `truncated`: true when more events exist than the read cap surfaced.
+- `integrity_ok`: false when the `prev_sha256` hash chain is broken across the read window - i.e. the
+  authoritative history was edited, reordered, or truncated. **This is the tamper signal.**
+
+The Settings -> **DRP** tab renders this as a **backup-history table** below the status cards
+(`apps/ui/src/SettingsPanel.tsx`, `BackupHistory`): a **leg filter**, a neutral "No backup history
+yet" empty state, a **"truncated" footer** when the window is capped, and - when `integrity_ok` is
+false - a prominent **red integrity-failure banner** ("Backup history integrity check failed - the log
+may be tampered or corrupt"). Treat that banner as a real incident, not a display glitch: the
+authoritative log no longer verifies.
+
+## Recovery drills
+
+An untested backup is not a backup. `deploy/restore-drill.sh` proves the backups actually restore,
+into **throwaway** containers/dirs only (it touches no production data), and records the outcome in
+**both** the `drill` sentinel (latest-state, drives the DRP "Last restore drill" card) and the
+append-only history (`drill_pass` / `drill_fail`).
+
+What a drill now proves:
+
+1. **Files restore is non-empty:** restores the latest restic snapshot into a temp dir and asserts the
+   restored file count is `> 0`.
+2. **Postgres PITR + row count:** runs the self-contained PITR proof (`test-pitr.sh`), which restores
+   a base backup + WAL to a target time in a throwaway container and asserts the restored core table
+   is non-empty (`> 0` rows) - i.e. the recovered database is queryable and carries data.
+3. **Measured RPO/RTO:** records **RPO** (now minus the latest archived WAL recovery point, taken from
+   the pg sentinel's `last_run_at`) and **RTO** (wall-clock of the whole drill, a proxy for
+   time-to-recover), plus an `evidence` string (e.g. `files=287 rows(document)=1 rpo=42s rto=118s`)
+   stamped into the sentinel `detail` and the history line.
+
+### Weekly timer
+
+`doktok-restore-drill.{service,timer}` runs the drill **weekly** (Sun 03:00, randomized delay,
+resource-capped) and is installed by `deploy/install-systemd.sh`. See
+[deploy/systemd/README.md](../../deploy/systemd/README.md) for the unit shapes and cadence.
+
+### Run a drill on demand
+
+The Settings -> DRP tab has a **"Run drill now"** button that calls
+`POST /api/v1/settings/drp/drill` and then polls the DRP status for the result. The flow is designed
+so the **backend never execs anything as root**:
+
+1. The backend only **drops a fixed, argument-free request file** at
+   `$DOKTOK_BACKUP_DIR/status/requests/drill.request`. It rejects with **429** if a request is already
+   pending, or if the last drill ran within the **10-minute cooldown** (`_DRILL_COOLDOWN_SECONDS`,
+   measured from the drill sentinel's `last_run_at`).
+2. A **root** systemd path-unit (`doktok-restore-drill-ondemand.path`) watches that file; when it
+   appears, the matching service deletes the request file first (so a failed drill can't loop) and
+   runs the one drill under `flock` (single-flight, so it can never overlap the weekly timer) with its
+   own systemd `StartLimit` cooldown backing up the backend's rate-limit.
+
+The same request file is also dropped by no other path, so the backend's two 429 rate-limits plus the
+root-side `flock`/`StartLimit` give at most one on-demand drill per ~10 minutes.
+
+## Activity-log mirror (non-authoritative)
+
+For convenience, terminal backup/drill events are also **mirrored** into the in-DB activity log (the
+Settings -> Activity tab). The mirror is explicitly **non-authoritative**, **idempotent**, and
+**forward-only**: only the events surfaced by a `/drp/history` read are mirrored (the whole file is
+never replayed), each row gets a deterministic id derived from `(seq, ts, leg, event)` so re-reads
+collapse to one row, and every row is tagged `{"source":"drp","authoritative":false}`.
+
+The mapping (`_MIRROR_EVENT_TYPES`) uses three new `AuditEventType` values - `backup.completed`
+(a leg `success`), `backup.failed` (a leg `failure` or `drill_fail`), and `drill.completed`
+(`drill_pass`); transient `start`/`prune` events are skipped as noise.
+
+**The history file remains the source of truth.** Because the mirror lives inside Postgres, a DB
+restore rolls the mirror back, but **not** the `history.jsonl` timeline. If the Activity tab and the
+DRP history table ever disagree, trust the DRP history.
 
 ## Gotchas
 

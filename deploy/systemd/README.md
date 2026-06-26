@@ -33,8 +33,11 @@ the `doktok-restore-drill-ondemand.path` (on-demand drill trigger). All run from
 call the mode-aware `deploy/backup.sh` (files via the `backup-runner` container + pg via
 `docker compose exec db pgbackrest`); in **host** mode the same script runs the host backup tools.
 They run as **root** because compose mode needs Docker access and the status sentinels are
-root-owned. The azure-sync / check-backup / restore-drill / ollama-autostop units are documented
-below and installed the same way (copy the example unit blocks into `/etc/systemd/system/`).
+root-owned. `doktok-restore-drill.timer` (weekly) and the on-demand `doktok-restore-drill-ondemand.path`
+are shipped units installed the same way (the path-unit is enabled `--now`; the drill `.service` units
+are triggered by the timer/path, so they are installed but not enabled directly). The azure-sync /
+check-backup / ollama-autostop units are documented below and installed the same way (copy the example
+unit blocks into `/etc/systemd/system/`).
 
 ### pg WAL-freshness (DRP)
 
@@ -102,7 +105,7 @@ Other services swap `Description`/`ExecStart`:
 - `doktok-backup-pg.service` -> `ExecStart=/opt/doktok/deploy/backup-pg.sh diff` (+ a `-full` variant `OnCalendar=Sun 03:00`)
 - `doktok-azure-sync.service` -> `ExecStart=/opt/doktok/deploy/azure-sync.sh` (timer `OnCalendar=hourly`)
 - `doktok-check-backup.service` -> `ExecStart=/opt/doktok/deploy/check-backup-freshness.sh` (timer `OnCalendar=*:0/30`)
-- `doktok-restore-drill.service` -> `ExecStart=/opt/doktok/deploy/restore-drill.sh` (timer `OnCalendar=monthly`)
+- `doktok-restore-drill.service` -> `ExecStart=/opt/doktok/deploy/restore-drill.sh` (shipped; timer `OnCalendar=Sun 03:00`)
 - `doktok-ollama-autostop.service` -> `ExecStart=/opt/doktok/deploy/ollama-autostop.sh` (timer
   `OnCalendar=*:0/2`). Needs Docker access (run as a user in the `docker` group, not the sandboxed
   `doktok` user) since it runs `docker compose start/stop ollama`.

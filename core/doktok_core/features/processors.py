@@ -8,6 +8,7 @@ version bump. They mirror the inline work done at activation, keyed off the pers
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from doktok_contracts.ports import (
 from doktok_contracts.schemas import DocumentChunk, DocumentEntity, EntityType, ExtractedRecord
 
 from doktok_core.aggregation import normalize_transaction
+from doktok_core.aggregation.windowing import stitch_windows, window_text
 from doktok_core.documents.artifacts import THUMBNAIL_REL
 from doktok_core.enrichment import (
     MAX_CATEGORIES_PER_DOCUMENT,
@@ -89,6 +91,26 @@ def _head_pages(
 # The entity types the rule-based EntitiesFeature owns: everything except the NER types.
 _NON_NER_TYPES: list[str] = [t.value for t in EntityType if t not in NER_ENTITY_TYPES]
 _NER_TYPES: list[str] = [t.value for t in NER_ENTITY_TYPES]
+
+
+logger = logging.getLogger("doktok.features")
+
+
+def _sum_usage(usages: list[LlmUsage]) -> LlmUsage | None:
+    """Total the usage of several LLM calls into one (multi-window record extraction). The
+    reconciler reads a processor's usage once per document, so a windowed feature reports the sum or
+    under-counts tokens/cost. ``estimated`` is sticky; ``eval_ms`` sums only the reported parts."""
+    if not usages:
+        return None
+    eval_ms = [u.eval_ms for u in usages if u.eval_ms is not None]
+    return LlmUsage(
+        prompt_tokens=sum(u.prompt_tokens for u in usages),
+        answer_tokens=sum(u.answer_tokens for u in usages),
+        reasoning_tokens=sum(u.reasoning_tokens for u in usages),
+        wall_ms=sum(u.wall_ms for u in usages),
+        eval_ms=sum(eval_ms) if eval_ms else None,
+        estimated=any(u.estimated for u in usages),
+    )
 
 
 def _delegate_usage(provider: object) -> LlmUsage | None:
@@ -466,26 +488,58 @@ class StructuredRecordsFeature:
         self._files = file_storage
         self._extractor = record_extractor
         self._records = record_repo
+        self._last_usage: LlmUsage | None = None
 
     def get_last_usage(self) -> LlmUsage | None:
-        return _delegate_usage(self._extractor)
+        return self._last_usage
 
     @property
     def model(self) -> str:
         return _provider_model(self._extractor)
 
     def process(self, tenant_id: str, document_id: str) -> None:
+        self._last_usage = None
         document = self._documents.get(tenant_id, document_id)
         if document is None or not document.storage_path:
             return
         content = _read_text(self._files, document.storage_path, "content.md")
         if not content.strip():
             return
-        records: list[ExtractedRecord] = []
-        for raw in self._extractor.extract(content):
-            record = normalize_transaction(raw, tenant_id=tenant_id, document_id=document_id)
-            if record is not None:
-                records.append(record)
+        # Transactions run to the last page, so extract over overlapping windows and stitch the
+        # per-window results - a head slice silently dropped everything past ~16k chars (#314).
+        windows = window_text(content)
+        per_window: list[list[ExtractedRecord]] = []
+        usages: list[LlmUsage] = []
+        raw_rows = 0
+        for window in windows:
+            rows = self._extractor.extract(window)
+            raw_rows += len(rows)
+            usage = _delegate_usage(self._extractor)
+            if usage is not None:
+                usages.append(usage)
+            per_window.append(
+                [
+                    record
+                    for raw in rows
+                    if (
+                        record := normalize_transaction(
+                            raw, tenant_id=tenant_id, document_id=document_id
+                        )
+                    )
+                    is not None
+                ]
+            )
+        records = stitch_windows(per_window)
+        self._last_usage = _sum_usage(usages)
+        logger.info(
+            "structured_records %s/%s: %d windows, %d chars, %d raw rows -> %d records",
+            tenant_id,
+            document_id,
+            len(windows),
+            len(content),
+            raw_rows,
+            len(records),
+        )
         self._records.replace_for_document(tenant_id, document_id, records)
 
 

@@ -8,7 +8,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockDetail(features: unknown[] = [], docOverride: Record<string, unknown> = {}) {
+function mockDetail(
+  features: unknown[] = [],
+  docOverride: Record<string, unknown> = {},
+  detailOverride: Record<string, unknown> = {},
+) {
   const calls: { url: string; method: string }[] = [];
   const detail = {
     document: {
@@ -22,6 +26,7 @@ function mockDetail(features: unknown[] = [], docOverride: Record<string, unknow
       metadata: { page_count: 1 },
       ...docOverride,
     },
+    ...detailOverride,
     features,
     categories: [{ id: "c1", name: "Invoices" }],
     entities: {
@@ -140,6 +145,70 @@ test("offers open and download links", async () => {
   const open = screen.getByRole("link", { name: /Open/ });
   expect(open).toHaveAttribute("href", "/api/v1/documents/d1/file");
   expect(open).toHaveAttribute("rel", "noopener noreferrer");
+});
+
+test("processing telemetry shows the summary strip, OCR outcome and per-step metrics", async () => {
+  mockDetail(
+    [],
+    {},
+    {
+      processing: {
+        received_at: "2026-06-10T00:00:00Z",
+        activated_at: "2026-06-10T00:01:00Z",
+        extraction_method: "ocr",
+        page_count: 3,
+        ocr_outcome: "done",
+        ocr_confidence: 0.97,
+        normalized_from_mime:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        language: "en",
+        total_duration_ms: 4200,
+        total_tokens: 1500,
+        steps: [
+          {
+            feature: "doc_metadata",
+            label: "Metadata",
+            status: "done",
+            started_at: null,
+            completed_at: null,
+            duration_ms: 1200,
+            prompt_tokens: 900,
+            answer_tokens: 600,
+            total_tokens: 1500,
+            model: "gpt-4o-mini",
+            estimated: false,
+            attempts: 1,
+            last_error: null,
+          },
+        ],
+      },
+    },
+  );
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Processing")).toBeInTheDocument());
+
+  // Summary strip
+  expect(screen.getByText("Total time")).toBeInTheDocument();
+  expect(screen.getByText("4.2s")).toBeInTheDocument();
+  // "1.5k tok" appears twice here: the summary total and the single step's own tokens.
+  expect(screen.getAllByText("1.5k tok").length).toBeGreaterThan(0);
+  expect(screen.getByText("Total tokens")).toBeInTheDocument();
+  // Normalization (office source) + OCR rows
+  expect(screen.getByText("Normalization")).toBeInTheDocument();
+  expect(screen.getByText("OCR")).toBeInTheDocument();
+  expect(screen.getByText("97%")).toBeInTheDocument();
+  // A per-step row with its duration (1.2s) shown
+  expect(screen.getByText("Metadata")).toBeInTheDocument();
+  expect(screen.getByText("1.2s")).toBeInTheDocument();
+});
+
+test("processing telemetry degrades to nothing when absent", async () => {
+  mockDetail(); // no `processing` key on the detail payload
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Processing")).toBeInTheDocument());
+  // None of the telemetry-only labels render
+  expect(screen.queryByText("Total time")).not.toBeInTheDocument();
+  expect(screen.queryByText("OCR")).not.toBeInTheDocument();
 });
 
 test("processing aside lists features and retries a failed one", async () => {

@@ -6,11 +6,15 @@ import {
   fetchDocumentContent,
   fetchDocumentDetail,
   fetchDocumentEntities,
+  formatDuration,
+  formatTokens,
   reingestDocument,
   rotateDocument,
   retryDocumentFeature,
   type DocEntity,
   type DocumentDetailData,
+  type ProcessingStep,
+  type ProcessingTelemetry,
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
@@ -25,6 +29,212 @@ const FEATURE_LABELS: Record<string, string> = {
   structured_records: "Records",
   thumbnail: "Thumbnail",
 };
+
+// Pipeline order for the per-step rows (IA decision). Features not listed here sort after these,
+// alphabetically, so an unknown/new feature still appears rather than being dropped.
+const STEP_ORDER = [
+  "extract",
+  "doc_metadata",
+  "doc_classify",
+  "entities",
+  "ner",
+  "structured_records",
+  "chunk_embed",
+  "thumbnail",
+];
+
+function stepRank(feature: string): number {
+  const i = STEP_ORDER.indexOf(feature);
+  return i === -1 ? STEP_ORDER.length : i;
+}
+
+type Outcome = { glyph: string; word: string; cls: string };
+
+/** Map a feature status to a glyph + word + colour class. Glyph AND word are always shown so the
+ * outcome never relies on colour alone (accessibility). */
+function featureOutcome(status: string): Outcome {
+  switch (status) {
+    case "done":
+      return { glyph: "✓", word: "done", cls: "proc-ok" };
+    case "failed":
+      return { glyph: "✗", word: "failed", cls: "proc-fail" };
+    case "running":
+      return { glyph: "…", word: "running", cls: "proc-run" };
+    default:
+      return { glyph: "•", word: status || "pending", cls: "proc-pending" };
+  }
+}
+
+/** OCR outcome is driven by the telemetry field, never inferred. "not_needed" is neutral (skipping
+ * OCR on a born-digital file is correct, not a success), so it is grey rather than green. */
+function ocrOutcome(outcome: ProcessingTelemetry["ocr_outcome"]): Outcome {
+  switch (outcome) {
+    case "done":
+      return { glyph: "✓", word: "done", cls: "proc-ok" };
+    case "failed":
+      return { glyph: "✗", word: "failed", cls: "proc-fail" };
+    default:
+      return { glyph: "—", word: "not needed", cls: "proc-neutral" };
+  }
+}
+
+/** One processing-step row: label, outcome (glyph+word+colour), duration, and tokens for LLM steps.
+ * Deep/rare fields (model, attempts, error, timestamps) live behind a native <details>. */
+function ProcStepRow({ step }: { step: ProcessingStep }) {
+  const outcome = featureOutcome(step.status);
+  const duration = formatDuration(step.duration_ms);
+  const tokens = formatTokens(step.total_tokens);
+  const hasDeep =
+    !!step.model || step.attempts > 1 || !!step.last_error || !!step.started_at || !!step.completed_at;
+  const row = (
+    <span className="proc-row">
+      <span className="proc-label">{step.label || step.feature}</span>
+      <span className={`proc-outcome ${outcome.cls}`}>
+        <span aria-hidden="true">{outcome.glyph}</span> {outcome.word}
+      </span>
+      {duration && <span className="proc-metric">{duration}</span>}
+      {tokens && (
+        <span className="proc-metric">
+          {tokens}
+          {step.estimated ? "*" : ""}
+        </span>
+      )}
+    </span>
+  );
+  if (!hasDeep) {
+    return <li>{row}</li>;
+  }
+  return (
+    <li>
+      <details className="proc-details">
+        <summary>{row}</summary>
+        <dl className="proc-deep">
+          {step.model && (
+            <>
+              <dt>Model</dt>
+              <dd>{step.model}</dd>
+            </>
+          )}
+          {step.attempts > 1 && (
+            <>
+              <dt>Attempts</dt>
+              <dd>{step.attempts}</dd>
+            </>
+          )}
+          {step.started_at && (
+            <>
+              <dt>Started</dt>
+              <dd>
+                <time dateTime={step.started_at}>{new Date(step.started_at).toLocaleString()}</time>
+              </dd>
+            </>
+          )}
+          {step.completed_at && (
+            <>
+              <dt>Completed</dt>
+              <dd>
+                <time dateTime={step.completed_at}>
+                  {new Date(step.completed_at).toLocaleString()}
+                </time>
+              </dd>
+            </>
+          )}
+          {step.last_error && (
+            <>
+              <dt>Error</dt>
+              <dd className="proc-fail">{step.last_error}</dd>
+            </>
+          )}
+          {step.estimated && (step.total_tokens ?? 0) > 0 && (
+            <>
+              <dt>Tokens</dt>
+              <dd>estimated (char-ratio)</dd>
+            </>
+          )}
+        </dl>
+      </details>
+    </li>
+  );
+}
+
+/** Card "Processing" telemetry: a summary strip (Ingested / Total time / Total tokens) plus a
+ * Normalization (office only) -> OCR -> per-feature step breakdown. Degrades gracefully: any absent
+ * field renders nothing, and a document with no telemetry shows nothing here. */
+function ProcessingTelemetrySection({ telemetry }: { telemetry: ProcessingTelemetry }) {
+  const ingested = telemetry.activated_at ?? telemetry.received_at;
+  const totalTime = formatDuration(telemetry.total_duration_ms);
+  const totalTokens = formatTokens(telemetry.total_tokens);
+  const hasSummary = !!ingested || !!totalTime || !!totalTokens;
+
+  const steps = telemetry.steps.slice().sort((a, b) => {
+    const r = stepRank(a.feature) - stepRank(b.feature);
+    return r !== 0 ? r : a.feature.localeCompare(b.feature);
+  });
+
+  // Normalization row only when the source was converted from another format (presence-driven, no
+  // MIME guessing in the UI).
+  const showNormalization = !!telemetry.normalized_from_mime;
+  // OCR row whenever we have an outcome; the backend always sets one (defaults "not_needed").
+  const ocr = ocrOutcome(telemetry.ocr_outcome);
+  const ocrConfidence =
+    telemetry.ocr_outcome === "done" && telemetry.ocr_confidence != null
+      ? `${Math.round(telemetry.ocr_confidence * 100)}%`
+      : null;
+
+  return (
+    <>
+      {hasSummary && (
+        <dl className="drp-metrics proc-summary">
+          {ingested && (
+            <>
+              <dt>Ingested</dt>
+              <dd>
+                <time dateTime={ingested}>{new Date(ingested).toLocaleDateString()}</time>
+              </dd>
+            </>
+          )}
+          {totalTime && (
+            <>
+              <dt>Total time</dt>
+              <dd>{totalTime}</dd>
+            </>
+          )}
+          {totalTokens && (
+            <>
+              <dt>Total tokens</dt>
+              <dd>{totalTokens}</dd>
+            </>
+          )}
+        </dl>
+      )}
+
+      <ul className="proc-list proc-steps">
+        {showNormalization && (
+          <li>
+            <span className="proc-row">
+              <span className="proc-label">Normalization</span>
+              <span className="proc-outcome proc-ok">
+                <span aria-hidden="true">✓</span> done
+              </span>
+            </span>
+          </li>
+        )}
+        <li>
+          <span className="proc-row">
+            <span className="proc-label">OCR</span>
+            <span className={`proc-outcome ${ocr.cls}`}>
+              <span aria-hidden="true">{ocr.glyph}</span> {ocr.word}
+            </span>
+            {ocrConfidence && <span className="proc-metric">{ocrConfidence}</span>}
+          </span>
+        </li>
+        {steps.map((s) => (
+          <ProcStepRow key={s.feature} step={s} />
+        ))}
+      </ul>
+    </>
+  );
+}
 
 /** First-page preview; falls back to a file-type glyph until the thumbnail feature produces one. */
 function DocumentThumbnail({ id, title }: { id: string; title: string }) {
@@ -355,6 +565,7 @@ export function DocumentDetail({
 
             <section className="doc-aside-section">
               <h3>Processing</h3>
+              {data.processing && <ProcessingTelemetrySection telemetry={data.processing} />}
               <ul className="proc-list">
                 {data.features.map((f) => (
                   <li key={f.feature}>

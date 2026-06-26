@@ -101,10 +101,25 @@ export function documentPageImageUrl(id: string, page: number, dpi = 150): strin
   return `/api/v1/documents/${encodeURIComponent(id)}/page/${page}/image?dpi=${dpi}`;
 }
 
+/** Compact per-document processing rollup for the Documents list chip tooltip (list response only).
+ * All fields are best-effort: absent/empty values are omitted from the rendered tooltip line. */
+export interface ProcessingSummary {
+  extraction_method: string;
+  ocr_outcome: "done" | "not_needed" | "failed";
+  page_count: number | null;
+  normalized_from_mime: string;
+  status: string;
+  features_done: number;
+  features_failed: number;
+}
+
 export interface DocumentPage {
   items: DokDocument[];
   total: number;
   next_cursor: string | null;
+  // Per-document processing summaries keyed by document id (sidecar map; list response only).
+  // Old/absent docs are simply missing from the map - callers must tolerate `undefined`.
+  processing?: Record<string, ProcessingSummary>;
 }
 
 export type DocumentSort = "acquired" | "created" | "title" | "category";
@@ -298,6 +313,17 @@ export function fetchDocumentActivity(id: string, signal?: AbortSignal): Promise
   );
 }
 
+/** Per-feature-run telemetry (duration + LLM token spend). Empty/zero for rows written before
+ * metrics existed or for features that do not call an LLM (e.g. thumbnail/extract). */
+export interface FeatureMetrics {
+  duration_ms: number;
+  prompt_tokens: number;
+  answer_tokens: number;
+  total_tokens: number;
+  model: string;
+  estimated: boolean;
+}
+
 export interface DocumentFeature {
   document_id: string;
   feature: string;
@@ -306,6 +332,8 @@ export interface DocumentFeature {
   attempts: number;
   max_attempts: number;
   last_error?: string | null;
+  // Per-run telemetry; absent on responses predating the metrics column (read defensively).
+  metrics?: FeatureMetrics;
 }
 
 export function fetchDocumentFeatures(id: string, signal?: AbortSignal): Promise<DocumentFeature[]> {
@@ -318,13 +346,107 @@ export interface DocEntitySummary {
   top: DocEntity[];
 }
 
+/** One processing step in the per-document detail telemetry: a feature run with its outcome, timing
+ * and (for LLM steps) token spend. Timestamps/durations/tokens/model are null/0 for rows processed
+ * before metrics existed or for non-LLM features - the UI must render nothing for those. */
+export interface ProcessingStep {
+  feature: string;
+  label: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  prompt_tokens: number | null;
+  answer_tokens: number | null;
+  total_tokens: number | null;
+  model: string | null;
+  estimated: boolean;
+  attempts: number;
+  last_error: string | null;
+}
+
+/** Per-document processing telemetry for the detail card: timestamps, extraction outcome, and a
+ * per-step breakdown. Backward compatible: documents with no telemetry yield nulls/zeros and must
+ * render exactly as before this feature shipped. */
+export interface ProcessingTelemetry {
+  received_at: string | null;
+  activated_at: string | null;
+  extraction_method: string;
+  page_count: number | null;
+  ocr_outcome: "done" | "not_needed" | "failed";
+  ocr_confidence: number | null;
+  normalized_from_mime: string;
+  language: string;
+  steps: ProcessingStep[];
+  total_duration_ms: number;
+  total_tokens: number;
+}
+
 export interface DocumentDetailData {
   document: DokDocument;
+  // Optional for resilience: a backend that has not been upgraded omits it, and the card degrades.
+  processing?: ProcessingTelemetry;
   features: DocumentFeature[];
   categories: DokCategory[];
   entities: DocEntitySummary;
   content: { length: number; excerpt: string };
   recent_activity: AuditEvent[];
+}
+
+/** Format a millisecond duration compactly: <1s -> "NNNms", <60s -> "N.Ns", >=60s -> "Nm Ns".
+ * Returns null for absent/non-positive values so callers render nothing (no "0s"/"NaN"). */
+export function formatDuration(ms: number | null | undefined): string | null {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return null;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const mins = Math.floor(seconds / 60);
+  const rem = Math.round(seconds - mins * 60);
+  return `${mins}m ${rem}s`;
+}
+
+/** Format a token count compactly: <1000 -> "NNN tok", >=1000 -> "N.Nk tok".
+ * Returns null for absent/non-positive values so callers render nothing. */
+export function formatTokens(tokens: number | null | undefined): string | null {
+  if (tokens == null || !Number.isFinite(tokens) || tokens <= 0) return null;
+  if (tokens < 1000) return `${Math.round(tokens)} tok`;
+  return `${(tokens / 1000).toFixed(1)}k tok`;
+}
+
+/** Build the concise list-tooltip rollup line from a per-document processing summary, omitting any
+ * absent/empty field. Returns null when nothing meaningful is known (caller appends nothing). */
+export function processingRollup(summary: ProcessingSummary | undefined): string | null {
+  if (!summary) return null;
+  const parts: string[] = [];
+  if (summary.ocr_outcome) parts.push(`OCR: ${summary.ocr_outcome}`);
+  if (summary.page_count != null && summary.page_count > 0) {
+    parts.push(`${summary.page_count} page${summary.page_count === 1 ? "" : "s"}`);
+  }
+  if (summary.normalized_from_mime) {
+    parts.push(`from ${mimeExtension(summary.normalized_from_mime)}`);
+  }
+  // Always show the done/failed tally - it is the at-a-glance health signal (0/0 is meaningful).
+  if (summary.features_done > 0 || summary.features_failed > 0) {
+    parts.push(`${summary.features_done} done / ${summary.features_failed} failed`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** Short, human extension for a MIME type used in the rollup ("application/...docx" -> ".docx"). */
+function mimeExtension(mime: string): string {
+  const known: Record<string, string> = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/msword": ".doc",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
+  };
+  if (known[mime]) return known[mime];
+  const slash = mime.lastIndexOf("/");
+  return slash >= 0 ? `.${mime.slice(slash + 1)}` : mime;
 }
 
 /** One-round-trip aggregate for the document detail card (full text/entities fetched lazily). */

@@ -198,7 +198,10 @@ export function OverviewPanel({
           <ul className="entity-chips">
             {categories.map((c) => (
               <li key={c.name}>
-                <span className="chip">{c.name}</span> {c.document_count}
+                <span className="chip" title={c.name}>
+                  {c.name}
+                </span>{" "}
+                {c.document_count}
               </li>
             ))}
           </ul>
@@ -227,7 +230,11 @@ export function OverviewPanel({
                       {new Date(ev.timestamp).toLocaleString()}
                     </time>
                     <span className="badge">{ev.event_type}</span>
-                    {label && <span className="timeline-doc">{label}</span>}
+                    {label && (
+                      <span className="timeline-doc" title={label}>
+                        {label}
+                      </span>
+                    )}
                     {detail && <span className="muted timeline-detail">{detail}</span>}
                   </button>
                 </li>

@@ -612,7 +612,7 @@ export function DocumentDetail({
                 <h3>Categories</h3>
                 <span className="feature-chips">
                   {data.categories.map((c) => (
-                    <span key={c.id} className="chip">
+                    <span key={c.id} className="chip" title={c.name}>
                       {c.name}
                     </span>
                   ))}

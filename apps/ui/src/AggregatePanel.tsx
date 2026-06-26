@@ -142,7 +142,9 @@ export function AggregatePanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                 ) : (
                   state.result.by_currency.map((b) => (
                     <div className="card" key={b.currency ?? "none"}>
-                      <div className="card-value">{formatMoneyMinor(b.total_minor, b.currency)}</div>
+                      <div className="card-value" title={formatMoneyMinor(b.total_minor, b.currency)}>
+                        {formatMoneyMinor(b.total_minor, b.currency)}
+                      </div>
                       <div className="card-label">
                         {b.count} record{b.count === 1 ? "" : "s"}
                         {b.currency ? ` · ${b.currency}` : ""}
@@ -169,7 +171,12 @@ export function AggregatePanel({ onOpenDocument }: { onOpenDocument?: (id: strin
                       {state.result.samples.map((r) => (
                         <tr key={r.id}>
                           <td>{r.occurred_on ?? "-"}</td>
-                          <td title={r.merchant_raw ?? undefined}>
+                          <td
+                            className="cell-truncate"
+                            title={
+                              r.merchant_normalized || r.merchant_raw || r.description || undefined
+                            }
+                          >
                             {r.merchant_normalized || r.merchant_raw || r.description || "-"}
                           </td>
                           <td>

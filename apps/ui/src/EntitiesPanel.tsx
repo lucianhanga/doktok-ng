@@ -92,7 +92,9 @@ export function EntitiesPanel({ onOpenDocument }: { onOpenDocument?: (id: string
                 <td>
                   <span className="badge">{e.entity_type}</span>
                 </td>
-                <td>{e.normalized_value}</td>
+                <td className="cell-truncate" title={e.normalized_value}>
+                  {e.normalized_value}
+                </td>
                 <td>{e.document_count}</td>
                 <td>{e.occurrences}</td>
               </tr>
@@ -108,16 +110,21 @@ export function EntitiesPanel({ onOpenDocument }: { onOpenDocument?: (id: string
           {docs.length === 0 ? (
             <p className="empty">No documents.</p>
           ) : (
-            <ul>
-              {docs.map((d) => (
-                <li
-                  key={d.id}
-                  onClick={() => onOpenDocument?.(d.id)}
-                  style={{ cursor: onOpenDocument ? "pointer" : "default" }}
-                >
-                  {d.title ?? d.original_filename} <code>({d.detected_mime ?? "?"})</code>
-                </li>
-              ))}
+            <ul className="entity-doc-list">
+              {docs.map((d) => {
+                const label = d.title ?? d.original_filename;
+                return (
+                  <li
+                    key={d.id}
+                    className="truncate"
+                    title={`${label} (${d.detected_mime ?? "?"})`}
+                    onClick={() => onOpenDocument?.(d.id)}
+                    style={{ cursor: onOpenDocument ? "pointer" : "default" }}
+                  >
+                    {label} <code>({d.detected_mime ?? "?"})</code>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </aside>

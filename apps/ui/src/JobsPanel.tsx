@@ -74,12 +74,16 @@ export function JobsPanel({ onOpenDocument }: { onOpenDocument?: (id: string) =>
                 onClick={() => job.document_id && onOpenDocument?.(job.document_id)}
                 style={{ cursor: job.document_id ? "pointer" : "default" }}
               >
-                <td>{basename(job.source_path)}</td>
+                <td className="cell-truncate" title={job.source_path}>
+                  {basename(job.source_path)}
+                </td>
                 <td>
                   <span className={`badge status-${job.status}`}>{jobStatusLabel(job.status)}</span>
                   {job.error_code && <span className="muted"> ({job.error_code})</span>}
                 </td>
-                <td>{job.detected_mime ?? "-"}</td>
+                <td className="cell-truncate" title={job.detected_mime ?? undefined}>
+                  {job.detected_mime ?? "-"}
+                </td>
                 <td>
                   <code>{shorten(job.sha256)}</code>
                 </td>

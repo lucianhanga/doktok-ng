@@ -4,6 +4,10 @@
 # rebuilds the images on the box with live build progress, recreates the changed services, and shows
 # the resulting health. Idempotent and safe to re-run.
 #
+# Prerequisite: the box must already have /opt/doktok/.env.production (the secrets file). It is a
+# one-time manual bootstrap (gitignored + skipped by rsync, so this never creates it); see
+# docs/operations/deploy-fresh-box-runbook.md section 3. This script fails fast if it is missing.
+#
 # Config (env vars, all have defaults so a bare `make deploy-box` works):
 #   DOKTOK_BOX_HOST   ssh target           (default lh@10.0.0.70)
 #   DOKTOK_BOX_KEY    ssh private key path  (default the on-prem N95 key)
@@ -26,6 +30,16 @@ COMPOSE="docker compose -f docker-compose.prod.yml --env-file .env.production"
 }
 
 warn "deploying $(git rev-parse --short HEAD 2>/dev/null || echo 'working tree') -> ${HOST}:${DIR}"
+
+# Pre-flight: the box's secrets file is a one-time manual bootstrap (it is gitignored and rsync skips
+# it, so this script can never create it). Fail fast with a clear pointer if it is missing, rather
+# than letting `docker compose --env-file .env.production` blow up cryptically later.
+if ! ssh -i "$KEY" "$HOST" "test -f '${DIR}/.env.production'"; then
+    err "missing ${HOST}:${DIR}/.env.production"
+    err "create it once on the box (cp .env.production.example .env.production; fill secrets; chmod 600)"
+    err "see docs/operations/deploy-fresh-box-runbook.md section 3"
+    exit 1
+fi
 
 # 1. Sync source. Ship code only; never clobber the box's secrets (.env.production) or its document
 #    store (storage/files). storage/ itself MUST ship (storage/{filesystem,postgres} are packages).

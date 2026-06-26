@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     # read by the read-only DRP settings panel + /metrics). azure_* + the *_password presence drive
     # the DRP "configured" booleans (presence only - the values are never returned).
     backup_dir: str = "./backups"
+    # Portable one-file backup (M12 portable backup, Phase 1). The backend STAGES the plaintext
+    # export here before streaming it out encrypted, so this MUST be on a WRITABLE volume - distinct
+    # from backup_dir, which the backend mounts read-only (it only reads the DRP status sentinels
+    # there). Empty => default to "<backup_dir>/exports". Staged archives are 0600 and TTL-swept.
+    backup_export_dir: str = ""
     # Deployment topology for backups/DRP (M12 #377): "host" (dev/test run directly on the host) or
     # "compose" (staging/prod containerized). The orchestrator runs backups accordingly; the DRP
     # panel surfaces this so it is honest about what's wired per environment.

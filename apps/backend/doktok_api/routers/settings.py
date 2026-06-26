@@ -7,7 +7,10 @@ write-only: it is never returned, only set/cleared, and GET reports only whether
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlparse
 
@@ -24,6 +27,7 @@ from doktok_contracts.schemas import (
     AiSettingsUpdate,
     AuditEventType,
     BackupEvent,
+    BackupExportInfo,
     BackupLegStatus,
     DrillTriggerResponse,
     DrpConfig,
@@ -42,11 +46,15 @@ from doktok_contracts.schemas import (
     OpenAiTestResult,
 )
 from doktok_core.audit.logger import record_activity
+from doktok_core.backup.export import ExportPaths
 from doktok_core.security.egress import openai_egress_allowed
 from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from pydantic import Field as PydField
 
 from doktok_api.dependencies import (
     Tenant,
@@ -599,3 +607,229 @@ def _last_drill_at(repo: AppSettingsRepository) -> datetime | None:
         return datetime.fromisoformat(last.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+# --------------------------------------------------------------------------------------------------
+# Portable one-file backup (M12 portable backup, Phase 1: export + encrypted download only).
+# Restore (upload/wipe/import) is a SEPARATE later phase and is intentionally not implemented here.
+# --------------------------------------------------------------------------------------------------
+
+_EXPORT_MIN_INTERVAL_SECONDS = 60  # backend rate-limit: don't allow back-to-back build storms
+
+
+class BackupExportDownloadRequest(BaseModel):
+    """Download body. The passphrase is POSTed (never a URL/query) so it can't leak into access
+    logs; it is piped to openssl via stdin and is never written to disk or logged."""
+
+    passphrase: str = PydField(min_length=8, max_length=1024)
+
+
+def _export_dir(request: Request) -> Path:
+    """The WRITABLE staging dir for portable exports. Defaults to ``<backup_dir>/exports`` but is
+    overridable (the backend mounts backup_dir read-only, so deployments point this at a writable
+    volume via DOKTOK_BACKUP_EXPORT_DIR)."""
+    settings = request.app.state.settings
+    configured = (settings.backup_export_dir or "").strip()
+    if configured:
+        return Path(configured)
+    return Path(f"{settings.backup_dir.rstrip('/')}/exports")
+
+
+def _export_paths(request: Request, export_dir: Path) -> ExportPaths:
+    from doktok_api import __version__
+
+    settings = request.app.state.settings
+    return ExportPaths(
+        export_dir=export_dir,
+        files_root=Path(settings.files_root),
+        database_url=settings.database_url,
+        secrets_key=settings.secrets_key,
+        app_version=__version__,
+    )
+
+
+def _record_portable(
+    audit: AuditLogRepository, tenant_id: str, *, ok: bool, description: str, export_id: str
+) -> None:
+    """Mirror a portable-export lifecycle event into the activity log (M12 portable backup Phase 1).
+
+    The authoritative DRP history.jsonl is host-written and the backend mounts it read-only, so the
+    backend cannot append there; instead portable events are recorded into the activity log using
+    the existing BackupEvent vocabulary with a ``portable`` leg marker. Never carries a secret.
+    """
+    record_activity(
+        audit,
+        tenant_id,
+        AuditEventType.BACKUP_COMPLETED if ok else AuditEventType.BACKUP_FAILED,
+        actor=tenant_id,
+        actor_kind="user",
+        description=description,
+        details={"setting": "backup", "leg": "portable", "export_id": export_id},
+    )
+
+
+@router.post("/backup/export", response_model=BackupExportInfo)
+def start_backup_export(
+    request: Request, tenant: Tenant, audit: Audit, background: BackgroundTasks
+) -> BackupExportInfo:
+    """Start an ASYNC portable backup build and return immediately with status='building' (M12
+    portable backup, Phase 1). Single-flight + rate-limited: 429 if a build is already running or
+    one started in the last minute. The build is read-only (pg_dump + a read of files_root)."""
+    import uuid
+
+    from doktok_core.backup import export as export_mod
+
+    export_dir = _export_dir(request)
+    # Single-flight: never run two concurrent builds (they are heavy and write the same dir).
+    if export_mod.is_build_in_progress(export_dir):
+        raise HTTPException(status_code=429, detail="a backup export is already building")
+    # Rate-limit: don't allow back-to-back rebuild storms.
+    latest = export_mod.latest_export_status(export_dir)
+    if latest is not None and latest.created_at is not None:
+        age = (datetime.now(UTC) - latest.created_at).total_seconds()
+        if age < _EXPORT_MIN_INTERVAL_SECONDS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"a backup export started {int(age)}s ago; "
+                f"wait {_EXPORT_MIN_INTERVAL_SECONDS}s",
+            )
+
+    export_mod.sweep_stale_exports(
+        export_dir
+    )  # opportunistic TTL cleanup of old plaintext archives
+    export_id = uuid.uuid4().hex
+    paths = _export_paths(request, export_dir)
+    settings = request.app.state.settings
+    app_version = paths.app_version
+
+    def _run() -> None:
+        result = export_mod.build_export(paths, export_id)
+        ok = result.status == "ready"
+        desc = (
+            f"Portable backup export ready ({result.member_count} members)"
+            if ok
+            else f"Portable backup export failed: {result.error}"
+        )
+        _record_portable(audit, tenant.tenant_id, ok=ok, description=desc, export_id=export_id)
+
+    background.add_task(_run)
+    _record_portable(
+        audit,
+        tenant.tenant_id,
+        ok=True,
+        description="Portable backup export started",
+        export_id=export_id,
+    )
+    _ = settings
+    return BackupExportInfo(
+        export_id=export_id,
+        status="building",
+        created_at=datetime.now(UTC),
+        app_version=app_version,
+    )
+
+
+@router.get("/backup/export/status", response_model=BackupExportInfo)
+def get_backup_export_status(
+    request: Request, tenant: Tenant, export_id: str | None = Query(None)
+) -> BackupExportInfo:
+    """Poll the status of a portable backup build. With ``export_id`` returns that build; otherwise
+    the most recent one. 404 if there is no matching build (M12 portable backup, Phase 1)."""
+    _ = tenant
+    from doktok_core.backup import export as export_mod
+
+    export_dir = _export_dir(request)
+    info = (
+        export_mod.read_export_status(export_dir, export_id)
+        if export_id
+        else export_mod.latest_export_status(export_dir)
+    )
+    if info is None:
+        raise HTTPException(status_code=404, detail="no such backup export")
+    return info
+
+
+@router.post("/backup/export/{export_id}/download")
+def download_backup_export(
+    export_id: str,
+    request: Request,
+    tenant: Tenant,
+    audit: Audit,
+    body: BackupExportDownloadRequest,
+) -> StreamingResponse:
+    """Stream the staged plaintext archive through ``openssl enc`` and return the AES-256
+    ciphertext (M12 portable backup, Phase 1). POST so the passphrase is in the body, never a
+    URL/log. The passphrase is piped to openssl on stdin and is never written to disk or logged.
+    The download filename ends ``.tgz.enc``; decrypt with the matching ``openssl enc -d``."""
+    from doktok_core.backup import export as export_mod
+
+    export_dir = _export_dir(request)
+    info = export_mod.read_export_status(export_dir, export_id)
+    if info is None or info.status != "ready":
+        raise HTTPException(status_code=404, detail="backup export is not ready")
+    staged = export_mod.staged_archive_path(export_dir, export_id)
+    if not staged.exists():
+        raise HTTPException(status_code=404, detail="backup export is not ready")
+
+    stream = _encrypt_stream(staged, body.passphrase)
+    ts = (info.created_at or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"doktok-backup-{ts}.tgz.enc"
+    _record_portable(
+        audit,
+        tenant.tenant_id,
+        ok=True,
+        description="Portable backup export downloaded",
+        export_id=export_id,
+    )
+    return StreamingResponse(
+        stream,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _encrypt_stream(staged: Path, passphrase: str) -> Iterator[bytes]:
+    """Yield the AES-256 ciphertext of ``staged``.
+
+    The staged plaintext is encrypted by ``openssl enc`` into a sibling temp file (``-in``/``-out``)
+    with the passphrase piped on stdin as a single line (``-pass stdin``) - so the passphrase is
+    never on the command line, never written to disk, and never logged. We then stream that temp
+    ciphertext file out in bounded chunks and delete it (best-effort) when the response finishes, so
+    neither plaintext nor ciphertext is ever buffered whole in memory. Encrypting to a file (rather
+    than mixing the passphrase line and data on one stdin pipe) is the robust, openssl-version-
+    portable invocation - the passphrase line can never be mistaken for archive bytes.
+    """
+    import subprocess
+    import tempfile
+
+    from doktok_core.backup import export as export_mod
+
+    fd, enc_name = tempfile.mkstemp(dir=str(staged.parent), suffix=".enc")
+    enc_path = Path(enc_name)
+    os.close(fd)
+    os.chmod(enc_path, 0o600)
+    try:
+        proc = subprocess.run(
+            export_mod.encrypt_argv(staged, enc_path),
+            input=(passphrase + "\n").encode("utf-8"),
+            capture_output=True,
+            timeout=600,
+            check=False,
+        )
+        if proc.returncode != 0:
+            enc_path.unlink(missing_ok=True)
+            # openssl stderr can be empty or generic; never surface or log the passphrase.
+            raise HTTPException(status_code=500, detail="failed to encrypt the backup export")
+    except BaseException:
+        enc_path.unlink(missing_ok=True)
+        raise
+
+    def _iter() -> Iterator[bytes]:
+        try:
+            with enc_path.open("rb") as fh:
+                while chunk := fh.read(1024 * 1024):
+                    yield chunk
+        finally:
+            enc_path.unlink(missing_ok=True)
+
+    return _iter()

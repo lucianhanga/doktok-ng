@@ -123,15 +123,28 @@ def test_telemetry_steps_durations_tokens_and_totals() -> None:
     assert tel.total_tokens == 500 + 50
 
 
-def test_telemetry_backward_compatible_empty_metrics() -> None:
-    # Old rows: empty metrics -> a valid telemetry with nulls/zeros (degrades to today's look).
+def test_telemetry_derives_duration_from_timestamps_when_metrics_empty() -> None:
+    # Documents processed before the metrics column existed have empty metrics but real
+    # last_attempt_at -> completed_at timestamps; derive a coarse (estimated) duration from them.
+    # Tokens cannot be recovered, so they stay None.
     doc = _doc({"extraction_method": "text"})
-    tel = build_processing_telemetry(doc, [_feature("doc_metadata")])
+    tel = build_processing_telemetry(doc, [_feature("doc_metadata")])  # 1s apart in the helper
+    step = tel.steps[0]
+    assert step.duration_ms == 1000
+    assert step.estimated is True
+    assert step.total_tokens is None
+    assert tel.total_duration_ms == 1000
+    assert tel.total_tokens == 0
+
+
+def test_telemetry_no_duration_when_timestamps_missing() -> None:
+    # A step that never completed (pending) has no completion timestamp -> no derivable duration.
+    doc = _doc({"extraction_method": "text"})
+    tel = build_processing_telemetry(doc, [_feature("doc_metadata", status=FeatureStatus.PENDING)])
     step = tel.steps[0]
     assert step.duration_ms is None
-    assert step.total_tokens is None
+    assert step.estimated is False
     assert tel.total_duration_ms == 0
-    assert tel.total_tokens == 0
 
 
 def test_summary_metadata_fields_and_counts() -> None:

@@ -236,9 +236,17 @@ $DC down                            # stop (KEEPS volumes). NEVER add -v unless 
 $DC pull && $DC up -d               # update to new images (built or pulled)
 ```
 
-- **Backups (M12):** `deploy/backup.sh` writes a timestamped DB + files archive; schedule via the
-  systemd timers in [deploy/systemd/README.md](../../deploy/systemd/README.md). Store the restic /
-  pgBackRest passphrases off-box — a repo is useless without them.
+- **Backups (M12):** `deploy/backup.sh diff|full` takes a local-first backup — `files_root` via
+  restic and Postgres via pgBackRest (base + continuous WAL / PITR) into `$DOKTOK_BACKUP_DIR` — and
+  writes per-leg freshness sentinels under `$DOKTOK_BACKUP_DIR/status/` that the **Settings → DRP**
+  panel reads. It is mode-aware (`DOKTOK_DEPLOY_MODE=compose` here). Schedule it with the shipped
+  systemd timers: write `/etc/doktok/backup.env` (including `DOKTOK_DEPLOY_MODE=compose`), then
+  `sudo ./deploy/install-systemd.sh` (installs `doktok-backup-diff` hourly, `doktok-backup-full`
+  weekly, `doktok-pg-wal-freshness` every minute). Push offsite with `deploy/azure-sync.sh`. Store the
+  restic / pgBackRest passphrases off-box — a repo is useless without them. Full design + the box-side
+  gotchas (run pgBackRest as the `postgres` user; `archive_timeout=60` keeps the pg leg fresh) are in
+  [backup-and-recovery.md](backup-and-recovery.md) and
+  [deploy/systemd/README.md](../../deploy/systemd/README.md).
 - **Resource budget (8 GB):** at idle the stack uses ~0.4 GB; under OCR load (models + embedder
   resident) ~2.2 GB of containers, leaving ~4.5 GB free. The per-container limits in the compose are
   ceilings; the real CPU governor is `OCR_CONCURRENCY x OCR_CPU_THREADS <= cores` (2x1 on 4 cores).
@@ -261,6 +269,12 @@ needs `/opt/doktok` with `docker-compose.prod.yml` + `.env.production` (steps 2-
 3. *(fixed)* PaddleOCR oneDNN crash on N95 — added `DOKTOK_OCR_ENABLE_MKLDNN` (false on this CPU).
 4. *(fixed)* `deploy/pgbackrest/pgbackrest.conf` lacked `pg1-user`/`pg1-database` (the superuser is
    `doktok`, not `postgres`) and writable log/lock paths — stanza-create failed until corrected.
+5. *(fixed)* **Always run pgBackRest in the db container as the `postgres` user** (`docker compose exec
+   -u postgres db pgbackrest ...`). `exec` defaults to root, which rewrites the repo's `archive.info`
+   as root-owned `0640`; the WAL `archive_command` then runs as the postgres server uid (999) and
+   can't read it, so all WAL archiving fails with `WAL segment ... not archived before the 60000ms
+   timeout`. `deploy/backup.sh` already uses `-u postgres`; if a manual root run broke a box, recover
+   with `sudo chown -R 999:999 $DOKTOK_BACKUP_DIR/pg`.
 
 ## Last updated
 

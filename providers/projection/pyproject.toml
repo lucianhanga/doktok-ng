@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doktok-provider-projection"
-version = "0.1.0"
+version = "0.2.0"
 description = "PCA/UMAP + HDBSCAN adapter for the EmbeddingProjector port"
 requires-python = ">=3.12"
 dependencies = ["doktok-contracts"]

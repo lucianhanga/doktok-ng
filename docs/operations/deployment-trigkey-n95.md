@@ -237,10 +237,18 @@ Two things hold state; back both up:
    OCR/normalized output under each tenant's `docs.active/`, plus in-flight folders. Back this up as a
    normal filesystem backup.
 
-Scripts for both are provided: [`deploy/backup.sh`](../../deploy/backup.sh) (writes a timestamped
-`db.sql.gz` + `files.tar.gz`) and [`deploy/restore.sh`](../../deploy/restore.sh) (restores from such a
-backup; destructive). Run a periodic `backup.sh` via cron, store the output encrypted and off-box, and
-**test `restore.sh` against a staging stack** so you know the restore path works before you need it.
+The **M12 backup engine** handles both legs: [`deploy/backup.sh`](../../deploy/backup.sh) takes a
+local-first backup - `files_root` via restic (dedup + AES-256) and Postgres via pgBackRest (base +
+continuous WAL / PITR) - into `$DOKTOK_BACKUP_DIR`, and writes per-leg freshness sentinels under
+`$DOKTOK_BACKUP_DIR/status/`. It is **mode-aware** (`DOKTOK_DEPLOY_MODE=compose` on this box). Restore
+with [`deploy/restore-pg.sh`](../../deploy/restore-pg.sh) (PITR) +
+[`deploy/restore-files.sh`](../../deploy/restore-files.sh). Schedule it with the shipped systemd
+timers (`sudo deploy/install-systemd.sh` after writing `/etc/doktok/backup.env`); push the repo
+offsite to Azure Blob with [`deploy/azure-sync.sh`](../../deploy/azure-sync.sh). The restic /
+pgBackRest passphrases must be stored **off the box** - a repo is useless without them. The full
+design, the sentinel schema, the DRP Settings panel, and the box-side gotchas (notably running
+pgBackRest as the `postgres` user) are in
+[backup-and-recovery.md](backup-and-recovery.md). Live backup health is visible in **Settings -> DRP**.
 
 > **Do not run `docker compose down -v`.** The `-v` flag deletes named volumes, including
 > `doktok-pgdata` — that wipes the entire database (documents, embeddings, settings, the key). Use

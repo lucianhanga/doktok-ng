@@ -8,7 +8,7 @@ from doktok_provider_ollama.ner import OllamaEntityNerExtractor
 from doktok_provider_ollama.ocr import OllamaVisionOcr
 from doktok_provider_ollama.records import OllamaRecordExtractor
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "OllamaCategoryClassifier",

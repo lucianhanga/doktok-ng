@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-26
+
 ### Added
+- **DRP backup metrics + redesigned status panel** (#380): backups now capture per-leg metrics into
+  the freshness sentinels at `$DOKTOK_BACKUP_DIR/status/<leg>.json` — for the files leg `file_count`,
+  `size`, and the restic snapshot `backup_id` (parsed from `restic backup` output in
+  `deploy/backup-files.sh`); for the pg leg the database `size` and the pgBackRest `backup_id`
+  (label), parsed from `pgbackrest info --output=json` by the `pg_backup_extra` helper in
+  `deploy/lib.sh`. `write_status` gained an optional metrics fragment arg and a `WRITE_STATUS_TS`
+  recovery-point override. The contract (`BackupLegStatus`) and `GET /drp` now carry
+  `size`/`file_count`/`backup_id`, and the Settings → DRP tab was redesigned into per-leg status
+  **cards** with colour-coded state badges (green ok / amber stale / red failed / grey unknown),
+  last-run age, the captured metrics, and a WAL-lag note.
+- **systemd backup timers + per-minute pg WAL-freshness stamp** (#377): shipped units in
+  `deploy/systemd/` — `doktok-backup-diff` (hourly → `deploy/backup.sh diff`), `doktok-backup-full`
+  (weekly Sun 03:00 → `deploy/backup.sh full`), and `doktok-pg-wal-freshness` (every minute →
+  `deploy/pg-wal-freshness.sh`) — installed by the new `deploy/install-systemd.sh` (run as root,
+  reads `/etc/doktok/backup.env`, now including `DOKTOK_DEPLOY_MODE`). `pg-wal-freshness.sh` stamps
+  the pg sentinel's `last_run_at` to the last archived WAL time and records `wal_lag_s`, preserving
+  the base backup's `size`/`backup_id`, so the pg leg reflects its ~60s WAL RPO instead of flapping
+  "stale" between hourly/weekly base backups. The prod db now sets `archive_timeout=60`
+  (`docker-compose.prod.yml`) so an idle DB still ships a WAL segment each minute.
+
+### Fixed
+- **pgBackRest runs as the `postgres` user in compose mode** (#383): `deploy/backup.sh` uses
+  `docker compose exec -u postgres ... pgbackrest` rather than the default root. Running as root
+  rewrote the repo's `archive.info` as root-owned `0640`, after which the WAL `archive_command` (the
+  postgres server uid 999) could not read it and all WAL archiving failed with `WAL segment ... not
+  archived before the 60000ms timeout`. Recovery on an affected box: `sudo chown -R 999:999
+  $DOKTOK_BACKUP_DIR/pg`.
+
 - **Office-document support (`.docx`/`.xlsx`/`.pptx`)** (#313): OOXML documents are added to the MIME
   allowlist and converted to PDF **on ingest** by a **local Gotenberg container**
   (`gotenberg/gotenberg:8`, MIT-licensed) wrapping headless LibreOffice, then run through the existing

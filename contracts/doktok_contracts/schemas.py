@@ -1023,6 +1023,55 @@ class DrillTriggerResponse(BaseModel):
     last_drill_at: datetime | None = None
 
 
+class BackupManifestMember(BaseModel):
+    """One member of a portable backup archive, with its size + checksum (M12 portable backup,
+    Phase 1). ``name`` is the in-archive path (``db.dump`` or a ``files/...`` entry summary)."""
+
+    name: str
+    size: int  # bytes
+    sha256: str  # hex digest of the member's bytes
+
+
+class BackupManifest(BaseModel):
+    """The ``manifest.json`` embedded in a portable backup archive (M12 portable backup, Phase 1).
+
+    Internal/at-rest model (not returned verbatim on the wire). Carries the per-member checksums, a
+    manifest-level integrity tag over those checksums (verified by a later restore), and a
+    NON-REVERSIBLE fingerprint of DOKTOK_SECRETS_KEY so a restore can warn on a key mismatch WITHOUT
+    ever storing the key. The archive is DATA-ONLY: it never contains the secrets key, tenant
+    tokens, the database URL, or .env. The OpenAI key inside app_settings stays as its existing
+    Fernet ciphertext (only decryptable on a host configured with the same DOKTOK_SECRETS_KEY).
+    """
+
+    schema_version: int = 1
+    created_at: datetime
+    app_version: str
+    pg_version: str
+    members: list[BackupManifestMember] = Field(default_factory=list)
+    # HMAC-SHA256 (hex) over the sorted "name:sha256" member lines; integrity check on restore.
+    manifest_hmac: str = ""
+    # Non-reversible fingerprint of DOKTOK_SECRETS_KEY (HMAC of a fixed label). Empty when no key is
+    # configured (plaintext-secrets dev mode). A restore compares this to warn on a key mismatch.
+    secrets_key_fingerprint: str = ""
+
+
+class BackupExportInfo(BaseModel):
+    """Status of a portable backup export build (M12 portable backup, Phase 1).
+
+    The build runs ASYNCHRONOUSLY: POST /export returns this with status='building'; the client
+    polls GET /export/status until status='ready' (then it may download) or 'failed'. The wire model
+    never carries the staged file path, the passphrase, or any secret - only a summary."""
+
+    export_id: str
+    status: str  # building | ready | failed
+    created_at: datetime | None = None
+    size_bytes: int | None = None  # size of the PLAINTEXT staged archive (pre-encryption)
+    app_version: str = ""
+    pg_version: str = ""
+    member_count: int = 0
+    error: str = ""  # short, non-secret failure summary when status='failed'
+
+
 class ModelOption(BaseModel):
     """A selectable model for a purpose, with its allowed context sizes."""
 

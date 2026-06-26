@@ -154,6 +154,10 @@ services:
       DOKTOK_CORS_ORIGINS: ${DOKTOK_CORS_ORIGINS:-[]}
       # DRP (M12 #377): read the backup freshness sentinels written by the backup orchestrator.
       DOKTOK_BACKUP_DIR: /var/lib/doktok/backups
+      # Portable one-file backup (M12 Phase 1): the backend STAGES the plaintext export here before
+      # streaming it out encrypted. backup_dir above is mounted read-only, so this points at a
+      # SEPARATE writable volume. Staged archives are 0600 and TTL-swept after 24h.
+      DOKTOK_BACKUP_EXPORT_DIR: /var/lib/doktok/exports
       DOKTOK_DEPLOY_MODE: ${DOKTOK_DEPLOY_MODE:-compose}
       DOKTOK_AZURE_CONTAINER: ${DOKTOK_AZURE_CONTAINER:-}
       DOKTOK_AZURE_SAS: ${DOKTOK_AZURE_SAS:-}
@@ -161,6 +165,8 @@ services:
       - doktok-files:/data/files
       # Read-only view of the host backup dir so the DRP panel can read status/ sentinels (M12 #377).
       - ${DOKTOK_BACKUP_DIR:-./backups}:/var/lib/doktok/backups:ro
+      # Writable staging for portable backup exports (M12 Phase 1); kept off the read-only backup dir.
+      - doktok-exports:/var/lib/doktok/exports
     healthcheck:
       test:
         - CMD-SHELL
@@ -265,3 +271,4 @@ volumes:
   doktok-ollama:
   doktok-files:
   doktok-caddy:
+  doktok-exports:  # writable staging for portable backup exports (M12 Phase 1)

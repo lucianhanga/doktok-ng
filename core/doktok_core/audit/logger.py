@@ -42,6 +42,10 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.BACKUP_COMPLETED.value: ("system", "info", "Backup completed"),
     AuditEventType.BACKUP_FAILED.value: ("system", "error", "Backup failed"),
     AuditEventType.DRILL_COMPLETED.value: ("system", "info", "Restore drill completed"),
+    AuditEventType.RESTORE_PREVIEWED.value: ("user", "info", "Portable restore previewed"),
+    AuditEventType.RESTORE_REQUESTED.value: ("user", "warning", "Portable restore requested"),
+    AuditEventType.RESTORE_COMPLETED.value: ("system", "info", "Portable restore completed"),
+    AuditEventType.RESTORE_FAILED.value: ("system", "error", "Portable restore failed"),
 }
 
 

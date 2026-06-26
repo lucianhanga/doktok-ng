@@ -27,6 +27,7 @@ units=(
     doktok-pg-wal-freshness.service doktok-pg-wal-freshness.timer
     doktok-restore-drill.service doktok-restore-drill.timer
     doktok-restore-drill-ondemand.service doktok-restore-drill-ondemand.path
+    doktok-restore-import-ondemand.service doktok-restore-import-ondemand.path
 )
 for u in "${units[@]}"; do
     install -m 0644 "deploy/systemd/${u}" "/etc/systemd/system/${u}"
@@ -38,7 +39,8 @@ systemctl daemon-reload
 # their timer/path, so they are installed but not enabled directly.
 for t in \
     doktok-backup-diff.timer doktok-backup-full.timer doktok-pg-wal-freshness.timer \
-    doktok-restore-drill.timer doktok-restore-drill-ondemand.path; do
+    doktok-restore-drill.timer doktok-restore-drill-ondemand.path \
+    doktok-restore-import-ondemand.path; do
     systemctl enable --now "$t"
     ok "enabled ${t}"
 done

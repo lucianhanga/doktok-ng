@@ -70,6 +70,7 @@ for the host-mode / optional timers; the shipped compose-mode units omit both.
 | doktok-check-backup | every 30 min | `deploy/check-backup-freshness.sh` |
 | doktok-restore-drill | weekly (Sun 03:00) | `deploy/restore-drill.sh` (shipped unit; records drill sentinel + history) |
 | doktok-restore-drill-ondemand | on request file | `deploy/restore-drill.sh` (triggered by the backend dropping `status/requests/drill.request`) |
+| doktok-restore-import-ondemand | on request file | `deploy/restore-import.sh <staged_id>` (DESTRUCTIVE portable restore; triggered by the backend dropping `status/requests/restore.request` after a successful preview) |
 | doktok-ollama-autostop | every 2 min | `deploy/ollama-autostop.sh` (stop/start the Ollama container by need, M16 #374) |
 
 ## Example unit (files snapshot) — the rest follow the same shape
@@ -144,3 +145,40 @@ failed drill can't loop, then (b) runs the drill under `flock -n /run/doktok-res
 also carries `StartLimitIntervalSec=600`/`StartLimitBurst=1` - at most one on-demand drill per 10 min
 on the box, backing up the backend's own 10-min rate-limit (the backend rejects with 429 if a request
 is already pending or the last drill ran within the cooldown).
+
+## Portable restore (on-demand, DESTRUCTIVE)
+
+The portable RESTORE (M12 portable restore, Phase 2) is the most dangerous operation in the app. The
+NON-destructive preview/validate runs in the backend (it decrypts + safe-extracts + checksum/HMAC/
+version-validates the upload into `<DOKTOK_BACKUP_EXPORT_DIR>/restores/<staged_id>/`). The DESTRUCTIVE
+apply runs OUT OF BAND as root, exactly like the on-demand drill, so the live backend never runs
+`pg_restore --clean` on the DB it is connected to.
+
+`POST /api/v1/settings/backup/restore/{staged_id}/apply` (requires `confirm:true` and a staged_id that
+passed preview) drops a fixed request file carrying ONLY the staged_id + restore_id (NO passphrase -
+the archive was already decrypted into staging at preview time):
+
+```
+<DOKTOK_BACKUP_DIR>/status/requests/restore.request
+```
+
+`doktok-restore-import-ondemand.path` watches that file (`PathExists=`, HARDCODED default
+`/var/lib/doktok/backups/status/requests/restore.request` - edit it if `DOKTOK_BACKUP_DIR` differs).
+The oneshot `doktok-restore-import-ondemand.service` (a) reads the staged_id out of the request file,
+(b) DELETES the request file first so a failed restore can't loop, then (c) runs
+`deploy/restore-import.sh <staged_id>` under `flock -n /run/doktok-restore-import.lock`
+(`StartLimitIntervalSec=3600`/`StartLimitBurst=1` - at most one restore per hour, belt-and-braces for
+the backend's own single-flight). The importer:
+
+1. takes a MANDATORY pre-restore safety snapshot (`backup.sh full`) - aborts if it fails;
+2. quiesces (sets `<DOKTOK_BACKUP_DIR>/status/maintenance.flag`, which the backend reads to park all
+   mutating requests with 503; stops the worker; terminates other DB sessions);
+3. imports the DB (`pg_restore --clean --if-exists`, ensure pgvector, `migrate` forward, `ANALYZE`);
+4. atomically swaps `files_root` with the staged `files/` (rename-based; keeps the old tree);
+5. lifts maintenance, restarts the worker, writes `status/restore.json` state=done + a `restore`
+   history event.
+
+On ANY failure the ERR trap rolls back from the safety snapshot and LEAVES `maintenance.flag` ON for a
+human (the system never comes back half-restored). The backend polls progress via
+`GET /api/v1/settings/backup/restore/status`, which reads `status/restore.json` (OUTSIDE Postgres,
+because the DB is being rewritten mid-restore).

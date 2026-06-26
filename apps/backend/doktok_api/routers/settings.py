@@ -44,6 +44,10 @@ from doktok_contracts.schemas import (
     OllamaWarmupResult,
     OpenAiTestRequest,
     OpenAiTestResult,
+    RestoreApplyRequest,
+    RestorePreview,
+    RestoreResult,
+    RestoreStatus,
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.backup.export import ExportPaths
@@ -51,7 +55,17 @@ from doktok_core.security.egress import openai_egress_allowed
 from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pydantic import Field as PydField
@@ -425,7 +439,7 @@ def get_drp(request: Request, tenant: Tenant, repo: Repo) -> DrpStatusResponse:
 
 # Valid history legs (matches the host-side log_event whitelist). A bad leg is a 422, not a silent
 # empty result, so a typo in a client surfaces loudly.
-_HISTORY_LEGS = ("files", "pg", "offsite", "drill", "prune")
+_HISTORY_LEGS = ("files", "pg", "offsite", "drill", "prune", "portable", "restore")
 
 # How each history event maps onto an activity-log AuditEventType when we mirror it (M12 DRP
 # hardening). Only terminal/meaningful events are mirrored; transient ``start`` events are skipped
@@ -484,6 +498,14 @@ def _mirror_history_to_activity(
 
     for ev in events:
         event_type = _MIRROR_EVENT_TYPES.get(ev.event)
+        # The restore leg gets its own dedicated event types (a restore is more significant than a
+        # routine backup). success/failure on the restore leg -> RESTORE_COMPLETED/RESTORE_FAILED.
+        if ev.leg == "restore" and ev.event in ("success", "failure"):
+            event_type = (
+                AuditEventType.RESTORE_COMPLETED
+                if ev.event == "success"
+                else AuditEventType.RESTORE_FAILED
+            )
         if event_type is None:
             continue  # skip start/prune-noise; only terminal outcomes are worth an activity row
         seed = f"{ev.seq}|{ev.ts.isoformat()}|{ev.leg}|{ev.event}"
@@ -491,6 +513,8 @@ def _mirror_history_to_activity(
         desc = f"{ev.leg} backup {ev.event}"
         if ev.event in ("drill_pass", "drill_fail", "drill_completed"):
             desc = f"restore drill {'passed' if ev.ok else 'failed'}"
+        elif ev.leg == "restore":
+            desc = f"portable restore {'completed' if ev.ok else 'failed'}"
         record_activity(
             audit,
             tenant_id,
@@ -610,8 +634,8 @@ def _last_drill_at(repo: AppSettingsRepository) -> datetime | None:
 
 
 # --------------------------------------------------------------------------------------------------
-# Portable one-file backup (M12 portable backup, Phase 1: export + encrypted download only).
-# Restore (upload/wipe/import) is a SEPARATE later phase and is intentionally not implemented here.
+# Portable one-file backup (M12 portable backup, Phase 1: export + encrypted download). Restore
+# (upload/validate/wipe/import) is Phase 2, appended further below.
 # --------------------------------------------------------------------------------------------------
 
 _EXPORT_MIN_INTERVAL_SECONDS = 60  # backend rate-limit: don't allow back-to-back build storms
@@ -645,6 +669,7 @@ def _export_paths(request: Request, export_dir: Path) -> ExportPaths:
         database_url=settings.database_url,
         secrets_key=settings.secrets_key,
         app_version=__version__,
+        app_schema_version=_running_schema_version(),
     )
 
 
@@ -833,3 +858,266 @@ def _encrypt_stream(staged: Path, passphrase: str) -> Iterator[bytes]:
             enc_path.unlink(missing_ok=True)
 
     return _iter()
+
+
+# --------------------------------------------------------------------------------------------------
+# Portable one-file RESTORE (M12 portable restore, Phase 2: upload -> validate -> wipe -> import).
+#
+# Topology (LOCKED): the NON-destructive preview/validate runs IN THE BACKEND (it has openssl + the
+# pg client). The DESTRUCTIVE apply runs via a ROOT systemd path-unit (deploy/restore-import.sh) -
+# the backend NEVER execs root/docker; it only drops a fixed request file (the same argument-free
+# request-file pattern as the on-demand drill), so a live backend never runs pg_restore --clean on
+# the DB it is connected to. This is the most dangerous feature in the app; every guardrail matters.
+# --------------------------------------------------------------------------------------------------
+
+# Upload chunk size for streaming the multipart body to disk (never buffer the archive in memory).
+_RESTORE_UPLOAD_CHUNK = 4 * 1024 * 1024
+
+
+def _status_dir(request: Request) -> Path:
+    """The host-written status dir (DRP sentinels + the restore status + the request files). This is
+    the read-only-mounted backup dir's ``status/`` - the backend reads sentinels here and writes
+    request files into ``status/requests/`` (a writable sub-path provisioned for it)."""
+    settings = request.app.state.settings
+    return Path(f"{settings.backup_dir.rstrip('/')}/status")
+
+
+def _running_schema_version() -> int:
+    """The running code's DB schema generation (latest migration number) for the restore version
+    gate. Read from the shipped migrations dir; 0 (gate disabled) if it cannot be located."""
+    from doktok_core.backup.schema import schema_version_from_migrations
+
+    try:
+        import doktok_storage_postgres.db as pg_db
+
+        return schema_version_from_migrations(pg_db.MIGRATIONS_DIR)
+    except Exception:  # noqa: BLE001 - a missing migrations dir disables the gate, never crashes
+        return 0
+
+
+def _record_restore(
+    audit: AuditLogRepository,
+    tenant_id: str,
+    event_type: AuditEventType,
+    *,
+    description: str,
+    restore_id: str = "",
+    staged_id: str = "",
+) -> None:
+    """Audit a restore lifecycle event into the activity log (M12 portable restore Phase 2). Never
+    carries the passphrase, a secret, a DSN, or a host path - only ids + a short description."""
+    record_activity(
+        audit,
+        tenant_id,
+        event_type,
+        actor=tenant_id,
+        actor_kind="user",
+        description=description,
+        details={
+            "setting": "backup",
+            "leg": "restore",
+            "restore_id": restore_id,
+            "staged_id": staged_id,
+        },
+    )
+
+
+@router.post("/backup/restore/preview", response_model=RestorePreview)
+async def preview_backup_restore(
+    request: Request,
+    tenant: Tenant,
+    audit: Audit,
+    file: Annotated[UploadFile, File()],
+    passphrase: Annotated[str, Form(min_length=8, max_length=1024)],
+) -> RestorePreview:
+    """Upload + NON-destructively validate an encrypted portable archive (M12 portable restore
+    Phase 2). Streams the upload to disk (never buffers it in memory), decrypts it with the
+    passphrase (stdin only; never logged), safely extracts it behind the hostile-archive gate, and
+    verifies the manifest + version compatibility. Returns a RestorePreview; on a hard failure
+    ``ok`` is False with ``errors`` populated and NO apply is allowed. This route is EXEMPT from the
+    global body-size limit and is capped instead by DOKTOK_MAX_RESTORE_GB (413 if larger)."""
+    import uuid
+
+    from doktok_core.backup import restore as restore_mod
+
+    settings = request.app.state.settings
+    export_dir = _export_dir(request)
+    staged_id = uuid.uuid4().hex
+    sdir = restore_mod.staging_dir(export_dir, staged_id)
+    enc = restore_mod.upload_path(export_dir, staged_id)
+    # A non-positive cap means "uploads disabled" (0 bytes allowed -> any upload is a 413).
+    max_bytes = max(0, settings.max_restore_gb) * 1024 * 1024 * 1024
+
+    restore_mod.sweep_stale_restores(export_dir)  # opportunistic TTL cleanup of old decrypted trees
+
+    # Stream the upload to disk in bounded chunks, enforcing the size cap as we go (a client can lie
+    # about / omit Content-Length, so cap the actual streamed bytes, not just the header).
+    try:
+        sdir.mkdir(parents=True, exist_ok=True)
+        os.chmod(sdir, 0o700)
+        written = 0
+        fd = os.open(enc, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as out:
+                while chunk := await file.read(_RESTORE_UPLOAD_CHUNK):
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"upload exceeds the {settings.max_restore_gb} GB restore limit",
+                        )
+                    out.write(chunk)
+        finally:
+            await file.close()
+    except HTTPException:
+        restore_mod.discard_staged(export_dir, staged_id)
+        raise
+    except OSError:
+        restore_mod.discard_staged(export_dir, staged_id)
+        raise HTTPException(status_code=503, detail="could not stage the upload") from None
+
+    # Flip the status sentinel to 'validating' (best-effort) so the UI poll reflects work in flight.
+    restore_mod.write_restore_status(
+        _status_dir(request), state="validating", step="validate", restore_id=staged_id
+    )
+
+    result = restore_mod.validate_staged_upload(
+        export_dir,
+        staged_id,
+        passphrase,
+        secrets_key=settings.secrets_key,
+        running_schema_version=_running_schema_version(),
+    )
+    # Restore the status to idle after a NON-destructive preview (nothing was applied).
+    restore_mod.write_restore_status(_status_dir(request), state="idle")
+
+    _record_restore(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.RESTORE_PREVIEWED,
+        description=(
+            f"Portable restore previewed: {'valid' if result.ok else 'rejected'} "
+            f"({result.member_count} members)"
+        ),
+        staged_id=staged_id,
+    )
+    return RestorePreview(
+        staged_id=staged_id,
+        ok=result.ok,
+        compatible=result.compatible,
+        app_version=result.app_version,
+        pg_version=result.pg_version,
+        created_at=result.created_at,
+        member_count=result.member_count,
+        total_bytes=result.total_bytes,
+        secrets_key_match=result.secrets_key_match,
+        warnings=result.warnings,
+        errors=result.errors,
+    )
+
+
+@router.post("/backup/restore/{staged_id}/apply", response_model=RestoreResult)
+def apply_backup_restore(
+    staged_id: str,
+    body: RestoreApplyRequest,
+    request: Request,
+    tenant: Tenant,
+    audit: Audit,
+) -> RestoreResult:
+    """Trigger the DESTRUCTIVE apply of a PRE-VALIDATED staged archive (M12 portable restore Phase
+    2). Requires ``confirm:true`` (422 otherwise; confirm-to-destroy) and a staged_id that passed
+    preview (404/409 otherwise). Single-flight: 409 if a restore is already applying. The backend
+    NEVER runs the destructive import - it drops a fixed request file the root systemd path-unit
+    consumes; the apply is async and the UI polls GET /backup/restore/status."""
+    import json as _json
+    import uuid
+
+    from doktok_core.backup import restore as restore_mod
+
+    if not body.confirm:
+        raise HTTPException(status_code=422, detail="confirm must be true to apply a restore")
+
+    export_dir = _export_dir(request)
+    if not restore_mod.is_validated(export_dir, staged_id):
+        # Either it never existed, or it failed preview (the tree is cleaned on failure).
+        raise HTTPException(
+            status_code=409, detail="no validated staged restore with that id; run preview first"
+        )
+
+    status_dir = _status_dir(request)
+    requests_dir = status_dir / "requests"
+    request_file = requests_dir / "restore.request"
+
+    # Single-flight: refuse if a request is already pending OR a restore is currently applying.
+    current = restore_mod.read_restore_status(status_dir)
+    if request_file.exists() or current.get("state") == "applying":
+        raise HTTPException(status_code=409, detail="a restore is already in progress")
+
+    restore_id = uuid.uuid4().hex
+    try:
+        requests_dir.mkdir(parents=True, exist_ok=True)
+        # The request file carries ONLY the staged_id + restore_id (no passphrase - already
+        # decrypted into staging; no DSN/secret). 0600: the host helper reads it as root.
+        payload = _json.dumps(
+            {
+                "staged_id": staged_id,
+                "restore_id": restore_id,
+                "requested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "actor": tenant.tenant_id,
+            }
+        )
+        request_file.write_text(payload, encoding="utf-8")
+        request_file.chmod(0o600)
+    except OSError:
+        raise HTTPException(status_code=503, detail="could not queue the restore request") from None
+
+    # Mark the status applying immediately so a rapid re-POST is single-flighted even before the
+    # host helper picks the request up (the helper overwrites this as it progresses).
+    restore_mod.write_restore_status(
+        status_dir,
+        state="applying",
+        step="queued",
+        restore_id=restore_id,
+        started_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    _record_restore(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.RESTORE_REQUESTED,
+        description="Portable restore requested (destructive apply queued)",
+        restore_id=restore_id,
+        staged_id=staged_id,
+    )
+    return RestoreResult(
+        accepted=True,
+        restore_id=restore_id,
+        detail="restore queued; the system will enter maintenance and apply it",
+    )
+
+
+@router.get("/backup/restore/status", response_model=RestoreStatus)
+def get_backup_restore_status(request: Request, tenant: Tenant) -> RestoreStatus:
+    """Poll the current portable-restore state (M12 portable restore Phase 2). Sourced from the
+    host-written ``restore.json`` sentinel OUTSIDE Postgres (the DB is rewritten mid-restore, so a
+    DB-backed status would be unreadable/rolled-back). Returns idle when nothing is in flight."""
+    _ = tenant
+    from doktok_core.backup import restore as restore_mod
+
+    raw = restore_mod.read_restore_status(_status_dir(request))
+
+    def _ts(value: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    return RestoreStatus(
+        state=raw["state"],
+        step=raw["step"],
+        detail=raw["detail"],
+        restore_id=raw["restore_id"],
+        started_at=_ts(raw.get("started_at", "")),
+        finished_at=_ts(raw.get("finished_at", "")),
+    )

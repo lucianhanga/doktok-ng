@@ -1,0 +1,16 @@
+[Unit]
+Description=Watch for an on-demand DokTok portable-restore request file
+Documentation=https://github.com/lucianhanga/doktok-ng/blob/main/deploy/systemd/README.md
+
+[Path]
+# The backend (POST /api/v1/settings/backup/restore/{staged_id}/apply) drops this file AFTER a
+# successful, NON-destructive preview validated the staged archive; the matching oneshot service
+# DELETES it first, then runs the DESTRUCTIVE importer as root (the live backend never runs
+# pg_restore --clean on the DB it is connected to). systemd .path units cannot interpolate an
+# EnvironmentFile, so this is the DOCUMENTED DEFAULT path (DOKTOK_BACKUP_DIR=/var/lib/doktok/backups).
+# If you override DOKTOK_BACKUP_DIR in /etc/doktok/backup.env, edit this PathExists to match.
+PathExists=/var/lib/doktok/backups/status/requests/restore.request
+Unit=doktok-restore-import-ondemand.service
+
+[Install]
+WantedBy=paths.target

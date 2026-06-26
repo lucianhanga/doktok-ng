@@ -182,8 +182,8 @@ The whole **ingestion path runs on one dense model** so it stays well under the 
 |---|---|---|
 | OCR (default) | PaddleOCR (CPU, local) | ~0 GB GPU/Ollama |
 | OCR (`DOKTOK_OCR_ENGINE=glm-ocr`) | `glm-ocr` (`DOKTOK_OCR_NUM_CTX=8192`) | ~3 GB |
-| OCR-quality judge | `qwen3:14b` (`DOKTOK_JUDGE_MODEL`) | shared with enrichment |
-| Enrichment (metadata + classify) | `qwen3:14b` (`DOKTOK_ENRICH_MODEL`, 4k ctx) | ~12 GB |
+| OCR-quality judge | follows the Data Pipeline AI setting (no separate model) | shared with the pipeline model |
+| Enrichment (metadata + classify) | the Data Pipeline model, or `DOKTOK_ENRICH_MODEL` (4k ctx) when the pipeline is OpenAI without egress | ~12 GB |
 | Embeddings | `qwen3-embedding:0.6b` | ~0.7 GB |
 | **Ingestion total** | | **~16 GB** |
 
@@ -206,8 +206,8 @@ reboot** (re-run it or add a `launchd` startup job to persist).
 ## If you are memory constrained
 
 - Lower `DOKTOK_INGEST_CONCURRENCY` and `OLLAMA_NUM_PARALLEL` to 1-2.
-- Keep ingestion on the dense models (`DOKTOK_ENRICH_MODEL` / `DOKTOK_JUDGE_MODEL` = `qwen3:14b`) so it
-  fits in ~16 GB and never needs the 23 GB qwen3.6.
+- Set the Data Pipeline AI model to the dense `qwen3:14b` (the OCR-quality judge follows it) so
+  ingestion fits in ~16 GB and never needs the 23 GB qwen3.6.
 - Keep `DOKTOK_OLLAMA_TIMEOUT_SECONDS` generous so queued requests finish rather than fail.
 
 ## Insights embedding map (M7.1)

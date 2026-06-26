@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   N95 settings) and refreshed the install docs (fresh-box runbook, N95 deployment guide, README,
   security runbook) for the one-command redeploy path and the RapidOCR/OpenVINO OCR default.
 
+### Changed
+- **OCR-quality judge now follows the Data Pipeline AI setting instead of a hardcoded model.**
+  Previously, when the Data Pipeline ran on OpenAI the embedded-vs-OCR judge silently loaded a
+  separate local `qwen3:14b` (via the UI-invisible `DOKTOK_JUDGE_MODEL`/`DOKTOK_ENRICH_MODEL` env
+  defaults) for every ambiguous page during ingestion. The judge now uses the same provider+model as
+  the Data Pipeline extractors: an OpenAI pipeline sends the judge's tiny A/B prompt to OpenAI too
+  (no local model loaded), a local Ollama pipeline reuses the already-resident pipeline model. Removed
+  the now-unused `DOKTOK_JUDGE_MODEL` / `judge_num_ctx` config. `DOKTOK_ENRICH_MODEL` remains only as
+  the local fallback used when the pipeline is OpenAI but egress is disabled.
+
 ## [0.2.0] - 2026-06-26
 
 ### Added

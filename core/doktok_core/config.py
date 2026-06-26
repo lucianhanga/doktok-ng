@@ -99,11 +99,8 @@ class Settings(BaseSettings):
     # structured `format` works reliably on qwen3:14b and is far faster than the qwen3.6 MoE for
     # extraction (when kept warm). Switch to qwen3.6:35b-a3b + DOKTOK_ENRICH_THINK=true for higher
     # quality/language fidelity at the cost of latency.
-    # OCR-quality judge (embedded-text vs OCR). Defaults to the dense enrichment model so ingestion
-    # never needs the 23 GB qwen3.6 (which would evict qwen3:14b on a ~48 GB box). Small context: it
-    # only compares a page of text. RAG chat still uses DOKTOK_DEFAULT_MODEL.
-    judge_model: str = "qwen3:14b"
-    judge_num_ctx: int = 8192
+    # The OCR-quality judge (embedded-text vs OCR) is not configured here: it follows the Data
+    # Pipeline AI settings (provider+model) like the extractors, so it never loads a separate model.
     enrich_model: str = "qwen3:14b"
     # The enrichment providers feed the document head (up to ~12-16k chars) to the model. 4096
     # tokens was too small for German text (~3 chars/token => ~4-5k tokens), so llama.cpp silently

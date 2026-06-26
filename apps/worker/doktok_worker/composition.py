@@ -59,6 +59,7 @@ from doktok_provider_ollama import (
 )
 from doktok_provider_openai import (
     OpenAiCategoryClassifier,
+    OpenAiChatModelProvider,
     OpenAiEntityNerExtractor,
     OpenAiMetadataExtractor,
     OpenAiRecordExtractor,
@@ -284,24 +285,11 @@ def build_services(
             keep_alive=settings.embedding_keep_alive,
             num_ctx=settings.embedding_num_ctx,
         )
-        # The worker's chat model serves only the OCR-quality judge; point it at the SAME model the
-        # pipeline uses so the worker keeps a single large model resident (avoids GPU thrash). When
-        # the pipeline runs on OpenAI, the judge stays on the local judge model.
-        judge_model = (
-            settings.judge_model
-            if use_openai
-            else (pl.model if pl.provider == "ollama" else settings.enrich_model)
-        )
-        judge_num_ctx = settings.judge_num_ctx if use_openai else pl.num_ctx
-        judge_think = ollama_think_for(pl.reasoning, judge_model, structured=False)
-        judge = OllamaChatModelProvider(
-            judge_model,
-            pl_url,
-            timeout=timeout,
-            num_ctx=judge_num_ctx,
-            keep_alive=settings.enrich_keep_alive,
-            think=judge_think,
-        )
+        # The OCR-quality judge runs inside the ingestion pipeline, so it follows the SAME Data
+        # Pipeline provider+model as the extractors below - never a separate hardcoded model. A
+        # local pipeline keeps one model resident; an OpenAI pipeline sends the judge's tiny A/B
+        # prompt to OpenAI too. (No-egress fallback: the local enrich_model, like the extractors.)
+        judge: ChatModelProvider
         metadata_extractor: MetadataExtractor
         category_classifier: CategoryClassifier
         record_extractor: RecordExtractor
@@ -309,6 +297,7 @@ def build_services(
         if use_openai:
             logger.info("pipeline extraction via OpenAI %s (egress per AI settings)", pl.model)
             effort = openai_reasoning_effort(pl.reasoning, pl.model)
+            judge = OpenAiChatModelProvider(pl.model, key, timeout=timeout, reasoning_effort=effort)
             metadata_extractor = OpenAiMetadataExtractor(
                 pl.model, key, timeout=timeout, reasoning_effort=effort
             )
@@ -327,6 +316,15 @@ def build_services(
             p_ctx = pl.num_ctx if pl.provider == "ollama" else settings.enrich_num_ctx
             p_think = ollama_think_for(pl.reasoning, p_model, structured=True)
             p_repair = p_model  # JSON-repair on the same model: keeps a single model resident
+            judge = OllamaChatModelProvider(
+                p_model,
+                pl_url,
+                timeout=timeout,
+                num_ctx=p_ctx,
+                keep_alive=settings.enrich_keep_alive,
+                # the judge replies a single char (A/B), not JSON, so it is not "structured"
+                think=ollama_think_for(pl.reasoning, p_model, structured=False),
+            )
             metadata_extractor = OllamaMetadataExtractor(
                 p_model,
                 p_repair,

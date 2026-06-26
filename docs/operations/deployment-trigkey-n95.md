@@ -56,10 +56,12 @@ The M11 epic owns the full ticket list; this guide references it rather than dup
 - **Ollama** for the **embedding model only** on this box. Pull just `qwen3-embedding:0.6b` — do
   **not** pull the chat/enrichment models, they will not fit and are not used here.
 - **`libmagic`** (MIME detection): `apt install libmagic1`.
-- **PaddleOCR runtime** on the worker host: `make ocr-paddle`
-  (`uv pip install paddleocr paddlepaddle pillow numpy`). Note `uv sync` prunes this extra, so re-run
-  it after any dependency sync.
-- An **OpenAI API key** with access to the models you will select for the pipeline and RAG purposes.
+- **OCR runtime.** On the box this is baked into the worker image, so nothing to install. For
+  host-process local dev: the recommended N95 engine is **RapidOCR/OpenVINO**
+  (`DOKTOK_OCR_ENGINE=rapidocr`, `DOKTOK_OCR_RAPID_BACKEND=openvino`). If you run PaddleOCR instead,
+  install its extra with `make ocr-paddle` (`uv pip install paddleocr paddlepaddle pillow numpy`);
+  note `uv sync` prunes that extra, so re-run it after any dependency sync.
+- An **OpenAI API key** only for the OpenAI provider topology; the remote-Ollama topology needs none.
 
 ## Target topology
 
@@ -102,18 +104,26 @@ Key points:
 - **Egress** from the box should be firewalled to OpenAI only. OCR, embeddings, and storage are local;
   the only legitimate outbound calls are to OpenAI for enrichment and chat.
 
-> The production compose file, the backend/worker Dockerfiles, and the Caddy config that realize this
-> topology are **planned (M11)** — they are not in the repo yet. Today's `docker-compose.yml` brings up
-> only `db` and `gotenberg`; the backend, worker, and UI run as host processes (`make run-backend`,
-> `make run-worker`, `make run-ui`). You can stand up the hybrid split today with that local-style
-> layout plus an OpenAI key; the production packaging is what M11 adds.
+> The production compose file (`docker-compose.prod.yml`), the backend/worker Dockerfiles, and the
+> Caddy config that realize this topology are **shipped** (M11). The dev `docker-compose.yml` still
+> brings up only `db` + `gotenberg` for host-process local development (`make run-backend` /
+> `run-worker` / `run-ui`), but the on-box deployment runs the full production compose. The
+> step-by-step on-box procedure (build on the box, `.env.production`, first start, day-2 redeploy with
+> `make deploy-box`) is in the
+> [fresh-box runbook](deploy-fresh-box-runbook.md).
 
 ## Configuration (DOKTOK_* settings)
 
-These go in `.env` (loaded by `make` and the app). All settings live in
-`core/doktok_core/config.py` with inline documentation; the values below are the N95 hybrid profile.
+On the box these go in **`.env.production`** (loaded by `docker compose -f docker-compose.prod.yml
+--env-file .env.production`); for host-process local dev they go in `.env`. The tracked
+[`.env.production.example`](../../.env.production.example) is the **single source of truth** for the
+full production variable list — it is sectioned (REQUIRED vs optional), ships the real N95 defaults,
+and documents every knob inline. Bootstrap it once by copying the template (see the
+[fresh-box runbook section 3](deploy-fresh-box-runbook.md)); the snippets below explain the N95-specific
+choices rather than re-listing every variable. All settings also live in `core/doktok_core/config.py`.
+
 Note these are the **environment baseline**; the AI provider split itself is stored in the database
-and set via the Settings UI (next section).
+and set via the Settings UI (next section) — the env vars only **seed** a fresh/empty DB.
 
 ### Hybrid split and egress
 
@@ -146,14 +156,19 @@ set through the Settings UI (next section) or seeded once from the env above on 
 ### N95 throughput tuning
 
 ```env
-# OCR is the local throughput governor (PaddleOCR, CPU-bound, ~1 core/page, ~seconds/page).
+# Engine: on the N95 run RapidOCR with the OpenVINO backend - much faster than PaddleOCR on
+# Alder Lake-N (Intel) and it avoids PaddlePaddle's oneDNN crash entirely.
+DOKTOK_OCR_ENGINE=rapidocr
+DOKTOK_OCR_RAPID_BACKEND=openvino   # Intel CPUs; "onnxruntime" otherwise
+
+# OCR is the local throughput governor (CPU-bound, ~1 core/page, ~seconds/page).
 # Rule of thumb: OCR_CONCURRENCY * OCR_CPU_THREADS <= physical cores. On 4 cores:
 DOKTOK_OCR_CONCURRENCY=2          # 2 OCR worker processes (pages OCR'd in parallel)
 DOKTOK_OCR_CPU_THREADS=1          # 1 math thread per worker (avoid oversubscription)
 
-# REQUIRED on the N95 / Alder Lake-N: PaddlePaddle's oneDNN kernels crash under the PIR executor here
-# ("Unimplemented ... onednn_instruction.cc"), failing every OCR page. Disabling oneDNN fixes it
-# (slightly slower). Leave it true (default) only on CPUs where oneDNN works.
+# PaddleOCR only: if you switch DOKTOK_OCR_ENGINE=paddleocr, oneDNN is REQUIRED off on the N95 /
+# Alder Lake-N - its kernels crash under the PIR executor here ("Unimplemented ...
+# onednn_instruction.cc"), failing every OCR page. (No effect when the engine is rapidocr.)
 DOKTOK_OCR_ENABLE_MKLDNN=false
 
 # How many documents flow through intake/extraction at once. Keep modest on 4 cores.
@@ -167,14 +182,17 @@ DOKTOK_OPENAI_RECONCILE_CONCURRENCY=6   # 6-8 for this box
 `DOKTOK_OCR_CONCURRENCY` is live-reloaded from the Settings DB between ingest scans; the env value is
 the startup default.
 
-**oneDNN crash on the N95.** `DOKTOK_OCR_ENABLE_MKLDNN=false` is not optional on this box. PaddleOCR's
-PaddlePaddle backend uses oneDNN (MKL-DNN) CPU kernels by default; on Intel N95 / Alder Lake-N they
-abort under the PIR executor (`Unimplemented ... onednn_instruction.cc`) and every OCR page fails.
-With oneDNN disabled, PaddleOCR reads pages correctly (validated). See
-[ADR-0010](../adr/ADR-0010-paddleocr-default-ocr-engine.md).
+**OCR engine on the N95.** Run **RapidOCR with the OpenVINO backend** (`DOKTOK_OCR_ENGINE=rapidocr`,
+`DOKTOK_OCR_RAPID_BACKEND=openvino`): it is markedly faster than PaddleOCR on Alder Lake-N and sidesteps
+the oneDNN issue below. If you instead pick PaddleOCR (`DOKTOK_OCR_ENGINE=paddleocr`),
+`DOKTOK_OCR_ENABLE_MKLDNN=false` is **not optional** on this box: PaddlePaddle's oneDNN (MKL-DNN) CPU
+kernels abort under the PIR executor on Intel N95 / Alder Lake-N (`Unimplemented ...
+onednn_instruction.cc`) and every OCR page fails; with oneDNN disabled, PaddleOCR reads pages correctly
+(validated). See [ADR-0010](../adr/ADR-0010-paddleocr-default-ocr-engine.md) and
+[ADR-0021](../adr/ADR-0021-pluggable-ocr-engines-and-device-aware-recommendation.md).
 
-**OCR memory and OOM.** PaddleOCR runs as a pool of `DOKTOK_OCR_CONCURRENCY` worker **processes**, each
-using ~1-1.5 GB RAM (it is GIL-serialized, so processes — not threads — give parallelism). When the
+**OCR memory and OOM.** The OCR engine runs as a pool of `DOKTOK_OCR_CONCURRENCY` worker **processes**,
+each using ~1-1.5 GB RAM (OCR is GIL-serialized, so processes — not threads — give parallelism). When the
 worker runs in a memory-capped container, the **worker container's `memory:` cap (not host RAM)** is
 what bounds safe concurrency: exceeding it OOM-kills a child, which surfaces as `BrokenProcessPool` /
 "a child process terminated abruptly". Fix by lowering `DOKTOK_OCR_CONCURRENCY` or raising the worker
@@ -183,9 +201,7 @@ capped at ~2.5 GB. (At 8 GB total, also leave room for Postgres, the embedder, a
 
 **Device-aware sizing hint.** `GET /api/v1/settings/ocr/recommendation` probes this host (CPU vendor,
 cores, RAM, GPU) and returns a suggested engine + concurrency; the Settings UI shows it as a one-click
-hint. On the N95 it suggests a CPU-appropriate concurrency. A lighter RapidOCR engine that avoids the
-oneDNN issue is planned (ADR-0021); until it is benchmarked here, PaddleOCR with oneDNN disabled is the
-engine to run.
+hint. On the N95 it suggests RapidOCR/OpenVINO with a CPU-appropriate concurrency (ADR-0021).
 
 ### Local Ollama server (embeddings only)
 
@@ -220,9 +236,10 @@ the vector dimension and require a re-index (ADR-0014, ADR-0020).
 **Planned (M11: APP-2):** headless / scripted seeding of the AI settings and OpenAI key so a fresh box
 can be configured without clicking through the UI. This does not exist yet; use the Settings UI today.
 
-> Security note on the key: the OpenAI API key is stored as **plaintext JSON in Postgres
-> `app_settings`** today. It is write-only over the API, but database backups are therefore
-> **secret-bearing**. Encryption at rest is **planned (M11: APP-8)**. Until then, protect and treat
+> Security note on the key: the OpenAI API key is **encrypted at rest** in Postgres `app_settings`
+> when `DOKTOK_SECRETS_KEY` is set (APP-8, shipped). It is write-only over the API. Database backups
+> still carry the key in its encrypted form, so the backup repos are secret-bearing and the
+> `DOKTOK_SECRETS_KEY` must be stored off the box too (a backup is undecryptable without it). Treat
 > backups as secrets (see Backups below).
 
 ## Backups
@@ -230,12 +247,12 @@ can be configured without clicking through the UI. This does not exist yet; use 
 Two things hold state; back both up:
 
 1. **The Postgres volume** `doktok-pgdata` — documents, chunks + embeddings, entities, chat threads,
-   categories, the audit log, and `app_settings` (the AI selection **and the OpenAI API key**). Back
-   up with `pg_dump` against the db container, or snapshot the named volume. **This backup contains
-   the OpenAI key in plaintext (until APP-8) — store it encrypted and access-controlled.**
+   categories, the audit log, and `app_settings` (the AI selection **and the OpenAI API key**, the
+   latter encrypted at rest via `DOKTOK_SECRETS_KEY`).
 2. **The file tree** `files_root` (`DOKTOK_FILES_ROOT`, default `./storage/files`) — originals and
-   OCR/normalized output under each tenant's `docs.active/`, plus in-flight folders. Back this up as a
-   normal filesystem backup.
+   OCR/normalized output under each tenant's `docs.active/`, plus in-flight folders.
+
+Both legs are covered by the M12 backup engine below; don't roll your own `pg_dump`/tar.
 
 The **M12 backup engine** handles both legs: [`deploy/backup.sh`](../../deploy/backup.sh) takes a
 local-first backup - `files_root` via restic (dedup + AES-256) and Postgres via pgBackRest (base +
@@ -278,8 +295,10 @@ LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
 ## Secrets, TLS, and the outbound firewall
 
 - **Secrets.** Tenant tokens (`DOKTOK_TENANT_TOKENS`), the Caddy edge token (`DOKTOK_API_TOKEN`, which
-  must be one of the tenant tokens), and the DB password come from an untracked `.env.production`
-  (gitignored) or Docker secrets — never the `dev-token-*` defaults. The OpenAI key is entered via the
+  must be one of the tenant tokens), the DB password, and `DOKTOK_SECRETS_KEY` come from an untracked
+  `.env.production` (gitignored, a one-time manual bootstrap copied from
+  [`.env.production.example`](../../.env.production.example); never rsynced by `make deploy-box`) —
+  never the `dev-token-*` defaults. The OpenAI key is entered via the
   Settings UI (persisted in Postgres) or seeded once from `DOKTOK_OPENAI_API_KEY`; rotating it is a
   Settings change + restart (or re-seed). Set `DOKTOK_SECRETS_KEY` so the key is encrypted at rest
   (APP-8); backups that include `app_settings` still carry it (the encrypted form), so keep backups
@@ -309,7 +328,9 @@ LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
 
 ## Last updated notes
 
-2026-06-25. Reflects the hybrid split as buildable today (per-purpose provider via Settings UI; local
-OCR + embeddings hardwired). OCR section expanded: the required `DOKTOK_OCR_ENABLE_MKLDNN=false` on this
-CPU (oneDNN crash), OCR worker-process memory / OOM tuning, and the device-aware OCR recommendation.
-A RapidOCR engine and live in-UI engine selection are planned (ADR-0021), not shipped.
+2026-06-26. Env/deploy/OCR refresh: the production compose, Dockerfiles, and Caddy config are now
+shipped (M11), so the env section points at `.env.production.example` (single source of truth) and the
+[fresh-box runbook](deploy-fresh-box-runbook.md) for the on-box procedure + the `make deploy-box`
+one-command redeploy. OCR guidance updated to **RapidOCR/OpenVINO** as the recommended N95 engine
+(ADR-0021, now shipped) with PaddleOCR + `DOKTOK_OCR_ENABLE_MKLDNN=false` as the fallback. The broader
+"shipped vs planned (M11)" table above may still under-state a few now-shipped items.

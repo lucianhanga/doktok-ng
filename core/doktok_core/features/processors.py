@@ -474,7 +474,7 @@ class StructuredRecordsFeature:
     """
 
     name = "structured_records"
-    version = 1
+    version = 2  # bumped for windowed extraction (#314) -> reconciler re-extracts the corpus
     dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(

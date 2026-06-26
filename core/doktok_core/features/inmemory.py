@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 
-from doktok_contracts.schemas import DocumentFeature, FeatureStatus
+from doktok_contracts.schemas import DocumentFeature, FeatureMetrics, FeatureStatus
 
 
 class InMemoryFeatureRepository:
@@ -164,13 +164,33 @@ class InMemoryFeatureRepository:
                 return row.model_copy(deep=True)
         return None
 
-    def mark_done(self, feature_id: str, *, feature_version: int) -> None:
+    def mark_done(
+        self, feature_id: str, *, feature_version: int, metrics: FeatureMetrics | None = None
+    ) -> None:
         for row in self.rows:
             if row.id == feature_id:
                 row.status = FeatureStatus.DONE
                 row.feature_version = feature_version
                 row.last_error = None
                 row.completed_at = datetime.now()
+                if metrics is not None:
+                    row.metrics = metrics
+
+    def feature_counts_for_documents(
+        self, tenant_id: str, document_ids: list[str]
+    ) -> dict[str, tuple[int, int]]:
+        wanted = set(document_ids)
+        counts: dict[str, tuple[int, int]] = {}
+        for row in self.rows:
+            if row.tenant_id != tenant_id or row.document_id not in wanted:
+                continue
+            done, failed = counts.get(row.document_id, (0, 0))
+            if row.status is FeatureStatus.DONE:
+                done += 1
+            elif row.status is FeatureStatus.FAILED:
+                failed += 1
+            counts[row.document_id] = (done, failed)
+        return counts
 
     def mark_failed(self, feature_id: str, *, error: str, next_attempt_at: datetime) -> None:
         for row in self.rows:

@@ -44,6 +44,7 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
+from doktok_core.features.telemetry import build_processing_summary, build_processing_telemetry
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 
@@ -125,6 +126,7 @@ def _decode_cursor(token: str | None, sort: DocumentSort, direction: SortDir) ->
 def list_documents(
     tenant: Tenant,
     repo: Repo,
+    features: Features,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: Annotated[str | None, Query()] = None,
     category: Annotated[str | None, Query()] = None,
@@ -154,7 +156,24 @@ def list_documents(
         token_type=token_type,
         token_match=token_match,
     )
-    return DocumentListPage(items=items, total=total, next_cursor=_encode_cursor(next_anchor))
+    # Per-document processing summary for the list tooltip. The metadata-derived fields are free
+    # from each row; the done/failed feature counts come from ONE batched GROUP BY over this page's
+    # ids (no N+1), kept off the shared Document shape via the response envelope's sidecar map.
+    counts = features.feature_counts_for_documents(tenant.tenant_id, [d.id for d in items])
+    summaries = {
+        d.id: build_processing_summary(
+            d,
+            features_done=counts.get(d.id, (0, 0))[0],
+            features_failed=counts.get(d.id, (0, 0))[1],
+        )
+        for d in items
+    }
+    return DocumentListPage(
+        items=items,
+        total=total,
+        next_cursor=_encode_cursor(next_anchor),
+        processing=summaries,
+    )
 
 
 def _validated_tokens(token: list[str] | None) -> tuple[str, ...]:
@@ -246,9 +265,12 @@ def get_document_detail(
             text = path.read_text(encoding="utf-8")
     content = DocumentContentMeta(length=len(text), excerpt=text[:_EXCERPT_CHARS])
 
+    feature_rows = features.list_for_document(tenant.tenant_id, document_id)
     return DocumentDetail(
         document=document,
-        features=features.list_for_document(tenant.tenant_id, document_id),
+        # Built from the document metadata + the already-loaded feature rows (no extra query).
+        processing=build_processing_telemetry(document, feature_rows),
+        features=feature_rows,
         categories=categories.list_for_document(tenant.tenant_id, document_id),
         entities=entity_summary,
         content=content,

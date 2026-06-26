@@ -49,6 +49,7 @@ from doktok_contracts.schemas import (
     EntitySummary,
     EntityType,
     ExtractedRecord,
+    FeatureMetrics,
     IngestionJob,
     ListAnchor,
     OcrSettings,
@@ -730,8 +731,21 @@ class FeatureRepository(Protocol):
         feature has a ``done`` row on the same document - so a stage waits for its inputs."""
         ...
 
-    def mark_done(self, feature_id: str, *, feature_version: int) -> None: ...
+    def mark_done(
+        self, feature_id: str, *, feature_version: int, metrics: FeatureMetrics | None = None
+    ) -> None:
+        """Mark a feature row done. When ``metrics`` is given (the reconciler measured this run),
+        persist it onto the row's ``metrics`` jsonb; when None, leave the column unchanged."""
+        ...
+
     def mark_failed(self, feature_id: str, *, error: str, next_attempt_at: datetime) -> None: ...
+    def feature_counts_for_documents(
+        self, tenant_id: str, document_ids: list[str]
+    ) -> dict[str, tuple[int, int]]:
+        """(done, failed) feature counts per document for the list tooltip, in one batched query.
+        Documents with no feature rows are absent from the returned map."""
+        ...
+
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentFeature]: ...
     def list_for_tenant(self, tenant_id: str, *, limit: int = 2000) -> list[DocumentFeature]: ...
     def list_for_documents(self, tenant_id: str, document_ids: list[str]) -> list[DocumentFeature]:

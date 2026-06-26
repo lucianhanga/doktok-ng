@@ -30,8 +30,11 @@ class FakeFeatureRepository:
     def claim_next(self, tenant_id, *, now, reclaim_before, dependencies=()):  # type: ignore[no-untyped-def]
         return None
 
-    def mark_done(self, feature_id, *, feature_version) -> None: ...  # type: ignore[no-untyped-def]
+    def mark_done(self, feature_id, *, feature_version, metrics=None) -> None: ...  # type: ignore[no-untyped-def]
     def mark_failed(self, feature_id, *, error, next_attempt_at) -> None: ...  # type: ignore[no-untyped-def]
+    def feature_counts_for_documents(self, tenant_id, document_ids):  # type: ignore[no-untyped-def]
+        return {}
+
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentFeature]:
         return []
 

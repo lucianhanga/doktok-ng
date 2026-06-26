@@ -15,7 +15,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class JobStatus(StrEnum):
@@ -135,6 +135,10 @@ class DocumentListPage(BaseModel):
     items: list[Document] = Field(default_factory=list)
     total: int = 0
     next_cursor: str | None = None
+    # Per-document processing summaries for the list tooltip, keyed by document id (sidecar map so
+    # the shared ``Document`` shape stays unchanged for search). Populated only on the list
+    # response; done/failed counts come from one batched GROUP BY over this page's ids (no per-row).
+    processing: dict[str, ProcessingSummary] = Field(default_factory=dict)
 
 
 class DocumentSort(StrEnum):
@@ -378,6 +382,29 @@ class TurnMetrics(BaseModel):
         )
 
 
+class FeatureMetrics(BaseModel):
+    """Per-feature-run telemetry persisted on the document_features ledger row's ``metrics`` jsonb
+    (per-document processing telemetry). ``duration_ms`` is the reconciler's wall-clock around the
+    processor; the token counts come from the enrichment/embedding model when it reports them (0
+    when the feature does not call an LLM, e.g. thumbnail/extract). ``estimated`` marks a char-ratio
+    estimate rather than a provider-reported count. Stored via ``model_dump()`` (migration 0029
+    chat-metrics precedent); old rows default to an empty object -> all zeros."""
+
+    duration_ms: int = 0
+    prompt_tokens: int = 0
+    answer_tokens: int = 0
+    total_tokens: int = 0
+    model: str = ""
+    estimated: bool = False
+
+    @model_validator(mode="after")
+    def _fill_total(self) -> FeatureMetrics:
+        # Mirror LlmUsage/TurnMetrics: derive the total from the parts when not given explicitly.
+        if self.total_tokens == 0:
+            self.total_tokens = self.prompt_tokens + self.answer_tokens
+        return self
+
+
 class FeatureStatus(StrEnum):
     """State of a single processing feature for one document (ADR-0009)."""
 
@@ -404,6 +431,9 @@ class DocumentFeature(BaseModel):
     next_attempt_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Per-run telemetry (duration + enrichment tokens). Empty default for rows written before the
+    # metrics column / by features that do not measure (backward compatible).
+    metrics: FeatureMetrics = Field(default_factory=FeatureMetrics)
 
 
 class TokenSuggestion(BaseModel):
@@ -669,6 +699,61 @@ class DocumentContentMeta(BaseModel):
     excerpt: str = ""
 
 
+class ProcessingStep(BaseModel):
+    """One processing step in the per-document telemetry view: a feature run with its outcome,
+    timing and (for LLM steps) token spend. Derived from a ``DocumentFeature`` ledger row + the
+    catalog label; ``duration_ms``/tokens/``model`` come from the row's ``metrics`` (None/0 for rows
+    processed before metrics existed or for non-LLM features)."""
+
+    feature: str
+    label: str
+    status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
+    prompt_tokens: int | None = None
+    answer_tokens: int | None = None
+    total_tokens: int | None = None
+    model: str | None = None
+    estimated: bool = False
+    attempts: int = 0
+    last_error: str | None = None
+
+
+class ProcessingTelemetry(BaseModel):
+    """Per-document processing telemetry for the detail view: timestamps, extraction outcome, and a
+    per-step breakdown with durations and enrichment token counts. Built from the document row's
+    metadata + the already-loaded feature ledger rows (no extra query). Backward compatible:
+    documents with empty metrics / no normalization yield nulls and zeros (today's look)."""
+
+    received_at: datetime | None = None
+    activated_at: datetime | None = None
+    extraction_method: str = ""
+    page_count: int | None = None
+    ocr_outcome: str = "not_needed"  # "done" | "not_needed" | "failed"
+    ocr_confidence: float | None = None
+    normalized_from_mime: str = ""
+    language: str = ""
+    steps: list[ProcessingStep] = Field(default_factory=list)
+    total_duration_ms: int = 0
+    total_tokens: int = 0
+
+
+class ProcessingSummary(BaseModel):
+    """Compact per-document processing summary for the Documents list tooltip (set ONLY on list
+    response items via the ``DocumentListPage.processing`` sidecar map - never on the shared
+    ``Document`` shape used by search). The metadata-derived fields are free from the row; the
+    done/failed counts come from one batched GROUP BY over the page's document ids (no N+1)."""
+
+    extraction_method: str = ""
+    ocr_outcome: str = "not_needed"  # "done" | "not_needed" | "failed"
+    page_count: int | None = None
+    normalized_from_mime: str = ""
+    status: str = ""
+    features_done: int = 0
+    features_failed: int = 0
+
+
 class DocumentDetail(BaseModel):
     """One-round-trip aggregate for the document detail view's eager fold (review follow-up).
 
@@ -679,6 +764,7 @@ class DocumentDetail(BaseModel):
     """
 
     document: Document
+    processing: ProcessingTelemetry = Field(default_factory=ProcessingTelemetry)
     features: list[DocumentFeature] = Field(default_factory=list)
     categories: list[Category] = Field(default_factory=list)
     entities: DocumentEntitySummary = Field(default_factory=DocumentEntitySummary)

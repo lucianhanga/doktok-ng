@@ -16,7 +16,9 @@ import logging
 from typing import Any
 
 import httpx
-from doktok_contracts.media import ExtractedMetadata
+from doktok_contracts.media import ExtractedMetadata, LlmUsage
+
+from doktok_provider_ollama.usage import usage_from_chat
 
 logger = logging.getLogger("doktok.enrich")
 
@@ -73,8 +75,18 @@ class OllamaMetadataExtractor:
         self._keep_alive = keep_alive
         # None => omit `think` (thinking on, safe for MoE + format); False => hard-disable (dense).
         self._think: bool | None = None if think else False
+        # Token usage of the most recent call (read by the reconciler via the feature processor).
+        self._last_usage: LlmUsage | None = None
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return self._last_usage
 
     def extract(self, text: str) -> ExtractedMetadata:
+        self._last_usage = None
         body = text[:_MAX_CHARS]
         content = self._chat(self._model, _SYSTEM, body, think=self._think)
         data = _loads(content)
@@ -116,8 +128,10 @@ class OllamaMetadataExtractor:
             payload["think"] = think  # top-level field; Ollama ignores `think` inside options
         response = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
         response.raise_for_status()
-        message = response.json().get("message", {})
-        return str(message.get("content", ""))  # ignore message.thinking
+        body = response.json()
+        content = str(body.get("message", {}).get("content", ""))  # ignore message.thinking
+        self._last_usage = usage_from_chat(body, content)
+        return content
 
 
 def _loads(content: str) -> dict[str, Any] | None:

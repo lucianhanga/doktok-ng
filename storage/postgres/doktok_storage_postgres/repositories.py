@@ -30,6 +30,7 @@ from doktok_contracts.schemas import (
     EntitySummary,
     EntityType,
     ExtractedRecord,
+    FeatureMetrics,
     FeatureStatus,
     IngestionJob,
     JobStatus,
@@ -996,12 +997,14 @@ class PostgresLexicalTermExtractor:
 
 _FEATURE_COLUMNS = (
     "id, tenant_id, document_id, feature, feature_version, status, attempts, max_attempts, "
-    "last_error, last_attempt_at, completed_at, next_attempt_at, created_at, updated_at"
+    "last_error, last_attempt_at, completed_at, next_attempt_at, created_at, updated_at, metrics"
 )
 _FEATURE_COLUMNS_F = ", ".join(f"f.{c}" for c in _FEATURE_COLUMNS.split(", "))
 
 
 def _row_to_feature(row: dict[str, Any]) -> DocumentFeature:
+    # ``metrics`` is jsonb (psycopg returns a dict); old rows / the column default are '{}', which
+    # FeatureMetrics validates to all-zeros (backward compatible).
     return DocumentFeature(
         id=row["id"],
         tenant_id=row["tenant_id"],
@@ -1017,6 +1020,7 @@ def _row_to_feature(row: dict[str, Any]) -> DocumentFeature:
         next_attempt_at=row["next_attempt_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        metrics=FeatureMetrics.model_validate(row.get("metrics") or {}),
     )
 
 
@@ -1148,13 +1152,43 @@ class PostgresFeatureRepository:
             ).fetchone()
         return _row_to_feature(row) if row else None
 
-    def mark_done(self, feature_id: str, *, feature_version: int) -> None:
+    def mark_done(
+        self, feature_id: str, *, feature_version: int, metrics: FeatureMetrics | None = None
+    ) -> None:
+        # When metrics are supplied, persist them onto the row (jsonb); otherwise leave the column
+        # as-is so a re-run without measurement doesn't clobber a prior measurement.
         with self._db.connection() as conn:
-            conn.execute(
-                "UPDATE document_features SET status='done', feature_version=%s, "
-                "completed_at=now(), last_error=NULL, updated_at=now() WHERE id=%s",
-                (feature_version, feature_id),
-            )
+            if metrics is None:
+                conn.execute(
+                    "UPDATE document_features SET status='done', feature_version=%s, "
+                    "completed_at=now(), last_error=NULL, updated_at=now() WHERE id=%s",
+                    (feature_version, feature_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE document_features SET status='done', feature_version=%s, "
+                    "completed_at=now(), last_error=NULL, metrics=%s, updated_at=now() WHERE id=%s",
+                    (feature_version, Json(metrics.model_dump()), feature_id),
+                )
+
+    def feature_counts_for_documents(
+        self, tenant_id: str, document_ids: list[str]
+    ) -> dict[str, tuple[int, int]]:
+        """(done, failed) feature counts per document for the list tooltip, in ONE batched GROUP BY
+        over the page's ids (never per-row). Documents with no rows are absent from the map."""
+        if not document_ids:
+            return {}
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT document_id, "
+                "COUNT(*) FILTER (WHERE status='done') AS done, "
+                "COUNT(*) FILTER (WHERE status='failed') AS failed "
+                "FROM document_features WHERE tenant_id=%s AND document_id = ANY(%s) "
+                "GROUP BY document_id",
+                (tenant_id, list(document_ids)),
+            ).fetchall()
+        return {r["document_id"]: (int(r["done"]), int(r["failed"])) for r in rows}
 
     def mark_failed(self, feature_id: str, *, error: str, next_attempt_at: datetime) -> None:
         with self._db.connection() as conn:

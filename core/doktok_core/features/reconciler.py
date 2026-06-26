@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
+from doktok_contracts.media import LlmUsage
 from doktok_contracts.ports import AuditLogRepository, FeatureProcessor, FeatureRepository
-from doktok_contracts.schemas import AuditEventType, DocumentFeature
+from doktok_contracts.schemas import AuditEventType, DocumentFeature, FeatureMetrics
 
 from doktok_core.audit.logger import record_activity
 
@@ -100,15 +102,29 @@ class FeatureReconciler:
             self._repo.mark_done(row.id, feature_version=row.feature_version)
             return
         try:
+            t0 = time.monotonic()
             processor.process(tenant_id, row.document_id)
-            self._repo.mark_done(row.id, feature_version=processor.version)
+            duration_ms = round((time.monotonic() - t0) * 1000)
+            metrics = self._metrics(processor, duration_ms)
+            self._repo.mark_done(row.id, feature_version=processor.version, metrics=metrics)
+            details: dict[str, object] = {
+                "feature": row.feature,
+                "version": processor.version,
+                "duration_ms": metrics.duration_ms,
+            }
+            if metrics.total_tokens:
+                details["prompt_tokens"] = metrics.prompt_tokens
+                details["answer_tokens"] = metrics.answer_tokens
+                details["total_tokens"] = metrics.total_tokens
+                if metrics.model:
+                    details["model"] = metrics.model
             self._record(
                 tenant_id,
                 AuditEventType.FEATURE_COMPLETED,
                 row,
                 severity="info",
                 description=f"{row.feature} completed",
-                details={"feature": row.feature, "version": processor.version},
+                details=details,
             )
         except Exception as exc:  # noqa: BLE001 - a feature failure retries, never crashes
             backoff = self._backoff_base * (2 ** max(0, row.attempts - 1))
@@ -132,6 +148,30 @@ class FeatureReconciler:
                 description=f"{row.feature} failed: {exc}"[:240],
                 details={"feature": row.feature, "error": str(exc), "attempt": row.attempts},
             )
+
+    def _metrics(self, processor: FeatureProcessor, duration_ms: int) -> FeatureMetrics:
+        """Build the per-run metrics: wall-clock duration always, plus token usage when the
+        processor exposes ``get_last_usage()`` (enrichment/embedding features). Best-effort - any
+        error reading usage is swallowed so telemetry never breaks reconciliation."""
+        usage: LlmUsage | None = None
+        getter = getattr(processor, "get_last_usage", None)
+        if callable(getter):
+            try:
+                result = getter()
+            except Exception:  # noqa: BLE001 - telemetry must not break the loop
+                result = None
+            if isinstance(result, LlmUsage):
+                usage = result
+        if usage is None:
+            return FeatureMetrics(duration_ms=duration_ms)
+        return FeatureMetrics(
+            duration_ms=duration_ms,
+            prompt_tokens=usage.prompt_tokens,
+            answer_tokens=usage.answer_tokens,
+            total_tokens=usage.total_tokens,
+            model=getattr(processor, "model", "") or "",
+            estimated=usage.estimated,
+        )
 
     def _record(
         self,

@@ -143,6 +143,24 @@ DOKTOK_AZURE_ACCOUNT=... DOKTOK_AZURE_CONTAINER=... DOKTOK_AZURE_SAS=... ./deplo
 
 Wrap with the quiesce hook for a still snapshot: `doktok-worker quiesce` -> back up -> `quiesce --off`.
 
+### On demand: `make backup` (dev / any host, no systemd needed)
+
+`make backup` runs the same mode-aware `deploy/backup.sh` the timers run, so you can populate the DRP
+(sentinels + history) on demand without systemd - useful in **dev**, where there is no host scheduler.
+It honours `DOKTOK_DEPLOY_MODE`; override the type with `TYPE=full|diff|incr` (default `full`).
+
+- **Treat dev as a device (recommended):** run the prod compose stack locally and set
+  `DOKTOK_DEPLOY_MODE=compose` (in `.env`) - then `make backup` uses the same containerized engine as
+  the box (the `backup-runner` + pgBackRest + WAL-archiving db image), and the DRP fills in exactly as
+  on the device. The lightweight dev `docker-compose.yml` (db + gotenberg only) has no backup engine.
+- **Bare host mode** (`DOKTOK_DEPLOY_MODE=host`) needs the host tools: `restic` (`brew install restic`)
+  for the files leg, and pgBackRest for the pg leg (awkward on macOS - prefer the compose path above).
+- The **portable backup** (Settings -> DRP -> Create/Download) and `make drp-selftest` work in any dev
+  with just `pg_dump` (`brew install libpq && brew link --force libpq` gives you pg_dump@17).
+
+Note: scheduled backups still require the host **systemd timers** (Linux only); `make backup` is the
+on-demand equivalent for dev/macOS.
+
 ## Restore
 
 1. (If offsite) pull the repo from Azure into `$DOKTOK_BACKUP_DIR` (reverse of `azure-sync.sh`).

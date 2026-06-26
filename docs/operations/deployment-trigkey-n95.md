@@ -13,35 +13,43 @@ this deployment uses the **hybrid split** decided in
 
 Read ADR-0020 first for the rationale and the privacy trade-off. This guide is the how-to.
 
-## What is shipped today vs. planned (M11)
+## Deployment capabilities (all shipped)
 
-This guide describes a target that is **partly built**. Items marked **planned (M11: ...)** do not
-exist in the repository today; do not treat them as available. Where a step has no production tooling
-yet, the guide gives the manual equivalent that works today.
+The containerized deployment and operations stack (M11) is **shipped and merged to main**, and the
+backup/DRP engine (M12) and the later Settings refinements (M13-M15) are shipped and running on the
+box. This guide describes the **current** system; nothing in the table below is aspirational.
 
-| Capability | Status |
+| Capability | Notes |
 |---|---|
-| Per-purpose provider split (pipeline/RAG on OpenAI; OCR/embeddings local) | Shipped (ADR-0014) |
-| Setting the provider split + OpenAI key via the **Settings UI** | Shipped |
-| Local dev `docker-compose.yml` (db + gotenberg only) | Shipped |
-| N95 tuning settings (`DOKTOK_OCR_CONCURRENCY`, `OPENAI_RECONCILE_CONCURRENCY`, ...) | Shipped |
-| **Production compose** (backend + worker + ollama-embedder + db + gotenberg + Caddy) | Shipped (M11: #318) |
-| **Dockerfiles** for backend, worker, and ui images | Shipped (M11: #317) |
-| Per-container resource limits + restart policies | Shipped (M11: #323) |
-| Caddy TLS (domain auto-HTTPS or LAN `tls internal`) + edge token injection | Shipped (M11: #321) |
-| **Headless / scripted seeding** of the AI settings + OpenAI key | Shipped (M11: APP-2/#325) |
-| **`DOKTOK_NO_EGRESS` blocking OpenAI** | Shipped (M11: APP-3/#326) |
-| OpenAI key env fallback (`DOKTOK_OPENAI_API_KEY`) | Shipped (M11: APP-7/#320) |
-| `migrate` command + advisory-locked migration | Shipped (M11: APP-1/#319) |
-| Encrypted OpenAI key at rest (`DOKTOK_SECRETS_KEY`) | Shipped (M11: APP-8/#331) |
-| Rate limiting, configurable CORS, body-size limit | Shipped (M11: APP-9/#332, APP-10/#333) |
-| Egress/privacy indicator in the Settings UI | Shipped (M11: APP-11/#334) |
-| Structured JSON logs + `/metrics`; dependency-aware `/ready`; worker heartbeat | Shipped (M11: #336/#337/#328/#329) |
-| Image build/publish to GHCR + SBOM; deploy + rollback workflow | Shipped (M11: #338/#339) |
-| Staging/production env profiles + security runbook | Shipped (M11: #340/#341) |
-| **Outbound firewall to OpenAI only** (example provided; apply it on the host) | Partly (M11: #322) |
+| Per-purpose provider split (pipeline/RAG on OpenAI; OCR/embeddings local) | ADR-0014 |
+| Setting the provider split + OpenAI key via the **Settings UI** | DB-backed, live-editable |
+| Per-purpose Ollama server URL (pipeline/RAG/embedding) with reset + Test button | M13; Settings -> AI |
+| OpenAI key "Test" button (validates the key without echoing it) | `POST /api/v1/settings/ai/test-openai` |
+| Selectable OCR engine (`DOKTOK_OCR_ENGINE`) + RapidOCR backend (`DOKTOK_OCR_RAPID_BACKEND`) | ADR-0021; RapidOCR/OpenVINO recommended on the N95 |
+| Device-aware OCR recommendation endpoint | `GET /api/v1/settings/ocr/recommendation` (probes CPU/cores/RAM/GPU) |
+| Drag-and-drop upload on the Overview screen | M14 |
+| Local dev `docker-compose.yml` (db + gotenberg only) | host-process dev path |
+| N95 tuning settings (`DOKTOK_OCR_CONCURRENCY`, `OPENAI_RECONCILE_CONCURRENCY`, ...) | |
+| **Production compose** (backend + worker + ollama-embedder + db + gotenberg + Caddy) | `docker-compose.prod.yml` |
+| **Dockerfiles** for backend, worker, db, and ui images | |
+| Per-container resource limits + restart policies | |
+| Caddy TLS (domain auto-HTTPS or LAN `tls internal`) + edge token injection | |
+| **Headless / scripted seeding** of the AI settings + OpenAI key | `seed-settings` CLI; seed-if-absent (APP-2) |
+| **`DOKTOK_NO_EGRESS` blocking OpenAI** | refuses + falls back to local (APP-3) |
+| OpenAI key env fallback (`DOKTOK_OPENAI_API_KEY`) | APP-7 |
+| `migrate` command + advisory-locked migration | `python -m doktok_api migrate` (APP-1) |
+| Encrypted OpenAI key at rest (`DOKTOK_SECRETS_KEY`) | Fernet, "enc:v1:" marker (APP-8) |
+| Rate limiting, configurable CORS, body-size limit | APP-9 / APP-10 |
+| Egress/privacy indicator in the Settings UI | APP-11 |
+| Structured JSON logs + `/metrics`; dependency-aware `/ready`; worker heartbeat | |
+| Image build/publish to GHCR + SBOM; deploy + rollback workflow | optional CI path (`release.yml` / `deploy.yml`) |
+| Staging/production env profiles + security runbook | `.env.production.example`; [security-runbook.md](security-runbook.md) |
+| Backup/DRP engine (restic + pgBackRest PITR, systemd timers, Azure offsite, DRP panel) | M12; [backup-and-recovery.md](backup-and-recovery.md) |
+| **Outbound firewall to OpenAI only** | example provided; apply it on the host (`deploy/firewall-openai-only.example.nft`) |
 
-The M11 epic owns the full ticket list; this guide references it rather than duplicating it.
+The M11/M12 epics own the full ticket history; this guide references them rather than duplicating
+them. The day-2 deploy path is the one command `make deploy-box`; the canonical fresh-box procedure
+is the [fresh-box runbook](deploy-fresh-box-runbook.md).
 
 ## Hardware and OS prerequisites
 
@@ -105,11 +113,11 @@ Key points:
   the only legitimate outbound calls are to OpenAI for enrichment and chat.
 
 > The production compose file (`docker-compose.prod.yml`), the backend/worker Dockerfiles, and the
-> Caddy config that realize this topology are **shipped** (M11). The dev `docker-compose.yml` still
-> brings up only `db` + `gotenberg` for host-process local development (`make run-backend` /
-> `run-worker` / `run-ui`), but the on-box deployment runs the full production compose. The
-> step-by-step on-box procedure (build on the box, `.env.production`, first start, day-2 redeploy with
-> `make deploy-box`) is in the
+> Caddy config that realize this topology are part of the repo and run on the box. The dev
+> `docker-compose.yml` brings up only `db` + `gotenberg` for host-process local development
+> (`make run-backend` / `run-worker` / `run-ui`), while the on-box deployment runs the full production
+> compose. The step-by-step on-box procedure (build on the box, `.env.production`, first start, day-2
+> redeploy with `make deploy-box`) is in the
 > [fresh-box runbook](deploy-fresh-box-runbook.md).
 
 ## Configuration (DOKTOK_* settings)
@@ -128,8 +136,8 @@ and set via the Settings UI (next section) — the env vars only **seed** a fres
 ### Hybrid split and egress
 
 ```env
-# Egress MUST be enabled for the hybrid split: the box sends content to OpenAI. As of APP-3 the gate
-# is enforced - if a purpose is set to OpenAI while NO_EGRESS=true, the app refuses to egress, logs a
+# Egress MUST be enabled for the hybrid split: the box sends content to OpenAI. The gate is enforced
+# (APP-3) - if a purpose is set to OpenAI while NO_EGRESS=true, the app refuses to egress, logs a
 # warning naming the setting, and falls back to the local model. So this must be false here
 # (ADR-0006/ADR-0020). The actual outbound traffic is then restricted to OpenAI at the host firewall.
 DOKTOK_NO_EGRESS=false
@@ -220,24 +228,36 @@ Pull only the embedder: `ollama pull qwen3-embedding:0.6b`. Do not pull `qwen3.6
 
 ## Setting the AI provider split and OpenAI key
 
-**Today (Settings UI):** open the **Settings** tab and, in the AI section:
+Two equivalent ways: the Settings UI (live-editable) or headless seeding from env (fresh DB only).
+
+**Settings UI (live-editable):** open the **Settings** tab and, in the AI section:
 
 1. Set the **pipeline** purpose to an **OpenAI** provider + model with a reasoning density.
 2. Set the **RAG / interrogation** purpose to an **OpenAI** provider + model.
 3. Enter the **OpenAI API key** (write-only: it is stored, never read back; `GET` only reports whether
-   a key is set).
+   a key is set). Use the **Test** button to validate it without echoing it
+   (`POST /api/v1/settings/ai/test-openai`).
 
 The selection is stored in the `app_settings` table and **applied on the next backend/worker
 restart** (ADR-0014). After saving, restart the backend and worker.
 
+Each Ollama-using purpose (pipeline, RAG, embedding) can also point at a **different Ollama server
+URL** from Settings -> AI, with a reset-to-default and a Test button (M13). Blank inherits
+`DOKTOK_OLLAMA_BASE_URL`. This is the ADR-0020 "beefier LAN Ollama host" option (run, e.g., embeddings
+on a GPU box while the rest stays on the N95).
+
 The embedding model is shown read-only and is intentionally not selectable — changing it would change
 the vector dimension and require a re-index (ADR-0014, ADR-0020).
 
-**Planned (M11: APP-2):** headless / scripted seeding of the AI settings and OpenAI key so a fresh box
-can be configured without clicking through the UI. This does not exist yet; use the Settings UI today.
+**Headless seeding (fresh DB):** for an unattended fresh box, the AI settings and OpenAI key can be
+seeded from env without the UI. Set `DOKTOK_PIPELINE_PROVIDER` / `DOKTOK_RAG_PROVIDER` (+ models) and
+`DOKTOK_OPENAI_API_KEY` in `.env.production`, then run the `seed-settings` command
+(`python -m doktok_api seed-settings`). Seeding is **seed-if-absent**: it only populates an empty DB
+and never overwrites a Settings-UI edit. The Settings UI remains the live-editable surface afterward.
 
 > Security note on the key: the OpenAI API key is **encrypted at rest** in Postgres `app_settings`
-> when `DOKTOK_SECRETS_KEY` is set (APP-8, shipped). It is write-only over the API. Database backups
+> when `DOKTOK_SECRETS_KEY` is set (APP-8; Fernet, "enc:v1:" marker). It is write-only over the API.
+> Database backups
 > still carry the key in its encrypted form, so the backup repos are secret-bearing and the
 > `DOKTOK_SECRETS_KEY` must be stored off the box too (a backup is undecryptable without it). Treat
 > backups as secrets (see Backups below).
@@ -287,10 +307,10 @@ OCR text, chunks, and embeddings are computed and stored **locally**; pgvector a
 leave the box. But the enrichment and chat paths do egress. Communicate this to stakeholders before
 ingesting sensitive material, and review OpenAI's data-handling terms for your account.
 
-As of APP-3, `DOKTOK_NO_EGRESS` **does** gate OpenAI: with it `true`, selecting OpenAI is refused and
-the app falls back to the local model. The hybrid therefore requires `DOKTOK_NO_EGRESS=false` as the
-explicit opt-in. If on-premises content confidentiality is a hard requirement, prefer the **separate
-LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
+`DOKTOK_NO_EGRESS` gates OpenAI (APP-3): with it `true`, selecting OpenAI is refused and the app falls
+back to the local model. The hybrid therefore requires `DOKTOK_NO_EGRESS=false` as the explicit
+opt-in. If on-premises content confidentiality is a hard requirement, prefer the **separate LAN Ollama
+host** alternative in ADR-0020 instead of OpenAI.
 
 ## Secrets, TLS, and the outbound firewall
 
@@ -328,9 +348,14 @@ LAN Ollama host** alternative in ADR-0020 instead of OpenAI.
 
 ## Last updated notes
 
-2026-06-26. Env/deploy/OCR refresh: the production compose, Dockerfiles, and Caddy config are now
-shipped (M11), so the env section points at `.env.production.example` (single source of truth) and the
-[fresh-box runbook](deploy-fresh-box-runbook.md) for the on-box procedure + the `make deploy-box`
-one-command redeploy. OCR guidance updated to **RapidOCR/OpenVINO** as the recommended N95 engine
-(ADR-0021, now shipped) with PaddleOCR + `DOKTOK_OCR_ENABLE_MKLDNN=false` as the fallback. The broader
-"shipped vs planned (M11)" table above may still under-state a few now-shipped items.
+2026-06-26. Freshness pass: removed the "planned (M11)" framing throughout now that M11
+(containerized deployment + operations) is shipped and merged, and M12 (backup/DRP) plus the M13-M15
+Settings refinements are running on the box. The old "shipped vs planned" table is now a
+"Deployment capabilities (all shipped)" table presenting the current architecture (added rows for the
+per-purpose Ollama URLs, the OpenAI-key and Ollama Test buttons, the OCR engine selection +
+recommendation endpoint, drag-and-drop upload, and the M12 backup engine). The AI-settings section now
+documents headless `seed-settings` (seed-if-absent) as a first-class alternative to the Settings UI
+rather than a "planned" item. Inline "as of APP-x" / "shipped" hedges were normalized to plain
+statements. The env section continues to point at `.env.production.example` (single source of truth)
+and the [fresh-box runbook](deploy-fresh-box-runbook.md) (canonical on-box procedure +
+`make deploy-box`). All flipped claims were verified against the codebase before changing.

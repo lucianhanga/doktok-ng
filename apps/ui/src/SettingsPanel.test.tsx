@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { SettingsPanel } from "./SettingsPanel";
@@ -114,6 +114,42 @@ let backupDownloadResponder: () => Response = () =>
     },
   });
 
+// Portable restore (Phase 2b): per-test responders for preview (POST), apply (POST), and the polled
+// status (GET). The status responder is a function so a test can advance it across polls (e.g.
+// applying -> done). The default status is the neutral idle state.
+const OK_PREVIEW = {
+  staged_id: "stg-1",
+  ok: true,
+  compatible: true,
+  app_version: "1.2.3",
+  pg_version: "16.2",
+  created_at: "2026-06-17T01:00:00Z",
+  member_count: 287,
+  total_bytes: 694157312, // 662 MiB
+  secrets_key_match: true,
+  warnings: [],
+  errors: [],
+};
+let restorePreviewResponder: () => Response = () =>
+  new Response(JSON.stringify(OK_PREVIEW), { status: 200 });
+let restoreApplyResponder: () => Response = () =>
+  new Response(
+    JSON.stringify({ accepted: true, restore_id: "rst-1", detail: "Restore started." }),
+    { status: 200 },
+  );
+let restoreStatusResponder: () => Response = () =>
+  new Response(
+    JSON.stringify({
+      state: "idle",
+      step: "",
+      started_at: null,
+      finished_at: null,
+      detail: "",
+      restore_id: "",
+    }),
+    { status: 200 },
+  );
+
 function mockApi() {
   historyResponse = HISTORY;
   drillResponder = () =>
@@ -134,6 +170,24 @@ function mockApi() {
         "Content-Disposition": 'attachment; filename="doktok-backup-20260617.tgz.enc"',
       },
     });
+  restorePreviewResponder = () => new Response(JSON.stringify(OK_PREVIEW), { status: 200 });
+  restoreApplyResponder = () =>
+    new Response(
+      JSON.stringify({ accepted: true, restore_id: "rst-1", detail: "Restore started." }),
+      { status: 200 },
+    );
+  restoreStatusResponder = () =>
+    new Response(
+      JSON.stringify({
+        state: "idle",
+        step: "",
+        started_at: null,
+        finished_at: null,
+        detail: "",
+        restore_id: "",
+      }),
+      { status: 200 },
+    );
   const calls: { url: string; method: string; body?: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -149,6 +203,12 @@ function mockApi() {
       if (/\/settings\/backup\/export\/[^/]+\/download$/.test(url) && method === "POST")
         return backupDownloadResponder();
       if (url.endsWith("/settings/backup/export") && method === "POST") return backupStartResponder();
+      // Portable restore endpoints (status is GET; preview + apply are POST).
+      if (url.includes("/settings/backup/restore/status")) return restoreStatusResponder();
+      if (url.endsWith("/settings/backup/restore/preview") && method === "POST")
+        return restorePreviewResponder();
+      if (/\/settings\/backup\/restore\/[^/]+\/apply$/.test(url) && method === "POST")
+        return restoreApplyResponder();
       if (url.endsWith("/catalog")) return new Response(JSON.stringify(CATALOG), { status: 200 });
       if (url.endsWith("/test-ollama"))
         return new Response(
@@ -483,4 +543,303 @@ test("a failed export status shows the error and offers a retry", async () => {
   await waitFor(() => expect(screen.getByText(/Backup failed/i)).toBeInTheDocument());
   expect(screen.getByText("disk full")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+// ---- Portable restore (Phase 2b: validate + apply an uploaded archive — DESTRUCTIVE) ----
+
+// A minimal File to drive the file input; the mock fetch ignores the actual bytes.
+function archiveFile(name = "doktok-backup.tgz.enc") {
+  return new File(["x"], name, { type: "application/octet-stream" });
+}
+
+// Upload a file + passphrase and click Check, returning once the preview summary has rendered.
+async function checkBackup(passphrase = "correct horse battery") {
+  fireEvent.change(screen.getByLabelText("Backup file"), {
+    target: { files: [archiveFile()] },
+  });
+  fireEvent.change(screen.getByLabelText("Restore passphrase"), {
+    target: { value: passphrase },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Check backup" }));
+}
+
+test("Check validates the file and renders the preview summary", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup();
+
+  // The preview POST is sent and the summary (members, humanized size, versions) renders.
+  await waitFor(() => expect(screen.getByText("This backup contains")).toBeInTheDocument());
+  expect(
+    calls.some((c) => c.method === "POST" && c.url.endsWith("/settings/backup/restore/preview")),
+  ).toBe(true);
+  // Scope to the preview block — member_count (287) and size (662 MiB) also appear in the history
+  // table, so assert against the preview's own definition list.
+  const preview = screen
+    .getByText("This backup contains")
+    .closest(".drp-restore-preview") as HTMLElement;
+  expect(within(preview).getByText("287")).toBeInTheDocument(); // member_count
+  expect(within(preview).getByText("1.2.3")).toBeInTheDocument(); // app_version
+});
+
+test("an ok=false preview with errors blocks the restore (no danger zone)", async () => {
+  mockApi();
+  restorePreviewResponder = () =>
+    new Response(
+      JSON.stringify({
+        ...OK_PREVIEW,
+        ok: false,
+        errors: ["Wrong passphrase or the archive is corrupt."],
+      }),
+      { status: 200 },
+    );
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup("wrong pass phrase");
+
+  await waitFor(() =>
+    expect(screen.getByText("Wrong passphrase or the archive is corrupt.")).toBeInTheDocument(),
+  );
+  // No danger zone / Restore button for an unusable archive.
+  expect(screen.queryByRole("button", { name: "Restore now" })).not.toBeInTheDocument();
+  expect(screen.queryByText("This backup contains")).not.toBeInTheDocument();
+});
+
+test("a mismatched secrets key shows the amber warning but still allows restore", async () => {
+  mockApi();
+  restorePreviewResponder = () =>
+    new Response(JSON.stringify({ ...OK_PREVIEW, secrets_key_match: false }), { status: 200 });
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup();
+  await waitFor(() =>
+    expect(screen.getByText(/different secrets key/i)).toBeInTheDocument(),
+  );
+  // The danger zone is still offered (the warning is non-blocking).
+  expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument();
+});
+
+test("an incompatible backup is shown in red and blocks the apply", async () => {
+  mockApi();
+  restorePreviewResponder = () =>
+    new Response(JSON.stringify({ ...OK_PREVIEW, compatible: false }), { status: 200 });
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup();
+  await waitFor(() => expect(screen.getByText(/not compatible/i)).toBeInTheDocument());
+  // No danger zone for an incompatible archive.
+  expect(screen.queryByRole("button", { name: "Restore now" })).not.toBeInTheDocument();
+});
+
+test("Restore now is disabled until both the checkbox and the typed phrase are provided", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument());
+
+  const restoreBtn = screen.getByRole("button", { name: "Restore now" });
+  expect(restoreBtn).toBeDisabled();
+
+  // Only the checkbox: still disabled.
+  fireEvent.click(screen.getByRole("checkbox"));
+  expect(restoreBtn).toBeDisabled();
+
+  // Wrong phrase: still disabled.
+  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "restore" } });
+  expect(restoreBtn).toBeDisabled();
+
+  // Exact phrase + checkbox: enabled.
+  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "RESTORE" } });
+  expect(restoreBtn).toBeEnabled();
+});
+
+test("confirming and clicking Restore now POSTs apply and the poller transitions to done", async () => {
+  const calls = mockApi();
+  // Status is idle until apply is POSTed, then reports applying, then done on the next poll.
+  let applied = false;
+  restoreApplyResponder = () => {
+    applied = true;
+    return new Response(
+      JSON.stringify({ accepted: true, restore_id: "rst-1", detail: "Restore started." }),
+      { status: 200 },
+    );
+  };
+  restoreStatusResponder = () => {
+    if (!applied) {
+      return new Response(
+        JSON.stringify({
+          state: "idle",
+          step: "",
+          started_at: null,
+          finished_at: null,
+          detail: "",
+          restore_id: "",
+        }),
+        { status: 200 },
+      );
+    }
+    // The first poll after apply already reports done (so the test does not depend on the 3s
+    // interval firing twice within waitFor's default 1s window).
+    return new Response(
+      JSON.stringify({
+        state: "done",
+        step: "finished",
+        started_at: "2026-06-17T02:00:00Z",
+        finished_at: "2026-06-17T02:05:00Z",
+        detail: "all data restored",
+        restore_id: "rst-1",
+      }),
+      { status: 200 },
+    );
+  };
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "RESTORE" } });
+  fireEvent.click(screen.getByRole("button", { name: "Restore now" }));
+
+  // Apply is POSTed.
+  await waitFor(() =>
+    expect(
+      calls.some((c) => c.method === "POST" && /\/restore\/[^/]+\/apply$/.test(c.url)),
+    ).toBe(true),
+  );
+  // The poller advances to the done message.
+  await waitFor(() =>
+    expect(screen.getByText(/Restore complete/i)).toBeInTheDocument(),
+  );
+});
+
+test("a failed restore status shows the rollback message", async () => {
+  mockApi();
+  // Idle until apply is POSTed, then the restore reports failed.
+  let applied = false;
+  restoreApplyResponder = () => {
+    applied = true;
+    return new Response(
+      JSON.stringify({ accepted: true, restore_id: "rst-1", detail: "Restore started." }),
+      { status: 200 },
+    );
+  };
+  restoreStatusResponder = () =>
+    applied
+      ? new Response(
+          JSON.stringify({
+            state: "failed",
+            step: "apply",
+            started_at: "2026-06-17T02:00:00Z",
+            finished_at: "2026-06-17T02:01:00Z",
+            detail: "checksum mismatch",
+            restore_id: "rst-1",
+          }),
+          { status: 200 },
+        )
+      : new Response(
+          JSON.stringify({
+            state: "idle",
+            step: "",
+            started_at: null,
+            finished_at: null,
+            detail: "",
+            restore_id: "",
+          }),
+          { status: 200 },
+        );
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "RESTORE" } });
+  fireEvent.click(screen.getByRole("button", { name: "Restore now" }));
+
+  await waitFor(() => expect(screen.getByText(/Restore failed/i)).toBeInTheDocument());
+  expect(screen.getByText(/rolled back to its state before the restore/i)).toBeInTheDocument();
+});
+
+test("a 422 (missing passphrase) on Check shows the passphrase-required error and blocks proceeding", async () => {
+  mockApi();
+  restorePreviewResponder = () =>
+    new Response(JSON.stringify({ detail: "passphrase required" }), { status: 422 });
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  // Provide a file but no passphrase, then Check.
+  fireEvent.change(screen.getByLabelText("Backup file"), { target: { files: [archiveFile()] } });
+  fireEvent.click(screen.getByRole("button", { name: "Check backup" }));
+
+  await waitFor(() => expect(screen.getByText(/passphrase is required/i)).toBeInTheDocument());
+  expect(screen.queryByText("This backup contains")).not.toBeInTheDocument();
+});
+
+test("a 413 (too large) on Check shows the size-limit error", async () => {
+  mockApi();
+  restorePreviewResponder = () =>
+    new Response(JSON.stringify({ detail: "too big" }), { status: 413 });
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
+  );
+
+  await checkBackup();
+  await waitFor(() =>
+    expect(screen.getByText(/exceeds the restore size limit/i)).toBeInTheDocument(),
+  );
+});
+
+test("an in-progress restore on mount is reflected and resumes polling", async () => {
+  mockApi();
+  // The very first status read (on mount) reports applying.
+  restoreStatusResponder = () =>
+    new Response(
+      JSON.stringify({
+        state: "applying",
+        step: "restoring",
+        started_at: "2026-06-17T02:00:00Z",
+        finished_at: null,
+        detail: "in progress",
+        restore_id: "rst-9",
+      }),
+      { status: 200 },
+    );
+  render(<SettingsPanel />);
+  await openDrp();
+  // The restore-in-progress line appears without the user touching anything.
+  await waitFor(() => expect(screen.getByText(/Applying the backup/i)).toBeInTheDocument());
 });

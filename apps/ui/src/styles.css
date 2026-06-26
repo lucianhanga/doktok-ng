@@ -1664,6 +1664,129 @@ tr.row-selected {
   }
 }
 
+/* ---- Portable restore (upload an archive and replace the system — DESTRUCTIVE) ---- */
+.drp-restore {
+  margin-top: 1.4rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.1rem;
+}
+.drp-restore .drp-card-head {
+  margin-bottom: 0.2rem;
+}
+.drp-restore .drp-card-head h4 {
+  margin: 0;
+}
+.drp-restore input[type="file"] {
+  font-size: 0.85rem;
+}
+/* The validated preview summary. */
+.drp-restore-preview {
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.drp-restore-preview h5 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.drp-restore-preview .drp-num,
+.drp-restore-preview .drp-mono {
+  font-variant-numeric: tabular-nums;
+}
+.drp-restore-incompatible,
+.drp-restore-secretwarn {
+  margin: 0.6rem 0 0;
+}
+.drp-restore-warnings {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+}
+.drp-restore-errors {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+.drp-restore-blocked {
+  margin-top: 0.6rem;
+}
+
+/* The danger zone: visually distinct (red) without being garish. */
+.drp-danger-zone {
+  margin-top: 1rem;
+  border: 1.5px solid var(--danger);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+}
+.drp-danger-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.92rem;
+  color: var(--danger);
+  font-weight: 700;
+}
+.drp-danger-body {
+  margin: 0 0 0.7rem;
+  font-size: 0.85rem;
+}
+.drp-danger-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.7rem;
+  cursor: pointer;
+}
+.drp-danger-ack input[type="checkbox"] {
+  margin-top: 0.15rem;
+}
+.drp-danger-confirm {
+  align-items: center;
+  gap: 0.75rem;
+}
+.drp-danger-confirm input[type="text"] {
+  width: 9rem;
+  font-variant-numeric: tabular-nums;
+}
+.drp-danger-button {
+  background: var(--danger);
+  color: #fff;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.drp-danger-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.drp-danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Restore progress + outcome lines. */
+.drp-restore-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.8rem;
+  font-size: 0.85rem;
+}
+.drp-restore-progress-note {
+  flex-basis: 100%;
+}
+.drp-restore-done,
+.drp-restore-failed {
+  margin-top: 0.8rem;
+  font-size: 0.88rem;
+}
+
 /* ---- Documents tab: shared toolbar + List/Thumbnails views ---- */
 .docs-subtabs {
   margin-left: auto;

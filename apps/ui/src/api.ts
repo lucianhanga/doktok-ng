@@ -893,6 +893,146 @@ export async function downloadBackupArchive(exportId: string, passphrase: string
   }
 }
 
+// ---- Portable backup RESTORE (M12 #380, Phase 2b: validate + apply an uploaded archive) ----
+// Restore is DESTRUCTIVE: applying replaces ALL current data with the backup's contents. The flow is
+// deliberately staged: upload+preview (validate, no mutation) -> review -> explicit confirm -> apply
+// (the backend goes into maintenance, 503s mutating requests, may restart) -> poll status.
+
+/** Result of validating an uploaded archive. `ok` gates the whole flow: when false, `errors[]`
+ * explains why (wrong passphrase / corrupt / incompatible) and apply must be blocked. When true,
+ * `staged_id` identifies the validated archive for the apply step. `compatible=false` blocks apply
+ * (version mismatch); `secrets_key_match=false` is a non-blocking amber warning (the stored OpenAI
+ * key won't decrypt). `warnings[]` are additional non-blocking notes. */
+export interface RestorePreview {
+  staged_id: string;
+  ok: boolean;
+  compatible: boolean;
+  app_version: string;
+  pg_version: string;
+  created_at: string | null;
+  member_count: number;
+  total_bytes: number;
+  secrets_key_match: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface RestoreResult {
+  accepted: boolean;
+  restore_id: string;
+  detail: string;
+}
+
+/** Server-side restore progress. `state` drives the UI; `step`/`detail` are human progress lines.
+ * Poll until `done` (success) or `failed` (the system rolled back to its pre-restore state). */
+export interface RestoreStatus {
+  state: "idle" | "validating" | "applying" | "done" | "failed";
+  step: string;
+  started_at: string | null;
+  finished_at: string | null;
+  detail: string;
+  restore_id: string;
+}
+
+/** Thrown by previewRestore on HTTP 413: the uploaded archive exceeds the restore size limit. */
+export class RestoreFileTooLargeError extends Error {
+  constructor() {
+    super("This file exceeds the restore size limit.");
+    this.name = "RestoreFileTooLargeError";
+  }
+}
+
+/** Thrown by previewRestore on HTTP 422: the passphrase is missing or shorter than the minimum. */
+export class RestorePassphraseError extends Error {
+  constructor() {
+    super("A passphrase is required to check this backup.");
+    this.name = "RestorePassphraseError";
+  }
+}
+
+/** Thrown by applyRestore on HTTP 409: the staged archive is no longer valid to apply (it was never
+ * validated, expired, or another restore is already applying). Carries the server detail. */
+export class RestoreConflictError extends Error {
+  readonly detail: string;
+  constructor(detail: string) {
+    super(detail);
+    this.name = "RestoreConflictError";
+    this.detail = detail;
+  }
+}
+
+/** Thrown by applyRestore on HTTP 422: the destructive confirmation was missing. */
+export class RestoreNotConfirmedError extends Error {
+  constructor() {
+    super("Restore was not confirmed.");
+    this.name = "RestoreNotConfirmedError";
+  }
+}
+
+/** Upload an archive + passphrase to VALIDATE it without mutating anything. The passphrase is sent
+ * once in the multipart body and never stored or logged. Resolves with a RestorePreview on 200
+ * (which may itself carry ok=false + errors[] for a wrong passphrase / corrupt / incompatible
+ * archive — that is NOT an HTTP error). Throws RestoreFileTooLargeError on 413 and
+ * RestorePassphraseError on 422 so the caller can show inline validation. */
+export async function previewRestore(file: File, passphrase: string): Promise<RestorePreview> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("passphrase", passphrase);
+  const response = await fetch("/api/v1/settings/backup/restore/preview", {
+    method: "POST",
+    body: form,
+  });
+  if (response.status === 413) {
+    throw new RestoreFileTooLargeError();
+  }
+  if (response.status === 422) {
+    throw new RestorePassphraseError();
+  }
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as RestorePreview;
+}
+
+/** Apply a previously validated archive — DESTRUCTIVE: this replaces all current data. `confirm:true`
+ * is always sent (the UI gates this behind an explicit user gesture). Resolves with a RestoreResult
+ * on 200; throws RestoreNotConfirmedError on 422 and RestoreConflictError on 409 (not validated /
+ * already applying) so the caller can message each precisely. */
+export async function applyRestore(stagedId: string): Promise<RestoreResult> {
+  const response = await fetch(
+    `/api/v1/settings/backup/restore/${encodeURIComponent(stagedId)}/apply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    },
+  );
+  if (response.status === 422) {
+    throw new RestoreNotConfirmedError();
+  }
+  if (response.status === 409) {
+    let detail = "This backup is no longer ready to apply, or a restore is already running.";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // keep the default message if the 409 body is not JSON
+    }
+    throw new RestoreConflictError(detail);
+  }
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as RestoreResult;
+}
+
+/** Poll the server-side restore progress. The caller must TOLERATE transient fetch failures here:
+ * during an apply the backend may 503 mutating requests and even restart, so a rejected promise is
+ * expected and should be retried, not surfaced as a hard error. */
+export function fetchRestoreStatus(): Promise<RestoreStatus> {
+  return getJson<RestoreStatus>("/api/v1/settings/backup/restore/status");
+}
+
 export interface FeatureCatalogEntry {
   name: string;
   version: number;

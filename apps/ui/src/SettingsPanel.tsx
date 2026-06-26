@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import {
+  applyRestore,
   downloadBackupArchive,
   fetchAiSettings,
   fetchBackupExportStatus,
@@ -9,8 +10,10 @@ import {
   fetchModelCatalog,
   fetchOcrRecommendation,
   fetchOcrSettings,
+  fetchRestoreStatus,
   formatBytes,
   formatDuration,
+  previewRestore,
   putAiSettings,
   putOcrSettings,
   startBackupExport,
@@ -21,6 +24,10 @@ import {
   BackupExportBusyError,
   BackupPassphraseTooShortError,
   DrillRejectedError,
+  RestoreConflictError,
+  RestoreFileTooLargeError,
+  RestoreNotConfirmedError,
+  RestorePassphraseError,
   OCR_ENGINES,
   type AiPurposeSettings,
   type AiSettings,
@@ -33,6 +40,8 @@ import {
   type ModelOption,
   type OcrRecommendation,
   type OcrSettings,
+  type RestorePreview,
+  type RestoreStatus,
 } from "./api";
 import { Ellipsis } from "./Ellipsis";
 
@@ -516,9 +525,373 @@ function PortableBackup() {
         </p>
       )}
 
-      <p className="muted drp-portable-note">
-        Restoring from a backup file is coming next.
+    </div>
+  );
+}
+
+// Portable restore (Phase 2b): take an encrypted archive produced by the export above and replace
+// the whole system with it. This is DESTRUCTIVE — applying wipes all current documents and data —
+// so the flow is deliberately staged with friction:
+//   1. pick + check  : upload the file + passphrase -> previewRestore (validate only, no mutation)
+//   2. review        : if ok, show what is inside; block apply on incompatibility; warn on a
+//                      mismatched secrets key (the stored OpenAI key won't decrypt)
+//   3. confirm       : an explicit DANGER gesture (checkbox + typing RESTORE) gates the apply button
+//   4. progress      : applyRestore -> poll fetchRestoreStatus every ~3s until done/failed. The poll
+//                      TOLERATES transient failures (the backend 503s + may restart mid-restore).
+// The passphrase lives in component state only, is sent once on Check, and is never logged or echoed.
+const RESTORE_POLL_MS = 3000;
+const CONFIRM_PHRASE = "RESTORE";
+
+function PortableRestore() {
+  const [file, setFile] = useState<File | null>(null);
+  const [passphrase, setPassphrase] = useState("");
+  const [checking, setChecking] = useState(false);
+  // The validated preview (staged archive). ok=false means it cannot be applied (errors[] explains).
+  const [preview, setPreview] = useState<RestorePreview | null>(null);
+  // Inline validation/error message for the pick+check stage (413/422/network).
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  // The DANGER confirmation gesture: both the checkbox AND the typed phrase are required.
+  const [ackChecked, setAckChecked] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+
+  // Apply + progress. applying: the apply POST is in flight. polling: a restore is running and we
+  // poll status. status holds the latest server progress.
+  const [applyPhase, setApplyPhase] = useState<"idle" | "applying" | "polling">("idle");
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [status, setStatus] = useState<RestoreStatus | null>(null);
+
+  // On mount, read the status once so an already-running restore (e.g. after a page reload during a
+  // restore) is reflected and resumes polling. Best-effort: a failure here is non-fatal.
+  useEffect(() => {
+    let active = true;
+    fetchRestoreStatus()
+      .then((s) => {
+        if (!active) return;
+        setStatus(s);
+        if (s.state === "validating" || s.state === "applying") setApplyPhase("polling");
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Poll restore progress every ~3s while a restore is running. Crucially, a rejected fetch is
+  // EXPECTED here (the backend 503s mutating requests during the restore and may restart), so we
+  // swallow it and keep polling rather than tearing the poller down. Stop on done/failed.
+  useEffect(() => {
+    if (applyPhase !== "polling") return;
+    let active = true;
+    const tick = () => {
+      fetchRestoreStatus()
+        .then((s) => {
+          if (!active) return;
+          setStatus(s);
+          if (s.state === "done" || s.state === "failed") setApplyPhase("idle");
+        })
+        .catch(() => {
+          // Transient unavailability during the restore — keep retrying on the next tick.
+        });
+    };
+    tick(); // poll once immediately, then on the interval
+    const id = setInterval(tick, RESTORE_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [applyPhase]);
+
+  async function check() {
+    if (!file) {
+      setCheckError("Choose a backup file first.");
+      return;
+    }
+    setChecking(true);
+    setCheckError(null);
+    setPreview(null);
+    // A new validation invalidates any prior confirmation gesture.
+    setAckChecked(false);
+    setConfirmText("");
+    try {
+      const p = await previewRestore(file, passphrase);
+      setPreview(p);
+    } catch (e) {
+      if (e instanceof RestoreFileTooLargeError) {
+        setCheckError("This file exceeds the restore size limit.");
+      } else if (e instanceof RestorePassphraseError) {
+        setCheckError("A passphrase is required to check this backup.");
+      } else {
+        setCheckError(e instanceof Error ? e.message : "Could not check the backup file.");
+      }
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function apply() {
+    if (!preview || !canApply) return;
+    setApplyPhase("applying");
+    setApplyError(null);
+    try {
+      await applyRestore(preview.staged_id);
+      // Accepted: the restore is now running on the server. Switch to polling for progress.
+      setApplyPhase("polling");
+    } catch (e) {
+      if (e instanceof RestoreConflictError) {
+        setApplyError(e.detail);
+      } else if (e instanceof RestoreNotConfirmedError) {
+        setApplyError("Restore was not confirmed — please tick the box and type the phrase.");
+      } else {
+        setApplyError(e instanceof Error ? e.message : "Could not start the restore.");
+      }
+      setApplyPhase("idle");
+    }
+  }
+
+  // A restore is in progress whenever we are applying or the server reports a running state.
+  const running =
+    applyPhase === "applying" ||
+    applyPhase === "polling" ||
+    status?.state === "validating" ||
+    status?.state === "applying";
+  const finished = status?.state === "done";
+  const failed = status?.state === "failed";
+
+  // The confirmation gesture is satisfied only when BOTH the box is ticked AND the exact phrase is
+  // typed. The phrase match is case-sensitive to force deliberate typing.
+  const confirmed = ackChecked && confirmText === CONFIRM_PHRASE;
+  // Apply is permitted only for a validated, compatible archive, with the gesture done, not running.
+  const canApply = !!preview && preview.ok && preview.compatible && confirmed && !running;
+
+  // Once a restore has been accepted or is running/finished, lock down the earlier stages.
+  const locked = running || finished;
+
+  return (
+    <div className="drp-restore">
+      <div className="drp-card-head">
+        <h4>Restore from a backup file</h4>
+        {status && status.state !== "idle" && (
+          <span
+            className={`drp-badge ${
+              status.state === "done"
+                ? "drp-ok"
+                : status.state === "failed"
+                  ? "drp-failed"
+                  : "drp-stale"
+            }`}
+          >
+            {status.state}
+          </span>
+        )}
+      </div>
+      <p className="muted">
+        Upload an encrypted backup file (<code>.tgz.enc</code>) created above to rebuild this system
+        from it. Restoring permanently replaces everything currently here.
       </p>
+
+      {/* Stage 1: pick + check */}
+      <div className="settings-row settings-url-row">
+        <label>
+          Backup file{" "}
+          <input
+            type="file"
+            accept=".tgz.enc"
+            aria-label="Backup file"
+            disabled={locked || checking}
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              setPreview(null);
+              setCheckError(null);
+              setAckChecked(false);
+              setConfirmText("");
+            }}
+          />
+        </label>
+      </div>
+      <div className="settings-row settings-url-row">
+        <label>
+          Passphrase{" "}
+          <input
+            type="password"
+            className="settings-url-input"
+            aria-label="Restore passphrase"
+            autoComplete="new-password"
+            placeholder="the passphrase this backup was made with"
+            disabled={locked || checking}
+            value={passphrase}
+            onChange={(e) => {
+              setPassphrase(e.target.value);
+              setCheckError(null);
+            }}
+          />
+        </label>
+        <button
+          type="button"
+          className="settings-test"
+          disabled={!file || checking || locked}
+          onClick={check}
+        >
+          {checking ? "Checking…" : "Check backup"}
+        </button>
+      </div>
+      {checkError && (
+        <p role="alert" className="settings-test-fail">
+          <span aria-hidden="true">✖ </span>
+          {checkError}
+        </p>
+      )}
+      {/* A validated-but-unusable archive: render the server errors and do NOT allow proceeding. */}
+      {preview && !preview.ok && (
+        <div role="alert" className="drp-restore-blocked">
+          <p className="settings-test-fail">
+            <span aria-hidden="true">✖ </span>
+            This backup cannot be restored.
+          </p>
+          {preview.errors.length > 0 && (
+            <ul className="drp-restore-errors">
+              {preview.errors.map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Stage 2: review the validated preview */}
+      {preview && preview.ok && (
+        <div className="drp-restore-preview">
+          <h5>This backup contains</h5>
+          <dl className="drp-metrics">
+            <dt>Created</dt>
+            <dd>{preview.created_at ? absoluteTs(preview.created_at) : "unknown"}</dd>
+            <dt>App version</dt>
+            <dd className="drp-mono">{preview.app_version || "—"}</dd>
+            <dt>Postgres</dt>
+            <dd className="drp-mono">{preview.pg_version || "—"}</dd>
+            <dt>Members</dt>
+            <dd className="drp-num">{preview.member_count.toLocaleString()}</dd>
+            <dt>Size</dt>
+            <dd className="drp-num">{formatBytes(preview.total_bytes) || "—"}</dd>
+          </dl>
+
+          {!preview.compatible && (
+            <p role="alert" className="settings-test-fail drp-restore-incompatible">
+              <span aria-hidden="true">✖ </span>
+              This backup is not compatible with the current version, so it cannot be restored here.
+            </p>
+          )}
+          {preview.secrets_key_match === false && (
+            <p role="status" className="settings-test-warn drp-restore-secretwarn">
+              <span aria-hidden="true">⚠ </span>
+              This backup was made with a different secrets key — your stored OpenAI key won&apos;t
+              decrypt and must be re-entered after the restore.
+            </p>
+          )}
+          {preview.warnings.length > 0 && (
+            <ul className="drp-restore-warnings">
+              {preview.warnings.map((msg, i) => (
+                <li key={i} className="settings-test-warn">
+                  <span aria-hidden="true">⚠ </span>
+                  {msg}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Stage 3: confirm-to-destroy + apply (only for a compatible, validated archive) */}
+      {preview && preview.ok && preview.compatible && !finished && (
+        <div className="drp-danger-zone">
+          <h5 className="drp-danger-title">
+            <span aria-hidden="true">⚠ </span>
+            Danger: this permanently replaces all current data
+          </h5>
+          <p className="drp-danger-body">
+            Restoring will permanently <strong>replace all current documents and data</strong> with
+            the contents of this backup. The app goes into maintenance during the restore and may be
+            briefly unavailable. This cannot be undone.
+          </p>
+          <label className="drp-danger-ack">
+            <input
+              type="checkbox"
+              checked={ackChecked}
+              disabled={running}
+              onChange={(e) => setAckChecked(e.target.checked)}
+            />{" "}
+            I understand this will erase everything currently in this system.
+          </label>
+          <div className="settings-row drp-danger-confirm">
+            <label>
+              Type <code>{CONFIRM_PHRASE}</code> to confirm{" "}
+              <input
+                type="text"
+                aria-label={`Type ${CONFIRM_PHRASE} to confirm`}
+                autoComplete="off"
+                disabled={running}
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="drp-danger-button"
+              disabled={!canApply}
+              title={
+                canApply
+                  ? ""
+                  : `Tick the box and type ${CONFIRM_PHRASE} to enable the restore`
+              }
+              onClick={apply}
+            >
+              {applyPhase === "applying"
+                ? "Starting restore…"
+                : running
+                  ? "Restoring…"
+                  : "Restore now"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Stage 4: progress / outcome */}
+      {running && (
+        <p role="status" className="drp-restore-progress">
+          <span className="drp-spinner" aria-hidden="true" />
+          <span aria-hidden="true">⟳ </span>
+          {status?.state === "validating"
+            ? "Validating…"
+            : status?.state === "applying"
+              ? "Applying the backup…"
+              : "Starting the restore…"}
+          {status?.step ? ` — ${status.step}` : ""}
+          {status?.detail ? <span className="muted"> {status.detail}</span> : null}
+          <span className="muted drp-restore-progress-note">
+            {" "}
+            The app may be briefly unavailable while this runs.
+          </span>
+        </p>
+      )}
+      {finished && (
+        <p role="status" className="settings-test-ok drp-restore-done">
+          <span aria-hidden="true">✔ </span>
+          Restore complete — reload the app.
+          {status?.detail ? <span className="muted"> {status.detail}</span> : null}
+        </p>
+      )}
+      {failed && (
+        <p role="alert" className="settings-test-fail drp-restore-failed">
+          <span aria-hidden="true">✖ </span>
+          Restore failed{status?.detail ? <>: <Ellipsis text={status.detail} /></> : "."} The system
+          was rolled back to its state before the restore.
+        </p>
+      )}
+      {applyError && (
+        <p role="alert" className="status-error">
+          {applyError}
+        </p>
+      )}
     </div>
   );
 }
@@ -674,6 +1047,7 @@ function DrpSection() {
         </>
       )}
       <PortableBackup />
+      <PortableRestore />
       <BackupHistory refreshKey={refreshKey} />
     </div>
   );

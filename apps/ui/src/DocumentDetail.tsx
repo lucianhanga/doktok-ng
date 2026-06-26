@@ -78,14 +78,33 @@ function ocrOutcome(outcome: ProcessingTelemetry["ocr_outcome"]): Outcome {
   }
 }
 
-/** One processing-step row: label, outcome (glyph+word+colour), duration, and tokens for LLM steps.
- * Deep/rare fields (model, attempts, error, timestamps) live behind a native <details>. */
-function ProcStepRow({ step }: { step: ProcessingStep }) {
+/** One processing-step row: label, outcome (glyph+word+colour), duration, tokens for LLM steps, and
+ * (for real feature steps that have not completed) a subtle Retry control. Deep/rare fields (model,
+ * attempts, error, timestamps) live behind a native <details>. */
+function ProcStepRow({ step, onRetry }: { step: ProcessingStep; onRetry?: (feature: string) => void }) {
   const outcome = featureOutcome(step.status);
   const duration = formatDuration(step.duration_ms);
   const tokens = formatTokens(step.total_tokens);
+  // Retry is offered only for real feature steps that have not completed (failed/pending/running),
+  // matching the legacy `status !== "done"` rule. The synthetic Normalization/OCR rows pass no
+  // onRetry, so they never show it.
+  const canRetry = !!onRetry && step.status !== "done";
+  // Expand whenever there is ANY extra detail to show, so each step can surface everything it knows.
   const hasDeep =
-    !!step.model || step.attempts > 1 || !!step.last_error || !!step.started_at || !!step.completed_at;
+    !!step.model ||
+    step.attempts > 0 ||
+    !!step.last_error ||
+    !!step.started_at ||
+    !!step.completed_at ||
+    step.duration_ms != null ||
+    step.prompt_tokens != null ||
+    step.answer_tokens != null ||
+    step.total_tokens != null;
+  const retryButton = canRetry ? (
+    <button type="button" className="link-button proc-retry" onClick={() => onRetry?.(step.feature)}>
+      Retry
+    </button>
+  ) : null;
   const row = (
     <span className="proc-row">
       <span className="proc-label">{step.label || step.feature}</span>
@@ -99,26 +118,63 @@ function ProcStepRow({ step }: { step: ProcessingStep }) {
           {step.estimated ? "*" : ""}
         </span>
       )}
+      {/* Without a <details>, Retry lives in the flex row, right-aligned after the metrics. */}
+      {!hasDeep && retryButton}
     </span>
   );
   if (!hasDeep) {
     return <li>{row}</li>;
   }
+  // With a <details>, Retry sits as a sibling of the disclosure (not inside <summary>, so it cannot
+  // toggle it) on the same baseline as the row.
   return (
-    <li>
+    <li className={retryButton ? "proc-step-retryable" : undefined}>
       <details className="proc-details">
         <summary>{row}</summary>
         <dl className="proc-deep">
+          <dt>Step</dt>
+          <dd>{step.feature}</dd>
+          <dt>Status</dt>
+          <dd>{step.status}</dd>
+          {step.duration_ms != null && (
+            <>
+              <dt>Duration</dt>
+              <dd>
+                {step.duration_ms.toLocaleString()} ms{step.estimated ? " (estimated)" : ""}
+              </dd>
+            </>
+          )}
+          {step.attempts > 0 && (
+            <>
+              <dt>Attempts</dt>
+              <dd>{step.attempts}</dd>
+            </>
+          )}
           {step.model && (
             <>
               <dt>Model</dt>
               <dd>{step.model}</dd>
             </>
           )}
-          {step.attempts > 1 && (
+          {step.prompt_tokens != null && (
             <>
-              <dt>Attempts</dt>
-              <dd>{step.attempts}</dd>
+              <dt>Prompt tokens</dt>
+              <dd>{step.prompt_tokens.toLocaleString()}</dd>
+            </>
+          )}
+          {step.answer_tokens != null && (
+            <>
+              <dt>Answer tokens</dt>
+              <dd>{step.answer_tokens.toLocaleString()}</dd>
+            </>
+          )}
+          {step.total_tokens != null && (
+            <>
+              <dt>Total tokens</dt>
+              <dd>
+                {step.total_tokens.toLocaleString()}
+                {step.estimated ? " (estimated)" : ""}
+              </dd>
             </>
           )}
           {step.started_at && (
@@ -145,14 +201,9 @@ function ProcStepRow({ step }: { step: ProcessingStep }) {
               <dd className="proc-fail">{step.last_error}</dd>
             </>
           )}
-          {step.estimated && (step.total_tokens ?? 0) > 0 && (
-            <>
-              <dt>Tokens</dt>
-              <dd>estimated (char-ratio)</dd>
-            </>
-          )}
         </dl>
       </details>
+      {retryButton}
     </li>
   );
 }
@@ -160,7 +211,13 @@ function ProcStepRow({ step }: { step: ProcessingStep }) {
 /** Card "Processing" telemetry: a summary strip (Ingested / Total time / Total tokens) plus a
  * Normalization (office only) -> OCR -> per-feature step breakdown. Degrades gracefully: any absent
  * field renders nothing, and a document with no telemetry shows nothing here. */
-function ProcessingTelemetrySection({ telemetry }: { telemetry: ProcessingTelemetry }) {
+function ProcessingTelemetrySection({
+  telemetry,
+  onRetry,
+}: {
+  telemetry: ProcessingTelemetry;
+  onRetry: (feature: string) => void;
+}) {
   const ingested = telemetry.activated_at ?? telemetry.received_at;
   const totalTime = formatDuration(telemetry.total_duration_ms);
   const totalTokens = formatTokens(telemetry.total_tokens);
@@ -229,7 +286,7 @@ function ProcessingTelemetrySection({ telemetry }: { telemetry: ProcessingTeleme
           </span>
         </li>
         {steps.map((s) => (
-          <ProcStepRow key={s.feature} step={s} />
+          <ProcStepRow key={s.feature} step={s} onRetry={onRetry} />
         ))}
       </ul>
     </>
@@ -565,22 +622,36 @@ export function DocumentDetail({
 
             <section className="doc-aside-section">
               <h3>Processing</h3>
-              {data.processing && <ProcessingTelemetrySection telemetry={data.processing} />}
-              <ul className="proc-list">
-                {data.features.map((f) => (
-                  <li key={f.feature}>
-                    <span className="proc-label">{FEATURE_LABELS[f.feature] ?? f.feature}</span>
-                    <span className={`badge status-${f.status}`} title={f.last_error ?? undefined}>
-                      {f.status}
-                    </span>
-                    {f.status !== "done" && (
-                      <button type="button" className="link-button" onClick={() => retry(f.feature)}>
-                        Retry
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              {/* One Processing timeline. Normally the backend always sends `processing`, so the rich
+                  per-step timeline (with Retry folded into each non-done feature row) is shown. If it
+                  is ever absent we fall back to the plain feature list so the section is never empty;
+                  the two are never rendered together. */}
+              {data.processing ? (
+                <ProcessingTelemetrySection telemetry={data.processing} onRetry={retry} />
+              ) : (
+                <ul className="proc-list">
+                  {data.features.map((f) => (
+                    <li key={f.feature}>
+                      <span className="proc-label">{FEATURE_LABELS[f.feature] ?? f.feature}</span>
+                      <span
+                        className={`badge status-${f.status}`}
+                        title={f.last_error ?? undefined}
+                      >
+                        {f.status}
+                      </span>
+                      {f.status !== "done" && (
+                        <button
+                          type="button"
+                          className="link-button proc-retry"
+                          onClick={() => retry(f.feature)}
+                        >
+                          Retry
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
           </aside>
         </div>

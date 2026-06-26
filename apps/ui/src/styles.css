@@ -1085,6 +1085,23 @@ tr.row-selected {
 .proc-neutral {
   color: var(--muted);
 }
+/* Retry: subtle, right-aligned, and visually after the metrics so it never competes with them.
+   In a plain row it follows the metrics inside the flex .proc-row; in a <details> row the <li>
+   becomes a flex line (.proc-step-retryable) and the button sits opposite the disclosure. */
+.proc-retry {
+  margin-left: auto;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.proc-steps li.proc-step-retryable {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.proc-step-retryable > .proc-details {
+  flex: 1;
+  min-width: 0;
+}
 /* Deep/rare fields tucked behind a native <details>; the summary row keeps its flex layout. */
 .proc-details > summary {
   cursor: pointer;

@@ -946,11 +946,21 @@ class PostgresStatsRepository:
                 "WHERE tenant_id=%s AND status = 'failed'",
                 tenant_id,
             )
+            # Documents with work in flight = a feature queued or running (e.g. a re-extraction the
+            # reconciler hasn't finished). These never show as a non-terminal ingestion job, so the
+            # overview's "Processing" count was blind to them.
+            processing_feature_docs = self._scalar(
+                cur,
+                "SELECT COUNT(DISTINCT document_id) AS n FROM document_features "
+                "WHERE tenant_id=%s AND status IN ('pending', 'running')",
+                tenant_id,
+            )
         return StatsSummary(
             documents=documents,
             jobs={row["status"]: int(row["n"]) for row in job_rows},
             entities=entities,
             documents_pending_features=pending_feature_docs,
+            documents_processing_features=processing_feature_docs,
         )
 
 

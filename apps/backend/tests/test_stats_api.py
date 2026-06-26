@@ -43,6 +43,7 @@ def test_returns_summary() -> None:
         "entities": 5,
         "pending_ingest": 0,  # no ingest dir for this tenant under the default files_root
         "documents_pending_features": 0,
+        "documents_processing_features": 0,
     }
 
 

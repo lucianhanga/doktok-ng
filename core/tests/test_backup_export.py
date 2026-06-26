@@ -98,7 +98,7 @@ def test_manifest_is_data_only_no_secrets(_paths: ExportPaths) -> None:
     manifest = _extract_manifest(archive)
     # The fingerprint is present but is the non-reversible HMAC, not the key.
     assert manifest.secrets_key_fingerprint == secrets_key_fingerprint("test-secret-key")
-    assert manifest.secrets_key_fingerprint != "test-secret-key"
+    assert manifest.secrets_key_fingerprint != "test-secret-key"  # pragma: allowlist secret
     # No secret VALUE (the key, the DSN, the password) appears anywhere in the manifest. (The field
     # NAME secrets_key_fingerprint legitimately contains "secrets_key" - that is not a leak.)
     blob = manifest.model_dump_json()

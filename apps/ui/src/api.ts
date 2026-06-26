@@ -523,19 +523,47 @@ export interface OllamaTestResult {
   ok: boolean;
   detail: string;
   url: string;
+  model: string;
+  // installed? null when no model was checked or the server was unreachable.
+  model_present: boolean | null;
 }
 
-/** Probe an Ollama server (the override, or the default if url is null/"") before saving (M13). */
-export async function testOllamaUrl(url: string | null): Promise<OllamaTestResult> {
+/** Probe an Ollama server (the override, or the default if url is null/"") before saving (M13).
+ * When `model` is given, the result also reports whether that model is installed (no model load). */
+export async function testOllamaUrl(
+  url: string | null,
+  model?: string,
+): Promise<OllamaTestResult> {
   const response = await fetch("/api/v1/settings/ai/test-ollama", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, model: model ?? "" }),
   });
   if (!response.ok) {
     throw friendlyHttpError(response.status);
   }
   return (await response.json()) as OllamaTestResult;
+}
+
+export interface OllamaWarmupResult {
+  ok: boolean;
+  detail: string;
+  url: string;
+  model: string;
+}
+
+/** Preload a model into an Ollama server so the first real request is not cold (M13 follow-up).
+ * Unlike testOllamaUrl this deliberately loads the model and can take a while on a large model. */
+export async function warmupOllama(url: string | null, model: string): Promise<OllamaWarmupResult> {
+  const response = await fetch("/api/v1/settings/ai/warmup-ollama", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, model }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as OllamaWarmupResult;
 }
 
 export interface OpenAiTestResult {

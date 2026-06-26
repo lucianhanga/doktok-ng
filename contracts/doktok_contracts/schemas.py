@@ -849,17 +849,41 @@ class AiSettingsUpdate(AiSettings):
 
 
 class OllamaTestRequest(BaseModel):
-    """Probe an Ollama server before saving (M13 #369). ``url`` None/"" tests the default."""
+    """Probe an Ollama server before saving (M13 #369). ``url`` None/"" tests the default.
+    ``model`` (optional) is also checked for being installed on that server (no model load)."""
 
     url: str | None = None
+    model: str = ""
 
 
 class OllamaTestResult(BaseModel):
-    """Result of an Ollama reachability probe: whether it answered + a short human detail."""
+    """Result of an Ollama reachability probe: whether it answered + a short human detail. When a
+    ``model`` was supplied, ``model_present`` says whether it is installed (None = not checked)."""
 
     ok: bool
     detail: str
     url: str  # the effective URL that was probed (the override, or the default when blank)
+    model: str = ""  # the model name that was checked, if any
+    model_present: bool | None = (
+        None  # installed? None when no model was checked / server unreachable
+    )
+
+
+class OllamaWarmupRequest(BaseModel):
+    """Preload a model into an Ollama server (M13 #369 follow-up). Unlike Test (a fast reachability
+    check), this triggers an actual model load so the first real request is not cold."""
+
+    url: str | None = None
+    model: str
+
+
+class OllamaWarmupResult(BaseModel):
+    """Result of a warm-up: whether the model loaded + a short human detail (no content)."""
+
+    ok: bool
+    detail: str
+    url: str
+    model: str
 
 
 class OpenAiTestRequest(BaseModel):

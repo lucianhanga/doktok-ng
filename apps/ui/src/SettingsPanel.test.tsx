@@ -58,7 +58,18 @@ function mockApi() {
       if (url.endsWith("/catalog")) return new Response(JSON.stringify(CATALOG), { status: 200 });
       if (url.endsWith("/test-ollama"))
         return new Response(
-          JSON.stringify({ ok: true, detail: "reachable - 2 model(s) installed", url: "x" }),
+          JSON.stringify({
+            ok: true,
+            detail: "reachable - 2 model(s) installed",
+            url: "x",
+            model: "",
+            model_present: null,
+          }),
+          { status: 200 },
+        );
+      if (url.endsWith("/warmup-ollama"))
+        return new Response(
+          JSON.stringify({ ok: true, detail: "model loaded", url: "x", model: "qwen3.6:35b-a3b" }),
           { status: 200 },
         );
       if (url.endsWith("/test-openai"))
@@ -144,10 +155,19 @@ test("the Test button probes the Ollama URL and shows the result", async () => {
 
   // Pipeline is on Ollama in the mock, so it has a Test button (the first one).
   fireEvent.click(screen.getAllByRole("button", { name: "Test" })[0]);
-  await waitFor(() =>
-    expect(screen.getByText(/Connected — reachable - 2 model/i)).toBeInTheDocument(),
-  );
+  await waitFor(() => expect(screen.getByText(/OK — reachable - 2 model/i)).toBeInTheDocument());
   expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/test-ollama"))).toBe(true);
+});
+
+test("the Warm up button preloads the model via the warmup endpoint", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+
+  // An Ollama purpose with a selected model exposes a Warm up button next to Test.
+  fireEvent.click(screen.getAllByRole("button", { name: "Warm up" })[0]);
+  await waitFor(() => expect(screen.getByText(/OK — model loaded/i)).toBeInTheDocument());
+  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/warmup-ollama"))).toBe(true);
 });
 
 test("the OpenAI Test button validates the entered key and shows the result", async () => {

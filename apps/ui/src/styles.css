@@ -1258,6 +1258,7 @@ tr.row-selected {
   cursor: default;
 }
 .settings-test-ok,
+.settings-test-warn,
 .settings-test-fail {
   font-size: 0.8rem;
 }
@@ -1278,6 +1279,9 @@ tr.row-selected {
 }
 .settings-test-ok {
   color: var(--success);
+}
+.settings-test-warn {
+  color: var(--warning);
 }
 .settings-test-fail {
   color: var(--danger);

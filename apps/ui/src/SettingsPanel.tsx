@@ -10,6 +10,7 @@ import {
   putOcrSettings,
   testOllamaUrl,
   testOpenAiKey,
+  warmupOllama,
   OCR_ENGINES,
   type AiPurposeSettings,
   type AiSettings,
@@ -182,28 +183,61 @@ function OllamaUrlField({
   label,
   value,
   defaultUrl,
+  model,
   onChange,
 }: {
   label: string;
   value: string | null | undefined;
   defaultUrl: string;
+  // The model selected for this purpose, when the provider is Ollama. Enables the installed-model
+  // check on Test and the Warm up action. Empty/undefined hides Warm up and skips the model check.
+  model?: string;
   onChange: (next: string | null) => void;
 }) {
   const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [warming, setWarming] = useState(false);
+  // level: ok (green) / warn (amber: reachable but the model is not installed) / fail (red).
+  const [result, setResult] = useState<{ level: "ok" | "warn" | "fail"; detail: string } | null>(
+    null,
+  );
+  const busy = testing || warming;
 
   async function runTest() {
     setTesting(true);
     setResult(null);
     try {
-      const r = await testOllamaUrl(value ?? null);
-      setResult({ ok: r.ok, detail: r.detail });
+      const r = await testOllamaUrl(value ?? null, model);
+      const level = !r.ok ? "fail" : r.model_present === false ? "warn" : "ok";
+      setResult({ level, detail: r.detail });
     } catch (e) {
-      setResult({ ok: false, detail: e instanceof Error ? e.message : "test failed" });
+      setResult({ level: "fail", detail: e instanceof Error ? e.message : "test failed" });
     } finally {
       setTesting(false);
     }
   }
+
+  async function runWarmup() {
+    if (!model) return;
+    setWarming(true);
+    setResult(null);
+    try {
+      const r = await warmupOllama(value ?? null, model);
+      setResult({ level: r.ok ? "ok" : "fail", detail: r.detail });
+    } catch (e) {
+      setResult({ level: "fail", detail: e instanceof Error ? e.message : "warm-up failed" });
+    } finally {
+      setWarming(false);
+    }
+  }
+
+  const statusClass =
+    result?.level === "ok"
+      ? "settings-test-ok"
+      : result?.level === "warn"
+        ? "settings-test-warn"
+        : "settings-test-fail";
+  const statusWord =
+    result?.level === "ok" ? "OK" : result?.level === "warn" ? "Warning" : "Failed";
 
   return (
     <div className="settings-row settings-url-row">
@@ -221,14 +255,20 @@ function OllamaUrlField({
           }}
         />
       </label>
-      <button
-        type="button"
-        className="settings-test"
-        disabled={testing}
-        onClick={runTest}
-      >
+      <button type="button" className="settings-test" disabled={busy} onClick={runTest}>
         {testing ? "Testing…" : "Test"}
       </button>
+      {model && (
+        <button
+          type="button"
+          className="settings-test"
+          disabled={busy}
+          onClick={runWarmup}
+          title={`Load ${model} into Ollama now (Test only checks reachability and does not load it)`}
+        >
+          {warming ? "Warming up…" : "Warm up"}
+        </button>
+      )}
       <button
         type="button"
         className="settings-reset"
@@ -241,11 +281,8 @@ function OllamaUrlField({
         Reset to default
       </button>
       {result && (
-        <span
-          role="status"
-          className={result.ok ? "settings-test-ok" : "settings-test-fail"}
-        >
-          {result.ok ? "Connected" : "Failed"} — {result.detail}
+        <span role="status" className={statusClass}>
+          {statusWord} — {result.detail}
         </span>
       )}
     </div>
@@ -335,6 +372,7 @@ function PurposeEditor({
           label={`${title} Ollama URL`}
           value={value.ollama_base_url}
           defaultUrl={ollamaUrlDefault}
+          model={value.model}
           onChange={(ollama_base_url) => onChange({ ...value, ollama_base_url })}
         />
       )}
@@ -498,6 +536,7 @@ export function SettingsPanel() {
               label="Embedding Ollama URL"
               value={ai.embedding?.ollama_base_url}
               defaultUrl={ai.ollama_base_url_default ?? ""}
+              model={ai.embedding_model ?? ""}
               onChange={(ollama_base_url) =>
                 setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
               }

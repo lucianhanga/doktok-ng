@@ -33,6 +33,8 @@ from doktok_contracts.schemas import (
     OllamaStatus,
     OllamaTestRequest,
     OllamaTestResult,
+    OllamaWarmupRequest,
+    OllamaWarmupResult,
     OpenAiTestRequest,
     OpenAiTestResult,
 )
@@ -152,29 +154,94 @@ def put_ai_settings(
     return _response(repo, ai, request)
 
 
-def _probe_ollama(url: str) -> tuple[bool, str]:
-    """Ping an Ollama server's /api/tags (M13 #369). Returns (ok, short detail); never raises."""
+def _probe_ollama(url: str) -> tuple[bool, str, list[str]]:
+    """Ping an Ollama server's /api/tags (M13 #369). Returns (ok, short detail, installed model
+    names); never raises. Connection/timeout failures get an actionable hint instead of a raw errno
+    so the UI can tell "server unreachable" from "model missing". /api/tags does NOT load a model."""
     import httpx
 
+    base = url.rstrip("/")
     try:
-        resp = httpx.get(f"{url.rstrip('/')}/api/tags", timeout=5.0)
-        if resp.status_code >= 400:
-            return (False, f"HTTP {resp.status_code}")
-        models = resp.json().get("models", [])
-        return (True, f"reachable - {len(models)} model(s) installed")
+        resp = httpx.get(f"{base}/api/tags", timeout=5.0)
+    except httpx.ConnectError:
+        return (False, "could not connect - is Ollama running and bound to 0.0.0.0:11434 here?", [])
+    except httpx.TimeoutException:
+        return (False, "timed out - the server did not respond within 5s", [])
     except Exception as exc:  # noqa: BLE001 - a probe reports failure, never raises
-        return (False, str(exc).splitlines()[0][:200] or "connection failed")
+        return (False, str(exc).splitlines()[0][:200] or "connection failed", [])
+    if resp.status_code >= 400:
+        return (False, f"HTTP {resp.status_code}", [])
+    names = [str(m.get("name", "")) for m in resp.json().get("models", []) if m.get("name")]
+    return (True, f"reachable - {len(names)} model(s) installed", names)
+
+
+def _model_installed(model: str, names: list[str]) -> bool:
+    """Whether ``model`` is among the installed Ollama model names. Exact match wins; a name with no
+    explicit ``:tag`` also matches any installed tag of that repo (e.g. 'qwen3' -> 'qwen3:latest')."""
+    wanted = model.strip()
+    if not wanted:
+        return False
+    if wanted in names:
+        return True
+    if ":" not in wanted:
+        return any(n.split(":")[0] == wanted for n in names)
+    return False
+
+
+def _warmup_ollama(url: str, model: str) -> tuple[bool, str]:
+    """Preload a model into Ollama via an empty /api/generate (no prompt -> the model is just loaded
+    into memory). Slow on a cold large model; never raises. Returns (ok, short detail)."""
+    import httpx
+
+    base = url.rstrip("/")
+    try:
+        resp = httpx.post(f"{base}/api/generate", json={"model": model}, timeout=180.0)
+    except httpx.ConnectError:
+        return (False, "could not connect - is Ollama running and reachable here?")
+    except httpx.TimeoutException:
+        return (False, "timed out loading the model (>180s)")
+    except Exception as exc:  # noqa: BLE001 - report failure, never raise
+        return (False, str(exc).splitlines()[0][:200] or "warm-up failed")
+    if resp.status_code >= 400:
+        try:
+            msg = str(resp.json().get("error", ""))  # Ollama 404s with a clear "model not found"
+        except Exception:  # noqa: BLE001
+            msg = ""
+        return (False, msg[:200] or f"HTTP {resp.status_code}")
+    return (True, f"model '{model}' loaded")
 
 
 @router.post("/ai/test-ollama", response_model=OllamaTestResult)
 def test_ollama_url(req: OllamaTestRequest, request: Request, tenant: Tenant) -> OllamaTestResult:
-    """Probe an Ollama server (the override, or the configured default if blank) before saving."""
+    """Probe an Ollama server (the override, or the configured default if blank) before saving. When
+    a model is supplied, also report whether it is installed (a fast check; no model is loaded)."""
     _ = tenant
     _validate_ollama_url(req.url, "url")
     settings = request.app.state.settings
     url = (req.url or "").strip() or settings.ollama_base_url
-    ok, detail = _probe_ollama(url)
-    return OllamaTestResult(ok=ok, detail=detail, url=url)
+    ok, detail, names = _probe_ollama(url)
+    model = req.model.strip()
+    model_present: bool | None = None
+    if ok and model:
+        model_present = _model_installed(model, names)
+        if model_present:
+            detail = f"{detail}; model '{model}' is installed"
+        else:
+            detail = f"{detail}; model '{model}' is NOT installed (run: ollama pull {model})"
+    return OllamaTestResult(ok=ok, detail=detail, url=url, model=model, model_present=model_present)
+
+
+@router.post("/ai/warmup-ollama", response_model=OllamaWarmupResult)
+def warmup_ollama(req: OllamaWarmupRequest, request: Request, tenant: Tenant) -> OllamaWarmupResult:
+    """Preload a model into an Ollama server so the first real request is not cold (M13 follow-up).
+    Distinct from Test: this deliberately loads the model and can take a while on a large model."""
+    _ = tenant
+    _validate_ollama_url(req.url, "url")
+    settings = request.app.state.settings
+    url = (req.url or "").strip() or settings.ollama_base_url
+    model = req.model.strip()
+    ok, detail = _warmup_ollama(url, model)
+    return OllamaWarmupResult(ok=ok, detail=detail, url=url, model=model)
 
 
 def _probe_openai(key: str) -> tuple[bool, str]:

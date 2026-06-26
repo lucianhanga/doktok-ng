@@ -163,6 +163,75 @@ def test_test_ollama_reports_unreachable() -> None:
     assert body["ok"] is False and body["url"] == "http://127.0.0.1:1" and body["detail"]
 
 
+def test_test_ollama_reports_selected_model_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # When a model is supplied, Test also reports whether it is installed (no model load involved).
+    from doktok_api.routers import settings as settings_router
+
+    monkeypatch.setattr(
+        settings_router,
+        "_probe_ollama",
+        lambda url: (True, "reachable - 2 model(s) installed", ["qwen3:30b", "nomic-embed:latest"]),
+    )
+    client = _client()
+    resp = client.post(
+        "/api/v1/settings/ai/test-ollama",
+        json={"url": "http://10.0.0.5:11434", "model": "qwen3:30b"},
+        headers=AUTH,
+    )
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["model"] == "qwen3:30b"
+    assert body["model_present"] is True
+    assert "installed" in body["detail"]
+
+
+def test_test_ollama_flags_missing_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from doktok_api.routers import settings as settings_router
+
+    monkeypatch.setattr(
+        settings_router,
+        "_probe_ollama",
+        lambda url: (True, "reachable - 1 model(s) installed", ["nomic-embed:latest"]),
+    )
+    client = _client()
+    resp = client.post(
+        "/api/v1/settings/ai/test-ollama",
+        json={"url": "http://10.0.0.5:11434", "model": "qwen3:30b"},
+        headers=AUTH,
+    )
+    body = resp.json()
+    assert body["ok"] is True  # the server is reachable...
+    assert body["model_present"] is False  # ...but the selected model is not installed
+    assert "NOT installed" in body["detail"] and "ollama pull qwen3:30b" in body["detail"]
+
+
+def test_warmup_ollama_loads_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from doktok_api.routers import settings as settings_router
+
+    monkeypatch.setattr(
+        settings_router, "_warmup_ollama", lambda url, model: (True, f"model '{model}' loaded")
+    )
+    client = _client()
+    resp = client.post(
+        "/api/v1/settings/ai/warmup-ollama",
+        json={"url": "http://10.0.0.5:11434", "model": "qwen3:30b"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True and body["model"] == "qwen3:30b" and "loaded" in body["detail"]
+
+
+def test_warmup_ollama_rejects_bad_url() -> None:
+    client = _client()
+    resp = client.post(
+        "/api/v1/settings/ai/warmup-ollama",
+        json={"url": "not-a-url", "model": "qwen3:30b"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 422
+
+
 def test_saving_settings_records_a_non_secret_activity_event() -> None:
     # M15 #373: a settings change is recorded in the activity log, without the OpenAI key.
     client, audit = _client_with_audit()

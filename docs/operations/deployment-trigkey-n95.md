@@ -223,8 +223,8 @@ Environment="OLLAMA_MAX_LOADED_MODELS=1"   # only the embedder is ever loaded
 Environment="OLLAMA_NUM_PARALLEL=2"        # a couple of concurrent embed calls; cheap at 1024 ctx
 ```
 
-Pull only the embedder: `ollama pull qwen3-embedding:0.6b`. Do not pull `qwen3.6:35b-a3b` or
-`qwen3:14b` — they will not fit in 8 GB and are not used in the hybrid split.
+Pull only the embedder: `ollama pull qwen3-embedding:0.6b`. Do not pull `qwen3.6:35b-a3b` — it
+will not fit in 8 GB and is not used in the hybrid split.
 
 ## Setting the AI provider split and OpenAI key
 

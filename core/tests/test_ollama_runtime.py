@@ -23,7 +23,7 @@ def _openai(model: str = "gpt-4o-mini") -> AiPurposeSettings:
 
 def _ollama(url: str | None) -> AiPurposeSettings:
     return AiPurposeSettings(
-        provider="ollama", model="qwen3:14b", num_ctx=8192, ollama_base_url=url
+        provider="ollama", model="qwen3.6:35b-a3b", num_ctx=8192, ollama_base_url=url
     )
 
 

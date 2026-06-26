@@ -152,7 +152,7 @@ Takeaways:
 - On Apple Silicon this is **unified memory**: it counts against system RAM. ~26 GB of weights needs
   a 32 GB machine just for the models (tight with the OS); 64 GB+ is comfortable for
   `OLLAMA_NUM_PARALLEL` of 2-4. If memory is tight, drop to a lighter chat model
-  (`DOKTOK_DEFAULT_MODEL=qwen3:14b`) or lower `OLLAMA_MAX_LOADED_MODELS` (accepting reload thrash).
+  (`DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b`) or lower `OLLAMA_MAX_LOADED_MODELS` (accepting reload thrash).
 
 ## Apple Silicon GPU memory budget (the ~75% "wired limit")
 
@@ -171,7 +171,7 @@ least-recently-used model to make room (also bounded by `OLLAMA_MAX_LOADED_MODEL
 **not** override this - it only prevents *idle* unloading, not eviction under memory pressure.
 
 Concrete example on 48 GB: the chat/RAG model `qwen3.6:35b-a3b` (~23 GB) and the enrichment/judge model
-`qwen3:14b` (~12 GB resident) total ~35 GB - right at the ceiling. They cannot both stay resident
+`qwen3.6:35b-a3b` (~12 GB resident) total ~35 GB - right at the ceiling. They cannot both stay resident
 alongside OCR + embeddings, so loading one evicts the other and the next call pays a ~14-50 s reload.
 
 ### How DokTok avoids this
@@ -199,14 +199,14 @@ The cap is a soft sysctl you can raise to fit both big models (e.g. 40 GB, leavi
 sudo sysctl iogpu.wired_limit_mb=40960   # gives the GPU ~40 GB on a 48 GB machine
 ```
 
-With ~40 GB, `qwen3.6` (23) + `qwen3:14b` (12) = 35 GB both fit, so chat and ingest coexist without
+With ~40 GB, `qwen3.6` (23) + `qwen3.6:35b-a3b` (12) = 35 GB both fit, so chat and ingest coexist without
 reloads. Caveats: **do not set it near total RAM** (the OS will swap hard or hang), and it **resets on
 reboot** (re-run it or add a `launchd` startup job to persist).
 
 ## If you are memory constrained
 
 - Lower `DOKTOK_INGEST_CONCURRENCY` and `OLLAMA_NUM_PARALLEL` to 1-2.
-- Set the Data Pipeline AI model to the dense `qwen3:14b` (the OCR-quality judge follows it) so
+- Set the Data Pipeline AI model to the dense `qwen3.6:35b-a3b` (the OCR-quality judge follows it) so
   ingestion fits in ~16 GB and never needs the 23 GB qwen3.6.
 - Keep `DOKTOK_OLLAMA_TIMEOUT_SECONDS` generous so queued requests finish rather than fail.
 

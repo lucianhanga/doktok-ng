@@ -98,7 +98,11 @@ def test_metrics_round_trip_through_mark_done(db: Database) -> None:
     claimed = repo.claim_next(TENANT, now=now, reclaim_before=before)
     assert claimed is not None
     metrics = FeatureMetrics(
-        duration_ms=1700, prompt_tokens=420, answer_tokens=130, model="qwen3:14b", estimated=True
+        duration_ms=1700,
+        prompt_tokens=420,
+        answer_tokens=130,
+        model="qwen3.6:35b-a3b",
+        estimated=True,
     )
     repo.mark_done(claimed.id, feature_version=1, metrics=metrics)
 
@@ -108,7 +112,7 @@ def test_metrics_round_trip_through_mark_done(db: Database) -> None:
     assert row.metrics.prompt_tokens == 420
     assert row.metrics.answer_tokens == 130
     assert row.metrics.total_tokens == 550  # validator-derived
-    assert row.metrics.model == "qwen3:14b"
+    assert row.metrics.model == "qwen3.6:35b-a3b"
     assert row.metrics.estimated is True
 
 

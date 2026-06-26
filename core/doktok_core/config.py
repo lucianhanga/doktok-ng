@@ -93,15 +93,9 @@ class Settings(BaseSettings):
     # model to free the chat slot) and a tight output cap (it only emits a short JSON array).
     rerank_model: str = ""  # empty => use default_model
     rerank_num_predict: int = 64
-    # Enrichment (M6.2): extraction model (structured JSON; thinking on, never think=false with
-    # format). The JSON-repair fallback now reuses this same configured model (MoE-safe per the
-    # provider), so no separate repair model is configured here. Dense default: think=false +
-    # structured `format` works reliably on qwen3:14b and is far faster than the qwen3.6 MoE for
-    # extraction (when kept warm). Switch to qwen3.6:35b-a3b + DOKTOK_ENRICH_THINK=true for higher
-    # quality/language fidelity at the cost of latency.
-    # The OCR-quality judge (embedded-text vs OCR) is not configured here: it follows the Data
-    # Pipeline AI settings (provider+model) like the extractors, so it never loads a separate model.
-    enrich_model: str = "qwen3:14b"
+    # Enrichment (M6.2) + the OCR-quality judge are NOT given a hardcoded model: they follow the
+    # Data Pipeline AI settings (provider+model) selected in the UI, falling back to default_model
+    # only when the pipeline is set to OpenAI but egress is disabled (no UI model to run locally).
     # The enrichment providers feed the document head (up to ~12-16k chars) to the model. 4096
     # tokens was too small for German text (~3 chars/token => ~4-5k tokens), so llama.cpp silently
     # left-truncated the head - exactly the title/date region being extracted. 8192 fits the head

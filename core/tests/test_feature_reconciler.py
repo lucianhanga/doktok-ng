@@ -158,7 +158,7 @@ class _UsageProcessor:
 
     name = "demo"
     version = 1
-    model = "qwen3:14b"
+    model = "qwen3.6:35b-a3b"
 
     def __init__(self, usage: LlmUsage | None) -> None:
         self._usage = usage
@@ -183,7 +183,7 @@ def test_metrics_persist_duration_and_tokens_and_land_in_activity() -> None:
     assert row.metrics.prompt_tokens == 400
     assert row.metrics.answer_tokens == 100
     assert row.metrics.total_tokens == 500
-    assert row.metrics.model == "qwen3:14b"
+    assert row.metrics.model == "qwen3.6:35b-a3b"
     assert row.metrics.estimated is True
 
     completed = next(
@@ -191,7 +191,7 @@ def test_metrics_persist_duration_and_tokens_and_land_in_activity() -> None:
     )
     assert "duration_ms" in completed.metadata
     assert completed.metadata["total_tokens"] == 500
-    assert completed.metadata["model"] == "qwen3:14b"
+    assert completed.metadata["model"] == "qwen3.6:35b-a3b"
 
 
 def test_metrics_duration_only_when_processor_reports_no_usage() -> None:

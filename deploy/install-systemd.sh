@@ -25,6 +25,8 @@ units=(
     doktok-backup-diff.service doktok-backup-diff.timer
     doktok-backup-full.service doktok-backup-full.timer
     doktok-pg-wal-freshness.service doktok-pg-wal-freshness.timer
+    doktok-restore-drill.service doktok-restore-drill.timer
+    doktok-restore-drill-ondemand.service doktok-restore-drill-ondemand.path
 )
 for u in "${units[@]}"; do
     install -m 0644 "deploy/systemd/${u}" "/etc/systemd/system/${u}"
@@ -32,7 +34,11 @@ for u in "${units[@]}"; do
 done
 
 systemctl daemon-reload
-for t in doktok-backup-diff.timer doktok-backup-full.timer doktok-pg-wal-freshness.timer; do
+# Timers + the on-demand .path get enabled --now; the drill/ondemand .service units are triggered by
+# their timer/path, so they are installed but not enabled directly.
+for t in \
+    doktok-backup-diff.timer doktok-backup-full.timer doktok-pg-wal-freshness.timer \
+    doktok-restore-drill.timer doktok-restore-drill-ondemand.path; do
     systemctl enable --now "$t"
     ok "enabled ${t}"
 done

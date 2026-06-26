@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch for an on-demand DokTok restore-drill request file
+Documentation=https://github.com/lucianhanga/doktok-ng/blob/main/deploy/systemd/README.md
+
+[Path]
+# The backend (POST /api/v1/settings/drp/drill) drops this file; the matching oneshot service runs
+# the drill and DELETES the file first. systemd .path units cannot interpolate EnvironmentFile, so
+# this is the DOCUMENTED DEFAULT path (DOKTOK_BACKUP_DIR=/var/lib/doktok/backups). If you override
+# DOKTOK_BACKUP_DIR in /etc/doktok/backup.env, edit this PathExists to match.
+PathExists=/var/lib/doktok/backups/status/requests/drill.request
+Unit=doktok-restore-drill-ondemand.service
+
+[Install]
+WantedBy=paths.target

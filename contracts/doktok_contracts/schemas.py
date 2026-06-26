@@ -73,6 +73,12 @@ class AuditEventType(StrEnum):
     # System-level (non-document) events (M15 #373): configuration + service lifecycle.
     SETTINGS_CHANGED = "settings.changed"
     SERVICE_STARTED = "service.started"
+    # Backup / disaster-recovery events mirrored into the activity log from the host-written,
+    # outside-Postgres append-only history (M12 DRP hardening). The authoritative source is the
+    # history.jsonl file; these rows are a non-authoritative, idempotent mirror of a read window.
+    BACKUP_COMPLETED = "backup.completed"
+    BACKUP_FAILED = "backup.failed"
+    DRILL_COMPLETED = "drill.completed"
 
 
 class EntityType(StrEnum):
@@ -971,6 +977,50 @@ class DrpStatusResponse(BaseModel):
     status: DrpStatus = Field(default_factory=DrpStatus)
     config: DrpConfig = Field(default_factory=DrpConfig)
     read_only: bool = True
+
+
+class BackupEvent(BaseModel):
+    """One entry from the append-only backup history (M12 DRP hardening).
+
+    The authoritative record lives OUTSIDE Postgres in a host-written ``history.jsonl`` (so a DB
+    restore can't roll backup history back). This is the on-the-wire projection of one line; the
+    tamper-evidence fields (``prev_sha256``/``schema``) are deliberately NOT exposed - only ``seq``
+    is surfaced so a consumer can see ordering. Never carries a secret, filename, or doc content.
+    """
+
+    ts: datetime
+    leg: str  # files | pg | offsite | drill | prune
+    event: str  # start | success | failure | prune | drill_pass | drill_fail
+    ok: bool = False
+    size: str = ""  # human-readable size, e.g. "662 MiB"
+    item_count: int | None = None  # files snapshotted / rows verified in a drill
+    backup_id: str = ""  # restic snapshot id / pgBackRest label
+    duration_ms: int | None = None
+    detail: str = ""  # short human note (truncated host-side); never a secret
+    seq: int | None = None  # monotonic sequence number from the history chain
+
+
+class DrpHistoryResponse(BaseModel):
+    """A read-only window over the append-only backup history (M12 DRP hardening), newest-first.
+
+    ``integrity_ok`` is False when the ``prev_sha256`` hash chain is broken across the read window,
+    which surfaces tampering or truncation of the authoritative history file to the operator.
+    """
+
+    events: list[BackupEvent] = Field(default_factory=list)
+    source_available: bool = False
+    total_returned: int = 0
+    truncated: bool = False
+    integrity_ok: bool = True
+
+
+class DrillTriggerResponse(BaseModel):
+    """Result of requesting an on-demand restore drill (M12 DRP hardening). The backend only drops a
+    request file the host watches; it never executes the drill itself."""
+
+    accepted: bool
+    detail: str = ""
+    last_drill_at: datetime | None = None
 
 
 class ModelOption(BaseModel):

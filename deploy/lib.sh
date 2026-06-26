@@ -81,3 +81,101 @@ write_status() {
     # Non-secret status; must be readable by the backend (a different uid in compose). (M12 #377)
     chmod 0644 "${STATUS_DIR}/${leg}.json"
 }
+
+# _sha256 <string> - sha256 hex of the given string (no trailing filename), portable across
+# coreutils (sha256sum) and BSD/macOS (shasum). Empty output if neither is available.
+_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$1" | sha256sum | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1
+    else
+        printf ''
+    fi
+}
+
+# _json_escape <string> - escape a string for safe embedding in a JSON string value. Handles
+# backslash, double-quote, tab, newline, carriage-return. This is the ONLY way free text enters the
+# append-only history - write_status's raw printf is NOT reused, so tampered/quoted detail strings
+# can never break the one-line-per-event JSONL invariant or inject extra fields.
+_json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}" # backslash first
+    s="${s//\"/\\\"}" # double quote
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\n'/\\n}"
+    printf '%s' "$s"
+}
+
+# History rotation threshold (lines). When history.jsonl grows past this it is rolled to .1 and a
+# fresh file is started whose first line chains off the last archived line (hash chain continues).
+HISTORY_MAX_LINES="${DOKTOK_HISTORY_MAX_LINES:-5000}"
+
+# _history_append <line> - the serialized read-last + append step. flock-guarded when available so
+# concurrent legs can't interleave and corrupt the seq/prev_sha256 chain; otherwise a single
+# O_APPEND printf (atomic for short lines on a local fs) is the best-effort fallback.
+_history_append() {
+    local file="$1" line="$2"
+    printf '%s\n' "$line" >>"$file"
+    chmod 0644 "$file" 2>/dev/null || true
+}
+
+# log_event <leg> <event> <ok:true|false> [detail] [extra-json] - append ONE JSON line to the
+# append-only, tamper-evident history (M12 DRP hardening). Outside Postgres (same dir/perms as the
+# sentinels) so a DB restore can't roll history back. Fields are whitelisted; only the detail is free
+# text (escaped + truncated). NEVER pass a secret, command line, raw stderr, filename, or tenant /
+# document content as detail - the history is operator-visible and shipped offsite.
+#   extra-json: a PRE-ESCAPED JSON metric fragment, e.g.
+#     '"size":"662 MiB","item_count":287,"backup_id":"abc","duration_ms":48213'
+log_event() {
+    local leg="$1" event="$2" ok="${3:-false}" detail="${4:-}" extra="${5:-}"
+    local ts="${WRITE_STATUS_TS:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+    mkdir -p "$STATUS_DIR"
+    local file="${STATUS_DIR}/history.jsonl"
+    local lock="${STATUS_DIR}/.history.lock"
+
+    # Truncate detail to ~200 chars BEFORE escaping (so the limit is on the human text, not escapes),
+    # then JSON-escape it. extra is trusted (callers build it from known-safe metric values).
+    detail="${detail:0:200}"
+    local esc_detail
+    esc_detail="$(_json_escape "$detail")"
+
+    # Serialize read-last + compute-chain + append. flock guards against interleaving legs.
+    _emit() {
+        local last_line="" prev_sha="" seq=1
+        # Rotate when the file is too long; chain the new file off the last archived line.
+        if [ -f "$file" ]; then
+            local nlines
+            nlines="$(wc -l <"$file" | tr -d ' ')"
+            if [ "${nlines:-0}" -ge "$HISTORY_MAX_LINES" ]; then
+                mv -f "$file" "${file}.1"
+                last_line="$(tail -n 1 "${file}.1" 2>/dev/null || true)"
+                prev_sha="$(_sha256 "$last_line")"
+                # seq continues from the archived last line so the monotonic counter never resets.
+                seq="$(printf '%s' "$last_line" | sed -n 's/.*"seq":\([0-9]\{1,\}\).*/\1/p')"
+                seq="$((${seq:-0} + 1))"
+                last_line=""
+            fi
+        fi
+        if [ -f "$file" ] && [ -s "$file" ]; then
+            last_line="$(tail -n 1 "$file" 2>/dev/null || true)"
+            prev_sha="$(_sha256 "$last_line")"
+            seq="$(printf '%s' "$last_line" | sed -n 's/.*"seq":\([0-9]\{1,\}\).*/\1/p')"
+            seq="$((${seq:-0} + 1))"
+        fi
+        local line
+        line="$(printf '{"schema":1,"seq":%d,"prev_sha256":"%s","ts":"%s","leg":"%s","event":"%s","ok":%s,"detail":"%s"%s}' \
+            "$seq" "$prev_sha" "$ts" "$leg" "$event" "$ok" "$esc_detail" "${extra:+,$extra}")"
+        _history_append "$file" "$line"
+    }
+
+    if command -v flock >/dev/null 2>&1; then
+        (
+            flock 9
+            _emit
+        ) 9>"$lock"
+    else
+        _emit
+    fi
+}

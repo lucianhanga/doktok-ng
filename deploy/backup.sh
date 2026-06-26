@@ -30,6 +30,9 @@ if [ "$mode" = "compose" ]; then
     pg_extra="$("${compose[@]}" exec -u postgres -T db pgbackrest --stanza=doktok info --output=json 2>/dev/null \
         | pg_backup_extra || true)"
     "${compose[@]}" run --rm backup-runner deploy/write-status.sh pg true "pgbackrest $type" "$pg_extra"
+    # Record the pg leg into the append-only history too (M12 DRP hardening), from the runner that
+    # has the shared backup dir mounted. The files leg logs its own history inside backup-files.sh.
+    "${compose[@]}" run --rm backup-runner deploy/log-event.sh pg success true "pgbackrest $type" "$pg_extra"
 else
     # Host (dev/test): tools installed on the host, host file paths.
     ./deploy/backup-files.sh

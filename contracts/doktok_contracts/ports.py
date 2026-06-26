@@ -243,6 +243,20 @@ class AppSettingsRepository(Protocol):
         backup volume) so a Postgres restore can't roll backup status back. None if unavailable."""
         ...
 
+    def get_backup_history(
+        self, limit: int = 100, leg: str | None = None
+    ) -> tuple[list[dict[str, object]], bool, bool, bool]:
+        """A bounded, newest-first window over the host-written append-only backup history
+        (``history.jsonl``, M12 DRP hardening). Like ``get_backup_status`` this is sourced OUTSIDE
+        Postgres so a DB restore can't roll history back. Optionally filtered to one ``leg``.
+
+        Returns ``(events, source_available, truncated, integrity_ok)`` where ``events`` is a list
+        of raw dicts (newest-first, capped at ``limit``), ``source_available`` is False when the
+        history file is missing/empty, ``truncated`` is True when older entries were dropped to stay
+        within the read cap, and ``integrity_ok`` is False when the ``prev_sha256`` hash chain is
+        broken across the read window (tamper signal). Never raises on a missing/corrupt file."""
+        ...
+
 
 @runtime_checkable
 class AuditLogRepository(Protocol):

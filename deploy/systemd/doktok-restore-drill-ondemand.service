@@ -1,0 +1,24 @@
+[Unit]
+Description=DokTok on-demand restore drill (consumes the request file, then runs the drill)
+Documentation=https://github.com/lucianhanga/doktok-ng/blob/main/deploy/systemd/README.md
+After=docker.service
+Requires=docker.service
+# Root-side cooldown: at most 1 on-demand drill per 10 minutes regardless of how many request files
+# arrive. This backs up the backend's own rate-limit (the backend is the first gate; this is belt +
+# braces in case requests are dropped directly onto the box).
+StartLimitIntervalSec=600
+StartLimitBurst=1
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/doktok
+EnvironmentFile=/etc/doktok/backup.env
+# (a) DELETE the request file FIRST so a slow/failed drill can't re-trigger an endless loop, then
+# (b) run the drill under a flock so an on-demand run and the weekly timer can never overlap.
+# DOKTOK_BACKUP_DIR comes from the env file; the default matches the .path unit above.
+ExecStartPre=/bin/rm -f ${DOKTOK_BACKUP_DIR}/status/requests/drill.request
+ExecStart=/usr/bin/flock -n /run/doktok-restore-drill.lock /opt/doktok/deploy/restore-drill.sh
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=100%
+MemoryMax=1G

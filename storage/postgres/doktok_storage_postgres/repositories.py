@@ -1630,6 +1630,68 @@ class PostgresAppSettingsRepository:
                 continue
         return out
 
+    def get_backup_history(
+        self, limit: int = 100, leg: str | None = None
+    ) -> tuple[list[dict[str, object]], bool, bool, bool]:
+        # Tail-read the host-written append-only history.jsonl (outside the DB, like the sentinels).
+        # Bounded read (cap the bytes we touch, NOT just the lines, so a corrupt/huge file can't OOM
+        # or stall the request), JSONL-parse skipping malformed lines, filter by leg, newest-first.
+        # Never raises: a missing/corrupt/empty file degrades to ([], False, False, True).
+        import hashlib
+        import json
+        from pathlib import Path
+
+        read_cap = 256 * 1024  # bytes; an upper bound on how much of the tail we parse
+        base = Path(self._backup_status_dir) if self._backup_status_dir else None
+        if base is None:
+            return ([], False, False, True)
+        path = base / "history.jsonl"
+        try:
+            if not path.is_file():
+                return ([], False, False, True)
+            size = path.stat().st_size
+            truncated = size > read_cap
+            with path.open("rb") as fh:
+                if truncated:
+                    fh.seek(size - read_cap)
+                    fh.readline()  # drop the partial first line after seeking mid-file
+                raw = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ([], False, False, True)
+
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        if not lines:
+            # An empty file means the source exists but has no events yet.
+            return ([], False, truncated, True)
+
+        # Verify the prev_sha256 chain across the window (best-effort). Each line's prev_sha256 must
+        # equal the sha256 of the preceding line; a mismatch -> the history was tampered/truncated.
+        integrity_ok = True
+        for i in range(1, len(lines)):
+            try:
+                claimed = json.loads(lines[i]).get("prev_sha256", "")
+            except json.JSONDecodeError:
+                integrity_ok = False
+                continue
+            actual = hashlib.sha256(lines[i - 1].encode("utf-8")).hexdigest()
+            if claimed != actual:
+                integrity_ok = False
+                break
+
+        events: list[dict[str, object]] = []
+        for ln in lines:
+            try:
+                rec = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if leg is not None and rec.get("leg") != leg:
+                continue
+            events.append(rec)
+        events.reverse()  # newest-first
+        return (events[: max(0, limit)], True, truncated, integrity_ok)
+
 
 _PROJECTION_HEADER_COLS = "algorithm, version, input_fingerprint, n_points, truncated, computed_at"
 

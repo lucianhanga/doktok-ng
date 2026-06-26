@@ -25,8 +25,10 @@ sudo ./deploy/install-systemd.sh
 systemctl list-timers 'doktok-*'
 ```
 
-It installs `doktok-backup-diff.timer` (hourly), `doktok-backup-full.timer` (weekly), and
-`doktok-pg-wal-freshness.timer` (every minute). All run from `WorkingDirectory=/opt/doktok` and read
+It installs `doktok-backup-diff.timer` (hourly), `doktok-backup-full.timer` (weekly),
+`doktok-pg-wal-freshness.timer` (every minute), `doktok-restore-drill.timer` (weekly Sun 03:00), and
+the `doktok-restore-drill-ondemand.path` (on-demand drill trigger). All run from
+`WorkingDirectory=/opt/doktok` and read
 `/etc/doktok/backup.env`, so they honour `DOKTOK_DEPLOY_MODE`: in **compose** mode the backup units
 call the mode-aware `deploy/backup.sh` (files via the `backup-runner` container + pg via
 `docker compose exec db pgbackrest`); in **host** mode the same script runs the host backup tools.
@@ -63,7 +65,8 @@ for the host-mode / optional timers; the shipped compose-mode units omit both.
 | doktok-backup-pg-logical | weekly | `deploy/backup-pg-logical.sh` (portable logical safety-net) |
 | doktok-azure-sync | hourly | `deploy/azure-sync.sh` |
 | doktok-check-backup | every 30 min | `deploy/check-backup-freshness.sh` |
-| doktok-restore-drill | monthly | `deploy/restore-drill.sh` |
+| doktok-restore-drill | weekly (Sun 03:00) | `deploy/restore-drill.sh` (shipped unit; records drill sentinel + history) |
+| doktok-restore-drill-ondemand | on request file | `deploy/restore-drill.sh` (triggered by the backend dropping `status/requests/drill.request`) |
 | doktok-ollama-autostop | every 2 min | `deploy/ollama-autostop.sh` (stop/start the Ollama container by need, M16 #374) |
 
 ## Example unit (files snapshot) — the rest follow the same shape
@@ -109,3 +112,32 @@ backup unit, e.g. `ExecStart=/opt/doktok/deploy/notify.sh "%i failed"`.
 
 Prune/expire runs inside the backup scripts (restic forget --prune; pgBackRest retention) - keep that
 on the scheduled path, not on the offsite immutable copy.
+
+## Restore drill (scheduled + on-demand)
+
+`doktok-restore-drill.timer` runs the drill weekly (`OnCalendar=Sun 03:00`, `Persistent`,
+`RandomizedDelaySec=1800`, `Nice=15`/`IOSchedulingClass=idle`/`MemoryMax=1G`). The drill restores the
+latest files snapshot into a throwaway dir, runs the self-contained Postgres PITR proof (asserting a
+core table has > 0 rows in the restored throwaway instance), measures RPO/RTO, and records an
+evidence string into BOTH the `drill` sentinel (latest-state, read by the DRP panel) and the
+append-only history (`drill_pass`/`drill_fail`). It touches NO production data.
+
+### On-demand drill (request file)
+
+The backend exposes `POST /api/v1/settings/drp/drill`. The backend NEVER runs the drill - it only
+drops a fixed, argument-free request file:
+
+```
+<DOKTOK_BACKUP_DIR>/status/requests/drill.request
+```
+
+`doktok-restore-drill-ondemand.path` watches that file (`PathExists=`). systemd `.path` units cannot
+interpolate `EnvironmentFile`, so the shipped unit HARDCODES the documented default
+`/var/lib/doktok/backups/status/requests/drill.request`; if you set a non-default `DOKTOK_BACKUP_DIR`
+in `/etc/doktok/backup.env`, edit `PathExists=` to match. When the file appears, the matching oneshot
+`doktok-restore-drill-ondemand.service` (a) DELETES the request file first (`ExecStartPre=rm -f`) so a
+failed drill can't loop, then (b) runs the drill under `flock -n /run/doktok-restore-drill.lock`
+(root-side single-flight, so an on-demand run and the weekly timer can never overlap). The service
+also carries `StartLimitIntervalSec=600`/`StartLimitBurst=1` - at most one on-demand drill per 10 min
+on the box, backing up the backend's own 10-min rate-limit (the backend rejects with 429 if a request
+is already pending or the last drill ran within the cooldown).

@@ -285,7 +285,10 @@ offsite to Azure Blob with [`deploy/azure-sync.sh`](../../deploy/azure-sync.sh).
 pgBackRest passphrases must be stored **off the box** - a repo is useless without them. The full
 design, the sentinel schema, the DRP Settings panel, and the box-side gotchas (notably running
 pgBackRest as the `postgres` user) are in
-[backup-and-recovery.md](backup-and-recovery.md). Live backup health is visible in **Settings -> DRP**.
+[backup-and-recovery.md](backup-and-recovery.md). Live backup health is visible in **Settings -> DRP**,
+which also surfaces the append-only backup-event history (with a tamper-evidence check) and a
+**"Run drill now"** button; `install-systemd.sh` now also installs a weekly restore-drill timer and the
+on-demand drill trigger - see [backup-and-recovery.md](backup-and-recovery.md).
 
 > **Do not run `docker compose down -v`.** The `-v` flag deletes named volumes, including
 > `doktok-pgdata` — that wipes the entire database (documents, embeddings, settings, the key). Use

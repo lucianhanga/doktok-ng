@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **DRP hardening: tamper-evident backup history + live restore drills** (#396 backend, #397 UI).
+  Backups now append to an authoritative, **append-only event history** at
+  `$DOKTOK_BACKUP_DIR/status/history.jsonl` (outside Postgres, so a DB restore can't roll it back),
+  written by `log_event` in `deploy/lib.sh` (compose wrapper `deploy/log-event.sh`): one JSON line per
+  event with a `seq` + `prev_sha256` **hash chain**, flock-serialized appends, field-whitelisted +
+  JSON-escaped `detail` (no secrets), rotating at ~5000 lines. The freshness sentinels are unchanged
+  (latest-state); the history is the timeline. New `GET /api/v1/settings/drp/history?limit&leg`
+  (`DrpHistoryResponse`) is a bounded, newest-first tail read that verifies the chain
+  (`integrity_ok=false` signals tampering) and never 500s; the Settings → DRP tab gained a
+  backup-history table with a leg filter, empty/truncated states, and an integrity-failure banner.
+  Backup/drill outcomes are also **mirrored** into the in-DB activity log (new `AuditEventType`
+  values `backup.completed` / `backup.failed` / `drill.completed`), explicitly non-authoritative and
+  idempotent — the history file remains the source of truth. `deploy/restore-drill.sh` is now a
+  **live, hardened drill** (asserts restored row counts, records measured RPO/RTO + an evidence
+  string, throwaway-only): a weekly `doktok-restore-drill` timer plus an on-demand path
+  (`POST /drp/drill` drops a request file consumed by a root `doktok-restore-drill-ondemand.path`
+  unit under `flock`; the backend never execs root; 429 on pending/cooldown), with a "Run drill now"
+  button in the UI. Azure offsite remains deferred / out of scope.
 - **`make deploy-box` one-command deploy** (`deploy/deploy-to-box.sh`): rsyncs the working tree to the
   compose box, rebuilds the images on the box with live build progress, runs
   `docker compose ... up -d`, and prints health. Configurable via `DOKTOK_BOX_HOST` / `DOKTOK_BOX_KEY`

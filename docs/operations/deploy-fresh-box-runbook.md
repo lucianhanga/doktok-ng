@@ -309,8 +309,11 @@ $DC pull && $DC up -d               # update to new images (built or pulled)
   panel reads. It is mode-aware (`DOKTOK_DEPLOY_MODE=compose` here). Schedule it with the shipped
   systemd timers: write `/etc/doktok/backup.env` (including `DOKTOK_DEPLOY_MODE=compose`), then
   `sudo ./deploy/install-systemd.sh` (installs `doktok-backup-diff` hourly, `doktok-backup-full`
-  weekly, `doktok-pg-wal-freshness` every minute). Push offsite with `deploy/azure-sync.sh`. Store the
-  restic / pgBackRest passphrases off-box — a repo is useless without them. Full design + the box-side
+  weekly, `doktok-pg-wal-freshness` every minute, plus a weekly `doktok-restore-drill` and an
+  on-demand drill trigger). Push offsite with `deploy/azure-sync.sh`. Store the
+  restic / pgBackRest passphrases off-box — a repo is useless without them. The backups also keep an
+  append-only, tamper-evident event history and run live restore drills (weekly + a Settings → DRP
+  "Run drill now" button) — see [backup-and-recovery.md](backup-and-recovery.md). Full design + the box-side
   gotchas (run pgBackRest as the `postgres` user; `archive_timeout=60` keeps the pg leg fresh) are in
   [backup-and-recovery.md](backup-and-recovery.md) and
   [deploy/systemd/README.md](../../deploy/systemd/README.md).

@@ -380,6 +380,40 @@ full destructive path needs a Linux host; everything else is testable anywhere w
   takes a **mandatory pre-restore safety snapshot and rolls back on failure**, so it is recoverable
   even in place - but Tier 2 (a separate B) is the safer first proof.
 
+### Step-by-step on a dev machine
+
+Dev (macOS/host) has no systemd, so the **destructive restore *apply* cannot run on macOS** (it needs
+the root path-unit on Linux). Everything else - making a backup, downloading it, and **validating that
+it would restore** - is fully testable in dev. Three things you can do, fastest first:
+
+**1. One-command proof (no setup beyond Docker):**
+```bash
+make drp-selftest
+```
+Runs the PITR proof + a full portable export -> encrypt -> decrypt -> restore round-trip in throwaway
+containers, asserting rows + a pgvector value + a file survive A -> B. Touches nothing real.
+
+**2. Exercise the real backup + recovery-validate UI (your actual data):**
+```bash
+brew install libpq && brew link --force libpq   # gives dev pg_dump@17 (one-time)
+# start the dev stack + backend/worker as usual, open Settings -> DRP
+```
+- **Make a backup:** the "Portable backup" card -> set a passphrase -> **Create backup** -> **Download**
+  the `.tgz.enc`. (Or `make backup` to populate the DRP sentinels + history - see "On demand" above.)
+- **Test recovery non-destructively:** "Restore from a backup file" -> pick the `.tgz.enc` you just
+  downloaded + the passphrase -> **Check backup**. The *preview* decrypts, safe-extracts, verifies the
+  manifest checksums/HMAC, and checks version compatibility - i.e. it proves the archive **would**
+  restore - **without** wiping anything. This is the safe dev recovery test. Do NOT run the final
+  "Restore now" against your dev data unless you mean to replace it (and that step only executes on a
+  Linux host anyway).
+
+**3. Full destructive round-trip (recover onto a clean instance):** to actually exercise the wipe +
+import, do it on Linux - either `deploy/restore-roundtrip.sh` (self-contained, throwaway containers,
+proves the data/format leg), or run the **prod compose stack** locally with `DOKTOK_DEPLOY_MODE=compose`
++ `sudo ./deploy/install-systemd.sh` so the restore path-unit exists, then drive the full
+upload -> preview -> confirm -> apply flow. See [Recover onto a new / different
+device](#recover-onto-a-new--different-device).
+
 ## Gotchas
 
 - **Run pgBackRest in the db container as the `postgres` user.** `deploy/backup.sh` runs

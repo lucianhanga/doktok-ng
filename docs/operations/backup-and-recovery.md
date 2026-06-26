@@ -152,6 +152,60 @@ Wrap with the quiesce hook for a still snapshot: `doktok-worker quiesce` -> back
 4. Start the stack, then `doktok-worker repair` to reconcile DB <-> files and re-queue any
    re-derivable gaps (the reconciler backfills derived artifacts).
 
+## Recover onto a new / different device
+
+The backup repos are **portable** - a backup taken on one device restores on another (this is the
+real test of a backup). restic (files) is content-addressed + encrypted; pgBackRest (Postgres)
+restores its repo into a fresh data dir. Three things must travel with the repos:
+
+1. **The repos** - the whole `$DOKTOK_BACKUP_DIR` (its `files/`, `pg/`, and `status/` dirs). With
+   offsite (Azure) deferred, backups currently live only on the source device's local disk, so
+   moving A -> B today means **copying `$DOKTOK_BACKUP_DIR` by hand** (USB / `scp` / rsync). (Once
+   offsite ships, B pulls the repo instead - step 1 of [Restore](#restore).)
+2. **The passphrases** - `DOKTOK_RESTIC_PASSWORD` and `DOKTOK_PGBACKREST_CIPHER_PASS`. They are NOT
+   in the backup (off-box by design); the repos are unrecoverable without them. Carry
+   `DOKTOK_SECRETS_KEY` too - `app_settings` (incl. the OpenAI key) is in the DB backup and B needs
+   the same key to decrypt the stored OpenAI key (everything else restores regardless; without it you
+   just re-enter the key in Settings).
+3. **The same PostgreSQL major version** - pg17 -> pg17 (`restore-pg.sh` refuses a mismatch; #356).
+   Dev and the device both run `pgvector/pgvector:pg17`, so this holds across them.
+
+This procedure is the same whether the source is a device or the **dev** machine - DRP treats dev as
+a device (host mode). It is OS-independent: a restic/pgBackRest repo made on dev (macOS) restores on
+the Linux box. (Caveat: dev's compose `db` isn't wired for pgBackRest WAL archiving, so a real `pg`
+repo only exists in dev if you ran a host-mode pg backup there; the **files** repo is always
+portable. `test-pitr.sh` proves PITR in dev but produces no persistent repo.)
+
+### Steps on the target device
+
+```bash
+# 0) Get the code + secrets onto B
+#    - deploy the app (e.g. `make deploy-box`) but DO NOT start the stack yet
+#    - copy the backup repo from A:
+scp -r A:/var/lib/doktok/backups  /var/lib/doktok/backups          # or USB/rsync
+#    - put the three secrets in /opt/doktok/.env.production (DB_PASSWORD, RESTIC_PASSWORD,
+#      PGBACKREST_CIPHER_PASS, SECRETS_KEY, TENANT_TOKENS, ...) - see the fresh-box runbook section 3.
+
+# 1) Restore Postgres into a fresh data dir (server STOPPED), then files_root, in one shot:
+export DOKTOK_BACKUP_DIR=/var/lib/doktok/backups
+export DOKTOK_PGDATA=/path/to/empty/pgdata           # the target cluster's data dir
+export DOKTOK_PGBACKREST_CIPHER_PASS=...  DOKTOK_RESTIC_PASSWORD=...
+./deploy/restore.sh /var/lib/doktok/files            # pg (latest) + files; add a PITR time as arg 2
+
+# 2) Start the stack, then reconcile DB <-> files and backfill any re-derivable gaps:
+doktok-worker repair
+```
+
+`restore.sh` restores Postgres **at or before** the files snapshot (the safe-restore rule: files
+restore point >= DB restore point), then `restore-files.sh`. Restores are **destructive** - run them
+on a fresh/empty target (or stage + swap), never against a live `files_root`/`PGDATA`. In compose
+mode, run the equivalent inside the db container / backup-runner as the existing scripts do; the
+contract and `$DOKTOK_BACKUP_DIR` layout are identical in both modes.
+
+> Simpler one-file path coming: a single downloadable `.tgz` (DB + files) with UI download/restore is
+> in design - it will become the easiest A -> B path for non-PITR full recovery. This section covers
+> the current restic/pgBackRest mechanism.
+
 ## Box-side: scheduling, monitoring, offsite
 
 - **WAL archiving:** the prod `db` image (`deploy/docker/db.Dockerfile`) bundles pgBackRest; the

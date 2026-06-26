@@ -50,21 +50,37 @@ def _ocr_outcome(extraction_method: str, *, has_failed_extract: bool) -> str:
     return "done" if extraction_method in _OCR_METHODS else "not_needed"
 
 
+def _derived_duration_ms(feature: DocumentFeature) -> int | None:
+    """Coarse per-step duration for documents processed before the metrics column existed: the
+    successful run's wall-clock (last attempt -> completion). Returns None when the timestamps are
+    missing or non-positive. It includes the whole attempt, so callers mark it ``estimated``."""
+    start, end = feature.last_attempt_at, feature.completed_at
+    if start is None or end is None:
+        return None
+    delta_ms = int((end - start).total_seconds() * 1000)
+    return delta_ms if delta_ms > 0 else None
+
+
 def _step(feature: DocumentFeature) -> ProcessingStep:
     m = feature.metrics
     has_tokens = m.total_tokens > 0
+    # Prefer the measured duration; otherwise derive a coarse one from the row's timestamps so
+    # already-processed documents (empty metrics) still show step timing. Tokens are unrecoverable.
+    measured = m.duration_ms if m.duration_ms > 0 else None
+    duration_ms = measured if measured is not None else _derived_duration_ms(feature)
+    estimated = m.estimated or (measured is None and duration_ms is not None)
     return ProcessingStep(
         feature=feature.feature,
         label=_label(feature.feature),
         status=feature.status.value,
         started_at=feature.last_attempt_at,
         completed_at=feature.completed_at,
-        duration_ms=m.duration_ms if m.duration_ms > 0 else None,
+        duration_ms=duration_ms,
         prompt_tokens=m.prompt_tokens if has_tokens else None,
         answer_tokens=m.answer_tokens if has_tokens else None,
         total_tokens=m.total_tokens if has_tokens else None,
         model=m.model or None,
-        estimated=m.estimated,
+        estimated=estimated,
         attempts=feature.attempts,
         last_error=feature.last_error,
     )

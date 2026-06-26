@@ -287,4 +287,16 @@ doktok-ng/
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**PolyForm Noncommercial License 1.0.0** — see [LICENSE](LICENSE).
+
+Free for any **noncommercial** use: personal and private use, research, education,
+nonprofits, and evaluation. You may use, modify, and share it for those purposes.
+
+**Commercial use requires a separate license.** If you want to use DokTok NG in or for
+a business, contact **lucianhanga@gmx.net** — see [COMMERCIAL.md](COMMERCIAL.md).
+
+> Note: releases and commits published before 2026-06-26 were available under the MIT
+> License and remain so for anyone who obtained them under those terms. From 2026-06-26
+> onward the project is licensed under PolyForm Noncommercial 1.0.0.
+>
+> This is a summary for convenience, not legal advice; the [LICENSE](LICENSE) text governs.

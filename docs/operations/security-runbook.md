@@ -13,8 +13,8 @@ This deployment deliberately departs from the local-first / no-egress default:
   is sent to OpenAI for metadata, classification, NER, and record extraction.
 - With **RAG on OpenAI**, the retrieved chunks and the user's question are sent to OpenAI for the
   answer and the rerank.
-- **OCR and embeddings stay local** (PaddleOCR + the Ollama embedder); pgvector and the file tree
-  never leave the box.
+- **OCR and embeddings stay local** (the local OCR engine — RapidOCR/OpenVINO on the N95 — plus the
+  Ollama embedder); pgvector and the file tree never leave the box.
 
 `DOKTOK_NO_EGRESS=true` blocks OpenAI entirely (APP-3): the system refuses to egress and falls back
 to the local model. The hybrid requires `DOKTOK_NO_EGRESS=false` as the explicit opt-in. The actual
@@ -23,6 +23,10 @@ stakeholders before ingesting sensitive material, and review OpenAI's data-handl
 on-prem confidentiality is required, use the separate-LAN-Ollama-host option in ADR-0020 instead.
 
 ## Exposure checklist (before going live)
+
+The full production variable list (REQUIRED vs optional) lives in the tracked
+[`.env.production.example`](../../.env.production.example) template; bootstrap `.env.production` from it
+once on the box per the [fresh-box runbook section 3](deploy-fresh-box-runbook.md).
 
 - [ ] TLS enforced: `DOKTOK_SITE_ADDRESS` is a domain (auto-HTTPS) or an `https://` host with
       `tls internal`; nothing is served on plain HTTP to untrusted networks.

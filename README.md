@@ -216,9 +216,13 @@ Full detail - persistence model, worker auto-resume, prerequisites, and troubles
 
 **Deploying to a small server.** To run DokTok NG on small hardware (a TRIGKEY N95: 4 cores, 8 GB, no
 GPU) for staging / limited production, the local LLMs do not fit, so it uses a hybrid split - OCR and
-embeddings stay local while enrichment and chat run on OpenAI (ADR-0020). See the operator guide
-[docs/operations/deployment-trigkey-n95.md](docs/operations/deployment-trigkey-n95.md). The production
-packaging (compose, Dockerfiles, headless seeding, deploy CI) is M11 work and marked planned there.
+embeddings stay local while enrichment and chat run on OpenAI or a remote LAN Ollama (ADR-0020). The
+production packaging (compose, Dockerfiles, headless seeding, deploy CI) is shipped. Bootstrap a box
+once with the [fresh-box runbook](docs/operations/deploy-fresh-box-runbook.md) (copy
+[`.env.production.example`](.env.production.example) -> `.env.production`, fill the REQUIRED secrets),
+then ship updates with the one command `make deploy-box`. For the hardware rationale, the hybrid
+trade-off, and N95 tuning see
+[docs/operations/deployment-trigkey-n95.md](docs/operations/deployment-trigkey-n95.md).
 
 ## Authentication and multi-tenancy
 

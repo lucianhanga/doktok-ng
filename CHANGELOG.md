@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`make deploy-box` one-command deploy** (`deploy/deploy-to-box.sh`): rsyncs the working tree to the
+  compose box, rebuilds the images on the box with live build progress, runs
+  `docker compose ... up -d`, and prints health. Configurable via `DOKTOK_BOX_HOST` / `DOKTOK_BOX_KEY`
+  / `DOKTOK_BOX_DIR` / `DOKTOK_BOX_SERVICES` (and `DOKTOK_BOX_NO_BUILD=1` to skip the rebuild). Fails
+  fast if the box is missing `/opt/doktok/.env.production`. Completed the `.env.production.example`
+  template into a sectioned single source of truth (REQUIRED vs optional, secret-generation hint, real
+  N95 settings) and refreshed the install docs (fresh-box runbook, N95 deployment guide, README,
+  security runbook) for the one-command redeploy path and the RapidOCR/OpenVINO OCR default.
+
 ## [0.2.0] - 2026-06-26
 
 ### Added

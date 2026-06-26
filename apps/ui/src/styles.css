@@ -1621,6 +1621,49 @@ tr.row-selected {
   color: var(--muted);
 }
 
+/* ---- Portable backup (single encrypted archive download) ---- */
+.drp-portable {
+  margin-top: 1.4rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.1rem;
+}
+.drp-portable .drp-card-head {
+  margin-bottom: 0.2rem;
+}
+.drp-portable .drp-card-head h4 {
+  margin: 0;
+}
+.drp-portable-note {
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0.5rem;
+}
+.drp-portable-size {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Small inline spinner shown while the archive is building. */
+.drp-spinner {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-right: 0.35rem;
+  vertical-align: -0.1rem;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: drp-spin 0.7s linear infinite;
+}
+@keyframes drp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drp-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
 /* ---- Documents tab: shared toolbar + List/Thumbnails views ---- */
 .docs-subtabs {
   margin-left: auto;

@@ -80,13 +80,39 @@ const HISTORY = {
   ],
 };
 
-// Per-test overrides for the two new DRP endpoints; reset by each mockApi() call.
+// Per-test overrides for the new DRP/backup endpoints; reset by each mockApi() call.
 let historyResponse: unknown = HISTORY;
 let drillResponder: () => Response = () =>
   new Response(
     JSON.stringify({ accepted: true, detail: "Drill requested.", last_drill_at: null }),
     { status: 200 },
   );
+
+// Portable backup: per-test responders for start, status (polled), and the download POST.
+const READY_INFO = {
+  export_id: "exp-1",
+  status: "ready",
+  created_at: "2026-06-17T01:00:00Z",
+  size_bytes: 694157312, // 662 MiB
+  app_version: "1.2.3",
+  pg_version: "16.2",
+  member_count: 287,
+  error: "",
+};
+let backupStartResponder: () => Response = () =>
+  new Response(JSON.stringify({ ...READY_INFO, status: "building", size_bytes: null }), {
+    status: 200,
+  });
+let backupStatusResponder: () => Response = () =>
+  new Response(JSON.stringify(READY_INFO), { status: 200 });
+let backupDownloadResponder: () => Response = () =>
+  new Response("encrypted-bytes", {
+    status: 200,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": 'attachment; filename="doktok-backup-20260617.tgz.enc"',
+    },
+  });
 
 function mockApi() {
   historyResponse = HISTORY;
@@ -95,6 +121,19 @@ function mockApi() {
       JSON.stringify({ accepted: true, detail: "Drill requested.", last_drill_at: null }),
       { status: 200 },
     );
+  backupStartResponder = () =>
+    new Response(JSON.stringify({ ...READY_INFO, status: "building", size_bytes: null }), {
+      status: 200,
+    });
+  backupStatusResponder = () => new Response(JSON.stringify(READY_INFO), { status: 200 });
+  backupDownloadResponder = () =>
+    new Response("encrypted-bytes", {
+      status: 200,
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": 'attachment; filename="doktok-backup-20260617.tgz.enc"',
+      },
+    });
   const calls: { url: string; method: string; body?: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -105,6 +144,11 @@ function mockApi() {
       if (url.includes("/settings/drp/history"))
         return new Response(JSON.stringify(historyResponse), { status: 200 });
       if (url.endsWith("/settings/drp/drill") && method === "POST") return drillResponder();
+      // Portable backup endpoints (order matters: the download path is more specific than start).
+      if (url.includes("/settings/backup/export/status")) return backupStatusResponder();
+      if (/\/settings\/backup\/export\/[^/]+\/download$/.test(url) && method === "POST")
+        return backupDownloadResponder();
+      if (url.endsWith("/settings/backup/export") && method === "POST") return backupStartResponder();
       if (url.endsWith("/catalog")) return new Response(JSON.stringify(CATALOG), { status: 200 });
       if (url.endsWith("/test-ollama"))
         return new Response(
@@ -344,4 +388,99 @@ test("a 429 from the drill endpoint surfaces the cooldown detail as a warning", 
   await waitFor(() =>
     expect(screen.getByText("A drill is already pending.")).toBeInTheDocument(),
   );
+});
+
+// ---- Portable backup (Phase 1: download) ----
+
+test("Create starts a build, polls to ready, and reveals the Download button with the size", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+
+  // start POSTs to the export endpoint; the build then polls status to "ready".
+  await waitFor(() =>
+    expect(
+      calls.some((c) => c.method === "POST" && c.url.endsWith("/settings/backup/export")),
+    ).toBe(true),
+  );
+  // Polling resolves to ready: the humanized size and the Download button appear.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument(),
+  );
+  expect(screen.getByLabelText("Backup size")).toHaveTextContent("662 MiB");
+  expect(calls.some((c) => c.url.includes("/settings/backup/export/status"))).toBe(true);
+});
+
+test("Download is blocked until the passphrase is at least 8 characters, then POSTs it", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument(),
+  );
+
+  // A short passphrase keeps Download disabled.
+  fireEvent.change(screen.getByLabelText("Backup passphrase"), { target: { value: "short" } });
+  expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
+
+  // A valid passphrase enables it and is sent in the download POST body.
+  fireEvent.change(screen.getByLabelText("Backup passphrase"), {
+    target: { value: "correct horse battery" },
+  });
+  expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Download" }));
+
+  await waitFor(() => {
+    const dl = calls.find((c) => /\/settings\/backup\/export\/[^/]+\/download$/.test(c.url));
+    expect(dl).toBeTruthy();
+    expect(JSON.parse(dl!.body!).passphrase).toBe("correct horse battery");
+  });
+});
+
+test("a 429 from start attaches to the running build by polling status to ready", async () => {
+  const calls = mockApi();
+  backupStartResponder = () =>
+    new Response(JSON.stringify({ detail: "already building" }), { status: 429 });
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+  // On 429 we fetch the current status (which is ready) instead of erroring.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument(),
+  );
+  expect(calls.some((c) => c.url.includes("/settings/backup/export/status"))).toBe(true);
+});
+
+test("a failed export status shows the error and offers a retry", async () => {
+  mockApi();
+  // Start returns failed straight away so no polling is needed.
+  backupStartResponder = () =>
+    new Response(
+      JSON.stringify({ ...READY_INFO, status: "failed", size_bytes: null, error: "disk full" }),
+      { status: 200 },
+    );
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+  await waitFor(() => expect(screen.getByText(/Backup failed/i)).toBeInTheDocument());
+  expect(screen.getByText("disk full")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 });

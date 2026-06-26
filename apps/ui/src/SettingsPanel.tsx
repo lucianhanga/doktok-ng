@@ -1,24 +1,31 @@
 import { useEffect, useState } from "react";
 
 import {
+  downloadBackupArchive,
   fetchAiSettings,
+  fetchBackupExportStatus,
   fetchDrpHistory,
   fetchDrpStatus,
   fetchModelCatalog,
   fetchOcrRecommendation,
   fetchOcrSettings,
+  formatBytes,
   formatDuration,
   putAiSettings,
   putOcrSettings,
+  startBackupExport,
   testOllamaUrl,
   testOpenAiKey,
   triggerDrill,
   warmupOllama,
+  BackupExportBusyError,
+  BackupPassphraseTooShortError,
   DrillRejectedError,
   OCR_ENGINES,
   type AiPurposeSettings,
   type AiSettings,
   type BackupEvent,
+  type BackupExportInfo,
   type BackupLegStatus,
   type DrpHistoryResponse,
   type DrpStatusResponse,
@@ -27,6 +34,9 @@ import {
   type OcrRecommendation,
   type OcrSettings,
 } from "./api";
+import { Ellipsis } from "./Ellipsis";
+
+const MIN_PASSPHRASE = 8;
 
 function ctxLabel(n: number): string {
   return n % 1024 === 0 ? `${n / 1024}k` : String(n);
@@ -318,6 +328,201 @@ function RecoveryDrill({
   );
 }
 
+// Portable backup (Phase 1: download). Builds one encrypted, self-contained archive of the whole
+// system (Postgres + documents) and streams it to the browser, gated on a user-set passphrase that
+// encrypts the download. Restore (uploading an archive on another device) is a separate later phase.
+//
+// Flow: Create -> POST start (or attach to an in-flight build on 429) -> poll status every ~2.5s
+// while "building" -> when "ready", show the size + a Download button (POSTs the passphrase, saves
+// the streamed file) -> "failed" surfaces the server error with a retry. The passphrase is held in
+// component state only, sent once on download, and never logged or echoed elsewhere.
+const POLL_MS = 2500;
+
+function PortableBackup() {
+  const [passphrase, setPassphrase] = useState("");
+  const [info, setInfo] = useState<BackupExportInfo | null>(null);
+  // starting: the Create request is in flight. polling: a build is in progress (status === building).
+  const [phase, setPhase] = useState<"idle" | "starting" | "polling">("idle");
+  const [downloading, setDownloading] = useState(false);
+  // A user-facing message: error (red) for failures, or an inline passphrase-validation note.
+  const [error, setError] = useState<string | null>(null);
+  const [passphraseError, setPassphraseError] = useState(false);
+
+  const status = info?.status ?? null;
+  const passphraseValid = passphrase.length >= MIN_PASSPHRASE;
+  const busy = phase === "starting" || phase === "polling";
+
+  // Poll the build status every ~2.5s while a build is in progress, then stop on ready/failed.
+  useEffect(() => {
+    if (phase !== "polling") return;
+    let active = true;
+    const tick = () => {
+      fetchBackupExportStatus(info?.export_id)
+        .then((next) => {
+          if (!active) return;
+          setInfo(next);
+          if (next.status !== "building") setPhase("idle");
+        })
+        .catch((e) => {
+          if (!active) return;
+          setError(e instanceof Error ? e.message : "Could not check the backup status.");
+          setPhase("idle");
+        });
+    };
+    tick(); // poll once immediately on entering the polling phase, then on the interval
+    const id = setInterval(tick, POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [phase, info?.export_id]);
+
+  async function create() {
+    setPhase("starting");
+    setError(null);
+    setPassphraseError(false);
+    try {
+      const started = await startBackupExport();
+      setInfo(started);
+      setPhase(started.status === "building" ? "polling" : "idle");
+    } catch (e) {
+      if (e instanceof BackupExportBusyError) {
+        // A build is already running: attach to it by polling the most recent build's status.
+        try {
+          const current = await fetchBackupExportStatus();
+          setInfo(current);
+          setPhase(current.status === "building" ? "polling" : "idle");
+        } catch (inner) {
+          setError(inner instanceof Error ? inner.message : "Could not attach to the running backup.");
+          setPhase("idle");
+        }
+        return;
+      }
+      setError(e instanceof Error ? e.message : "Could not start the backup.");
+      setPhase("idle");
+    }
+  }
+
+  async function download() {
+    if (!info || !passphraseValid) return;
+    setDownloading(true);
+    setError(null);
+    setPassphraseError(false);
+    try {
+      await downloadBackupArchive(info.export_id, passphrase);
+    } catch (e) {
+      if (e instanceof BackupPassphraseTooShortError) {
+        setPassphraseError(true);
+      } else {
+        setError(e instanceof Error ? e.message : "Could not download the backup.");
+      }
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  const buildingState = status === "building" || busy;
+
+  return (
+    <div className="drp-portable">
+      <div className="drp-card-head">
+        <h4>Portable backup</h4>
+        {status && (
+          <span
+            className={`drp-badge ${
+              status === "ready" ? "drp-ok" : status === "failed" ? "drp-failed" : "drp-stale"
+            }`}
+          >
+            {status}
+          </span>
+        )}
+      </div>
+      <p className="muted">
+        Create a single encrypted file containing the whole system (database and documents) so you
+        can move or restore it on another device. This complements the automatic backups above.
+      </p>
+
+      <div className="settings-row settings-url-row">
+        <label>
+          Passphrase{" "}
+          <input
+            type="password"
+            className="settings-url-input"
+            aria-label="Backup passphrase"
+            autoComplete="new-password"
+            placeholder={`at least ${MIN_PASSPHRASE} characters`}
+            value={passphrase}
+            onChange={(e) => {
+              setPassphrase(e.target.value);
+              setPassphraseError(false);
+            }}
+          />
+        </label>
+      </div>
+      <p className="muted drp-portable-note">
+        You will need this exact passphrase to restore. Store it safely — we cannot recover it.
+      </p>
+      {passphraseError && (
+        <p role="alert" className="settings-test-fail">
+          Passphrase must be at least {MIN_PASSPHRASE} characters.
+        </p>
+      )}
+
+      <div className="drp-drill-controls">
+        <button type="button" className="settings-test" disabled={busy} onClick={create}>
+          {phase === "starting"
+            ? "Starting…"
+            : buildingState
+              ? "Building backup…"
+              : status === "ready"
+                ? "Rebuild"
+                : status === "failed"
+                  ? "Retry"
+                  : "Create backup"}
+        </button>
+
+        {buildingState && (
+          <span role="status" className="muted">
+            <span className="drp-spinner" aria-hidden="true" /> Building backup…
+          </span>
+        )}
+
+        {status === "ready" && info && (
+          <>
+            <span className="muted drp-portable-size" aria-label="Backup size">
+              {formatBytes(info.size_bytes) || "ready"}
+            </span>
+            <button
+              type="button"
+              className="settings-save"
+              disabled={downloading || !passphraseValid}
+              title={passphraseValid ? "" : `Set a passphrase of at least ${MIN_PASSPHRASE} characters`}
+              onClick={download}
+            >
+              {downloading ? "Encrypting + downloading…" : "Download"}
+            </button>
+          </>
+        )}
+      </div>
+
+      {status === "failed" && info && (
+        <p role="alert" className="settings-test-fail">
+          Backup failed{info.error ? <>: <Ellipsis text={info.error} /></> : "."}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="status-error">
+          {error}
+        </p>
+      )}
+
+      <p className="muted drp-portable-note">
+        Restoring from a backup file is coming next.
+      </p>
+    </div>
+  );
+}
+
 // Read-only Disaster Recovery Plan section (#368). Surfaces backup freshness + config; recovery is
 // performed on the host (this never runs backups or exposes secrets). The backup-history window and
 // the recovery-drill panel are added under the status/config (backup/DRP hardening epic).
@@ -468,6 +673,7 @@ function DrpSection() {
           <RecoveryDrill drill={drp.status.drill} onTriggered={refreshNow} />
         </>
       )}
+      <PortableBackup />
       <BackupHistory refreshKey={refreshKey} />
     </div>
   );

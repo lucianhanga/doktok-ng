@@ -2,19 +2,25 @@ import { useEffect, useState } from "react";
 
 import {
   fetchAiSettings,
+  fetchDrpHistory,
   fetchDrpStatus,
   fetchModelCatalog,
   fetchOcrRecommendation,
   fetchOcrSettings,
+  formatDuration,
   putAiSettings,
   putOcrSettings,
   testOllamaUrl,
   testOpenAiKey,
+  triggerDrill,
   warmupOllama,
+  DrillRejectedError,
   OCR_ENGINES,
   type AiPurposeSettings,
   type AiSettings,
+  type BackupEvent,
   type BackupLegStatus,
+  type DrpHistoryResponse,
   type DrpStatusResponse,
   type ModelCatalog,
   type ModelOption,
@@ -34,11 +40,293 @@ function relAge(seconds: number | null): string {
   return `${Math.round(seconds / 86400)} d ago`;
 }
 
+// Relative age from an ISO timestamp (the backup log stores absolute `ts`, not an age in seconds),
+// reusing relAge so the history table reads the same as the status cards. Returns "" for an
+// unparseable/empty timestamp so the caller can omit the cell.
+function relAgeFromTs(ts: string): string {
+  if (!ts) return "";
+  const ms = Date.parse(ts);
+  if (Number.isNaN(ms)) return "";
+  return relAge(Math.max(0, Math.round((Date.now() - ms) / 1000)));
+}
+
+// Full absolute timestamp for the hover title on the relative time. Falls back to the raw string.
+function absoluteTs(ts: string): string {
+  if (!ts) return "";
+  const ms = Date.parse(ts);
+  if (Number.isNaN(ms)) return ts;
+  return new Date(ms).toLocaleString();
+}
+
+// Map a backup-log event to its colour class + display word. Colour is never the only signal: each
+// row also shows the word (and the badge/leg), so it stays legible for colour-blind users.
+function eventClass(event: string): "drp-event-pass" | "drp-event-fail" | "drp-event-neutral" {
+  if (event === "success" || event === "drill_pass") return "drp-event-pass";
+  if (event === "failure" || event === "drill_fail") return "drp-event-fail";
+  return "drp-event-neutral";
+}
+
+// Backup history window: the append-only backup event log, newest first. Polls on the same 45s
+// cadence as the status cards (and re-fetches immediately after a drill is triggered, via the
+// bumped `refreshKey`). source_available=false is a neutral empty state (fresh install); a failed
+// integrity check is surfaced as a prominent danger banner above the table.
+type LegFilter = "" | "files" | "pg" | "offsite" | "drill" | "prune";
+
+function BackupHistory({ refreshKey }: { refreshKey: number }) {
+  const [history, setHistory] = useState<DrpHistoryResponse | null>(null);
+  const [err, setErr] = useState(false);
+  const [leg, setLeg] = useState<LegFilter>("");
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      fetchDrpHistory(200, leg || undefined)
+        .then((h) => active && (setHistory(h), setErr(false)))
+        .catch(() => active && setErr(true));
+    };
+    load();
+    const id = setInterval(load, 45000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [leg, refreshKey]);
+
+  return (
+    <div className="drp-history">
+      <div className="drp-history-head">
+        <h4>Backup history</h4>
+        <label className="drp-history-filter">
+          Leg{" "}
+          <select
+            aria-label="Filter backup history by leg"
+            value={leg}
+            onChange={(e) => setLeg(e.target.value as LegFilter)}
+          >
+            <option value="">All</option>
+            <option value="files">files</option>
+            <option value="pg">pg</option>
+            <option value="offsite">offsite</option>
+            <option value="drill">drill</option>
+            <option value="prune">prune</option>
+          </select>
+        </label>
+      </div>
+      {err && (
+        <p role="alert" className="status-error">
+          Could not load backup history.
+        </p>
+      )}
+      {history && !history.integrity_ok && (
+        <p role="alert" className="drp-integrity-alert">
+          Backup history integrity check failed — the log may be tampered or corrupt.
+        </p>
+      )}
+      {history && !history.source_available ? (
+        <p role="status" className="muted">
+          No backup history yet.
+        </p>
+      ) : history && history.events.length === 0 ? (
+        <p role="status" className="muted">
+          No backup events{leg ? ` for ${leg}` : ""} yet.
+        </p>
+      ) : history ? (
+        <>
+          <div className="drp-history-scroll">
+            <table className="drp-history-table">
+              <thead>
+                <tr>
+                  <th scope="col">Time</th>
+                  <th scope="col">Leg</th>
+                  <th scope="col">Event</th>
+                  <th scope="col" className="drp-num">
+                    Size
+                  </th>
+                  <th scope="col" className="drp-num">
+                    Items
+                  </th>
+                  <th scope="col" className="drp-num">
+                    Duration
+                  </th>
+                  <th scope="col">Backup ID</th>
+                  <th scope="col">Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.events.map((ev, i) => (
+                  <BackupHistoryRow key={ev.seq ?? `${ev.ts}-${ev.leg}-${ev.event}-${i}`} ev={ev} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {history.truncated && (
+            <p className="drp-history-foot muted">
+              Showing the latest {history.total_returned}; older events were rotated out.
+            </p>
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function BackupHistoryRow({ ev }: { ev: BackupEvent }) {
+  const rel = relAgeFromTs(ev.ts);
+  const duration = formatDuration(ev.duration_ms);
+  const shortId = /^[0-9a-f]{12,}$/.test(ev.backup_id) ? ev.backup_id.slice(0, 8) : ev.backup_id;
+  return (
+    <tr>
+      <td>
+        {rel ? (
+          <span title={absoluteTs(ev.ts)}>{rel}</span>
+        ) : (
+          <span title={absoluteTs(ev.ts)}>{ev.ts}</span>
+        )}
+      </td>
+      <td>
+        <span className={`drp-badge drp-leg-${ev.leg}`}>{ev.leg}</span>
+      </td>
+      <td className={eventClass(ev.event)}>
+        <span aria-hidden="true" className="drp-event-glyph">
+          {eventClass(ev.event) === "drp-event-pass"
+            ? "✔"
+            : eventClass(ev.event) === "drp-event-fail"
+              ? "✖"
+              : "•"}
+        </span>{" "}
+        {ev.event}
+      </td>
+      <td className="drp-num">{ev.size || ""}</td>
+      <td className="drp-num">{ev.item_count != null ? ev.item_count.toLocaleString() : ""}</td>
+      <td className="drp-num">{duration ?? ""}</td>
+      <td className="drp-mono" title={ev.backup_id || undefined}>
+        {shortId || ""}
+      </td>
+      <td className="drp-detail-cell" title={ev.detail || undefined}>
+        {ev.detail || ""}
+      </td>
+    </tr>
+  );
+}
+
+// Recovery drill panel: trigger an on-demand drill and watch for it to complete, plus a compact
+// view of the last drill result drawn from the existing DrpStatus.drill leg (so we never duplicate
+// that state). On 429 we show the returned cooldown/pending detail as a warning, not an error.
+function RecoveryDrill({
+  drill,
+  onTriggered,
+}: {
+  drill: BackupLegStatus | undefined;
+  onTriggered: () => void;
+}) {
+  // idle | requesting | running (polling for completion) ; warn/error carry a message.
+  const [phase, setPhase] = useState<"idle" | "requesting" | "running">("idle");
+  const [message, setMessage] = useState<{ level: "ok" | "warn" | "fail"; text: string } | null>(
+    null,
+  );
+  // The drill last_run_at at the moment we triggered; we stop polling once it changes (new drill).
+  const baselineRef = useState<{ current: string | null }>(() => ({ current: null }))[0];
+
+  // While running, poll status + history every ~10s until a newer drill result appears, then stop.
+  useEffect(() => {
+    if (phase !== "running") return;
+    let active = true;
+    const id = setInterval(() => {
+      onTriggered(); // refreshes status + history in the parent
+      // The parent re-renders us with a fresh `drill` prop; the effect below detects completion.
+    }, 10000);
+    // Safety cap: stop polling after ~5 min so we never spin forever if no sentinel arrives.
+    const stop = setTimeout(() => {
+      if (active) setPhase("idle");
+    }, 300000);
+    return () => {
+      active = false;
+      clearInterval(id);
+      clearTimeout(stop);
+    };
+  }, [phase, onTriggered]);
+
+  // Detect completion: once running, a change in the drill leg's last_run_at means the drill ran.
+  useEffect(() => {
+    if (phase !== "running") return;
+    const last = drill?.last_run_at ?? null;
+    if (last && last !== baselineRef.current) {
+      setPhase("idle");
+      const passed = drill?.state === "ok";
+      setMessage({
+        level: passed ? "ok" : "fail",
+        text: passed ? "Drill passed." : `Drill finished: ${drill?.detail || drill?.state}`,
+      });
+    }
+  }, [drill, phase, baselineRef]);
+
+  async function run() {
+    setPhase("requesting");
+    setMessage(null);
+    baselineRef.current = drill?.last_run_at ?? null;
+    try {
+      const r = await triggerDrill();
+      setMessage({ level: "ok", text: r.detail || "Drill requested." });
+      setPhase("running");
+      onTriggered(); // kick an immediate refresh
+    } catch (e) {
+      if (e instanceof DrillRejectedError) {
+        setMessage({ level: "warn", text: e.detail });
+      } else {
+        setMessage({ level: "fail", text: e instanceof Error ? e.message : "Could not start the drill." });
+      }
+      setPhase("idle");
+    }
+  }
+
+  const busy = phase === "requesting" || phase === "running";
+  const statusClass =
+    message?.level === "ok"
+      ? "settings-test-ok"
+      : message?.level === "warn"
+        ? "settings-test-warn"
+        : "settings-test-fail";
+
+  const lastState = drill?.state ?? "unknown";
+  const hasLastDrill = !!(drill && drill.last_run_at);
+
+  return (
+    <div className="drp-drill">
+      <h4>Recovery drill</h4>
+      <p className="muted">
+        A drill restores the latest backups into a throwaway location to prove they can be recovered.
+        It touches no production data.
+      </p>
+      <div className="drp-drill-controls">
+        <button type="button" className="settings-test" disabled={busy} onClick={run}>
+          {phase === "requesting" ? "Requesting…" : phase === "running" ? "Running…" : "Run drill now"}
+        </button>
+        {message && (
+          <span role="status" className={statusClass}>
+            {message.text}
+          </span>
+        )}
+      </div>
+      {hasLastDrill && (
+        <div className="drp-drill-last">
+          <span className={`drp-badge drp-${lastState}`}>{lastState}</span>
+          <span className="muted">last run {relAge(drill?.age_seconds ?? null)}</span>
+          {drill?.detail && <span className="drp-drill-evidence drp-mono">{drill.detail}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Read-only Disaster Recovery Plan section (#368). Surfaces backup freshness + config; recovery is
-// performed on the host (this never runs backups or exposes secrets).
+// performed on the host (this never runs backups or exposes secrets). The backup-history window and
+// the recovery-drill panel are added under the status/config (backup/DRP hardening epic).
 function DrpSection() {
   const [drp, setDrp] = useState<DrpStatusResponse | null>(null);
   const [err, setErr] = useState(false);
+  // Bumped to force the history + drill children to re-fetch immediately (e.g. right after a drill
+  // is triggered) without waiting for their own 45s/10s poll.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -54,6 +342,14 @@ function DrpSection() {
       clearInterval(id);
     };
   }, []);
+
+  // Force an immediate status refresh + bump the history/drill refresh key (used after a drill).
+  const refreshNow = () => {
+    fetchDrpStatus()
+      .then((d) => (setDrp(d), setErr(false)))
+      .catch(() => setErr(true));
+    setRefreshKey((k) => k + 1);
+  };
 
   // restic snapshot ids are long hex hashes — show the short form (like git) but keep the full id
   // in the tooltip. pgBackRest labels (e.g. 20260625-120000F) are already short, so leave them.
@@ -169,8 +465,10 @@ function DrpSection() {
               <span className="muted">{yn(drp.config.azure_credentials_configured)}</span>
             </div>
           </div>
+          <RecoveryDrill drill={drp.status.drill} onTriggered={refreshNow} />
         </>
       )}
+      <BackupHistory refreshKey={refreshKey} />
     </div>
   );
 }

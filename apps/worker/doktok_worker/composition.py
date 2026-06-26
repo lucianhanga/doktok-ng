@@ -288,7 +288,7 @@ def build_services(
         # The OCR-quality judge runs inside the ingestion pipeline, so it follows the SAME Data
         # Pipeline provider+model as the extractors below - never a separate hardcoded model. A
         # local pipeline keeps one model resident; an OpenAI pipeline sends the judge's tiny A/B
-        # prompt to OpenAI too. (No-egress fallback: the local enrich_model, like the extractors.)
+        # prompt to OpenAI too. (No-egress fallback: the local default_model, like the extractors.)
         judge: ChatModelProvider
         metadata_extractor: MetadataExtractor
         category_classifier: CategoryClassifier
@@ -311,8 +311,9 @@ def build_services(
                 pl.model, key, timeout=timeout, reasoning_effort=effort
             )
         else:
-            # Ollama path: the selected Ollama model, or the env default if OpenAI lacks a key.
-            p_model = pl.model if pl.provider == "ollama" else settings.enrich_model
+            # The Data Pipeline UI model when local; the canonical local default_model only as the
+            # fallback when the pipeline is set to OpenAI but egress is off (no UI model to run).
+            p_model = pl.model if pl.provider == "ollama" else settings.default_model
             p_ctx = pl.num_ctx if pl.provider == "ollama" else settings.enrich_num_ctx
             p_think = ollama_think_for(pl.reasoning, p_model, structured=True)
             p_repair = p_model  # JSON-repair on the same model: keeps a single model resident

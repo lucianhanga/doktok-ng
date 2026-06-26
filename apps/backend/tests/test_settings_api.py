@@ -41,14 +41,14 @@ def test_requires_token() -> None:
 
 def test_catalog_lists_models_per_purpose() -> None:
     body = _client().get("/api/v1/settings/ai/catalog", headers=AUTH).json()
-    assert {m["model"] for m in body["pipeline"]} >= {"qwen3:14b", "qwen3.6:35b-a3b"}
+    assert {m["model"] for m in body["pipeline"]} >= {"qwen3.6:35b-a3b"}
     assert body["reasoning_levels"] == ["off", "low", "medium", "high"]
 
 
 def test_get_defaults_and_update_roundtrip() -> None:
     client = _client()
     defaults = client.get("/api/v1/settings/ai", headers=AUTH).json()
-    assert defaults["pipeline"]["model"] == "qwen3:14b"
+    assert defaults["pipeline"]["model"] == "qwen3.6:35b-a3b"
     assert defaults["rag"]["model"] == "qwen3.6:35b-a3b"
     assert defaults["openai_api_key_set"] is False
 
@@ -63,7 +63,7 @@ def test_get_defaults_and_update_roundtrip() -> None:
             },
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 32768,
                 "reasoning": "low",
             },
@@ -76,7 +76,7 @@ def test_get_defaults_and_update_roundtrip() -> None:
     assert (
         saved["pipeline"]["model"] == "qwen3.6:35b-a3b" and saved["pipeline"]["reasoning"] == "high"
     )
-    assert saved["rag"]["model"] == "qwen3:14b"
+    assert saved["rag"]["model"] == "qwen3.6:35b-a3b"
     # The key is stored but never returned - only that it is set.
     assert saved["openai_api_key_set"] is True
     assert "openai_api_key" not in saved
@@ -98,14 +98,14 @@ def test_per_purpose_ollama_url_default_and_override_roundtrip() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 8192,
                 "reasoning": "off",
                 "ollama_base_url": "http://gpu-box:11434",
             },
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 32768,
                 "reasoning": "off",
             },
@@ -127,14 +127,14 @@ def test_invalid_ollama_url_is_rejected() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 8192,
                 "reasoning": "off",
                 "ollama_base_url": "not-a-url",
             },
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 32768,
                 "reasoning": "off",
             },
@@ -240,13 +240,13 @@ def test_saving_settings_records_a_non_secret_activity_event() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 8192,
                 "reasoning": "off",
             },
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 32768,
                 "reasoning": "off",
             },
@@ -358,13 +358,13 @@ def test_saving_ai_settings_clears_cached_providers() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 16384,
                 "reasoning": "off",
             },
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3:14b",
+                "model": "qwen3.6:35b-a3b",
                 "num_ctx": 32768,
                 "reasoning": "low",
             },

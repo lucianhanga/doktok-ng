@@ -197,7 +197,7 @@ def test_detail_includes_processing_telemetry(tmp_path: Path) -> None:
             created_at=now,
             updated_at=now,
             metrics=FeatureMetrics(
-                duration_ms=1500, prompt_tokens=300, answer_tokens=80, model="qwen3:14b"
+                duration_ms=1500, prompt_tokens=300, answer_tokens=80, model="qwen3.6:35b-a3b"
             ),
         )
     )
@@ -223,7 +223,7 @@ def test_detail_includes_processing_telemetry(tmp_path: Path) -> None:
     assert step["label"] == "Metadata"  # from the feature catalog
     assert step["duration_ms"] == 1500
     assert step["total_tokens"] == 380
-    assert step["model"] == "qwen3:14b"
+    assert step["model"] == "qwen3.6:35b-a3b"
     assert proc["total_duration_ms"] == 1500
     assert proc["total_tokens"] == 380
 

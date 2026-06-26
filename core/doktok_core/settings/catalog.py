@@ -15,15 +15,8 @@ MODEL_CATALOG = ModelCatalog(
     pipeline=[
         ModelOption(
             provider="ollama",
-            model="qwen3:14b",
-            label="Qwen3 14B - dense, local (fast)",
-            contexts=[4096, 8192, 16384],
-            supports_reasoning=True,
-        ),
-        ModelOption(
-            provider="ollama",
             model="qwen3.6:35b-a3b",
-            label="Qwen3.6 35B-A3B - MoE, local (higher quality)",
+            label="Qwen3.6 35B-A3B - MoE, local",
             contexts=[8192, 16384, 32768],
             supports_reasoning=True,
         ),
@@ -47,13 +40,6 @@ MODEL_CATALOG = ModelCatalog(
             provider="ollama",
             model="qwen3.6:35b-a3b",
             label="Qwen3.6 35B-A3B - MoE, local (recommended)",
-            contexts=[8192, 16384, 32768],
-            supports_reasoning=True,
-        ),
-        ModelOption(
-            provider="ollama",
-            model="qwen3:14b",
-            label="Qwen3 14B - dense, local (lighter)",
             contexts=[8192, 16384, 32768],
             supports_reasoning=True,
         ),

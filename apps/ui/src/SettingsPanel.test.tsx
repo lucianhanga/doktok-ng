@@ -9,8 +9,7 @@ afterEach(() => {
 
 const CATALOG = {
   pipeline: [
-    { provider: "ollama", model: "qwen3:14b", label: "Qwen3 14B", contexts: [8192, 16384], supports_reasoning: true },
-    { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [32768], supports_reasoning: true },
+    { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [8192, 16384, 32768], supports_reasoning: true },
   ],
   rag: [
     { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [32768], supports_reasoning: true },
@@ -18,7 +17,7 @@ const CATALOG = {
   reasoning_levels: ["off", "low", "medium", "high"],
 };
 const AI = {
-  pipeline: { provider: "ollama", model: "qwen3:14b", num_ctx: 8192, reasoning: "off" },
+  pipeline: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 8192, reasoning: "off" },
   rag: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 32768, reasoning: "off" },
   embedding: { ollama_base_url: null },
   ollama_base_url_default: "http://localhost:11434",

@@ -14,7 +14,8 @@ The local-first defaults (ADR-0003, ADR-0006) assume a much larger machine. The 
 fit on 8 GB:
 
 - chat / RAG: `qwen3.6:35b-a3b` (~23 GB MoE),
-- enrichment / OCR-quality judge: `qwen3:14b` (~9-12 GB resident).
+- enrichment / OCR-quality judge: follow the Data Pipeline model selected in the UI (no separate
+  model).
 
 The performance budget (`docs/operations/performance-and-ollama.md`) shows the full local stack needs
 roughly 48-64 GB of unified memory (Apple Silicon) or a 64 GB box with a GPU. That is infeasible on an
@@ -102,7 +103,7 @@ Deploy DokTok NG in a **hybrid split** for the limited-production target:
 ## Alternatives considered
 
 - **Full local stack (ADR-0006 default).** Everything on-box, no egress. Needs ~48-64 GB unified
-  memory (Apple Silicon) or a 64 GB box with a GPU to hold `qwen3.6:35b-a3b` + `qwen3:14b` +
+  memory (Apple Silicon) or a 64 GB box with a GPU to hold `qwen3.6:35b-a3b` +
   embeddings (see `docs/operations/performance-and-ollama.md`). Infeasible on an N95. Rejected for
   this target only; it remains the recommended posture wherever the hardware allows.
 - **Hybrid with a separate LAN Ollama host.** Point the small box at a beefier on-premises Ollama

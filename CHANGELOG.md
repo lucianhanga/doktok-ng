@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (no local model loaded), a local Ollama pipeline reuses the already-resident pipeline model. Removed
   the now-unused `DOKTOK_JUDGE_MODEL` / `judge_num_ctx` config. `DOKTOK_ENRICH_MODEL` remains only as
   the local fallback used when the pipeline is OpenAI but egress is disabled.
+- **Document enrichment now also follows the Data Pipeline AI setting; no hardcoded enrichment
+  model.** The metadata/category/record/NER extractors no longer fall back to a separate
+  `DOKTOK_ENRICH_MODEL` (which defaulted to `qwen3:14b`); when the Data Pipeline is set to OpenAI but
+  egress is disabled they fall back to the system `default_model`, exactly like the judge. Removed the
+  `enrich_model` config and the `DOKTOK_ENRICH_MODEL` / `DOKTOK_JUDGE_MODEL` env vars from all
+  templates. The default pipeline model and the selectable model catalog dropped `qwen3:14b` in favour
+  of `qwen3.6:35b-a3b`, so no purpose loads `qwen3:14b` unless an operator explicitly selects it.
 
 ## [0.2.0] - 2026-06-26
 

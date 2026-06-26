@@ -83,7 +83,7 @@ the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
 DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b          # RAG chat / reranker (23 GB MoE)
 DOKTOK_EMBEDDING_MODEL=qwen3-embedding:0.6b    # 1024-dim, no 512-token truncation
 DOKTOK_EMBEDDING_NUM_CTX=1024                  # cap embedding context (chunks ~300 tok) to free KV-cache
-DOKTOK_ENRICH_MODEL=qwen3:14b                  # dense; enrichment + OCR-quality judge + JSON repair
+# Enrichment + OCR-quality judge follow the Data Pipeline model selected in the UI (no hardcoded model)
 DOKTOK_OCR_ENGINE=paddleocr                    # PP-OCRv5 (default); or "glm-ocr" (Ollama vision)
 DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 ```

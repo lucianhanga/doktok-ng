@@ -126,7 +126,7 @@ and ADR-0010 for OCR) are:
 DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b          # RAG chat / reranker
 DOKTOK_EMBEDDING_MODEL=qwen3-embedding:0.6b    # 1024-dim embeddings
 DOKTOK_EMBEDDING_NUM_CTX=1024                  # cap embedding context (chunks ~300 tok); frees KV-cache
-DOKTOK_ENRICH_MODEL=qwen3:14b                  # enrichment + OCR-quality judge + JSON repair (one model)
+# Enrichment + OCR-quality judge follow the Data Pipeline model selected in the UI (no hardcoded model)
 DOKTOK_OCR_ENGINE=paddleocr                    # PP-OCRv5, CPU-only (no Ollama call for default OCR)
 ```
 

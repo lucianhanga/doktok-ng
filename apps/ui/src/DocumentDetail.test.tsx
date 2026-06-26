@@ -192,7 +192,13 @@ test("processing telemetry shows the summary strip, OCR outcome and per-step met
   expect(screen.getByText("4.2s")).toBeInTheDocument();
   // "1.5k tok" appears twice here: the summary total and the single step's own tokens.
   expect(screen.getAllByText("1.5k tok").length).toBeGreaterThan(0);
-  expect(screen.getByText("Total tokens")).toBeInTheDocument();
+  // "Total tokens" labels both the summary strip and the per-step expanded detail.
+  expect(screen.getAllByText("Total tokens").length).toBeGreaterThan(0);
+  // The per-step <details> surfaces the full breakdown (prompt/answer tokens + exact counts + model).
+  expect(screen.getByText("Prompt tokens")).toBeInTheDocument();
+  expect(screen.getByText("Answer tokens")).toBeInTheDocument();
+  expect(screen.getByText("900")).toBeInTheDocument(); // exact prompt token count in the detail
+  expect(screen.getByText("gpt-4o-mini")).toBeInTheDocument(); // model in the detail
   // Normalization (office source) + OCR rows
   expect(screen.getByText("Normalization")).toBeInTheDocument();
   expect(screen.getByText("OCR")).toBeInTheDocument();
@@ -200,6 +206,79 @@ test("processing telemetry shows the summary strip, OCR outcome and per-step met
   // A per-step row with its duration (1.2s) shown
   expect(screen.getByText("Metadata")).toBeInTheDocument();
   expect(screen.getByText("1.2s")).toBeInTheDocument();
+});
+
+test("processing timeline shows each step once and retries a non-done feature step", async () => {
+  // `features` is also populated, but with `processing` present only the timeline renders (no legacy
+  // duplicate list), so each step/feature appears exactly once.
+  const calls = mockDetail(
+    [
+      { feature: "extract", status: "done", feature_version: 1, attempts: 1, max_attempts: 3 },
+      { feature: "entities", status: "failed", feature_version: 1, attempts: 3, max_attempts: 3 },
+    ],
+    {},
+    {
+      processing: {
+        received_at: "2026-06-10T00:00:00Z",
+        activated_at: "2026-06-10T00:01:00Z",
+        extraction_method: "text",
+        page_count: 1,
+        ocr_outcome: "not_needed",
+        ocr_confidence: null,
+        normalized_from_mime: "",
+        language: "en",
+        total_duration_ms: 2000,
+        total_tokens: 0,
+        steps: [
+          {
+            feature: "extract",
+            label: "Text",
+            status: "done",
+            started_at: null,
+            completed_at: null,
+            duration_ms: 800,
+            prompt_tokens: null,
+            answer_tokens: null,
+            total_tokens: null,
+            model: null,
+            estimated: false,
+            attempts: 1,
+            last_error: null,
+          },
+          {
+            feature: "entities",
+            label: "Entities",
+            status: "failed",
+            started_at: null,
+            completed_at: null,
+            duration_ms: null,
+            prompt_tokens: null,
+            answer_tokens: null,
+            total_tokens: null,
+            model: null,
+            estimated: false,
+            attempts: 3,
+            last_error: "boom",
+          },
+        ],
+      },
+    },
+  );
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Processing")).toBeInTheDocument());
+
+  // Each step label appears exactly once (no duplicate legacy list).
+  expect(screen.getAllByText("Text")).toHaveLength(1);
+  expect(screen.getAllByText("Entities")).toHaveLength(1);
+  // The done step exposes no Retry; only the failed feature step does.
+  expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+  // last_error stays accessible behind the step's <details>.
+  expect(screen.getByText("boom")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() =>
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/entities/retry"))).toBe(true),
+  );
 });
 
 test("processing telemetry degrades to nothing when absent", async () => {

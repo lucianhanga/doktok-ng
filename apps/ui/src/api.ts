@@ -775,6 +775,124 @@ export async function triggerDrill(): Promise<DrillTriggerResponse> {
   return (await response.json()) as DrillTriggerResponse;
 }
 
+// ---- Portable backup export (M12 #380, Phase 1: download a single encrypted archive) ----
+// One encrypted, self-contained archive of the whole system (Postgres + documents) for moving or
+// restoring on another device. Built asynchronously, then downloaded with a user-set passphrase.
+export interface BackupExportInfo {
+  export_id: string;
+  status: "building" | "ready" | "failed";
+  created_at: string | null;
+  // null until the build finishes; humanize with formatBytes for display.
+  size_bytes: number | null;
+  app_version: string;
+  pg_version: string;
+  member_count: number;
+  error: string;
+}
+
+/** Humanize a byte count to a binary unit (e.g. 694157312 -> "662 MiB"). Returns "" for null. */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let value = bytes / 1024;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
+}
+
+/** Thrown by startBackupExport on HTTP 429: a build is already running (or one started <60s ago).
+ * The caller should attach to the existing build by polling status instead of treating it as an
+ * error. */
+export class BackupExportBusyError extends Error {
+  constructor() {
+    super("A backup is already being built.");
+    this.name = "BackupExportBusyError";
+  }
+}
+
+/** Start building a portable backup archive. Resolves with the initial (status "building") info on
+ * 200; throws BackupExportBusyError on 429 so the caller can attach to the in-flight build. */
+export async function startBackupExport(): Promise<BackupExportInfo> {
+  const response = await fetch("/api/v1/settings/backup/export", { method: "POST" });
+  if (response.status === 429) {
+    throw new BackupExportBusyError();
+  }
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as BackupExportInfo;
+}
+
+/** Poll the status of a backup build. Omit `exportId` for the most recent build. */
+export function fetchBackupExportStatus(exportId?: string): Promise<BackupExportInfo> {
+  const qs = exportId ? `?export_id=${encodeURIComponent(exportId)}` : "";
+  return getJson<BackupExportInfo>(`/api/v1/settings/backup/export/status${qs}`);
+}
+
+/** Thrown by downloadBackupArchive on HTTP 422: the passphrase is shorter than 8 characters. */
+export class BackupPassphraseTooShortError extends Error {
+  constructor() {
+    super("passphrase must be at least 8 characters");
+    this.name = "BackupPassphraseTooShortError";
+  }
+}
+
+/** Parse the filename from a Content-Disposition header, or "" if absent/unparseable. */
+function filenameFromDisposition(header: string | null): string {
+  if (!header) return "";
+  // RFC 5987 filename*=UTF-8''... takes precedence over a plain filename="...".
+  const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1].replace(/^"|"$/g, ""));
+    } catch {
+      // fall through to the plain form
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1]?.trim() ?? "";
+}
+
+/** Download the encrypted archive: POST the passphrase, read the response blob, and trigger a
+ * browser save using the server's Content-Disposition filename (falling back to a timestamped
+ * default). The passphrase is sent once over the request body and never stored or logged.
+ * Throws BackupPassphraseTooShortError on 422 so the caller can show an inline validation message. */
+export async function downloadBackupArchive(exportId: string, passphrase: string): Promise<void> {
+  const response = await fetch(
+    `/api/v1/settings/backup/export/${encodeURIComponent(exportId)}/download`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase }),
+    },
+  );
+  if (response.status === 422) {
+    throw new BackupPassphraseTooShortError();
+  }
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  const blob = await response.blob();
+  const filename =
+    filenameFromDisposition(response.headers.get("Content-Disposition")) ||
+    `doktok-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.tgz.enc`;
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export interface FeatureCatalogEntry {
   name: string;
   version: number;

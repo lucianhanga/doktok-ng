@@ -16,6 +16,7 @@ from doktok_storage_postgres import (
     Database,
     PostgresDocumentRepository,
     PostgresEntityRepository,
+    PostgresFeatureRepository,
     PostgresIngestionJobRepository,
     PostgresStatsRepository,
 )
@@ -53,7 +54,13 @@ def test_summary_counts(db: Database) -> None:
         ]
     )
 
+    # Seed a feature row for the active doc -> it is queued ('pending'), i.e. work in flight.
+    PostgresFeatureRepository(db).ensure_for_active(TENANT, [("structured_records", 1)])
+
     summary = PostgresStatsRepository(db).summary(TENANT)
     assert summary.documents == 1
     assert summary.jobs == {"active": 1, "failed": 1}
     assert summary.entities == 1
+    # The pending feature is counted as in-progress, not as "needs attention" (failed).
+    assert summary.documents_processing_features == 1
+    assert summary.documents_pending_features == 0

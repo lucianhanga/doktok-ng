@@ -678,6 +678,9 @@ class StatsSummary(BaseModel):
     documents_pending_features: int = (
         0  # documents needing attention: >=1 FAILED feature (not merely in-progress) - M7.3
     )
+    documents_processing_features: int = (
+        0  # documents with >=1 feature still queued/running (in-progress (re)processing)
+    )
 
 
 class HealthStatus(BaseModel):

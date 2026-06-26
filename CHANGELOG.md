@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Overview "Processing" count stayed 0 during feature reprocessing.** It summed only ingestion
+  job statuses, but a re-scheduled extraction runs on an already-`active` document (terminal job) and
+  its work lives in the feature ledger. `StatsSummary` now reports `documents_processing_features`
+  (documents with a `pending`/`running` feature) and the Overview folds it into "Processing", so
+  reprocessing is visible instead of reading 0.
+
 ### Added
 - **DRP hardening: tamper-evident backup history + live restore drills** (#396 backend, #397 UI).
   Backups now append to an authoritative, **append-only event history** at

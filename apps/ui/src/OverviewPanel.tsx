@@ -122,10 +122,14 @@ export function OverviewPanel({
   // "active" job count, which only duplicates the document count and invites a false comparison.
   const jobs = stats?.jobs ?? {};
   const TERMINAL_JOB = new Set(["active", "failed", "quarantined", "duplicate"]);
-  const processing = Object.entries(jobs).reduce(
+  // "Processing" = ingestion jobs still moving through the pipeline PLUS documents whose features
+  // are queued/running (e.g. a re-extraction). The latter never appear as a non-terminal job - the
+  // document is already "active" - so without them the count read 0 during reprocessing.
+  const processingJobs = Object.entries(jobs).reduce(
     (sum, [status, n]) => (TERMINAL_JOB.has(status) ? sum : sum + n),
     0,
   );
+  const processing = processingJobs + (stats?.documents_processing_features ?? 0);
   const failed = (jobs.failed ?? 0) + (jobs.quarantined ?? 0);
   const waiting = stats?.pending_ingest ?? 0;
   const pendingFeatures = stats?.documents_pending_features ?? 0;

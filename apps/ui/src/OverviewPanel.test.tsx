@@ -56,6 +56,38 @@ test("renders counts and recent activity", async () => {
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
 });
 
+test("counts documents whose features are reprocessing as Processing (no non-terminal job)", async () => {
+  // Re-scheduled extraction: the doc is already 'active' (terminal job), the work is in its
+  // features. Without documents_processing_features the Processing count read 0 (#bug).
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/stats")) {
+        return new Response(
+          JSON.stringify({
+            documents: 2,
+            jobs: { active: 2 }, // all terminal -> 0 from jobs
+            entities: 1,
+            pending_ingest: 0,
+            documents_pending_features: 0,
+            documents_processing_features: 6,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+  render(<OverviewPanel />);
+  // The Processing counter shows the 6 documents being reprocessed, and the pipeline is not "idle".
+  const processing = await screen.findByText("Processing");
+  expect(processing.parentElement).toHaveTextContent("6");
+  expect(
+    screen.queryByText(/Pipeline idle/),
+  ).not.toBeInTheDocument();
+});
+
 test("shows the duplicates count and opens a recent-activity entry in the Activity tab", async () => {
   const onOpenActivity = vi.fn();
   vi.stubGlobal(

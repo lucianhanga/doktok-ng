@@ -288,6 +288,7 @@ export interface Stats {
   entities: number;
   pending_ingest: number;
   documents_pending_features: number;
+  documents_processing_features: number;
 }
 
 export function fetchDocument(id: string, signal?: AbortSignal): Promise<DokDocument> {

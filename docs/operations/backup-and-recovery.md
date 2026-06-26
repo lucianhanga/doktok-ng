@@ -343,6 +343,25 @@ The mapping (`_MIRROR_EVENT_TYPES`) uses three new `AuditEventType` values - `ba
 restore rolls the mirror back, but **not** the `history.jsonl` timeline. If the Activity tab and the
 DRP history table ever disagree, trust the DRP history.
 
+## Testing the DRP
+
+An untested backup is not a backup. The restore *apply* runs via a root systemd path-unit, so the
+full destructive path needs a Linux host; everything else is testable anywhere with Docker.
+
+- **Tier 0 - automated (CI):** `deploy/test-pitr.sh` (PITR proof) + the backup/restore unit +
+  integration tests run on every push.
+- **Tier 1 - one command, no risk (dev or any box):** `make drp-selftest` runs, in throwaway
+  containers that touch no real data, the PITR proof **and** a portable export -> encrypt -> decrypt
+  -> restore round-trip (`deploy/restore-roundtrip.sh`) asserting rows + a pgvector value + a file
+  come across A -> B. Also: create + download a backup in Settings -> DRP, then **Check backup** on
+  the downloaded `.tgz.enc` (a non-destructive preview validates the real archive end-to-end).
+- **Tier 2 - cross-device (the real DR test, no risk to prod):** stand up a throwaway second stack,
+  export from A, restore into B, and confirm documents/search/chat came across. `restore-roundtrip.sh`
+  proves the data/format leg of this self-contained; the full app-level B is a manual stand-up.
+- **Tier 3 - in place on the box:** real backups, "Run drill now", and a real restore. The restore
+  takes a **mandatory pre-restore safety snapshot and rolls back on failure**, so it is recoverable
+  even in place - but Tier 2 (a separate B) is the safer first proof.
+
 ## Gotchas
 
 - **Run pgBackRest in the db container as the `postgres` user.** `deploy/backup.sh` runs

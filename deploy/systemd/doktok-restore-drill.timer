@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the DokTok restore drill weekly (Sun 03:00)
+
+[Timer]
+OnCalendar=Sun 03:00
+Persistent=true
+# Spread load across hosts/reboots so the heavy drill never collides with the weekly full backup.
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target

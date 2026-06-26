@@ -17,8 +17,9 @@ source deploy/lib.sh
 require pgbackrest
 : "${DOKTOK_PGDATA:?set DOKTOK_PGDATA (the Postgres data directory pgBackRest can read)}"
 : "${DOKTOK_PGBACKREST_CIPHER_PASS:?set DOKTOK_PGBACKREST_CIPHER_PASS (and store it off the box)}"
-trap 'write_status pg false "backup failed"; err "postgres backup FAILED"; exit 1' ERR
+trap 'write_status pg false "backup failed"; log_event pg failure false "backup failed"; err "postgres backup FAILED"; exit 1' ERR
 
+pg_t0="$(date +%s%3N 2>/dev/null || echo 0)"
 mkdir -p "$PG_DIR"
 conf="${BACKUP_DIR}/pgbackrest.conf"
 cat >"$conf" <<CONF
@@ -37,11 +38,17 @@ CONF
 chmod 600 "$conf"
 
 type="${1:-incr}"
+log_event pg start true "pgbackrest ${type}"
 pgbackrest --config="$conf" --stanza=doktok stanza-create 2>/dev/null || true
 pgbackrest --config="$conf" --stanza=doktok check
 pgbackrest --config="$conf" --stanza=doktok backup --type="$type"
 # Capture pg metrics (db size, backup label) for the DRP (M12 #380); best-effort.
 pg_extra="$(pgbackrest --config="$conf" --stanza=doktok info --output=json 2>/dev/null | pg_backup_extra || true)"
 write_status pg true "pgbackrest ${type}" "$pg_extra"
+pg_dur=0
+[ "${pg_t0:-0}" -gt 0 ] && pg_dur="$(( $(date +%s%3N 2>/dev/null || echo 0) - pg_t0 ))"
+log_event pg success true "pgbackrest ${type}" "${pg_extra:+${pg_extra},}\"duration_ms\":${pg_dur}"
+# pgBackRest applies repo1-retention-full as part of the backup; record it as a prune event.
+log_event prune prune true "pgbackrest retention (full=${DOKTOK_PG_RETENTION_FULL:-2})"
 ok "pgBackRest ${type} backup complete -> ${PG_DIR}"
 pgbackrest --config="$conf" --stanza=doktok info

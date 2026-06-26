@@ -1,0 +1,17 @@
+[Unit]
+Description=DokTok restore drill (prove backups restore; records the drill sentinel + history)
+Documentation=https://github.com/lucianhanga/doktok-ng/blob/main/deploy/systemd/README.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/doktok
+EnvironmentFile=/etc/doktok/backup.env
+ExecStart=/opt/doktok/deploy/restore-drill.sh
+# The drill spins up throwaway pg containers + restores files; keep it well out of the way of OCR /
+# ingestion on the small box. It touches NO production data.
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=100%
+MemoryMax=1G

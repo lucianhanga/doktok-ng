@@ -1,8 +1,12 @@
+import json
 from datetime import UTC, datetime
 
 from doktok_contracts.schemas import (
+    AuditEventType,
+    BackupEvent,
     Document,
     DocumentStatus,
+    DrpHistoryResponse,
     IngestionJob,
     JobStatus,
 )
@@ -42,3 +46,38 @@ def test_job_status_state_machine_values() -> None:
         "duplicate",
     }
     assert {s.value for s in JobStatus} == expected
+
+
+def test_backup_event_parses_real_history_line_with_extra_keys() -> None:
+    # A real host-written history.jsonl line carries tamper-evidence fields (schema/seq/prev_sha256)
+    # that the wire model must IGNORE, plus the whitelisted metric fields it surfaces.
+    line = (
+        '{"schema":1,"seq":42,"prev_sha256":"abc123","ts":"2026-06-26T03:00:00Z",'
+        '"leg":"files","event":"success","ok":true,"size":"662 MiB","item_count":287,'
+        '"backup_id":"a1b2c3","duration_ms":48213,"detail":"restic snapshot"}'
+    )
+    ev = BackupEvent.model_validate(json.loads(line))
+    assert ev.leg == "files" and ev.event == "success" and ev.ok is True
+    assert ev.size == "662 MiB" and ev.item_count == 287 and ev.backup_id == "a1b2c3"
+    assert ev.duration_ms == 48213 and ev.detail == "restic snapshot" and ev.seq == 42
+    # prev_sha256/schema are not fields on the model, so they are dropped on the wire.
+    assert "prev_sha256" not in ev.model_dump() and "schema" not in ev.model_dump()
+
+
+def test_backup_event_defaults() -> None:
+    ev = BackupEvent(ts=datetime.now(UTC), leg="pg", event="start")
+    assert ev.ok is False
+    assert ev.size == "" and ev.backup_id == "" and ev.detail == ""
+    assert ev.item_count is None and ev.duration_ms is None and ev.seq is None
+
+
+def test_drp_history_response_defaults() -> None:
+    resp = DrpHistoryResponse()
+    assert resp.events == [] and resp.source_available is False
+    assert resp.total_returned == 0 and resp.truncated is False and resp.integrity_ok is True
+
+
+def test_backup_audit_event_types_present() -> None:
+    assert AuditEventType.BACKUP_COMPLETED.value == "backup.completed"
+    assert AuditEventType.BACKUP_FAILED.value == "backup.failed"
+    assert AuditEventType.DRILL_COMPLETED.value == "drill.completed"

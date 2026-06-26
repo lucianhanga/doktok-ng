@@ -23,8 +23,11 @@ from doktok_contracts.schemas import (
     AiSettingsResponse,
     AiSettingsUpdate,
     AuditEventType,
+    BackupEvent,
     BackupLegStatus,
+    DrillTriggerResponse,
     DrpConfig,
+    DrpHistoryResponse,
     DrpStatus,
     DrpStatusResponse,
     ModelCatalog,
@@ -43,7 +46,7 @@ from doktok_core.security.egress import openai_egress_allowed
 from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from doktok_api.dependencies import (
     Tenant,
@@ -410,3 +413,189 @@ def get_drp(request: Request, tenant: Tenant, repo: Repo) -> DrpStatusResponse:
         azure_credentials_configured=bool(settings.azure_sas),
     )
     return DrpStatusResponse(status=status, config=config)
+
+
+# Valid history legs (matches the host-side log_event whitelist). A bad leg is a 422, not a silent
+# empty result, so a typo in a client surfaces loudly.
+_HISTORY_LEGS = ("files", "pg", "offsite", "drill", "prune")
+
+# How each history event maps onto an activity-log AuditEventType when we mirror it (M12 DRP
+# hardening). Only terminal/meaningful events are mirrored; transient ``start`` events are skipped
+# (they are noise in the activity table). Drill outcomes collapse to DRILL_COMPLETED.
+_MIRROR_EVENT_TYPES = {
+    "success": AuditEventType.BACKUP_COMPLETED,
+    "failure": AuditEventType.BACKUP_FAILED,
+    "drill_fail": AuditEventType.BACKUP_FAILED,
+    "drill_pass": AuditEventType.DRILL_COMPLETED,
+    "drill_completed": AuditEventType.DRILL_COMPLETED,
+}
+
+_DRILL_COOLDOWN_SECONDS = 600  # 10 min: backend rate-limit for on-demand drills
+
+
+def _to_backup_event(raw: dict[str, object]) -> BackupEvent | None:
+    """Project one raw history dict onto the wire model, whitelisting only the exposed fields (never
+    prev_sha256/schema). Returns None when the line is too malformed to render (no leg/event)."""
+    leg = raw.get("leg")
+    event = raw.get("event")
+    ts = raw.get("ts")
+    if not isinstance(leg, str) or not isinstance(event, str) or not isinstance(ts, str):
+        return None
+    try:
+        return BackupEvent(
+            ts=datetime.fromisoformat(ts.replace("Z", "+00:00")),
+            leg=leg,
+            event=event,
+            ok=bool(raw.get("ok", False)),
+            size=str(raw.get("size", "")),
+            item_count=_as_int(raw.get("item_count")),
+            backup_id=str(raw.get("backup_id", "")),
+            duration_ms=_as_int(raw.get("duration_ms")),
+            detail=str(raw.get("detail", "")),
+            seq=_as_int(raw.get("seq")),
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def _as_int(value: object) -> int | None:
+    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _mirror_history_to_activity(
+    audit: AuditLogRepository, tenant_id: str, events: list[BackupEvent]
+) -> None:
+    """Mirror the returned history window into the activity log, idempotently (M12 DRP hardening).
+
+    Forward-only and cheap: only the events surfaced by THIS read are mirrored (we never replay the
+    whole file - that would re-flood the table after a DB restore). Each row gets a DETERMINISTIC id
+    derived from (seq, ts, leg, event), so re-reads collapse to one row via the audit repository's
+    insert-if-absent (ON CONFLICT DO NOTHING) semantics. The activity rows are explicitly marked
+    non-authoritative; the history.jsonl is the source of truth."""
+    import hashlib
+
+    for ev in events:
+        event_type = _MIRROR_EVENT_TYPES.get(ev.event)
+        if event_type is None:
+            continue  # skip start/prune-noise; only terminal outcomes are worth an activity row
+        seed = f"{ev.seq}|{ev.ts.isoformat()}|{ev.leg}|{ev.event}"
+        event_id = "drp-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
+        desc = f"{ev.leg} backup {ev.event}"
+        if ev.event in ("drill_pass", "drill_fail", "drill_completed"):
+            desc = f"restore drill {'passed' if ev.ok else 'failed'}"
+        record_activity(
+            audit,
+            tenant_id,
+            event_type,
+            actor="system",
+            actor_kind="system",
+            description=desc,
+            event_id=event_id,
+            details={"source": "drp", "authoritative": False},
+        )
+
+
+@router.get("/drp/history", response_model=DrpHistoryResponse)
+def get_drp_history(
+    request: Request,
+    tenant: Tenant,
+    repo: Repo,
+    audit: Audit,
+    limit: int = Query(100, ge=1, le=500),
+    leg: str | None = Query(None),
+) -> DrpHistoryResponse:
+    """Read-only window over the append-only backup history (M12 DRP hardening), newest-first.
+
+    Sourced OUTSIDE Postgres (a host-written ``history.jsonl``) so a DB restore can't roll it back.
+    ``integrity_ok`` is False when the prev_sha256 hash chain is broken over the read window, which
+    surfaces tampering. Surfaced events are also mirrored into the activity log idempotently."""
+    if leg is not None and leg not in _HISTORY_LEGS:
+        raise HTTPException(status_code=422, detail=f"leg must be one of {_HISTORY_LEGS}")
+    raw_events, source_available, truncated, integrity_ok = repo.get_backup_history(
+        limit=limit, leg=leg
+    )
+    events = [ev for ev in (_to_backup_event(r) for r in raw_events) if ev is not None]
+    # Mirror only what this read surfaced (cheap, forward-only, idempotent).
+    _mirror_history_to_activity(audit, tenant.tenant_id, events)
+    return DrpHistoryResponse(
+        events=events,
+        source_available=source_available,
+        total_returned=len(events),
+        truncated=truncated,
+        integrity_ok=integrity_ok,
+    )
+
+
+@router.post("/drp/drill", response_model=DrillTriggerResponse)
+def trigger_drp_drill(
+    request: Request, tenant: Tenant, repo: Repo, audit: Audit
+) -> DrillTriggerResponse:
+    """Request an on-demand restore drill (M12 DRP hardening). The backend NEVER runs the drill - it
+    only drops a request file a root systemd path-unit watches. Rate-limited: 429 if a request is
+    already pending OR the last drill completed within the cooldown window."""
+    import json as _json
+    from pathlib import Path
+
+    settings = request.app.state.settings
+    status_dir = Path(f"{settings.backup_dir.rstrip('/')}/status")
+    requests_dir = status_dir / "requests"
+    request_file = requests_dir / "drill.request"
+
+    # Rate-limit 1: a request is already pending (the host has not consumed it yet).
+    last_drill_at = _last_drill_at(repo)
+    if request_file.exists():
+        raise HTTPException(
+            status_code=429,
+            detail="a restore drill is already requested and pending",
+        )
+    # Rate-limit 2: the last drill ran within the cooldown window.
+    if last_drill_at is not None:
+        age = (datetime.now(UTC) - last_drill_at).total_seconds()
+        if age < _DRILL_COOLDOWN_SECONDS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"a drill ran {int(age)}s ago; wait {_DRILL_COOLDOWN_SECONDS}s before retry",
+            )
+
+    try:
+        requests_dir.mkdir(parents=True, exist_ok=True)
+        payload = _json.dumps(
+            {
+                "requested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "actor": tenant.tenant_id,
+            }
+        )
+        request_file.write_text(payload, encoding="utf-8")
+        request_file.chmod(0o644)
+    except OSError as exc:
+        # Don't leak the host path/errno detail to the client.
+        _ = exc
+        raise HTTPException(status_code=503, detail="could not queue the drill request") from None
+
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.SETTINGS_CHANGED,
+        actor=tenant.tenant_id,
+        actor_kind="user",
+        description="On-demand restore drill requested",
+        details={"setting": "drp", "action": "drill_requested"},
+    )
+    return DrillTriggerResponse(
+        accepted=True, detail="restore drill requested", last_drill_at=last_drill_at
+    )
+
+
+def _last_drill_at(repo: AppSettingsRepository) -> datetime | None:
+    """The drill sentinel's last_run_at, if any (for the drill cooldown). None if unavailable."""
+    raw = repo.get_backup_status()
+    if not raw:
+        return None
+    drill = raw.get("drill") or {}
+    last = drill.get("last_run_at")
+    if not isinstance(last, str):
+        return None
+    try:
+        return datetime.fromisoformat(last.replace("Z", "+00:00"))
+    except ValueError:
+        return None

@@ -39,6 +39,9 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.DOCUMENT_VIEWED.value: ("view", "info", "Document viewed"),
     AuditEventType.SETTINGS_CHANGED.value: ("user", "info", "Settings changed"),
     AuditEventType.SERVICE_STARTED.value: ("system", "info", "Service started"),
+    AuditEventType.BACKUP_COMPLETED.value: ("system", "info", "Backup completed"),
+    AuditEventType.BACKUP_FAILED.value: ("system", "error", "Backup failed"),
+    AuditEventType.DRILL_COMPLETED.value: ("system", "info", "Restore drill completed"),
 }
 
 

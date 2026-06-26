@@ -1,7 +1,7 @@
 .PHONY: help setup lint format typecheck test arch check \
         run-backend run-worker run-ui clean-tenant rag-eval enrich-eval ocr-paddle ocr-rapid ocr-rapid-openvino projection-engine db db-down \
         js-install js-typecheck js-lint js-test js \
-        secrets sbom hooks
+        secrets sbom hooks deploy-box
 
 # Load local environment from .env (if present) and export it to every recipe.
 # Command-line overrides (e.g. `make db DOKTOK_DB_PORT=5500`) still win.
@@ -94,5 +94,8 @@ sbom: ## Generate a CycloneDX SBOM of runtime deps (sbom/python.cdx.json)
 
 hooks: ## Install git pre-commit hooks
 	uvx pre-commit install
+
+deploy-box: ## Deploy the working tree to the compose box: rsync + rebuild (live progress) + up -d. Override DOKTOK_BOX_HOST/KEY/DIR/SERVICES; DOKTOK_BOX_NO_BUILD=1 to skip the rebuild.
+	@deploy/deploy-to-box.sh
 
 check: lint typecheck test arch js ## Run all checks (Python + JS)

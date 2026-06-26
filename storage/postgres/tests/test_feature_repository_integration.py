@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from doktok_contracts.schemas import Document, DocumentStatus, FeatureStatus
+from doktok_contracts.schemas import (
+    Document,
+    DocumentStatus,
+    FeatureMetrics,
+    FeatureStatus,
+)
 from doktok_storage_postgres import Database, PostgresDocumentRepository, PostgresFeatureRepository
 
 TENANT = "test-a"
@@ -80,3 +85,66 @@ def test_version_bump_marks_done_rows_stale(db: Database) -> None:
     repo.ensure_for_active(TENANT, [("chunk_embed", 2)])
     row = next(r for r in repo.list_for_document(TENANT, "d1") if r.feature == "chunk_embed")
     assert row.status is FeatureStatus.PENDING and row.feature_version == 2
+
+
+def test_metrics_round_trip_through_mark_done(db: Database) -> None:
+    docs = PostgresDocumentRepository(db)
+    _active_doc(docs, "d1")
+    repo = PostgresFeatureRepository(db)
+    repo.ensure_for_active(TENANT, [("doc_metadata", 1)])
+
+    now = datetime.now(UTC)
+    before = now - timedelta(seconds=900)
+    claimed = repo.claim_next(TENANT, now=now, reclaim_before=before)
+    assert claimed is not None
+    metrics = FeatureMetrics(
+        duration_ms=1700, prompt_tokens=420, answer_tokens=130, model="qwen3:14b", estimated=True
+    )
+    repo.mark_done(claimed.id, feature_version=1, metrics=metrics)
+
+    row = next(r for r in repo.list_for_document(TENANT, "d1") if r.feature == "doc_metadata")
+    assert row.status is FeatureStatus.DONE
+    assert row.metrics.duration_ms == 1700
+    assert row.metrics.prompt_tokens == 420
+    assert row.metrics.answer_tokens == 130
+    assert row.metrics.total_tokens == 550  # validator-derived
+    assert row.metrics.model == "qwen3:14b"
+    assert row.metrics.estimated is True
+
+
+def test_mark_done_without_metrics_leaves_empty_default(db: Database) -> None:
+    docs = PostgresDocumentRepository(db)
+    _active_doc(docs, "d1")
+    repo = PostgresFeatureRepository(db)
+    repo.ensure_for_active(TENANT, [("doc_metadata", 1)])
+
+    now = datetime.now(UTC)
+    claimed = repo.claim_next(TENANT, now=now, reclaim_before=now - timedelta(seconds=900))
+    assert claimed is not None
+    repo.mark_done(claimed.id, feature_version=1)  # no metrics -> column stays the '{}' default
+
+    row = next(r for r in repo.list_for_document(TENANT, "d1") if r.feature == "doc_metadata")
+    assert row.metrics.duration_ms == 0 and row.metrics.total_tokens == 0
+
+
+def test_feature_counts_for_documents_is_batched(db: Database) -> None:
+    docs = PostgresDocumentRepository(db)
+    _active_doc(docs, "d1")
+    _active_doc(docs, "d2")
+    repo = PostgresFeatureRepository(db)
+    repo.record_done(TENANT, "d1", "chunk_embed", 1)
+    repo.record_done(TENANT, "d1", "entities", 1)
+    repo.record_done(TENANT, "d2", "chunk_embed", 1)
+    # Make one feature on d2 fail.
+    now = datetime.now(UTC)
+    repo.ensure_for_active(TENANT, [("doc_metadata", 1)])
+    claimed = repo.claim_next(TENANT, now=now, reclaim_before=now - timedelta(seconds=900))
+    assert claimed is not None
+    repo.mark_failed(claimed.id, error="boom", next_attempt_at=now + timedelta(hours=1))
+
+    counts = repo.feature_counts_for_documents(TENANT, ["d1", "d2"])
+    # Both docs have done rows; exactly one doc_metadata row (on whichever doc was claimed) failed.
+    assert counts["d1"][0] >= 2 and counts["d2"][0] >= 1
+    total_failed = counts["d1"][1] + counts["d2"][1]
+    assert total_failed == 1
+    assert repo.feature_counts_for_documents(TENANT, []) == {}

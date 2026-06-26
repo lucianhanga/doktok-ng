@@ -495,6 +495,12 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
             "extraction_method": result.extraction_method,
             "page_count": result.page_count,
             "ocr_confidence": result.ocr_confidence,
+            # The source mime when an office doc was converted to PDF (#313); absent otherwise.
+            **(
+                {"normalized_from": result.normalized_from_mime}
+                if result.normalized_from_mime
+                else {}
+            ),
             "language": language,
             "original": artifacts.original,
             "system_document": artifacts.system_document,

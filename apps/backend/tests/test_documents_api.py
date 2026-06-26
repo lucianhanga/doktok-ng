@@ -3,11 +3,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import CategoryRepository, DocumentRepository
+from doktok_contracts.ports import CategoryRepository, DocumentRepository, FeatureRepository
 from doktok_contracts.schemas import Document, DocumentStatus
 from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
+from doktok_core.features.inmemory import InMemoryFeatureRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -43,6 +44,7 @@ def _client(*docs: Document) -> TestClient:
     registry = build_registry()
     registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -111,6 +113,7 @@ def test_needs_attention_filter() -> None:
     registry = build_registry()
     registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 

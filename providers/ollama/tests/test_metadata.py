@@ -9,13 +9,18 @@ from doktok_provider_ollama import OllamaMetadataExtractor
 
 
 class _Resp:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, extra: dict[str, Any] | None = None) -> None:
         self._content = content
+        self._extra = extra or {}
 
     def raise_for_status(self) -> None: ...
 
     def json(self) -> dict[str, Any]:
-        return {"message": {"content": self._content, "thinking": "ignored reasoning"}}
+        body: dict[str, Any] = {
+            "message": {"content": self._content, "thinking": "ignored reasoning"}
+        }
+        body.update(self._extra)
+        return body
 
 
 def _patch(monkeypatch: Any, replies: list[str]) -> list[dict[str, Any]]:
@@ -57,3 +62,28 @@ def test_falls_back_to_repair_model_on_invalid_json(monkeypatch: Any) -> None:
     assert len(calls) == 2
     assert calls[0]["model"] == "primary" and calls[1]["model"] == "repair"
     assert calls[1]["think"] is False  # repair model disables thinking (top-level)
+
+
+def test_reports_token_usage_from_response_counts(monkeypatch: Any) -> None:
+    def fake_post(url: str, *, json: dict[str, Any], timeout: float) -> _Resp:
+        return _Resp(_GOOD, extra={"prompt_eval_count": 320, "eval_count": 64})
+
+    monkeypatch.setattr("doktok_provider_ollama.metadata.httpx.post", fake_post)
+    ex = OllamaMetadataExtractor("primary", "repair", "http://x")
+    ex.extract("some document text")
+    usage = ex.get_last_usage()
+    assert usage is not None
+    assert usage.prompt_tokens == 320
+    assert usage.answer_tokens == 64
+    assert usage.total_tokens == 384
+    assert usage.estimated is False
+    assert ex.model == "primary"
+
+
+def test_usage_estimated_when_counts_absent(monkeypatch: Any) -> None:
+    _patch(monkeypatch, [_GOOD])  # _Resp without eval_count/prompt_eval_count
+    ex = OllamaMetadataExtractor("primary", "repair", "http://x")
+    ex.extract("some document text")
+    usage = ex.get_last_usage()
+    assert usage is not None and usage.estimated is True
+    assert usage.prompt_tokens == 0  # no provider counter -> 0

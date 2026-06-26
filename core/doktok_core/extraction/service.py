@@ -63,6 +63,10 @@ class ExtractionResult:
     extraction_method: str
     page_count: int
     ocr_confidence: float | None = None
+    # When an office document (.docx/.xlsx/.pptx) was converted to PDF before extraction (#313),
+    # the source mime it was normalized FROM; None when no normalization happened. Surfaced into
+    # ``documents.metadata`` as ``normalized_from`` for the processing-telemetry view.
+    normalized_from_mime: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     # Per-page OCR geometry (aligned with ``pages``; None where a page has no OCR boxes, e.g.
     # born-digital text or the Ollama OCR path). Persisted to content.json. Empty = no layout.
@@ -130,6 +134,9 @@ def extract_document(
                 ocr_concurrency,
                 ocr_dpi,
             )
+        # Record the source mime we normalized FROM so the processing-telemetry view can show the
+        # office->PDF step (e.g. "normalized from application/vnd...wordprocessingml.document").
+        result.normalized_from_mime = mime
         # The converted PDF is the canonical viewable form, so persist it as the normalized
         # artifact (what preview serves). If the converted PDF itself needed OCR, prefer the
         # searchable PDF that carries the recovered text layer.

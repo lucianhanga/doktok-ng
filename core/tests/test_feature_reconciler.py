@@ -6,7 +6,9 @@ import itertools
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+from doktok_contracts.media import LlmUsage
 from doktok_contracts.schemas import DocumentFeature, FeatureStatus
+from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.features.inmemory import InMemoryFeatureRepository
 from doktok_core.features.reconciler import FeatureReconciler
 
@@ -151,6 +153,57 @@ def test_retries_then_gives_up_recording_the_error() -> None:
     assert row.last_error and "boom" in row.last_error
 
 
+class _UsageProcessor:
+    """A processor that reports token usage (like the enrichment/embedding features)."""
+
+    name = "demo"
+    version = 1
+    model = "qwen3:14b"
+
+    def __init__(self, usage: LlmUsage | None) -> None:
+        self._usage = usage
+
+    def process(self, tenant_id: str, document_id: str) -> None:  # noqa: ARG002
+        pass
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return self._usage
+
+
+def test_metrics_persist_duration_and_tokens_and_land_in_activity() -> None:
+    repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
+    audit = InMemoryAuditLogRepository()
+    usage = LlmUsage(prompt_tokens=400, answer_tokens=100, estimated=True)
+    proc = _UsageProcessor(usage)
+    FeatureReconciler(repo, [proc], ["t1"], clock=lambda: BASE, audit_log=audit).reconcile()
+
+    row = next(r for r in repo.list_for_document("t1", "d1") if r.feature == "demo")
+    assert row.status is FeatureStatus.DONE
+    assert row.metrics.duration_ms >= 0  # measured wall-clock (monotonic; >=0)
+    assert row.metrics.prompt_tokens == 400
+    assert row.metrics.answer_tokens == 100
+    assert row.metrics.total_tokens == 500
+    assert row.metrics.model == "qwen3:14b"
+    assert row.metrics.estimated is True
+
+    completed = next(
+        e for e in audit.list_events("t1", document_id="d1") if e.event_type.endswith("completed")
+    )
+    assert "duration_ms" in completed.metadata
+    assert completed.metadata["total_tokens"] == 500
+    assert completed.metadata["model"] == "qwen3:14b"
+
+
+def test_metrics_duration_only_when_processor_reports_no_usage() -> None:
+    repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
+    proc = _UsageProcessor(None)  # exposes get_last_usage but returns None (e.g. usage unavailable)
+    FeatureReconciler(repo, [proc], ["t1"], clock=lambda: BASE).reconcile()
+
+    row = next(r for r in repo.list_for_document("t1", "d1") if r.feature == "demo")
+    assert row.metrics.total_tokens == 0
+    assert row.metrics.model == ""
+
+
 def test_version_bump_reprocesses_done_document() -> None:
     repo = InMemoryFeatureRepository(active={"t1": ["d1"]})
     repo.record_done("t1", "d1", "demo", 1)  # already done at v1
@@ -220,7 +273,7 @@ def test_concurrent_drain_processes_every_row_exactly_once() -> None:
             with lock:
                 return next(cursor, None)
 
-        def mark_done(self, feature_id, *, feature_version):  # type: ignore[no-untyped-def]
+        def mark_done(self, feature_id, *, feature_version, metrics=None):  # type: ignore[no-untyped-def]
             with lock:
                 done.append(feature_id)
 

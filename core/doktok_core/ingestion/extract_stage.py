@@ -79,6 +79,9 @@ class ExtractStage:
             "original": artifacts.original,
             "system_document": artifacts.system_document,
         }
+        # The source mime when an office doc was converted to PDF (#313); absent otherwise.
+        if result.normalized_from_mime:
+            metadata["normalized_from"] = result.normalized_from_mime
         try:
             activated = self._documents.activate(
                 tenant_id, document_id, storage_path=artifacts.storage_path, metadata=metadata

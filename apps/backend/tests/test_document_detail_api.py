@@ -145,6 +145,89 @@ def test_detail_aggregate(tmp_path: Path) -> None:
     assert len(body["content"]["excerpt"]) == 4000
 
 
+def test_detail_includes_processing_telemetry(tmp_path: Path) -> None:
+    from doktok_contracts.ports import (
+        AuditLogRepository,
+        CategoryRepository,
+        FeatureRepository,
+    )
+    from doktok_contracts.schemas import (
+        DocumentFeature,
+        FeatureMetrics,
+        FeatureStatus,
+    )
+    from doktok_core.audit.inmemory import InMemoryAuditLogRepository
+    from doktok_core.categories.inmemory import InMemoryCategoryRepository
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+
+    (tmp_path / "content.md").write_text("body", encoding="utf-8")
+    doc = Document(
+        id="d1",
+        tenant_id="tenant-a",
+        sha256="a" * 64,
+        original_filename="scan.pdf",
+        title="scan",
+        status=DocumentStatus.ACTIVE,
+        storage_path=str(tmp_path),
+        created_at=datetime.now(UTC),
+        ingested_at=datetime.now(UTC),
+        activated_at=datetime.now(UTC),
+        metadata={
+            "extraction_method": "ocr",
+            "page_count": 3,
+            "ocr_confidence": 0.88,
+            "language": "en",
+            "normalized_from": "application/x-docx",
+        },
+    )
+    doc_repo = InMemoryDocumentRepository()
+    doc_repo.add(doc)
+    feature_repo = InMemoryFeatureRepository()
+    now = datetime.now(UTC)
+    feature_repo.rows.append(
+        DocumentFeature(
+            id="f1",
+            tenant_id="tenant-a",
+            document_id="d1",
+            feature="doc_metadata",
+            status=FeatureStatus.DONE,
+            attempts=1,
+            last_attempt_at=now,
+            completed_at=now,
+            created_at=now,
+            updated_at=now,
+            metrics=FeatureMetrics(
+                duration_ms=1500, prompt_tokens=300, answer_tokens=80, model="qwen3:14b"
+            ),
+        )
+    )
+
+    registry = build_registry()
+    registry.register(DocumentRepository, doc_repo)  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, feature_repo)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+
+    body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    proc = body["processing"]
+    assert proc["extraction_method"] == "ocr"
+    assert proc["ocr_outcome"] == "done"
+    assert proc["page_count"] == 3
+    assert proc["ocr_confidence"] == 0.88
+    assert proc["normalized_from_mime"] == "application/x-docx"
+    assert proc["language"] == "en"
+    step = next(s for s in proc["steps"] if s["feature"] == "doc_metadata")
+    assert step["label"] == "Metadata"  # from the feature catalog
+    assert step["duration_ms"] == 1500
+    assert step["total_tokens"] == 380
+    assert step["model"] == "qwen3:14b"
+    assert proc["total_duration_ms"] == 1500
+    assert proc["total_tokens"] == 380
+
+
 def test_detail_other_tenant_is_404(tmp_path: Path) -> None:
     client = _detail_client(tmp_path)
     assert client.get("/api/v1/documents/missing/detail", headers=_auth()).status_code == 404

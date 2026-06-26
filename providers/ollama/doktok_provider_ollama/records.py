@@ -12,7 +12,9 @@ import logging
 from typing import Any
 
 import httpx
-from doktok_contracts.media import ExtractedTransaction
+from doktok_contracts.media import ExtractedTransaction, LlmUsage
+
+from doktok_provider_ollama.usage import usage_from_chat
 
 logger = logging.getLogger("doktok.records")
 
@@ -75,8 +77,17 @@ class OllamaRecordExtractor:
         self._num_ctx = num_ctx
         self._keep_alive = keep_alive
         self._think: bool | None = None if think else False
+        self._last_usage: LlmUsage | None = None
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return self._last_usage
 
     def extract(self, text: str) -> list[ExtractedTransaction]:
+        self._last_usage = None
         content = self._chat(self._model, _SYSTEM, text[:_MAX_CHARS], think=self._think)
         rows = _rows(content)
         if rows is None:
@@ -112,7 +123,10 @@ class OllamaRecordExtractor:
             payload["think"] = think  # top-level field; Ollama ignores `think` inside options
         response = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
         response.raise_for_status()
-        return str(response.json().get("message", {}).get("content", ""))
+        body = response.json()
+        content = str(body.get("message", {}).get("content", ""))
+        self._last_usage = usage_from_chat(body, content)
+        return content
 
 
 def _rows(content: str) -> list[dict[str, Any]] | None:

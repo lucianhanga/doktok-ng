@@ -9,11 +9,12 @@ from datetime import UTC, date, datetime
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import CategoryRepository, DocumentRepository
+from doktok_contracts.ports import CategoryRepository, DocumentRepository, FeatureRepository
 from doktok_contracts.schemas import Document, DocumentStatus
 from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
+from doktok_core.features.inmemory import InMemoryFeatureRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -50,10 +51,16 @@ def _doc(
     )
 
 
-def _client(repo: InMemoryDocumentRepository) -> TestClient:
+def _client(
+    repo: InMemoryDocumentRepository, features: InMemoryFeatureRepository | None = None
+) -> TestClient:
     registry = build_registry()
     registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(
+        FeatureRepository,  # type: ignore[type-abstract]
+        features or InMemoryFeatureRepository(),
+    )
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -179,3 +186,42 @@ def test_too_many_tokens_is_400() -> None:
     client = _client(_repo(_doc("d1")))
     qs = "&".join(f"token=t{i}" for i in range(21))
     assert client.get(f"/api/v1/documents?{qs}", headers=AUTH).status_code == 400
+
+
+def test_list_includes_processing_summary_sidecar() -> None:
+    from datetime import timedelta
+
+    from doktok_contracts.schemas import DocumentFeature, FeatureStatus
+
+    doc = _doc("d1", title="Scan")
+    doc.metadata = {
+        "extraction_method": "ocr",
+        "page_count": 2,
+        "normalized_from": "application/x-docx",
+    }
+    features = InMemoryFeatureRepository()
+    now = datetime.now(UTC)
+    for i, status in enumerate([FeatureStatus.DONE, FeatureStatus.DONE, FeatureStatus.FAILED]):
+        features.rows.append(
+            DocumentFeature(
+                id=f"f{i}",
+                tenant_id="tenant-a",
+                document_id="d1",
+                feature=f"feat{i}",
+                status=status,
+                created_at=now + timedelta(seconds=i),
+                updated_at=now,
+            )
+        )
+    body = _client(_repo(doc), features).get("/api/v1/documents", headers=AUTH).json()
+
+    # The shared Document shape is unchanged; the summary lives in the envelope sidecar map.
+    assert "processing" not in body["items"][0]
+    summary = body["processing"]["d1"]
+    assert summary["extraction_method"] == "ocr"
+    assert summary["ocr_outcome"] == "done"
+    assert summary["page_count"] == 2
+    assert summary["normalized_from_mime"] == "application/x-docx"
+    assert summary["status"] == "active"
+    assert summary["features_done"] == 2
+    assert summary["features_failed"] == 1

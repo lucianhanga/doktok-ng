@@ -11,6 +11,7 @@ import json
 import uuid
 from pathlib import Path
 
+from doktok_contracts.media import LlmUsage
 from doktok_contracts.ports import (
     CategoryClassifier,
     CategoryRepository,
@@ -90,6 +91,23 @@ _NON_NER_TYPES: list[str] = [t.value for t in EntityType if t not in NER_ENTITY_
 _NER_TYPES: list[str] = [t.value for t in NER_ENTITY_TYPES]
 
 
+def _delegate_usage(provider: object) -> LlmUsage | None:
+    """Best-effort read of token usage from an enrichment/embedding provider. Providers that report
+    usage expose ``get_last_usage()`` (mirrors UsageReportingChatModel); others -> None. The
+    reconciler reads it via the processor's own ``get_last_usage`` after ``process``."""
+    getter = getattr(provider, "get_last_usage", None)
+    if not callable(getter):
+        return None
+    result = getter()
+    return result if isinstance(result, LlmUsage) else None
+
+
+def _provider_model(provider: object) -> str:
+    """The model name a provider used, when it exposes one (for telemetry); empty otherwise."""
+    model = getattr(provider, "model", "")
+    return model if isinstance(model, str) else ""
+
+
 class ChunkEmbedFeature:
     """Re-chunk + re-embed a document into the chunk store (vector + FTS search)."""
 
@@ -110,6 +128,13 @@ class ChunkEmbedFeature:
         self._chunker = chunker
         self._embedder = embedding_provider
         self._chunks = chunk_repo
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return _delegate_usage(self._embedder)
+
+    @property
+    def model(self) -> str:
+        return _provider_model(self._embedder)
 
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
@@ -248,6 +273,13 @@ class NerFeature:
         self._ner = ner_extractor
         self._repo = entity_repo
 
+    def get_last_usage(self) -> LlmUsage | None:
+        return _delegate_usage(self._ner)
+
+    @property
+    def model(self) -> str:
+        return _provider_model(self._ner)
+
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
         if document is None or not document.storage_path:
@@ -302,6 +334,13 @@ class DocMetadataFeature:
         self._files = file_storage
         self._extractor = metadata_extractor
 
+    def get_last_usage(self) -> LlmUsage | None:
+        return _delegate_usage(self._extractor)
+
+    @property
+    def model(self) -> str:
+        return _provider_model(self._extractor)
+
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
         if document is None or not document.storage_path:
@@ -353,6 +392,13 @@ class DocClassifyFeature:
         self._files = file_storage
         self._classifier = classifier
         self._categories = category_repo
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return _delegate_usage(self._classifier)
+
+    @property
+    def model(self) -> str:
+        return _provider_model(self._classifier)
 
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
@@ -420,6 +466,13 @@ class StructuredRecordsFeature:
         self._files = file_storage
         self._extractor = record_extractor
         self._records = record_repo
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return _delegate_usage(self._extractor)
+
+    @property
+    def model(self) -> str:
+        return _provider_model(self._extractor)
 
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)

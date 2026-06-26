@@ -1443,6 +1443,133 @@ tr.row-selected {
   margin: 0.1rem 0 0.3rem;
 }
 
+/* ---- Backup history window + recovery drill (backup/DRP hardening epic) ---- */
+.drp-history {
+  margin-top: 1.4rem;
+}
+.drp-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.drp-history-head h4 {
+  margin: 0;
+}
+.drp-history-filter {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+/* Leg badges reuse the .drp-badge pill; neutral by default. */
+.drp-badge.drp-leg-files,
+.drp-badge.drp-leg-pg,
+.drp-badge.drp-leg-offsite,
+.drp-badge.drp-leg-drill,
+.drp-badge.drp-leg-prune {
+  color: var(--muted);
+}
+/* Prominent danger banner when the append-only log fails its integrity check. */
+.drp-integrity-alert {
+  margin: 0.6rem 0;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--danger);
+  border-left: 3px solid var(--danger);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.drp-history-scroll {
+  margin-top: 0.6rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.drp-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.drp-history-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  background: var(--surface-2);
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+.drp-history-table tbody td {
+  padding: 0.4rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.drp-history-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.drp-history-table tbody tr:hover {
+  background: var(--surface-2);
+}
+.drp-history-table .drp-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Event colour + glyph: green pass, red fail, neutral for start/prune. Word is always shown too. */
+.drp-event-pass {
+  color: var(--success);
+}
+.drp-event-fail {
+  color: var(--danger);
+}
+.drp-event-neutral {
+  color: var(--muted);
+}
+.drp-event-glyph {
+  font-weight: 700;
+}
+.drp-detail-cell {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drp-history-foot {
+  margin: 0.45rem 0 0;
+  font-size: 0.78rem;
+}
+.drp-drill {
+  margin-top: 1.4rem;
+}
+.drp-drill h4 {
+  margin: 0 0 0.3rem;
+}
+.drp-drill-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0;
+}
+.drp-drill-last {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+}
+.drp-drill-evidence {
+  color: var(--muted);
+}
+
 /* ---- Documents tab: shared toolbar + List/Thumbnails views ---- */
 .docs-subtabs {
   margin-left: auto;

@@ -694,6 +694,87 @@ export function fetchDrpStatus(signal?: AbortSignal): Promise<DrpStatusResponse>
   return getJson<DrpStatusResponse>("/api/v1/settings/drp", signal);
 }
 
+// Backup/DRP hardening epic: append-only backup event log + on-demand recovery drill.
+// One row in the tamper-evident backup history log. Numeric fields are nullable for events that
+// do not carry them (e.g. a `start`/`prune` row has no item_count/duration); render nothing for
+// absent/empty values rather than "0"/"NaN".
+export interface BackupEvent {
+  ts: string;
+  leg: string; // files | pg | offsite | drill | prune
+  event: string; // start | success | failure | drill_pass | drill_fail | prune
+  ok: boolean;
+  size: string; // human-readable, may be ""
+  item_count: number | null;
+  backup_id: string; // may be ""
+  duration_ms: number | null;
+  detail: string;
+  seq: number | null;
+}
+
+export interface DrpHistoryResponse {
+  events: BackupEvent[];
+  // false on a fresh install where the log has never been written - a neutral empty state, NOT
+  // an error.
+  source_available: boolean;
+  total_returned: number;
+  // the server returned the most recent `total_returned`; older rows were rotated out.
+  truncated: boolean;
+  // false means the append-only log failed its integrity (hash-chain) check - surfaced prominently
+  // as a tamper/corruption warning, not a normal state.
+  integrity_ok: boolean;
+}
+
+export interface DrillTriggerResponse {
+  accepted: boolean;
+  detail: string;
+  last_drill_at: string | null;
+}
+
+/** Recent backup events, newest first. `leg` filters to a single backup leg when given. */
+export async function fetchDrpHistory(
+  limit?: number,
+  leg?: string,
+  signal?: AbortSignal,
+): Promise<DrpHistoryResponse> {
+  const params = new URLSearchParams();
+  if (limit != null) params.set("limit", String(limit));
+  if (leg) params.set("leg", leg);
+  const qs = params.toString();
+  return getJson<DrpHistoryResponse>(`/api/v1/settings/drp/history${qs ? `?${qs}` : ""}`, signal);
+}
+
+/** Thrown by triggerDrill on HTTP 429 (a drill is already pending, or we are in the cooldown
+ * window). Carries the server's `detail` so the UI can show "already pending"/cooldown as a
+ * warning rather than a generic error. */
+export class DrillRejectedError extends Error {
+  readonly detail: string;
+  constructor(detail: string) {
+    super(detail);
+    this.name = "DrillRejectedError";
+    this.detail = detail;
+  }
+}
+
+/** Request an on-demand recovery drill. Resolves with the server response on 200; throws
+ * DrillRejectedError on 429 (pending/cooldown) so the caller can warn instead of error. */
+export async function triggerDrill(): Promise<DrillTriggerResponse> {
+  const response = await fetch("/api/v1/settings/drp/drill", { method: "POST" });
+  if (response.status === 429) {
+    let detail = "A drill is already pending or in its cooldown window.";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // keep the default message if the 429 body is not JSON
+    }
+    throw new DrillRejectedError(detail);
+  }
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as DrillTriggerResponse;
+}
+
 export interface FeatureCatalogEntry {
   name: string;
   version: number;

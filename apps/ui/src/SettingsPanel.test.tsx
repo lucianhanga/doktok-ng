@@ -47,7 +47,54 @@ const DRP = {
   },
 };
 
+const HISTORY = {
+  source_available: true,
+  integrity_ok: true,
+  truncated: false,
+  total_returned: 2,
+  events: [
+    {
+      ts: "2026-06-17T00:05:00Z",
+      leg: "files",
+      event: "success",
+      ok: true,
+      size: "662 MiB",
+      item_count: 287,
+      backup_id: "a1b2c3d4e5f6a7b8",
+      duration_ms: 4200,
+      detail: "restic snapshot complete",
+      seq: 2,
+    },
+    {
+      ts: "2026-06-16T00:00:00Z",
+      leg: "offsite",
+      event: "failure",
+      ok: false,
+      size: "",
+      item_count: null,
+      backup_id: "",
+      duration_ms: null,
+      detail: "azure unreachable",
+      seq: 1,
+    },
+  ],
+};
+
+// Per-test overrides for the two new DRP endpoints; reset by each mockApi() call.
+let historyResponse: unknown = HISTORY;
+let drillResponder: () => Response = () =>
+  new Response(
+    JSON.stringify({ accepted: true, detail: "Drill requested.", last_drill_at: null }),
+    { status: 200 },
+  );
+
 function mockApi() {
+  historyResponse = HISTORY;
+  drillResponder = () =>
+    new Response(
+      JSON.stringify({ accepted: true, detail: "Drill requested.", last_drill_at: null }),
+      { status: 200 },
+    );
   const calls: { url: string; method: string; body?: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -55,6 +102,9 @@ function mockApi() {
       const url = typeof input === "string" ? input : input.toString();
       calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
       const method = init?.method ?? "GET";
+      if (url.includes("/settings/drp/history"))
+        return new Response(JSON.stringify(historyResponse), { status: 200 });
+      if (url.endsWith("/settings/drp/drill") && method === "POST") return drillResponder();
       if (url.endsWith("/catalog")) return new Response(JSON.stringify(CATALOG), { status: 200 });
       if (url.endsWith("/test-ollama"))
         return new Response(
@@ -225,4 +275,73 @@ test("shows the read-only DRP section with backup status and config", async () =
   expect(screen.getByText("/var/lib/doktok/backups")).toBeInTheDocument();
   expect(screen.getByText(/doktok-backups · immutable/)).toBeInTheDocument();
   expect(screen.getByText("not configured")).toBeInTheDocument(); // azure creds
+});
+
+async function openDrp() {
+  await waitFor(() => expect(screen.getByRole("tab", { name: "DRP" })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("tab", { name: "DRP" }));
+}
+
+test("renders the backup history table newest-first with event rows", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Backup history" })).toBeInTheDocument(),
+  );
+  // Both events render, with their leg badges, sizes and details.
+  expect(screen.getByText("restic snapshot complete")).toBeInTheDocument();
+  expect(screen.getByText("azure unreachable")).toBeInTheDocument();
+  expect(screen.getByText("662 MiB")).toBeInTheDocument();
+  // The short backup id (first 8 of the hex hash) is shown.
+  expect(screen.getByText("a1b2c3d4")).toBeInTheDocument();
+});
+
+test("shows the neutral empty state when no backup history exists", async () => {
+  mockApi();
+  historyResponse = {
+    source_available: false,
+    integrity_ok: true,
+    truncated: false,
+    total_returned: 0,
+    events: [],
+  };
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() => expect(screen.getByText("No backup history yet.")).toBeInTheDocument());
+});
+
+test("shows a prominent integrity warning when the log fails its check", async () => {
+  mockApi();
+  historyResponse = { ...HISTORY, integrity_ok: false };
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() =>
+    expect(screen.getByText(/integrity check failed/i)).toBeInTheDocument(),
+  );
+});
+
+test("Run drill now POSTs to the drill endpoint and confirms", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run drill now" })).toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole("button", { name: "Run drill now" }));
+  await waitFor(() => expect(screen.getByText("Drill requested.")).toBeInTheDocument());
+  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/settings/drp/drill"))).toBe(true);
+});
+
+test("a 429 from the drill endpoint surfaces the cooldown detail as a warning", async () => {
+  mockApi();
+  drillResponder = () =>
+    new Response(JSON.stringify({ detail: "A drill is already pending." }), { status: 429 });
+  render(<SettingsPanel />);
+  await openDrp();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run drill now" })).toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole("button", { name: "Run drill now" }));
+  await waitFor(() =>
+    expect(screen.getByText("A drill is already pending.")).toBeInTheDocument(),
+  );
 });

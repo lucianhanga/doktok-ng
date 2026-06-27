@@ -257,9 +257,7 @@ def put_ai_settings(
                 ),
             },
         )
-    new_no_egress = (
-        prior_no_egress if (update.no_egress is None or locked) else update.no_egress
-    )
+    new_no_egress = prior_no_egress if (update.no_egress is None or locked) else update.no_egress
     ai = AiSettings(pipeline=update.pipeline, rag=update.rag, embedding=update.embedding)
     # Boundary gate: refuse a selection that would send content off-host while no-egress is on,
     # evaluated against the posture THIS save applies. The sinks re-check (defense-in-depth).

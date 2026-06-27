@@ -10,6 +10,8 @@ from typing import Any
 from doktok_contracts.errors import DuplicateActiveDocumentError
 from doktok_contracts.media import ExtractedTerm
 from doktok_contracts.schemas import (
+    CONFIDENCE_HIGH,
+    CONFIDENCE_MEDIUM,
     AggregationBucket,
     AggregationIntent,
     AggregationResult,
@@ -20,10 +22,12 @@ from doktok_contracts.schemas import (
     ChatMessage,
     ChatThread,
     Citation,
+    ConfidenceBuckets,
     Document,
     DocumentChunk,
     DocumentEntity,
     DocumentFeature,
+    DocumentRecordSummary,
     DocumentSort,
     DocumentStatus,
     EmbeddingProjection,
@@ -35,10 +39,13 @@ from doktok_contracts.schemas import (
     IngestionJob,
     JobStatus,
     ListAnchor,
+    MerchantRollup,
     OcrSettings,
     ProjectionPoint,
     ProjectionRequest,
     RankedChunk,
+    RecordCurrencyRollup,
+    RecordTypeCount,
     SortDir,
     StatsSummary,
     TokenMatch,
@@ -1497,6 +1504,96 @@ class PostgresRecordRepository:
                 (tenant_id, document_id),
             ).fetchall()
         return [_row_to_record(r) for r in rows]
+
+    def list_for_document_page(
+        self, tenant_id: str, document_id: str, *, limit: int, offset: int
+    ) -> tuple[list[ExtractedRecord], int]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            total = cur.execute(
+                "SELECT COUNT(*) AS n FROM extracted_records WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            ).fetchone()
+            rows = cur.execute(
+                f"SELECT {_REC_COLUMNS} FROM extracted_records "
+                "WHERE tenant_id=%s AND document_id=%s "
+                "ORDER BY occurred_on ASC NULLS LAST, id LIMIT %s OFFSET %s",
+                (tenant_id, document_id, limit, offset),
+            ).fetchall()
+        return [_row_to_record(r) for r in rows], (total["n"] if total else 0)
+
+    def record_summary(self, tenant_id: str, document_id: str) -> DocumentRecordSummary:
+        # All queries are scoped to one document and served by idx_records_tenant_doc; the per-doc
+        # slice is small, so these GROUP BYs are cheap enough to run eagerly on the detail card.
+        scope = "WHERE tenant_id=%s AND document_id=%s"
+        args = (tenant_id, document_id)
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            # Totals, date range, and confidence buckets in one pass. NULL confidence = unscored.
+            agg = cur.execute(
+                "SELECT COUNT(*) AS total, MIN(occurred_on) AS dmin, MAX(occurred_on) AS dmax, "
+                "COUNT(*) FILTER (WHERE confidence >= %s) AS c_high, "
+                "COUNT(*) FILTER (WHERE confidence >= %s AND confidence < %s) AS c_med, "
+                "COUNT(*) FILTER (WHERE confidence < %s) AS c_low, "
+                "COUNT(*) FILTER (WHERE confidence IS NULL) AS c_unscored "
+                f"FROM extracted_records {scope}",
+                (CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, *args),
+            ).fetchone()
+            cur_rows = cur.execute(
+                "SELECT currency, "
+                "COALESCE(SUM(amount_minor) FILTER (WHERE direction='debit'), 0) AS debit_minor, "
+                "COALESCE(SUM(amount_minor) FILTER (WHERE direction='credit'), 0) AS credit_minor, "
+                f"COUNT(*) AS cnt FROM extracted_records {scope} "
+                "GROUP BY currency ORDER BY cnt DESC, currency",
+                args,
+            ).fetchall()
+            type_rows = cur.execute(
+                f"SELECT record_type, COUNT(*) AS cnt FROM extracted_records {scope} "
+                "GROUP BY record_type ORDER BY cnt DESC, record_type",
+                args,
+            ).fetchall()
+            merch_rows = cur.execute(
+                "SELECT merchant_normalized, currency, COUNT(*) AS cnt, "
+                f"COALESCE(SUM(amount_minor), 0) AS total_minor FROM extracted_records {scope} "
+                "AND merchant_normalized IS NOT NULL "
+                "GROUP BY merchant_normalized, currency "
+                "ORDER BY cnt DESC, merchant_normalized LIMIT 5",
+                args,
+            ).fetchall()
+
+        if not agg or agg["total"] == 0:
+            return DocumentRecordSummary()
+        buckets = ConfidenceBuckets(
+            high=agg["c_high"], medium=agg["c_med"], low=agg["c_low"], unscored=agg["c_unscored"]
+        )
+        return DocumentRecordSummary(
+            total=agg["total"],
+            by_currency=[
+                RecordCurrencyRollup(
+                    currency=(r["currency"].strip() if r["currency"] else None),
+                    debit_minor=int(r["debit_minor"]),
+                    credit_minor=int(r["credit_minor"]),
+                    count=r["cnt"],
+                )
+                for r in cur_rows
+            ],
+            by_type=[
+                RecordTypeCount(record_type=r["record_type"], count=r["cnt"]) for r in type_rows
+            ],
+            date_from=agg["dmin"],
+            date_to=agg["dmax"],
+            top_merchants=[
+                MerchantRollup(
+                    merchant=r["merchant_normalized"],
+                    currency=(r["currency"].strip() if r["currency"] else None),
+                    count=r["cnt"],
+                    total_minor=int(r["total_minor"]),
+                )
+                for r in merch_rows
+            ],
+            confidence=buckets,
+            low_confidence_count=buckets.low,
+        )
 
     def aggregate(self, tenant_id: str, intent: AggregationIntent) -> AggregationResult:
         # Build a parameterized WHERE from the typed intent (never string-interpolated user input).

@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 from doktok_api.main import create_app
 from doktok_contracts.ports import DocumentRepository, EntityRepository
-from doktok_contracts.schemas import Document, DocumentEntity, DocumentStatus, EntityType
+from doktok_contracts.schemas import (
+    Document,
+    DocumentEntity,
+    DocumentStatus,
+    EntityType,
+    ExtractedRecord,
+)
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.entities.inmemory import InMemoryEntityRepository
@@ -86,7 +92,9 @@ def _detail_client(tmp_path: Path) -> TestClient:
         AuditLogRepository,
         CategoryRepository,
         FeatureRepository,
+        RecordRepository,
     )
+    from doktok_core.aggregation.inmemory import InMemoryRecordRepository
     from doktok_core.audit.inmemory import InMemoryAuditLogRepository
     from doktok_core.categories.inmemory import InMemoryCategoryRepository
     from doktok_core.features.inmemory import InMemoryFeatureRepository
@@ -126,6 +134,7 @@ def _detail_client(tmp_path: Path) -> TestClient:
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    registry.register(RecordRepository, InMemoryRecordRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -150,12 +159,14 @@ def test_detail_includes_processing_telemetry(tmp_path: Path) -> None:
         AuditLogRepository,
         CategoryRepository,
         FeatureRepository,
+        RecordRepository,
     )
     from doktok_contracts.schemas import (
         DocumentFeature,
         FeatureMetrics,
         FeatureStatus,
     )
+    from doktok_core.aggregation.inmemory import InMemoryRecordRepository
     from doktok_core.audit.inmemory import InMemoryAuditLogRepository
     from doktok_core.categories.inmemory import InMemoryCategoryRepository
     from doktok_core.features.inmemory import InMemoryFeatureRepository
@@ -208,6 +219,7 @@ def test_detail_includes_processing_telemetry(tmp_path: Path) -> None:
     registry.register(FeatureRepository, feature_repo)  # type: ignore[type-abstract]
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    registry.register(RecordRepository, InMemoryRecordRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 
@@ -226,6 +238,135 @@ def test_detail_includes_processing_telemetry(tmp_path: Path) -> None:
     assert step["model"] == "qwen3.6:35b-a3b"
     assert proc["total_duration_ms"] == 1500
     assert proc["total_tokens"] == 380
+
+
+def _records_client(tmp_path: Path, records: list[ExtractedRecord] | None = None) -> TestClient:
+    from doktok_contracts.ports import (
+        AuditLogRepository,
+        CategoryRepository,
+        FeatureRepository,
+        RecordRepository,
+    )
+    from doktok_core.aggregation.inmemory import InMemoryRecordRepository
+    from doktok_core.audit.inmemory import InMemoryAuditLogRepository
+    from doktok_core.categories.inmemory import InMemoryCategoryRepository
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+
+    (tmp_path / "content.md").write_text("body", encoding="utf-8")
+    doc = Document(
+        id="d1",
+        tenant_id="tenant-a",
+        sha256="a" * 64,
+        original_filename="statement.pdf",
+        title="statement",
+        status=DocumentStatus.ACTIVE,
+        storage_path=str(tmp_path),
+        created_at=datetime.now(UTC),
+    )
+    doc_repo = InMemoryDocumentRepository()
+    doc_repo.add(doc)
+    rec_repo = InMemoryRecordRepository()
+    if records:
+        rec_repo.replace_for_document("tenant-a", "d1", records)
+    registry = build_registry()
+    registry.register(DocumentRepository, doc_repo)  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    registry.register(RecordRepository, rec_repo)  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    return TestClient(create_app(settings=settings, registry=registry))
+
+
+def _txn(rid: str, **kw: object) -> ExtractedRecord:
+    return ExtractedRecord(
+        id=rid,
+        tenant_id="tenant-a",
+        document_id="d1",
+        raw_text=rid,
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+def test_detail_folds_record_summary(tmp_path: Path) -> None:
+    from datetime import date
+
+    client = _records_client(
+        tmp_path,
+        [
+            _txn(
+                "r1",
+                amount_minor=4250,
+                currency="EUR",
+                direction="debit",
+                occurred_on=date(2024, 2, 3),
+                merchant_normalized="block house",
+            ),
+            _txn(
+                "r2",
+                amount_minor=1000,
+                currency="EUR",
+                direction="credit",
+                occurred_on=date(2024, 2, 9),
+                merchant_normalized="block house",
+            ),
+        ],
+    )
+    body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    recs = body["records"]
+    assert recs["total"] == 2
+    eur = next(c for c in recs["by_currency"] if c["currency"] == "EUR")
+    assert eur["debit_minor"] == 4250 and eur["credit_minor"] == 1000 and eur["count"] == 2
+    assert recs["date_from"] == "2024-02-03" and recs["date_to"] == "2024-02-09"
+    assert recs["top_merchants"][0]["merchant"] == "block house"
+    # Honest confidence: nothing scores today, so both rows are unscored.
+    assert recs["confidence"]["unscored"] == 2
+    assert recs["low_confidence_count"] == 0
+
+
+def test_detail_record_summary_empty_when_no_records(tmp_path: Path) -> None:
+    body = _records_client(tmp_path).get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    assert body["records"]["total"] == 0
+    assert body["records"]["by_currency"] == []
+
+
+def test_records_endpoint_paginates(tmp_path: Path) -> None:
+    from datetime import date
+
+    rows = [
+        _txn(f"r{i:02d}", occurred_on=date(2024, 1, i + 1), merchant_normalized=f"m{i}")
+        for i in range(5)
+    ]
+    client = _records_client(tmp_path, rows)
+    page1 = client.get("/api/v1/documents/d1/records?limit=2&offset=0", headers=_auth()).json()
+    assert page1["total"] == 5
+    assert len(page1["items"]) == 2
+    assert page1["next_offset"] == 2
+    last = client.get("/api/v1/documents/d1/records?limit=2&offset=4", headers=_auth()).json()
+    assert len(last["items"]) == 1
+    assert last["next_offset"] is None  # last page
+
+
+def test_records_endpoint_empty_document(tmp_path: Path) -> None:
+    body = _records_client(tmp_path).get("/api/v1/documents/d1/records", headers=_auth()).json()
+    assert body == {"items": [], "total": 0, "next_offset": None}
+
+
+def test_records_endpoint_limit_bound_is_422(tmp_path: Path) -> None:
+    client = _records_client(tmp_path)
+    assert client.get("/api/v1/documents/d1/records?limit=0", headers=_auth()).status_code == 422
+    assert client.get("/api/v1/documents/d1/records?limit=201", headers=_auth()).status_code == 422
+    assert client.get("/api/v1/documents/d1/records?offset=-1", headers=_auth()).status_code == 422
+
+
+def test_records_endpoint_foreign_or_missing_doc_is_404(tmp_path: Path) -> None:
+    client = _records_client(tmp_path)
+    assert client.get("/api/v1/documents/missing/records", headers=_auth()).status_code == 404
+
+
+def test_records_endpoint_requires_token(tmp_path: Path) -> None:
+    assert _records_client(tmp_path).get("/api/v1/documents/d1/records").status_code == 401
 
 
 def test_detail_other_tenant_is_404(tmp_path: Path) -> None:

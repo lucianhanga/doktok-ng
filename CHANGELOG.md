@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **No-egress gate is now enforced end-to-end, visible, and fail-closed** (#413 boundary/read, #414
+  sinks, UI gate). Previously `DOKTOK_NO_EGRESS` was enforced only at the worker, silently: the UI
+  let you pick OpenAI under no-egress, the save was accepted, then the worker quietly fell back to a
+  local model (or failed with a cryptic `Connection refused`). Now: "egress" means **any non-loopback
+  destination** (OpenAI **or** a remote Ollama URL — the latter was ungated before) via one
+  `purpose_requires_egress` predicate; `PUT /settings/ai` **422s** a selection that would egress
+  under no-egress with per-field reasons; `GET /settings/ai` + the catalog expose `no_egress` and
+  per-purpose/`per-option` egress status; the Settings UI **disables** forbidden models with a clear
+  reason, shows a posture badge, and distinguishes "blocked by no-egress" from "needs an API key";
+  the worker and RAG sinks **fail loud** (no silent substitution, no remote-URL egress); and enabling
+  egress is audited (`egress.enabled`).
+
 ### Fixed
 - **Overview "Processing" count stayed 0 during feature reprocessing.** It summed only ingestion
   job statuses, but a re-scheduled extraction runs on an already-`active` document (terminal job) and

@@ -149,7 +149,16 @@ let restoreStatusResponder: () => Response = () =>
     { status: 200 },
   );
 
+// Overridable AI catalog / settings / PUT responders (no-egress gate tests). Default to the
+// egress-free fixtures above so the existing tests are unaffected.
+let catalogResponse: unknown = CATALOG;
+let aiResponse: unknown = AI;
+let aiPutResponder: ((body: string | undefined) => Response) | null = null;
+
 function mockApi() {
+  catalogResponse = CATALOG;
+  aiResponse = AI;
+  aiPutResponder = null;
   historyResponse = HISTORY;
   drillResponder = () =>
     new Response(
@@ -208,7 +217,7 @@ function mockApi() {
         return restorePreviewResponder();
       if (/\/settings\/backup\/restore\/[^/]+\/apply$/.test(url) && method === "POST")
         return restoreApplyResponder();
-      if (url.endsWith("/catalog")) return new Response(JSON.stringify(CATALOG), { status: 200 });
+      if (url.endsWith("/catalog")) return new Response(JSON.stringify(catalogResponse), { status: 200 });
       if (url.endsWith("/test-ollama"))
         return new Response(
           JSON.stringify({
@@ -231,7 +240,7 @@ function mockApi() {
           { status: 200 },
         );
       if (url.endsWith("/settings/ai") && method === "GET")
-        return new Response(JSON.stringify(AI), { status: 200 });
+        return new Response(JSON.stringify(aiResponse), { status: 200 });
       if (url.endsWith("/settings/ocr/recommendation"))
         return new Response(
           JSON.stringify({ engine: "rapidocr", concurrency: 2, reason: "Intel CPU - OpenVINO." }),
@@ -243,7 +252,9 @@ function mockApi() {
         return new Response(JSON.stringify(DRP), { status: 200 });
       if (url.endsWith("/settings/ocr") && method === "PUT")
         return new Response(init?.body as string, { status: 200 }); // echo
-      // PUT /settings/ai echoes back the body with the key masked.
+      // PUT /settings/ai: a test may install a responder (e.g. a 422 egress rejection); otherwise
+      // echo back the body with the key masked.
+      if (aiPutResponder) return aiPutResponder(init?.body as string | undefined);
       const sent = init?.body ? JSON.parse(init.body as string) : {};
       return new Response(
         JSON.stringify({ pipeline: sent.pipeline, rag: sent.rag, openai_api_key_set: false }),
@@ -841,4 +852,114 @@ test("an in-progress restore on mount is reflected and resumes polling", async (
   await openDrp();
   // The restore-in-progress line appears without the user touching anything.
   await waitFor(() => expect(screen.getByText(/Applying the backup/i)).toBeInTheDocument());
+});
+
+// ---- No-egress gate (Settings -> AI models) ----
+
+const OPENAI_OPTION = {
+  provider: "openai",
+  model: "gpt-5-nano",
+  label: "GPT-5 nano",
+  contexts: [128000],
+  supports_reasoning: true,
+  requires_egress: true,
+};
+
+test("under no-egress, an OpenAI option in the pipeline picker is disabled and labelled blocked", async () => {
+  mockApi();
+  catalogResponse = {
+    ...CATALOG,
+    no_egress: true,
+    pipeline: [...CATALOG.pipeline, OPENAI_OPTION],
+  };
+  aiResponse = { ...AI, no_egress: true };
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+
+  // The remote option is greyed out in place (not hidden) and the reason rides in its text.
+  const pipeline = screen.getByLabelText("Data pipeline model") as HTMLSelectElement;
+  const blocked = within(pipeline).getByRole("option", {
+    name: /GPT-5 nano \(blocked by no-egress\)/i,
+  });
+  expect(blocked).toBeDisabled();
+  // The local Ollama option in the same picker is still selectable.
+  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 35B" })).toBeEnabled();
+});
+
+test("a pipeline blocked_reason of openai_selected shows the red block, not the key-missing message", async () => {
+  mockApi();
+  aiResponse = {
+    ...AI,
+    no_egress: true,
+    purpose_status: {
+      pipeline: { requires_egress: true, usable: false, blocked_reason: "openai_selected" },
+      rag: { requires_egress: false, usable: true, blocked_reason: null },
+      embedding: { requires_egress: false, usable: true, blocked_reason: null },
+    },
+  };
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByText(/Blocked by no-egress/i)).toBeInTheDocument());
+  // The policy block must NEVER be conflated with the missing-key state.
+  expect(screen.queryByText(/Needs an OpenAI API key/i)).not.toBeInTheDocument();
+});
+
+test("a blocked_reason of openai_key_missing shows the distinct key-needed message, not a policy block", async () => {
+  mockApi();
+  aiResponse = {
+    ...AI,
+    no_egress: false,
+    purpose_status: {
+      pipeline: { requires_egress: true, usable: false, blocked_reason: "openai_key_missing" },
+      rag: { requires_egress: false, usable: true, blocked_reason: null },
+      embedding: { requires_egress: false, usable: true, blocked_reason: null },
+    },
+  };
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByText(/Needs an OpenAI API key/i)).toBeInTheDocument());
+  expect(screen.queryByText(/Blocked by no-egress/i)).not.toBeInTheDocument();
+});
+
+test("a 422 egress_not_permitted on save shows the violation inline and the form-level message", async () => {
+  mockApi();
+  aiPutResponder = () =>
+    new Response(
+      JSON.stringify({
+        detail: {
+          code: "egress_not_permitted",
+          message: "Cannot save: this selection would send data off-host while no-egress is on.",
+          violations: [{ purpose: "pipeline", reason: "openai_selected", value: "gpt-5-nano" }],
+        },
+      }),
+      { status: 422 },
+    );
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  // The structured detail (an object, not a string) must not throw: the form-level message renders.
+  await waitFor(() =>
+    expect(
+      screen.getByText(/would send data off-host while no-egress is on/i),
+    ).toBeInTheDocument(),
+  );
+  // The violation is pinned to the offending purpose and names the offending value.
+  expect(
+    screen.getByText(/OpenAI is not permitted while no-egress is on/i),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/\(gpt-5-nano\)/)).toBeInTheDocument();
+});
+
+test("the posture badge reflects no_egress on and off", async () => {
+  mockApi();
+  aiResponse = { ...AI, no_egress: true };
+  const { unmount } = render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByText("Data stays on this host")).toBeInTheDocument());
+  unmount();
+
+  aiResponse = { ...AI, no_egress: false };
+  render(<SettingsPanel />);
+  await waitFor(() =>
+    expect(screen.getByText("Remote models permitted")).toBeInTheDocument(),
+  );
 });

@@ -73,6 +73,11 @@ class AuditEventType(StrEnum):
     # System-level (non-document) events (M15 #373): configuration + service lifecycle.
     SETTINGS_CHANGED = "settings.changed"
     SERVICE_STARTED = "service.started"
+    # Egress posture (no-egress gate). ENABLED = a settings change turned on remote egress (document
+    # content will now leave the host - the auditable opt-in). BLOCKED = a runtime sink refused a
+    # saved egress config because DOKTOK_NO_EGRESS is on (defense-in-depth, surfaced not silent).
+    EGRESS_ENABLED = "egress.enabled"
+    EGRESS_BLOCKED = "egress.blocked"
     # Backup / disaster-recovery events mirrored into the activity log from the host-written,
     # outside-Postgres append-only history (M12 DRP hardening). The authoritative source is the
     # history.jsonl file; these rows are a non-authoritative, idempotent mirror of a read window.
@@ -840,6 +845,25 @@ class OcrSettings(BaseModel):
 OCR_ENGINES: tuple[str, ...] = ("paddleocr", "rapidocr", "glm-ocr")
 
 
+class EgressBlockReason(StrEnum):
+    """Why an AI purpose can't run as configured. Policy blocks (egress refused) are distinct from
+    the usability gap (OpenAI selected but no key) - different cause, different remediation."""
+
+    OPENAI_SELECTED = "openai_selected"  # provider=openai while DOKTOK_NO_EGRESS is on
+    REMOTE_OLLAMA_URL = "remote_ollama_url"  # non-loopback Ollama URL while DOKTOK_NO_EGRESS is on
+    OPENAI_KEY_MISSING = (
+        "openai_key_missing"  # not a policy block: valid config, needs a key to run
+    )
+
+
+class PurposeEgressStatus(BaseModel):
+    """Per-purpose (pipeline/rag/embedding) runtime status for the AI settings UI."""
+
+    requires_egress: bool = False  # would this purpose move document content off-host?
+    usable: bool = True  # can it actually run as configured right now?
+    blocked_reason: EgressBlockReason | None = None  # machine-readable; None when usable
+
+
 class AiSettingsResponse(AiSettings):
     """AI settings as returned to the UI - never the OpenAI key, only whether one is set."""
 
@@ -851,8 +875,16 @@ class AiSettingsResponse(AiSettings):
     # The effective default Ollama URL (DOKTOK_OLLAMA_BASE_URL) so the UI can show it as the
     # placeholder and "reset to default" target for each per-purpose override (M13 #369).
     ollama_base_url_default: str = ""
-    # True when a purpose is set to OpenAI AND egress is permitted, i.e. document content actually
-    # leaves the host. Drives a non-dismissable privacy indicator in the UI (APP-11).
+    # The active no-egress policy (DOKTOK_NO_EGRESS). The UI reflects it - it does not toggle it
+    # (deploy-time env switch, ADR-0006/0008) - to gate/badge purposes that would leave the host.
+    no_egress: bool = True
+    # Per-purpose runtime egress status, keyed "pipeline"|"rag"|"embedding": lets the UI show, per
+    # row, "blocked by no-egress" vs "needs an API key" vs "running off-host", without redoing
+    # loopback detection in the client.
+    purpose_status: dict[str, PurposeEgressStatus] = Field(default_factory=dict)
+    # True when any purpose actually moves content off-host right now (requires egress AND usable).
+    # Drives a non-dismissable privacy indicator in the UI (APP-11). Covers OpenAI AND a remote
+    # (non-loopback) Ollama URL, not just OpenAI.
     egress_active: bool = False
 
 
@@ -1147,6 +1179,10 @@ class ModelOption(BaseModel):
     label: str
     contexts: list[int]
     supports_reasoning: bool = False
+    # True for any provider that sends content off-host (OpenAI). The UI disables/badges these when
+    # no-egress is on. A local Ollama option is False; a remote Ollama *URL* is gated separately
+    # (per-purpose, via PurposeEgressStatus) since the option itself is provider-agnostic.
+    requires_egress: bool = False
 
 
 class ModelCatalog(BaseModel):
@@ -1155,6 +1191,8 @@ class ModelCatalog(BaseModel):
     pipeline: list[ModelOption] = Field(default_factory=list)
     rag: list[ModelOption] = Field(default_factory=list)
     reasoning_levels: list[str] = Field(default_factory=list)
+    # The active no-egress policy, so the catalog alone tells the UI which options to disable/badge.
+    no_egress: bool = True
 
 
 class VizLegendEntry(BaseModel):

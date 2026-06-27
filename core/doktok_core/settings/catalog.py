@@ -61,6 +61,11 @@ MODEL_CATALOG = ModelCatalog(
     reasoning_levels=REASONING_LEVELS,
 )
 
+# Every remote (OpenAI) option moves content off-host; mark it once here so there is a single rule
+# (no per-literal drift). A remote Ollama *URL* is gated separately, per-purpose, at request time.
+for _option in (*MODEL_CATALOG.pipeline, *MODEL_CATALOG.rag):
+    _option.requires_egress = _option.provider == "openai"
+
 # OpenAI models whose name starts with one of these reason; they take reasoning_effort, not temp.
 _OPENAI_REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 

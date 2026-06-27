@@ -33,7 +33,26 @@ def openai_egress_allowed(*, key: str, no_egress: bool) -> bool:
     Selecting OpenAI sends document content off the host, so it is refused while no-egress is on
     (``DOKTOK_NO_EGRESS``) - the loopback check only covers the local Ollama endpoint, not OpenAI.
     Set ``DOKTOK_NO_EGRESS=false`` to opt into remote enrichment/RAG (ADR-0006; the hybrid
-    deployment topology in ADR-0020). Callers that select OpenAI but get ``False`` here must fall
-    back to the local default rather than silently egressing.
+    deployment topology in ADR-0020).
     """
     return bool(key) and not no_egress
+
+
+def url_requires_egress(url: str | None, *, default_url: str) -> bool:
+    """Whether a purpose's effective Ollama URL would send content off-host: True iff its host is
+    non-loopback. ``url`` None/"" means "inherit the default", so the default is what's checked."""
+    return not is_loopback_url(url or default_url)
+
+
+def purpose_requires_egress(
+    provider: str, ollama_base_url: str | None, *, default_url: str
+) -> bool:
+    """Whether an AI purpose would move document content off this host - the single definition of
+    "egress" shared by the settings boundary (PUT), the read response (GET), and the runtime sinks.
+
+    Two vectors: provider ``openai`` (always remote), or provider ``ollama`` whose effective base
+    URL points at a non-loopback host. A loopback Ollama endpoint is the only no-egress destination.
+    """
+    if provider == "openai":
+        return True
+    return url_requires_egress(ollama_base_url, default_url=default_url)

@@ -1,12 +1,52 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
-import { DocumentsPanel } from "./DocumentsPanel";
+import { BULK_CONCURRENCY, DocumentsPanel } from "./DocumentsPanel";
 import type { DokDocument } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/** A fetch mock for the select-all-matching flow: the documents list reports a `total` larger than
+ * the loaded page (so the cross-page affordance is offered), and `/documents/ids` returns the
+ * snapshot. Captures DELETE calls so a test can assert which ids a bulk action targeted. */
+function mockSelectAll(opts: {
+  pageDocs: DokDocument[];
+  total: number;
+  ids: string[];
+  truncated?: boolean;
+  idsTotal?: number;
+}) {
+  const deleted: string[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/documents/ids")) {
+      return new Response(
+        JSON.stringify({
+          ids: opts.ids,
+          total: opts.idsTotal ?? opts.total,
+          truncated: opts.truncated ?? false,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+    if (init?.method === "DELETE") {
+      const id = decodeURIComponent(url.replace("/api/v1/documents/", ""));
+      deleted.push(id);
+      return new Response(null, { status: 204 });
+    }
+    return new Response(
+      JSON.stringify({ items: opts.pageDocs, total: opts.total, next_cursor: null }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, deleted };
+}
 
 function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknown[] = []) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -300,4 +340,133 @@ test("adding a token filter narrows the query", async () => {
     });
     expect(calledWithToken).toBe(true);
   });
+});
+
+// --- Select all matching (cross-page bulk selection) ---------------------------------------------
+
+test("offers select-all-matching only when the page is full AND more match off-page", async () => {
+  // Two loaded rows but five total: selecting the page reveals the cross-page affordance.
+  mockSelectAll({
+    pageDocs: [doc({ id: "d0", original_filename: "d0.pdf" }), doc({ id: "d1", original_filename: "d1.pdf" })],
+    total: 5,
+    ids: ["d0", "d1", "d2", "d3", "d4"],
+  });
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("d0.pdf")).toBeInTheDocument());
+
+  // Nothing selected yet -> no banner.
+  expect(screen.queryByRole("button", { name: /Select all 5 matching/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Select all"));
+  expect(screen.getByText("All 2 on this page are selected.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Select all 5 matching" })).toBeInTheDocument();
+});
+
+test("does not offer select-all-matching when total equals the loaded page", async () => {
+  mockSelectAll({
+    pageDocs: [doc({ id: "d0", original_filename: "d0.pdf" }), doc({ id: "d1", original_filename: "d1.pdf" })],
+    total: 2,
+    ids: ["d0", "d1"],
+  });
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("d0.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByLabelText("Select all"));
+  expect(screen.queryByText(/on this page are selected/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Select all .* matching/ })).not.toBeInTheDocument();
+});
+
+test("select-all-matching fetches ids, shows the count, and a bulk action targets all of them", async () => {
+  const { fetchMock, deleted } = mockSelectAll({
+    pageDocs: [doc({ id: "d0", original_filename: "d0.pdf" }), doc({ id: "d1", original_filename: "d1.pdf" })],
+    total: 5,
+    ids: ["d0", "d1", "d2", "d3", "d4"],
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("d0.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByLabelText("Select all"));
+  fireEvent.click(screen.getByRole("button", { name: "Select all 5 matching" }));
+
+  // The id endpoint is queried, and State B reports the cross-page count.
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/v1/documents/ids"))).toBe(true),
+  );
+  await waitFor(() => expect(screen.getByText("All 5 matching are selected.")).toBeInTheDocument());
+
+  // The confirm shows the real selection size, and the delete targets every matching id - including
+  // the three that were never on the loaded page.
+  fireEvent.click(screen.getByText("Delete selected"));
+  expect((window.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("Delete 5 document(s)?");
+  await waitFor(() => expect(deleted.sort()).toEqual(["d0", "d1", "d2", "d3", "d4"]));
+});
+
+test("a truncated snapshot says 'first 10,000 of N' and never claims all", async () => {
+  const { fetchMock } = mockSelectAll({
+    pageDocs: [doc({ id: "d0", original_filename: "d0.pdf" }), doc({ id: "d1", original_filename: "d1.pdf" })],
+    total: 25000,
+    ids: ["d0", "d1", "d2"], // stand-in for the capped list
+    truncated: true,
+    idsTotal: 25000,
+  });
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("d0.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByLabelText("Select all"));
+  fireEvent.click(screen.getByRole("button", { name: "Select all 25,000 matching" }));
+
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/v1/documents/ids"))).toBe(true),
+  );
+  expect(
+    screen.getByText("Selected the first 10,000 of 25,000 — too many to select all."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/matching are selected/)).not.toBeInTheDocument();
+});
+
+test("deselecting a row exits all-matching; a bulk action then targets only the loaded selection", async () => {
+  const { deleted } = mockSelectAll({
+    pageDocs: [doc({ id: "d0", original_filename: "d0.pdf" }), doc({ id: "d1", original_filename: "d1.pdf" })],
+    total: 5,
+    ids: ["d0", "d1", "d2", "d3", "d4"],
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("d0.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByLabelText("Select all"));
+  fireEvent.click(screen.getByRole("button", { name: "Select all 5 matching" }));
+  await waitFor(() => expect(screen.getByText("All 5 matching are selected.")).toBeInTheDocument());
+
+  // Deselecting one loaded row collapses the snapshot back to the loaded page (minus that row).
+  fireEvent.click(screen.getByLabelText("Select d1.pdf"));
+  expect(screen.queryByText(/matching are selected/)).not.toBeInTheDocument();
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Delete selected"));
+  expect((window.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("Delete 1 document(s)?");
+  await waitFor(() => expect(deleted).toEqual(["d0"])); // cross-page ids were dropped on exit
+});
+
+test("a bulk action fans out to every selected id under a bounded concurrency cap", async () => {
+  expect(BULK_CONCURRENCY).toBeGreaterThanOrEqual(6);
+  expect(BULK_CONCURRENCY).toBeLessThanOrEqual(8);
+
+  const ids = Array.from({ length: 20 }, (_, i) => `x${i}`);
+  const { deleted } = mockSelectAll({
+    pageDocs: [doc({ id: "x0", original_filename: "x0.pdf" }), doc({ id: "x1", original_filename: "x1.pdf" })],
+    total: 20,
+    ids,
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("x0.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByLabelText("Select all"));
+  fireEvent.click(screen.getByRole("button", { name: "Select all 20 matching" }));
+  await waitFor(() => expect(screen.getByText("All 20 matching are selected.")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Delete selected"));
+  await waitFor(() => expect(deleted.sort()).toEqual([...ids].sort()));
 });

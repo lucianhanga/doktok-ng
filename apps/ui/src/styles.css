@@ -814,6 +814,14 @@ table.jobs td.cell-truncate {
   border-color: rgba(176, 0, 32, 0.5);
 }
 
+/* The cross-page "select all matching" banner: tinted with the accent so it reads as a distinct,
+ * actionable step beneath the bulk bar rather than another row of actions. */
+.bulk-bar.select-all-banner {
+  border-color: var(--accent);
+  background: var(--selected-fill);
+  margin-top: 0;
+}
+
 .bulk-reprocess {
   display: inline-flex;
   align-items: center;

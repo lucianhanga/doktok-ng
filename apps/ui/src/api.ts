@@ -126,42 +126,75 @@ export type DocumentSort = "acquired" | "created" | "title" | "category";
 export type SortDir = "asc" | "desc";
 export type TokenMatch = "all" | "any";
 
-export interface DocumentQuery {
+/** The filter fields shared by the documents list and the "select all matching" id endpoint. */
+export interface DocumentFilters {
   category?: string;
   status?: string;
-  cursor?: string;
   needsAttention?: boolean;
   unidentifiable?: boolean;
-  limit?: number;
-  sort?: DocumentSort;
-  dir?: SortDir;
   title?: string;
   tokens?: string[];
   tokenMatch?: TokenMatch;
+}
+
+export interface DocumentQuery extends DocumentFilters {
+  cursor?: string;
+  limit?: number;
+  sort?: DocumentSort;
+  dir?: SortDir;
+}
+
+/** Build the shared filter query params used by BOTH the list and the id-selection endpoints, so a
+ * "select all matching" snapshot is taken against the exact same filter the visible list shows. */
+function documentFilterParams(opts: DocumentFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  if (opts.category) params.set("category", opts.category);
+  if (opts.status) params.set("status", opts.status);
+  if (opts.needsAttention) params.set("needs_attention", "true");
+  if (opts.unidentifiable) params.set("unidentifiable", "true");
+  if (opts.title?.trim()) params.set("title", opts.title.trim());
+  if (opts.tokenMatch) params.set("token_match", opts.tokenMatch);
+  (opts.tokens ?? []).forEach((t) => params.append("token", t));
+  return params;
 }
 
 export async function fetchDocuments(
   opts?: DocumentQuery,
   signal?: AbortSignal,
 ): Promise<DocumentPage> {
-  const params = new URLSearchParams();
-  if (opts?.category) params.set("category", opts.category);
-  if (opts?.status) params.set("status", opts.status);
+  const params = documentFilterParams(opts ?? {});
   if (opts?.cursor) params.set("cursor", opts.cursor);
-  if (opts?.needsAttention) params.set("needs_attention", "true");
-  if (opts?.unidentifiable) params.set("unidentifiable", "true");
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.sort) params.set("sort", opts.sort);
   if (opts?.dir) params.set("dir", opts.dir);
-  if (opts?.title?.trim()) params.set("title", opts.title.trim());
-  if (opts?.tokenMatch) params.set("token_match", opts.tokenMatch);
-  (opts?.tokens ?? []).forEach((t) => params.append("token", t));
   const qs = params.toString();
   const response = await fetch(`/api/v1/documents${qs ? `?${qs}` : ""}`, { signal });
   if (!response.ok) {
     throw friendlyHttpError(response.status);
   }
   return (await response.json()) as DocumentPage;
+}
+
+/** All document ids matching the filters, for "select all matching" cross-page bulk actions. Capped
+ * server-side (10,000): when more match, `ids` holds the first cap and `truncated` is true. Takes the
+ * SAME filter shape as `fetchDocuments` so the snapshot matches the visible list exactly. */
+export interface DocumentIdSelection {
+  ids: string[];
+  total: number;
+  truncated: boolean;
+}
+
+export async function fetchDocumentIds(
+  opts?: DocumentFilters,
+  signal?: AbortSignal,
+): Promise<DocumentIdSelection> {
+  const params = documentFilterParams(opts ?? {});
+  const qs = params.toString();
+  const response = await fetch(`/api/v1/documents/ids${qs ? `?${qs}` : ""}`, { signal });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as DocumentIdSelection;
 }
 
 export interface CategorySummary {

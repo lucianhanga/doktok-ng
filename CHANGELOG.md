@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reprocessing is visible instead of reading 0.
 
 ### Added
+- **Documents list: "select all matching" across pages** for bulk actions. After the header
+  checkbox selects the loaded page, a banner offers "Select all N matching" the current filter (via
+  the existing `GET /documents/ids`, capped at 10,000 with honest "first 10,000 of N" copy when more
+  match). Lets you reprocess a failing feature over a large filtered set without paging manually.
+  Bulk actions now run with bounded concurrency (6 in flight) + live progress instead of one
+  unthrottled request per document; selecting-all-matching survives the 4s poll (the prune effect is
+  suppressed in that mode); deselecting a row or changing a filter exits the mode.
 - **DRP hardening: tamper-evident backup history + live restore drills** (#396 backend, #397 UI).
   Backups now append to an authoritative, **append-only event history** at
   `$DOKTOK_BACKUP_DIR/status/history.jsonl` (outside Postgres, so a DB restore can't roll it back),

@@ -4,6 +4,7 @@ import {
   deleteDocument,
   documentThumbnailUrl,
   fetchCategories,
+  fetchDocumentIds,
   fetchDocuments,
   fetchFeatureCatalog,
   fetchFeatures,
@@ -40,6 +41,18 @@ type ThumbSize = "s" | "m" | "l";
 
 const PAGE_SIZE = 50;
 const THUMB_SIZE_KEY = "doktok.docs.thumbSize";
+
+// Server-side cap on "select all matching" (mirrors the backend); above it we select the first N and
+// tell the user the selection is partial - we never claim "all" when truncated.
+const SELECT_ALL_CAP = 10000;
+
+// Bulk actions fan out one request per id. At thousands of ids an unthrottled fan-out is a thundering
+// herd, so we cap how many are in flight at once. A server-side bulk endpoint is a backend follow-up.
+export const BULK_CONCURRENCY = 6;
+
+// Whether the bulk selection currently spans pages (a snapshot of all matching ids) or is just the
+// manually ticked rows. Cross-page selections must survive the 4s poll's prune.
+type SelectionMode = "manual" | "all-matching";
 
 function readThumbSize(): ThumbSize {
   try {
@@ -457,25 +470,39 @@ export function DocumentsPanel({
   const [thumbSize, setThumbSize] = useState<ThumbSize>(() => readThumbSize());
   const [windowSize, setWindowSize] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("manual");
+  // When the snapshot was truncated at the cap, the banner must say "first N of total", not "all".
+  const [selectAllTruncated, setSelectAllTruncated] = useState(false);
+  const [selectAllTotal, setSelectAllTotal] = useState(0);
   const [busy, setBusy] = useState(false);
+  // Live progress for a running bulk action (bounded-concurrency fan-out); null when idle.
+  const [bulkProgress, setBulkProgress] = useState<{ label: string; done: number; total: number } | null>(null);
   const [catalog, setCatalog] = useState<FeatureCatalogEntry[]>([]);
   const [reprocessFeature, setReprocessFeature] = useState("");
   const [notice, setNotice] = useState("");
   const loadAbort = useRef<AbortController | null>(null);
   const lastToggled = useRef<string | null>(null);
+  // The header "select all" checkbox needs an indeterminate (some-but-not-all) visual; React has no
+  // prop for it, so we drive the DOM property from an effect.
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
-  const load = useCallback(() => {
-    const filters = {
+  // The filter snapshot shared by the list load and the "select all matching" id fetch, so the
+  // cross-page selection is taken against the exact same query the list is showing.
+  const filters = useMemo(
+    () => ({
       category: category || undefined,
       status: status || undefined,
       needsAttention: needsAttention || undefined,
       unidentifiable: unidentifiable || undefined,
-      sort,
-      dir,
       title: title || undefined,
       tokens,
       tokenMatch,
-    };
+    }),
+    [category, status, needsAttention, unidentifiable, title, tokens, tokenMatch],
+  );
+
+  const load = useCallback(() => {
+    const query = { ...filters, sort, dir };
     // Abort any in-flight poll so a slow response can't land after a newer one (last-write-wins).
     loadAbort.current?.abort();
     const ctrl = new AbortController();
@@ -489,7 +516,7 @@ export function DocumentsPanel({
       let next: string | null = null;
       const processing: Record<string, ProcessingSummary> = {};
       do {
-        const page = await fetchDocuments({ ...filters, cursor, limit: PAGE_SIZE }, ctrl.signal);
+        const page = await fetchDocuments({ ...query, cursor, limit: PAGE_SIZE }, ctrl.signal);
         items = items.concat(page.items);
         total = page.total;
         next = page.next_cursor;
@@ -514,40 +541,45 @@ export function DocumentsPanel({
       if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
       setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
     });
-  }, [
-    category,
-    status,
-    needsAttention,
-    unidentifiable,
-    sort,
-    dir,
-    title,
-    tokens,
-    tokenMatch,
-    windowSize,
-  ]);
+  }, [filters, sort, dir, windowSize]);
 
   useEffect(load, [load]);
   useInterval(load, 4000);
 
-  // Reset to the first window whenever a filter/sort changes (a new query is a fresh browse).
+  // Reset to the first window whenever a filter/sort changes (a new query is a fresh browse). A new
+  // query also invalidates any cross-page selection, so drop it and fall back to manual mode.
   useEffect(() => {
     setWindowSize(PAGE_SIZE);
     lastToggled.current = null;
+    setSelected(new Set());
+    setSelectionMode("manual");
+    setSelectAllTruncated(false);
   }, [category, status, needsAttention, unidentifiable, sort, dir, title, tokens, tokenMatch]);
 
   useEffect(() => persistThumbSize(thumbSize), [thumbSize]);
 
   // Keep the bulk selection in sync with what's actually shown (filter/poll can drop documents),
-  // so an action never targets a hidden/gone document and select-all stays correct.
+  // so an action never targets a hidden/gone document and select-all stays correct. CRITICAL: in
+  // all-matching mode the selection is a cross-page snapshot taken at activation - pruning it to the
+  // loaded window here would silently discard every off-screen id on the next 4s poll, so skip it.
   useEffect(() => {
+    if (selectionMode === "all-matching") return;
     if (state.kind !== "ok") return;
     const ids = new Set(state.docs.map((d) => d.id));
     setSelected((prev) => {
       const next = new Set([...prev].filter((id) => ids.has(id)));
       return next.size === prev.size ? prev : next;
     });
-  }, [state]);
+  }, [state, selectionMode]);
+
+  // Drive the header checkbox's indeterminate (some-but-not-all selected) DOM property.
+  useEffect(() => {
+    if (!selectAllRef.current) return;
+    const loaded = state.kind === "ok" ? state.docs : [];
+    const loadedSelected = loaded.filter((d) => selected.has(d.id)).length;
+    selectAllRef.current.indeterminate = loadedSelected > 0 && loadedSelected < loaded.length;
+    // Recompute whenever either the selection or the loaded page changes.
+  }, [selected, state]);
   useEffect(() => {
     fetchCategories()
       .then(setCategories)
@@ -561,8 +593,38 @@ export function DocumentsPanel({
   const total = state.kind === "ok" ? state.total : 0;
   const hasMore = state.kind === "ok" && state.hasMore;
   const isFiltered = Boolean(category || status || needsAttention || unidentifiable || tokens.length);
+  // How the loaded page sits inside the selection: drives the header checkbox (checked/indeterminate)
+  // and the "select all matching" reveal rule.
+  const loadedSelectedCount = docs.filter((d) => selected.has(d.id)).length;
+  const allLoadedSelected = docs.length > 0 && loadedSelectedCount === docs.length;
+  // State A: every loaded row is ticked AND there are more matching off-page -> offer the cross-page
+  // selection. Gate on total (not hasMore) so it shows even when the whole window is loaded.
+  const offerSelectAll =
+    selectionMode === "manual" && allLoadedSelected && total > docs.length;
+  const showSelectAllBanner = offerSelectAll || (selectionMode === "all-matching" && selected.size > 0);
+
+  // Drop the selection entirely and return to manual mode (banner "Clear selection" + bulk-bar Clear).
+  function clearSelection() {
+    setSelected(new Set());
+    setSelectionMode("manual");
+    setSelectAllTruncated(false);
+  }
 
   function toggle(id: string, shiftKey: boolean) {
+    // A manual row change while in all-matching mode collapses the cross-page snapshot back to the
+    // loaded page (the row being clicked is currently ticked, so this deselects it).
+    if (selectionMode === "all-matching") {
+      setSelectionMode("manual");
+      setSelectAllTruncated(false);
+      const loaded = new Set(docs.map((d) => d.id));
+      setSelected((prev) => {
+        const next = new Set([...prev].filter((x) => loaded.has(x)));
+        next.delete(id);
+        return next;
+      });
+      lastToggled.current = id;
+      return;
+    }
     setSelected((prev) => {
       const next = new Set(prev);
       const order = docs.map((d) => d.id);
@@ -582,17 +644,57 @@ export function DocumentsPanel({
   }
 
   function toggleAll() {
-    setSelected((prev) => (prev.size === docs.length ? new Set() : new Set(docs.map((d) => d.id))));
+    if (selectionMode === "all-matching" || allLoadedSelected) {
+      clearSelection();
+    } else {
+      setSelected(new Set(docs.map((d) => d.id)));
+    }
+  }
+
+  // Take a cross-page snapshot of every id matching the current filter (capped server-side). The set
+  // becomes the source of truth for bulk actions and survives the poll's prune until the mode exits.
+  async function selectAllMatching() {
+    try {
+      const selection = await fetchDocumentIds(filters);
+      setSelected(new Set(selection.ids));
+      setSelectionMode("all-matching");
+      setSelectAllTruncated(selection.truncated);
+      setSelectAllTotal(selection.total);
+      lastToggled.current = null;
+    } catch (err: unknown) {
+      setNotice(
+        `Could not select all matching: ${err instanceof Error ? err.message : "error"}`,
+      );
+    }
   }
 
   async function runBulk(action: (id: string) => Promise<void>, label: string) {
     setBusy(true);
     setNotice("");
     const ids = [...selected];
-    // Report per-item outcomes instead of silently swallowing failures.
-    const results = await Promise.allSettled(ids.map((id) => action(id)));
-    const failed = results.filter((r) => r.status === "rejected").length;
-    setSelected(new Set());
+    setBulkProgress({ label, done: 0, total: ids.length });
+    // Bounded-concurrency fan-out: at most BULK_CONCURRENCY requests in flight so a many-thousand-id
+    // selection doesn't stampede the backend. Report per-item outcomes; surface live progress.
+    let failed = 0;
+    let done = 0;
+    let cursor = 0;
+    async function worker() {
+      for (;;) {
+        const index = cursor++;
+        if (index >= ids.length) return;
+        try {
+          await action(ids[index]);
+        } catch {
+          failed += 1;
+        }
+        done += 1;
+        setBulkProgress({ label, done, total: ids.length });
+      }
+    }
+    const lanes = Math.min(BULK_CONCURRENCY, ids.length);
+    await Promise.all(Array.from({ length: lanes }, () => worker()));
+    clearSelection();
+    setBulkProgress(null);
     setBusy(false);
     setNotice(
       failed === 0
@@ -751,7 +853,11 @@ export function DocumentsPanel({
 
       {selected.size > 0 && (
         <div className="bulk-bar" role="region" aria-label="Bulk actions">
-          <span>{selected.size} selected</span>
+          <span>
+            {bulkProgress
+              ? `${bulkProgress.label}: ${bulkProgress.done.toLocaleString()}/${bulkProgress.total.toLocaleString()}…`
+              : `${selected.size.toLocaleString()} selected`}
+          </span>
           <button
             type="button"
             disabled={busy}
@@ -818,9 +924,39 @@ export function DocumentsPanel({
               )}
             </span>
           )}
-          <button type="button" disabled={busy} onClick={() => setSelected(new Set())}>
+          <button type="button" disabled={busy} onClick={clearSelection}>
             Clear
           </button>
+        </div>
+      )}
+
+      {showSelectAllBanner && (
+        <div
+          className="bulk-bar select-all-banner"
+          role="region"
+          aria-label="Select all matching"
+          aria-live="polite"
+        >
+          {offerSelectAll ? (
+            <>
+              <span>All {docs.length.toLocaleString()} on this page are selected.</span>
+              <button type="button" disabled={busy} onClick={() => void selectAllMatching()}>
+                Select all {total.toLocaleString()} matching
+              </button>
+            </>
+          ) : (
+            <>
+              <span>
+                {selectAllTruncated
+                  ? `Selected the first ${SELECT_ALL_CAP.toLocaleString()} of ` +
+                    `${selectAllTotal.toLocaleString()} — too many to select all.`
+                  : `All ${selected.size.toLocaleString()} matching are selected.`}
+              </span>
+              <button type="button" disabled={busy} onClick={clearSelection}>
+                Clear selection
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -880,9 +1016,10 @@ export function DocumentsPanel({
             <tr>
               <th className="cell-check">
                 <input
+                  ref={selectAllRef}
                   type="checkbox"
                   aria-label="Select all"
-                  checked={docs.length > 0 && selected.size === docs.length}
+                  checked={allLoadedSelected}
                   onChange={toggleAll}
                 />
               </th>
@@ -958,7 +1095,7 @@ export function DocumentsPanel({
               <input
                 type="checkbox"
                 aria-label="Select all loaded documents"
-                checked={selected.size === docs.length}
+                checked={allLoadedSelected}
                 onChange={toggleAll}
               />{" "}
               Select all loaded

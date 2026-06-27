@@ -24,13 +24,17 @@ import {
   BackupExportBusyError,
   BackupPassphraseTooShortError,
   DrillRejectedError,
+  EgressNotPermittedError,
   RestoreConflictError,
   RestoreFileTooLargeError,
   RestoreNotConfirmedError,
   RestorePassphraseError,
   OCR_ENGINES,
+  type AiPurpose,
   type AiPurposeSettings,
   type AiSettings,
+  type EgressViolation,
+  type PurposeEgressStatus,
   type BackupEvent,
   type BackupExportInfo,
   type BackupLegStatus,
@@ -1167,6 +1171,54 @@ function OllamaUrlField({
   );
 }
 
+// Per-purpose egress status line (no-egress gate). Three never-conflated states, color is never the
+// only signal (each carries a glyph + distinct wording):
+//   - openai_selected / remote_ollama_url -> RED policy block: names the why + the host-side fix.
+//   - openai_key_missing                  -> YELLOW credential state, points at the OpenAI section.
+//   - requires_egress && usable           -> YELLOW awareness: a remote model is in use (allowed).
+// Returns null when the purpose is fully local (no message needed) or the backend omitted the state.
+function EgressStatusNote({ status }: { status?: PurposeEgressStatus }) {
+  if (!status) return null;
+  const reason = status.blocked_reason;
+
+  if (reason === "openai_selected" || reason === "remote_ollama_url") {
+    const why =
+      reason === "openai_selected"
+        ? "OpenAI sends document content off this host."
+        : "this Ollama server is not on this host.";
+    return (
+      <p role="status" className="settings-test-fail egress-status">
+        <span aria-hidden="true">✖ </span>
+        <strong>Blocked by no-egress</strong> — {why}{" "}
+        <span className="egress-status-detail">
+          To use it, set <code>DOKTOK_NO_EGRESS=false</code> on the host.
+        </span>
+      </p>
+    );
+  }
+
+  if (reason === "openai_key_missing") {
+    return (
+      <p role="status" className="settings-test-warn egress-status">
+        <span aria-hidden="true">⚠ </span>
+        <strong>Needs an OpenAI API key</strong> — add one in the OpenAI section below.
+      </p>
+    );
+  }
+
+  if (status.requires_egress && status.usable) {
+    return (
+      <p role="status" className="settings-test-warn egress-status">
+        <span aria-hidden="true">⚠ </span>
+        <strong>Sends data off-host</strong> — this purpose uses a remote model, so content leaves
+        this host.
+      </p>
+    );
+  }
+
+  return null;
+}
+
 function PurposeEditor({
   title,
   description,
@@ -1174,6 +1226,9 @@ function PurposeEditor({
   value,
   reasoningLevels,
   ollamaUrlDefault,
+  noEgress,
+  status,
+  violation,
   onChange,
 }: {
   title: string;
@@ -1182,6 +1237,12 @@ function PurposeEditor({
   value: AiPurposeSettings;
   reasoningLevels: string[];
   ollamaUrlDefault: string;
+  // The active no-egress policy: greys out remote options in the picker (does NOT hide them).
+  noEgress: boolean;
+  // Resolved per-purpose egress state from the backend (drives the status line below the row).
+  status?: PurposeEgressStatus;
+  // A server-side save rejection (422) that named this purpose, shown inline on the field.
+  violation?: EgressViolation;
   onChange: (next: AiPurposeSettings) => void;
 }) {
   const selected =
@@ -1208,11 +1269,26 @@ function PurposeEditor({
               onChange({ ...value, provider, model, num_ctx });
             }}
           >
-            {options.map((o) => (
-              <option key={`${o.provider}:${o.model}`} value={`${o.provider}:${o.model}`}>
-                {o.label}
-              </option>
-            ))}
+            {options.map((o) => {
+              // A remote option under no-egress is disabled in place (greyed), not hidden, and the
+              // reason rides in the visible text + title so it never depends on colour/state alone.
+              const blocked = !!o.requires_egress && noEgress;
+              return (
+                <option
+                  key={`${o.provider}:${o.model}`}
+                  value={`${o.provider}:${o.model}`}
+                  disabled={blocked}
+                  title={
+                    blocked
+                      ? "Blocked by the no-egress policy on this host (DOKTOK_NO_EGRESS)"
+                      : undefined
+                  }
+                >
+                  {o.label}
+                  {blocked ? " (blocked by no-egress)" : ""}
+                </option>
+              );
+            })}
           </select>
         </label>
         <label>
@@ -1254,8 +1330,31 @@ function PurposeEditor({
           onChange={(ollama_base_url) => onChange({ ...value, ollama_base_url })}
         />
       )}
+      <EgressStatusNote status={status} />
+      {violation && (
+        <p role="alert" className="settings-test-fail egress-status">
+          <span aria-hidden="true">✖ </span>
+          {violation.reason === "openai_selected"
+            ? "OpenAI is not permitted while no-egress is on."
+            : "That Ollama server is off this host and not permitted while no-egress is on."}{" "}
+          <span className="egress-status-detail">({violation.value})</span>
+        </p>
+      )}
     </div>
   );
+}
+
+// True when the purpose's CURRENT selection is a remote option under no-egress (locally computable
+// from the catalog, so it covers a persisted-remote choice loaded while the policy is on). Used to
+// disable Save without auto-rewriting the saved choice — the backend 422 is the lock behind it.
+function selectionBlocked(
+  options: ModelOption[],
+  value: AiPurposeSettings,
+  noEgress: boolean,
+): boolean {
+  if (!noEgress) return false;
+  const opt = options.find((o) => o.provider === value.provider && o.model === value.model);
+  return !!opt?.requires_egress;
 }
 
 export function SettingsPanel() {
@@ -1270,6 +1369,9 @@ export function SettingsPanel() {
   const [openaiTesting, setOpenaiTesting] = useState(false);
   const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
   const [tab, setTab] = useState<"settings" | "drp">("settings");
+  // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
+  const [egressError, setEgressError] = useState<string | null>(null);
+  const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
 
   useEffect(() => {
     const c = new AbortController();
@@ -1299,6 +1401,8 @@ export function SettingsPanel() {
     setSaving(true);
     setNotice("");
     setError(null);
+    setEgressError(null);
+    setViolations({});
     // Persist AI + OCR together. The AI model applies immediately for chat/RAG; OCR parallelism is
     // live-reloaded by the worker within ~15s. Send the OpenAI key only if the user typed one.
     Promise.all([
@@ -1316,9 +1420,30 @@ export function SettingsPanel() {
         setOpenaiKey("");
         setNotice("Saved. Chat/RAG model applied now; OCR parallelism applies within ~15s.");
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "could not save"))
+      .catch((err: unknown) => {
+        // A no-egress policy rejection carries a structured detail (object, not a string): show the
+        // message at the form level and pin each violation to its purpose field. Anything else is a
+        // generic save error.
+        if (err instanceof EgressNotPermittedError) {
+          setEgressError(err.message);
+          const byPurpose: Partial<Record<AiPurpose, EgressViolation>> = {};
+          for (const v of err.violations) byPurpose[v.purpose] = v;
+          setViolations(byPurpose);
+        } else {
+          setError(err instanceof Error ? err.message : "could not save");
+        }
+      })
       .finally(() => setSaving(false));
   }
+
+  // The active no-egress policy gates the model pickers (greys out remote options) and, when a
+  // persisted remote selection is loaded while the policy is on, blocks Save without rewriting it.
+  const noEgress = catalog?.no_egress ?? false;
+  const saveBlocked =
+    !!catalog &&
+    !!ai &&
+    (selectionBlocked(catalog.pipeline, ai.pipeline, noEgress) ||
+      selectionBlocked(catalog.rag, ai.rag, noEgress));
 
   return (
     <section className="panel" aria-label="Settings">
@@ -1354,6 +1479,18 @@ export function SettingsPanel() {
         ) : (
           <div className="settings-section">
           <h3>AI models</h3>
+          {/* Single source of truth for the host's data-egress posture. The wording (not just the
+              colour) carries the state, so it stays legible without colour. */}
+          {ai.no_egress !== undefined && (
+            <p
+              role="status"
+              className={`egress-posture ${
+                ai.no_egress ? "egress-posture-secure" : "egress-posture-open"
+              }`}
+            >
+              {ai.no_egress ? "Data stays on this host" : "Remote models permitted"}
+            </p>
+          )}
           {ai.egress_active && (
             <p className="status-error" role="status">
               Privacy: a remote (OpenAI) model is active, so document content and chat context are
@@ -1371,6 +1508,9 @@ export function SettingsPanel() {
             value={ai.pipeline}
             reasoningLevels={catalog.reasoning_levels}
             ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+            noEgress={noEgress}
+            status={ai.purpose_status?.pipeline}
+            violation={violations.pipeline}
             onChange={(pipeline) => setAi({ ...ai, pipeline })}
           />
           <PurposeEditor
@@ -1380,6 +1520,9 @@ export function SettingsPanel() {
             value={ai.rag}
             reasoningLevels={catalog.reasoning_levels}
             ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+            noEgress={noEgress}
+            status={ai.purpose_status?.rag}
+            violation={violations.rag}
             onChange={(rag) => setAi({ ...ai, rag })}
           />
           <div className="settings-purpose">
@@ -1419,6 +1562,14 @@ export function SettingsPanel() {
                 setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
               }
             />
+            <EgressStatusNote status={ai.purpose_status?.embedding} />
+            {violations.embedding && (
+              <p role="alert" className="settings-test-fail egress-status">
+                <span aria-hidden="true">✖ </span>
+                That Ollama server is off this host and not permitted while no-egress is on.{" "}
+                <span className="egress-status-detail">({violations.embedding.value})</span>
+              </p>
+            )}
           </div>
           <div className="settings-purpose">
             <h4>OpenAI</h4>
@@ -1531,8 +1682,23 @@ export function SettingsPanel() {
             )}
           </div>
 
+          {egressError && (
+            <p role="alert" className="status-error egress-form-error">
+              {egressError}
+            </p>
+          )}
           <div className="settings-actions">
-            <button type="button" className="settings-save" onClick={save} disabled={saving}>
+            <button
+              type="button"
+              className="settings-save"
+              onClick={save}
+              disabled={saving || saveBlocked}
+              title={
+                saveBlocked
+                  ? "A selected model is blocked by no-egress. Choose a local model, or set DOKTOK_NO_EGRESS=false on the host."
+                  : undefined
+              }
+            >
               {saving ? "Saving…" : "Save"}
             </button>
             {notice && (

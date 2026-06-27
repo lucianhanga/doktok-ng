@@ -484,6 +484,25 @@ export interface AiEmbeddingSettings {
   ollama_base_url?: string | null;
 }
 
+export type AiPurpose = "pipeline" | "rag" | "embedding";
+
+// Why a purpose is unusable under the active egress policy (no-egress gate, ADR-0006/0008).
+// "openai_selected"/"remote_ollama_url" are POLICY blocks (red, fix = flip the host env switch);
+// "openai_key_missing" is NOT a policy block — it is a missing-credential state (yellow, fix = add
+// a key in the OpenAI section). The two are never conflated. null = no problem.
+export type EgressBlockedReason =
+  | "openai_selected"
+  | "remote_ollama_url"
+  | "openai_key_missing";
+
+// Resolved, per-purpose egress descriptor computed by the backend against the EFFECTIVE url (so the
+// UI never reimplements loopback detection in JS). `usable` is false only for a real block.
+export interface PurposeEgressStatus {
+  requires_egress: boolean;
+  usable: boolean;
+  blocked_reason: EgressBlockedReason | null;
+}
+
 export interface AiSettings {
   pipeline: AiPurposeSettings;
   rag: AiPurposeSettings;
@@ -496,6 +515,11 @@ export interface AiSettings {
   ollama_base_url_default?: string;
   // True when a remote provider is active and content actually egresses to OpenAI (APP-11).
   egress_active?: boolean;
+  // The active no-egress policy (deploy-time DOKTOK_NO_EGRESS, ADR-0006/0008). Optional so a
+  // pre-upgrade backend (which omits it) degrades to "no gate shown" rather than a wrong posture.
+  no_egress?: boolean;
+  // Per-purpose resolved egress state from the backend. Optional for the same reason.
+  purpose_status?: Record<AiPurpose, PurposeEgressStatus>;
 }
 
 export interface ModelOption {
@@ -504,12 +528,18 @@ export interface ModelOption {
   label: string;
   contexts: number[];
   supports_reasoning: boolean;
+  // True for options that send content off this host (e.g. OpenAI). Disabled in the picker when
+  // the no-egress policy is on. Optional so a pre-upgrade catalog degrades to "not gated".
+  requires_egress?: boolean;
 }
 
 export interface ModelCatalog {
   pipeline: ModelOption[];
   rag: ModelOption[];
   reasoning_levels: string[];
+  // The active no-egress policy, mirrored on the catalog so the picker can grey out forbidden
+  // options without a second round-trip. Optional for pre-upgrade backends.
+  no_egress?: boolean;
 }
 
 export function fetchAiSettings(signal?: AbortSignal): Promise<AiSettings> {
@@ -601,7 +631,31 @@ export async function uploadDocuments(files: File[]): Promise<IngestUploadResult
   return (await response.json()) as IngestUploadResult;
 }
 
-/** Persist AI settings. openai_api_key: omit/null = unchanged, "" = clear, value = set. */
+// A single purpose the server refused to save because it would egress under no-egress. `reason` is
+// the policy cause ("openai_key_missing" is never a violation — that is a credential state, not a
+// policy block). `value` is the offending selection (model id or URL) for the inline message.
+export interface EgressViolation {
+  purpose: AiPurpose;
+  reason: "openai_selected" | "remote_ollama_url";
+  value: string;
+}
+
+/** Thrown by putAiSettings on HTTP 422 with a structured `egress_not_permitted` detail: the chosen
+ * model(s)/URL(s) would send data off-host while no-egress is on. Carries the per-purpose
+ * `violations` (for inline field errors) and the human `message` (for the form-level error). This is
+ * the server-side lock behind the UI's grey-out gate. */
+export class EgressNotPermittedError extends Error {
+  readonly violations: EgressViolation[];
+  constructor(message: string, violations: EgressViolation[]) {
+    super(message);
+    this.name = "EgressNotPermittedError";
+    this.violations = violations;
+  }
+}
+
+/** Persist AI settings. openai_api_key: omit/null = unchanged, "" = clear, value = set.
+ * Throws EgressNotPermittedError on a 422 `egress_not_permitted` so the caller can surface the
+ * per-purpose violations inline (the detail is a structured object, NOT a string). */
 export async function putAiSettings(
   body: AiSettings & { openai_api_key?: string | null },
 ): Promise<AiSettings> {
@@ -610,6 +664,25 @@ export async function putAiSettings(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (response.status === 422) {
+    interface EgressDetailBody {
+      detail?: { code?: string; message?: string; violations?: EgressViolation[] };
+    }
+    let parsed: EgressDetailBody | null = null;
+    try {
+      parsed = (await response.json()) as EgressDetailBody;
+    } catch {
+      // Non-JSON 422 — fall through to the generic error below.
+    }
+    const detail = parsed?.detail;
+    if (detail?.code === "egress_not_permitted") {
+      throw new EgressNotPermittedError(
+        detail.message || "This selection is not permitted while no-egress is on.",
+        detail.violations ?? [],
+      );
+    }
+    throw friendlyHttpError(422);
+  }
   if (!response.ok) {
     throw friendlyHttpError(response.status);
   }

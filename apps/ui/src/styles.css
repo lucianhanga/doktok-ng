@@ -1337,6 +1337,43 @@ tr.row-selected {
 .settings-test-fail {
   color: var(--danger);
 }
+/* No-egress posture + per-purpose status (security gate). Colour is reinforced by wording/glyphs so
+   it never reads on colour alone. All colours come from the theme tokens (no raw hex). */
+.egress-posture {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.85rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.egress-posture-secure {
+  color: var(--success);
+}
+.egress-posture-open {
+  color: var(--warning);
+}
+.egress-status {
+  margin: 0.45rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.egress-status code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.78rem;
+}
+.egress-status-detail {
+  color: var(--muted);
+  font-weight: 400;
+}
+.egress-form-error {
+  margin: 0.75rem 0 0;
+  font-weight: 600;
+}
 .settings-actions {
   display: flex;
   align-items: center;

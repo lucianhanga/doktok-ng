@@ -52,15 +52,6 @@ test("the fixed status bar shows backend health (no Status tab)", async () => {
   await waitFor(() => expect(screen.getByText(/doktok-ng-backend/)).toBeInTheDocument());
 });
 
-test("Ingestion tab shows the jobs view", async () => {
-  mockRoutes();
-  render(<App />);
-  await userEvent.click(screen.getByRole("button", { name: "Ingestion" }));
-  await waitFor(() =>
-    expect(screen.getByText(/No ingestion jobs yet/i)).toBeInTheDocument(),
-  );
-});
-
 test("keeps the chat conversation when opening a cited document and going back", async () => {
   vi.stubGlobal(
     "fetch",

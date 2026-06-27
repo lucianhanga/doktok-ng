@@ -1,13 +1,11 @@
 import { useState } from "react";
 
 import { ActivityPanel } from "./ActivityPanel";
-import { AggregatePanel } from "./AggregatePanel";
 import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { EntitiesPanel } from "./EntitiesPanel";
 import { InsightsPanel } from "./InsightsPanel";
-import { JobsPanel } from "./JobsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
@@ -15,11 +13,9 @@ import { ThemeToggle } from "./ThemeToggle";
 
 type View =
   | "overview"
-  | "ingestion"
   | "documents"
   | "chat"
   | "entities"
-  | "totals"
   | "insights"
   | "activity"
   | "settings";
@@ -29,9 +25,7 @@ const TABS: { id: View; label: string }[] = [
   { id: "documents", label: "Documents" },
   { id: "chat", label: "Chat" },
   { id: "entities", label: "Entities" },
-  { id: "totals", label: "Totals" },
   { id: "insights", label: "Insights" },
-  { id: "ingestion", label: "Ingestion" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
 ];
@@ -130,9 +124,7 @@ export default function App() {
               />
             </div>
             {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
-            {view === "totals" && <AggregatePanel onOpenDocument={setOpenDoc} />}
             {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}
-            {view === "ingestion" && <JobsPanel onOpenDocument={setOpenDoc} />}
             {view === "activity" && (
               <ActivityPanel onOpenDocument={setOpenDoc} focusId={activityFocusId} />
             )}

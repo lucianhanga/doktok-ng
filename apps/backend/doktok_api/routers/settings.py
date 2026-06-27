@@ -34,6 +34,7 @@ from doktok_contracts.schemas import (
     DrpHistoryResponse,
     DrpStatus,
     DrpStatusResponse,
+    EgressBlockReason,
     ModelCatalog,
     OcrRecommendation,
     OcrSettings,
@@ -44,6 +45,7 @@ from doktok_contracts.schemas import (
     OllamaWarmupResult,
     OpenAiTestRequest,
     OpenAiTestResult,
+    PurposeEgressStatus,
     RestoreApplyRequest,
     RestorePreview,
     RestoreResult,
@@ -51,7 +53,7 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.backup.export import ExportPaths
-from doktok_core.security.egress import openai_egress_allowed
+from doktok_core.security.egress import purpose_requires_egress
 from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
@@ -82,18 +84,95 @@ Repo = Annotated[AppSettingsRepository, Depends(get_app_settings_repository)]
 Audit = Annotated[AuditLogRepository, Depends(get_audit_repository)]
 
 
+def _purpose_status(
+    provider: str,
+    ollama_base_url: str | None,
+    *,
+    no_egress: bool,
+    default_url: str,
+    key_set: bool,
+) -> PurposeEgressStatus:
+    """Resolve one purpose's runtime egress status against the active posture (used by GET and the
+    egress_active indicator). Policy blocks (egress refused) are distinct from a missing key."""
+    requires = purpose_requires_egress(provider, ollama_base_url, default_url=default_url)
+    if no_egress and requires:
+        reason = (
+            EgressBlockReason.OPENAI_SELECTED
+            if provider == "openai"
+            else EgressBlockReason.REMOTE_OLLAMA_URL
+        )
+        return PurposeEgressStatus(requires_egress=True, usable=False, blocked_reason=reason)
+    if provider == "openai" and not key_set:
+        return PurposeEgressStatus(
+            requires_egress=True, usable=False, blocked_reason=EgressBlockReason.OPENAI_KEY_MISSING
+        )
+    return PurposeEgressStatus(requires_egress=requires, usable=True)
+
+
+def _purpose_statuses(
+    ai: AiSettings, *, no_egress: bool, default_url: str, key_set: bool
+) -> dict[str, PurposeEgressStatus]:
+    def status(provider: str, url: str | None) -> PurposeEgressStatus:
+        return _purpose_status(
+            provider, url, no_egress=no_egress, default_url=default_url, key_set=key_set
+        )
+
+    return {
+        "pipeline": status(ai.pipeline.provider, ai.pipeline.ollama_base_url),
+        "rag": status(ai.rag.provider, ai.rag.ollama_base_url),
+        # Embedding has no provider switch - only the URL vector can egress.
+        "embedding": status("ollama", ai.embedding.ollama_base_url),
+    }
+
+
+def _egress_violations(
+    ai: AiSettings, *, no_egress: bool, default_url: str
+) -> list[dict[str, str]]:
+    """Per-field violations when a config would egress under no-egress (drives the PUT 422)."""
+    if not no_egress:
+        return []
+    purposes = (
+        ("pipeline", ai.pipeline.provider, ai.pipeline.ollama_base_url),
+        ("rag", ai.rag.provider, ai.rag.ollama_base_url),
+        ("embedding", "ollama", ai.embedding.ollama_base_url),
+    )
+    violations: list[dict[str, str]] = []
+    for purpose, provider, url in purposes:
+        if purpose_requires_egress(provider, url, default_url=default_url):
+            if provider == "openai":
+                violations.append(
+                    {
+                        "purpose": purpose,
+                        "reason": EgressBlockReason.OPENAI_SELECTED.value,
+                        "value": provider,
+                    }
+                )
+            else:
+                violations.append(
+                    {
+                        "purpose": purpose,
+                        "reason": EgressBlockReason.REMOTE_OLLAMA_URL.value,
+                        "value": url or default_url,
+                    }
+                )
+    return violations
+
+
 def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> AiSettingsResponse:
     settings = request.app.state.settings
-    key = repo.get_openai_api_key() or settings.openai_api_key
-    remote_selected = "openai" in (ai.pipeline.provider, ai.rag.provider)
+    key_set = bool(repo.get_openai_api_key() or settings.openai_api_key)
+    status = _purpose_statuses(
+        ai, no_egress=settings.no_egress, default_url=settings.ollama_base_url, key_set=key_set
+    )
     return AiSettingsResponse(
         **ai.model_dump(),
         openai_api_key_set=bool(repo.get_openai_api_key()),
         embedding_model=settings.embedding_model,
         embedding_num_ctx=settings.embedding_num_ctx,
         ollama_base_url_default=settings.ollama_base_url,
-        egress_active=remote_selected
-        and openai_egress_allowed(key=key, no_egress=settings.no_egress),
+        no_egress=settings.no_egress,
+        purpose_status=status,
+        egress_active=any(s.requires_egress and s.usable for s in status.values()),
     )
 
 
@@ -110,10 +189,11 @@ def _validate_ollama_url(value: str | None, field: str) -> None:
 
 
 @router.get("/ai/catalog", response_model=ModelCatalog)
-def ai_model_catalog(tenant: Tenant) -> ModelCatalog:
-    """The selectable models per AI purpose + the reasoning-density levels."""
+def ai_model_catalog(request: Request, tenant: Tenant) -> ModelCatalog:
+    """The selectable models per AI purpose + the reasoning-density levels, plus the active
+    no-egress policy so the UI can disable/badge the egress-requiring options."""
     _ = tenant  # auth-gated; the catalog is the same for everyone
-    return MODEL_CATALOG
+    return MODEL_CATALOG.model_copy(update={"no_egress": request.app.state.settings.no_egress})
 
 
 @router.get("/ai", response_model=AiSettingsResponse)
@@ -151,7 +231,36 @@ def put_ai_settings(
     _validate_ollama_url(update.pipeline.ollama_base_url, "pipeline.ollama_base_url")
     _validate_ollama_url(update.rag.ollama_base_url, "rag.ollama_base_url")
     _validate_ollama_url(update.embedding.ollama_base_url, "embedding.ollama_base_url")
+    settings = request.app.state.settings
     ai = AiSettings(pipeline=update.pipeline, rag=update.rag, embedding=update.embedding)
+    # Boundary gate: refuse a selection that would send content off-host while no-egress is on,
+    # before persisting. The worker/RAG sinks re-check (defense-in-depth), but this is the lock.
+    violations = _egress_violations(
+        ai, no_egress=settings.no_egress, default_url=settings.ollama_base_url
+    )
+    if violations:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "egress_not_permitted",
+                "message": (
+                    "DOKTOK_NO_EGRESS is on; these selections would send document content "
+                    "off-host. Set DOKTOK_NO_EGRESS=false on the host to allow remote models."
+                ),
+                "violations": violations,
+            },
+        )
+    # Capture the prior egress posture so we can audit a false->true transition (the opt-in).
+    prior_key_set = bool(repo.get_openai_api_key() or settings.openai_api_key)
+    prior_active = any(
+        s.requires_egress and s.usable
+        for s in _purpose_statuses(
+            repo.get_ai_settings(),
+            no_egress=settings.no_egress,
+            default_url=settings.ollama_base_url,
+            key_set=prior_key_set,
+        ).values()
+    )
     repo.set_ai_settings(ai)
     new_key = update.openai_api_key  # None leaves it unchanged; "" clears it
     key_changed = new_key is not None
@@ -176,7 +285,21 @@ def put_ai_settings(
         description=summary,
         details={"setting": "ai"},
     )
-    return _response(repo, ai, request)
+    response = _response(repo, ai, request)
+    # Audit the security-significant opt-in: egress went off->on (content now leaves the host).
+    if response.egress_active and not prior_active:
+        leaving = [p for p, s in response.purpose_status.items() if s.requires_egress and s.usable]
+        record_activity(
+            audit,
+            tenant.tenant_id,
+            AuditEventType.EGRESS_ENABLED,
+            actor=tenant.tenant_id,
+            actor_kind="user",
+            severity="warning",
+            description=f"Remote egress enabled for: {', '.join(sorted(leaving))}",
+            details={"purposes": sorted(leaving)},
+        )
+    return response
 
 
 def _probe_ollama(url: str) -> tuple[bool, str, list[str]]:

@@ -19,17 +19,17 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
-def _client_with_audit() -> tuple[TestClient, InMemoryAuditLogRepository]:
+def _client_with_audit(*, no_egress: bool = True) -> tuple[TestClient, InMemoryAuditLogRepository]:
     registry = build_registry()
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
     audit = InMemoryAuditLogRepository()
     registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
-    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    settings = Settings(env="test", tenant_tokens=TOKENS, no_egress=no_egress, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry)), audit
 
 
-def _client() -> TestClient:
-    return _client_with_audit()[0]
+def _client(*, no_egress: bool = True) -> TestClient:
+    return _client_with_audit(no_egress=no_egress)[0]
 
 
 AUTH = {"Authorization": "Bearer tok-a"}
@@ -87,7 +87,8 @@ def test_get_defaults_and_update_roundtrip() -> None:
 
 def test_per_purpose_ollama_url_default_and_override_roundtrip() -> None:
     # M13 #369: GET exposes the effective default URL; per-purpose + embedding overrides round-trip.
-    client = _client()
+    # A remote (non-loopback) Ollama URL is egress, so this needs no-egress off.
+    client = _client(no_egress=False)
     defaults = client.get("/api/v1/settings/ai", headers=AUTH).json()
     assert defaults["ollama_base_url_default"] == "http://localhost:11434"
     assert defaults["pipeline"]["ollama_base_url"] is None
@@ -278,7 +279,8 @@ def test_ocr_recommendation_returns_a_valid_suggestion() -> None:
 
 def test_ollama_status_reflects_offloading() -> None:
     # M16 #374: default embedding keeps local Ollama needed; offloading all of it flips the flag.
-    client = _client()
+    # Offloading to OpenAI + a remote embedding URL is egress, so this needs no-egress off.
+    client = _client(no_egress=False)
     s = client.get("/api/v1/settings/ollama-status", headers=AUTH).json()
     assert s["local_ollama_needed"] is True  # default embedding uses the in-stack Ollama
     # Offload everything: OpenAI pipeline/RAG + a remote embedding URL.
@@ -373,3 +375,89 @@ def test_saving_ai_settings_clears_cached_providers() -> None:
     )
     assert registry.is_registered(ChatModelProvider) is False
     assert registry.is_registered(RagAnswerer) is False
+
+
+def _ai_body(pipeline: dict[str, object], **extra: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "pipeline": pipeline,
+        "rag": {
+            "provider": "ollama",
+            "model": "qwen3.6:35b-a3b",
+            "num_ctx": 32768,
+            "reasoning": "off",
+        },
+    }
+    body.update(extra)
+    return body
+
+
+def test_put_rejects_openai_pipeline_under_no_egress() -> None:
+    client = _client(no_egress=True)
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json=_ai_body(
+            {"provider": "openai", "model": "gpt-4o-mini", "num_ctx": 8192, "reasoning": "off"}
+        ),
+        headers=AUTH,
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "egress_not_permitted"
+    assert detail["violations"] == [
+        {"purpose": "pipeline", "reason": "openai_selected", "value": "openai"}
+    ]
+
+
+def test_put_rejects_remote_ollama_url_under_no_egress() -> None:
+    client = _client(no_egress=True)
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json=_ai_body(
+            {
+                "provider": "ollama",
+                "model": "qwen3.6:35b-a3b",
+                "num_ctx": 8192,
+                "reasoning": "off",
+                "ollama_base_url": "http://10.0.0.28:11434",
+            }
+        ),
+        headers=AUTH,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["violations"] == [
+        {"purpose": "pipeline", "reason": "remote_ollama_url", "value": "http://10.0.0.28:11434"}
+    ]
+
+
+def test_get_exposes_no_egress_and_purpose_status() -> None:
+    body = _client(no_egress=True).get("/api/v1/settings/ai", headers=AUTH).json()
+    assert body["no_egress"] is True
+    # Default pipeline/RAG are local (loopback) Ollama -> usable, no egress.
+    assert body["purpose_status"]["pipeline"] == {
+        "requires_egress": False,
+        "usable": True,
+        "blocked_reason": None,
+    }
+    assert body["egress_active"] is False
+
+
+def test_catalog_marks_openai_options_and_no_egress() -> None:
+    body = _client(no_egress=True).get("/api/v1/settings/ai/catalog", headers=AUTH).json()
+    assert body["no_egress"] is True
+    by_model = {o["model"]: o["requires_egress"] for o in body["pipeline"]}
+    assert by_model["qwen3.6:35b-a3b"] is False
+    assert by_model["gpt-4o-mini"] is True
+
+
+def test_enabling_openai_egress_is_audited() -> None:
+    client, audit = _client_with_audit(no_egress=False)
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json=_ai_body(
+            {"provider": "openai", "model": "gpt-4o-mini", "num_ctx": 8192, "reasoning": "off"},
+            openai_api_key="sk-test",  # pragma: allowlist secret
+        ),
+        headers=AUTH,
+    )
+    assert resp.status_code == 200 and resp.json()["egress_active"] is True
+    assert "egress.enabled" in [e.event_type for e in audit.list_events("tenant-a")]

@@ -42,6 +42,7 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentFeature,
+    DocumentRecordSummary,
     DocumentSort,
     DocumentStatus,
     DocumentVersion,
@@ -520,6 +521,19 @@ class RecordRepository(Protocol):
         ...
 
     def list_for_document(self, tenant_id: str, document_id: str) -> list[ExtractedRecord]: ...
+
+    def list_for_document_page(
+        self, tenant_id: str, document_id: str, *, limit: int, offset: int
+    ) -> tuple[list[ExtractedRecord], int]:
+        """One offset page of a document's records (ordered occurred_on NULLS LAST, id) plus the
+        total count, for the lazy GET /documents/{id}/records endpoint."""
+        ...
+
+    def record_summary(self, tenant_id: str, document_id: str) -> DocumentRecordSummary:
+        """Compact per-document rollup for the detail card: per-currency debit/credit totals +
+        count, date range, top merchants (by count), record-type counts, and confidence buckets
+        (NULL confidence counted as unscored). Money is summed per currency, never across them."""
+        ...
 
     def aggregate(self, tenant_id: str, intent: AggregationIntent) -> AggregationResult:
         """Deterministic typed aggregation (sum/count) over a tenant's records, filtered by the

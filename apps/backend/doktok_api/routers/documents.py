@@ -18,6 +18,7 @@ from doktok_contracts.ports import (
     EntityRepository,
     FeatureRepository,
     IngestionJobRepository,
+    RecordRepository,
 )
 from doktok_contracts.schemas import (
     AuditEventType,
@@ -32,6 +33,7 @@ from doktok_contracts.schemas import (
     DocumentIdSelection,
     DocumentLayout,
     DocumentListPage,
+    DocumentRecordPage,
     DocumentSort,
     DocumentStatus,
     EntityType,
@@ -56,6 +58,7 @@ from doktok_api.dependencies import (
     get_entity_repository,
     get_feature_repository,
     get_job_repository,
+    get_record_repository,
 )
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -66,6 +69,7 @@ Features = Annotated[FeatureRepository, Depends(get_feature_repository)]
 Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
 Jobs = Annotated[IngestionJobRepository, Depends(get_job_repository)]
 Audit = Annotated[AuditLogRepository, Depends(get_audit_repository)]
+Records = Annotated[RecordRepository, Depends(get_record_repository)]
 
 # Bytes of extracted text returned inline on the detail card; the full text is fetched lazily.
 _EXCERPT_CHARS = 4000
@@ -228,10 +232,12 @@ def get_document_detail(
     categories: Categories,
     entities: Entities,
     audit: Audit,
+    records: Records,
 ) -> DocumentDetail:
     """One aggregate for the detail card: document, processing, categories, an entity summary, a
-    content excerpt, and recent activity. The full text and full entity list are fetched lazily via
-    /content and /entities when their tab is opened."""
+    content excerpt, a structured-records rollup, and recent activity. The unbounded payloads - the
+    full text, full entity list, and full records list - are fetched lazily via /content, /entities
+    and /records when their tab is opened."""
     document = repo.get(tenant.tenant_id, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
@@ -275,6 +281,7 @@ def get_document_detail(
         entities=entity_summary,
         content=content,
         recent_activity=audit.list_events(tenant.tenant_id, document_id=document_id, limit=10),
+        records=records.record_summary(tenant.tenant_id, document_id),
     )
 
 
@@ -359,6 +366,29 @@ def get_document_entities(
     document_id: str, tenant: Tenant, entities: Entities
 ) -> list[DocumentEntity]:
     return entities.list_for_document(tenant.tenant_id, document_id)
+
+
+@router.get("/{document_id}/records", response_model=DocumentRecordPage)
+def get_document_records(
+    document_id: str,
+    tenant: Tenant,
+    repo: Repo,
+    records: Records,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DocumentRecordPage:
+    """Lazy, offset-paginated full list of a document's structured records (the Transactions tab).
+    The eager rollup lives on /detail; this is the unbounded row list, fetched on demand. 404s when
+    the document is missing or owned by another tenant (so 'no records' differs from 'no doc')."""
+    if repo.get(tenant.tenant_id, document_id) is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    items, total = records.list_for_document_page(
+        tenant.tenant_id, document_id, limit=limit, offset=offset
+    )
+    served = offset + len(items)
+    return DocumentRecordPage(
+        items=items, total=total, next_offset=served if served < total else None
+    )
 
 
 @router.get("/{document_id}/features", response_model=list[DocumentFeature])

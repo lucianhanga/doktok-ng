@@ -477,7 +477,10 @@ class ExtractedRecord(BaseModel):
     merchant_normalized: str | None = None
     description: str | None = None
     account_label: str | None = None
-    confidence: float = 1.0
+    # Extraction confidence (0..1) or None = UNSCORED. The extractor does not emit a score today, so
+    # new rows stay None until a model genuinely scores them (a 1.0 default would dishonestly read
+    # as "100% confident" for never-scored rows). Migration 0032 backfilled legacy 1.0 rows to NULL.
+    confidence: float | None = None
 
 
 class AggregationIntent(BaseModel):
@@ -774,13 +777,87 @@ class ProcessingSummary(BaseModel):
     features_failed: int = 0
 
 
+# Confidence-bucket thresholds for ConfidenceBuckets (shared by every record-summary backend so the
+# in-memory and Postgres repositories agree). high >= HIGH; MEDIUM <= medium < HIGH; low < MEDIUM;
+# a None confidence is UNSCORED (counted separately, never bucketed). Starting constants - the NLP
+# review may retune them once the extractor actually emits scores.
+CONFIDENCE_HIGH = 0.8
+CONFIDENCE_MEDIUM = 0.5
+
+
+class RecordCurrencyRollup(BaseModel):
+    """A per-currency money rollup for one document's structured records. Money is NEVER summed
+    across currencies (mirrors AggregationBucket). Records with a NULL direction count toward
+    ``count`` but neither debit nor credit total."""
+
+    currency: str | None = None
+    debit_minor: int = 0  # SUM(amount_minor) WHERE direction='debit' (spend)
+    credit_minor: int = 0  # SUM(amount_minor) WHERE direction='credit' (refund/payment)
+    count: int = 0
+
+
+class MerchantRollup(BaseModel):
+    """A top merchant for one document, ranked by occurrence count (as specced). ``total_minor`` is
+    a per-currency hint (the same merchant under two currencies appears as two rollups)."""
+
+    merchant: str  # merchant_normalized (display)
+    count: int = 0
+    total_minor: int = 0
+    currency: str | None = None
+
+
+class RecordTypeCount(BaseModel):
+    """How many records of a given record_type the document carries (record_type may diversify
+    beyond 'card_transaction')."""
+
+    record_type: str
+    count: int = 0
+
+
+class ConfidenceBuckets(BaseModel):
+    """Extraction-confidence distribution for a document's records. Only rows with a non-NULL
+    confidence are bucketed; NULL (never scored) rows are counted as ``unscored``. Today nothing
+    scores, so summaries are honestly almost entirely ``unscored`` (see ExtractedRecord.confidence).
+    """
+
+    high: int = 0  # confidence >= CONFIDENCE_HIGH
+    medium: int = 0  # CONFIDENCE_MEDIUM <= confidence < CONFIDENCE_HIGH
+    low: int = 0  # confidence < CONFIDENCE_MEDIUM
+    unscored: int = 0  # confidence IS NULL (never scored by a model)
+
+
+class DocumentRecordSummary(BaseModel):
+    """Compact structured-records rollup for the document detail card; the full row list is fetched
+    on demand via GET /documents/{id}/records. Mirrors DocumentEntitySummary (summary eager, full
+    list lazy). All rollups are per-currency - money is never summed across currencies."""
+
+    total: int = 0
+    by_currency: list[RecordCurrencyRollup] = Field(default_factory=list)
+    by_type: list[RecordTypeCount] = Field(default_factory=list)
+    date_from: date | None = None  # MIN(occurred_on)
+    date_to: date | None = None  # MAX(occurred_on)
+    top_merchants: list[MerchantRollup] = Field(default_factory=list)  # top ~5 by count
+    confidence: ConfidenceBuckets = Field(default_factory=ConfidenceBuckets)
+    # == confidence.low; surfaced flat for the trust strip (rows scored below CONFIDENCE_MEDIUM).
+    low_confidence_count: int = 0
+
+
+class DocumentRecordPage(BaseModel):
+    """A page of a document's structured records (the lazy Transactions tab). Offset-paginated,
+    ordered (occurred_on NULLS LAST, id). ``next_offset`` is None on the last page."""
+
+    items: list[ExtractedRecord] = Field(default_factory=list)
+    total: int = 0
+    next_offset: int | None = None
+
+
 class DocumentDetail(BaseModel):
     """One-round-trip aggregate for the document detail view's eager fold (review follow-up).
 
     Bundles everything shown immediately (identity, summary, processing, categories, an entity
-    summary, a content excerpt, and recent activity) so the card needs one request instead of six.
-    The two unbounded payloads - the full extracted text and the full entity list - stay behind the
-    existing lazy endpoints and are only fetched when their tab is opened.
+    summary, a content excerpt, recent activity, and a structured-records rollup) so the card needs
+    one request. The unbounded payloads - the full extracted text, the full entity list, and the
+    full records list - stay behind their lazy endpoints and are only fetched when a tab is opened.
     """
 
     document: Document
@@ -790,6 +867,8 @@ class DocumentDetail(BaseModel):
     entities: DocumentEntitySummary = Field(default_factory=DocumentEntitySummary)
     content: DocumentContentMeta = Field(default_factory=DocumentContentMeta)
     recent_activity: list[AuditEvent] = Field(default_factory=list)
+    # Structured-records rollup (additive; default-empty for record-less documents - today's look).
+    records: DocumentRecordSummary = Field(default_factory=DocumentRecordSummary)
 
 
 class AiPurposeSettings(BaseModel):

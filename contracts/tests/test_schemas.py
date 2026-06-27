@@ -4,11 +4,17 @@ from datetime import UTC, datetime
 from doktok_contracts.schemas import (
     AuditEventType,
     BackupEvent,
+    ConfidenceBuckets,
     Document,
+    DocumentDetail,
+    DocumentRecordSummary,
     DocumentStatus,
     DrpHistoryResponse,
+    ExtractedRecord,
     IngestionJob,
     JobStatus,
+    MerchantRollup,
+    RecordCurrencyRollup,
 )
 
 
@@ -81,3 +87,53 @@ def test_backup_audit_event_types_present() -> None:
     assert AuditEventType.BACKUP_COMPLETED.value == "backup.completed"
     assert AuditEventType.BACKUP_FAILED.value == "backup.failed"
     assert AuditEventType.DRILL_COMPLETED.value == "drill.completed"
+
+
+def test_extracted_record_confidence_defaults_to_none() -> None:
+    # Honest default: a never-scored row is UNSCORED (None), not falsely 1.0/"100% confident".
+    rec = ExtractedRecord(id="r1", tenant_id="t1", document_id="d1", raw_text="x")
+    assert rec.confidence is None
+
+
+def test_document_detail_round_trip_without_records() -> None:
+    # Backward-compat: an older payload with no `records` key still validates, defaulting to empty.
+    doc = Document(
+        id="d1",
+        tenant_id="t1",
+        sha256="abc",
+        original_filename="note.txt",
+        created_at=datetime.now(UTC),
+    )
+    detail = DocumentDetail.model_validate({"document": doc.model_dump()})
+    assert detail.records == DocumentRecordSummary()
+    assert detail.records.total == 0 and detail.records.by_currency == []
+    # And it round-trips through JSON with the additive field present + empty.
+    again = DocumentDetail.model_validate(json.loads(detail.model_dump_json()))
+    assert again.records.total == 0
+
+
+def test_document_detail_round_trip_with_records() -> None:
+    doc = Document(
+        id="d1",
+        tenant_id="t1",
+        sha256="abc",
+        original_filename="statement.pdf",
+        created_at=datetime.now(UTC),
+    )
+    summary = DocumentRecordSummary(
+        total=3,
+        by_currency=[
+            RecordCurrencyRollup(currency="EUR", debit_minor=8240, credit_minor=0, count=3)
+        ],
+        top_merchants=[
+            MerchantRollup(merchant="block house", count=2, total_minor=8240, currency="EUR")
+        ],
+        confidence=ConfidenceBuckets(unscored=3),
+        low_confidence_count=0,
+    )
+    detail = DocumentDetail(document=doc, records=summary)
+    again = DocumentDetail.model_validate(json.loads(detail.model_dump_json()))
+    assert again.records.total == 3
+    assert again.records.by_currency[0].debit_minor == 8240
+    assert again.records.confidence.unscored == 3
+    assert again.records.top_merchants[0].merchant == "block house"

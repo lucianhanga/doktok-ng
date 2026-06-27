@@ -9,6 +9,7 @@ posture into an enforced one instead of a comment.
 from __future__ import annotations
 
 import ipaddress
+from typing import Any, NoReturn
 from urllib.parse import urlparse
 
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "ip6-localhost"})
@@ -56,3 +57,40 @@ def purpose_requires_egress(
     if provider == "openai":
         return True
     return url_requires_egress(ollama_base_url, default_url=default_url)
+
+
+class EgressBlockedError(RuntimeError):
+    """Raised when an AI client whose destination is off-host is used while no-egress is on."""
+
+
+class EgressBlocked:
+    """Fail-closed stand-in for an AI client (extractor / chat model / embedder) whose configured
+    destination would leave the host while ``DOKTOK_NO_EGRESS`` is on.
+
+    Constructing it never egresses; any call raises ``EgressBlockedError`` with an actionable
+    message. The runtime sinks substitute this for the real client so the work fails loudly (a
+    feature is marked FAILED, a chat call errors) instead of silently running on a different model
+    or - worse - egressing to a remote URL anyway. Implements the union of provider methods
+    (``extract``/``classify``/``complete``/``embed``) so it satisfies every purpose's protocol.
+    """
+
+    def __init__(self, purpose: str) -> None:
+        self.message = (
+            f"{purpose} requires network egress (an off-host model or URL) but DOKTOK_NO_EGRESS "
+            "is on. Change the model/URL in Settings > AI, or set DOKTOK_NO_EGRESS=false."
+        )
+
+    def _blocked(self) -> NoReturn:
+        raise EgressBlockedError(self.message)
+
+    def extract(self, text: str) -> Any:
+        self._blocked()
+
+    def classify(self, text: str, existing: list[str]) -> list[str]:
+        self._blocked()
+
+    def complete(self, prompt: str) -> str:
+        self._blocked()
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self._blocked()

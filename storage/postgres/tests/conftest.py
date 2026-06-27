@@ -31,6 +31,8 @@ def _clean_test_tenants(database: Database) -> None:
         conn.execute("DELETE FROM audit_events WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM document_activity WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM document_chunks WHERE tenant_id LIKE 'test%'")
+        conn.execute("DELETE FROM kg_entity_mentions WHERE tenant_id LIKE 'test%'")
+        conn.execute("DELETE FROM kg_entities WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM document_entities WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM document_features WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM extracted_records WHERE tenant_id LIKE 'test%'")

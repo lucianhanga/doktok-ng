@@ -24,6 +24,7 @@ from doktok_core.features.processors import (
     DocClassifyFeature,
     DocMetadataFeature,
     EntitiesFeature,
+    EntityGraphFeature,
     NerFeature,
     StructuredRecordsFeature,
     ThumbnailFeature,
@@ -89,6 +90,7 @@ from doktok_storage_postgres import (
     PostgresEntityRepository,
     PostgresFeatureRepository,
     PostgresIngestionJobRepository,
+    PostgresKnowledgeGraphRepository,
     PostgresLexicalTermExtractor,
     PostgresProjectionRequestRepository,
     PostgresRecordRepository,
@@ -272,6 +274,7 @@ def build_services(
     chunk_repo = PostgresChunkRepository(db)
     entity_extractor = RegexEntityExtractor()
     entity_repo = PostgresEntityRepository(db)
+    knowledge_graph_repo = PostgresKnowledgeGraphRepository(db)
     lexical_term_extractor = PostgresLexicalTermExtractor(db)
     feature_repo = PostgresFeatureRepository(db)
     category_repo = PostgresCategoryRepository(db)
@@ -440,6 +443,7 @@ def build_services(
                 lexical_terms_limit=settings.lexical_terms_limit,
             ),
             NerFeature(document_repo, file_storage, clients.ner, entity_repo),
+            EntityGraphFeature(entity_repo, knowledge_graph_repo),
             DocMetadataFeature(document_repo, file_storage, clients.metadata),
             DocClassifyFeature(document_repo, file_storage, clients.category, category_repo),
             StructuredRecordsFeature(document_repo, file_storage, clients.record, record_repo),

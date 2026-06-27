@@ -38,6 +38,8 @@ from doktok_contracts.schemas import (
     FeatureStatus,
     IngestionJob,
     JobStatus,
+    KgEntity,
+    KgEntityMention,
     ListAnchor,
     MerchantRollup,
     OcrSettings,
@@ -917,6 +919,126 @@ def _like_prefix(prefix: str) -> str:
     """Escape LIKE wildcards in ``prefix`` and append ``%`` for a case-insensitive prefix match."""
     escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"{escaped}%"
+
+
+class PostgresKnowledgeGraphRepository:
+    """``KnowledgeGraphRepository`` on PostgreSQL (KAG Phase 1). Tenant-scoped, idempotent."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def upsert_entities(self, entities: list[KgEntity]) -> None:
+        if not entities:
+            return
+        # DO NOTHING: the node identity is a deterministic function of type+value, so an existing
+        # node is already correct - re-running must not mutate it (keeps the feature idempotent).
+        with self._db.connection() as conn, conn.transaction():
+            for entity in entities:
+                conn.execute(
+                    "INSERT INTO kg_entities "
+                    "(id, tenant_id, entity_type, normalized_value, metadata) "
+                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                    (
+                        entity.id,
+                        entity.tenant_id,
+                        entity.entity_type.value,
+                        entity.normalized_value,
+                        Json(entity.metadata),
+                    ),
+                )
+
+    def replace_mentions_for_document(
+        self, tenant_id: str, document_id: str, mentions: list[KgEntityMention]
+    ) -> None:
+        # One transaction: delete the document's prior links then insert the current set, so a crash
+        # never leaves a half-resolved document.
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute(
+                "DELETE FROM kg_entity_mentions WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            )
+            for mention in mentions:
+                conn.execute(
+                    "INSERT INTO kg_entity_mentions "
+                    "(mention_id, tenant_id, canonical_entity_id, document_id, chunk_id, "
+                    "entity_type, normalized_value) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        mention.mention_id,
+                        mention.tenant_id,
+                        mention.canonical_entity_id,
+                        mention.document_id,
+                        mention.chunk_id,
+                        mention.entity_type.value,
+                        mention.normalized_value,
+                    ),
+                )
+
+    def get_entity(self, tenant_id: str, entity_id: str) -> KgEntity | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id, tenant_id, entity_type, normalized_value, metadata "
+                "FROM kg_entities WHERE tenant_id=%s AND id=%s",
+                (tenant_id, entity_id),
+            ).fetchone()
+        return _row_to_kg_entity(row) if row else None
+
+    def mentions_for_document(self, tenant_id: str, document_id: str) -> list[KgEntityMention]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_KG_MENTION_COLUMNS} FROM kg_entity_mentions "
+                "WHERE tenant_id=%s AND document_id=%s ORDER BY mention_id",
+                (tenant_id, document_id),
+            ).fetchall()
+        return [_row_to_kg_mention(row) for row in rows]
+
+    def mentions_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEntityMention]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_KG_MENTION_COLUMNS} FROM kg_entity_mentions "
+                "WHERE tenant_id=%s AND canonical_entity_id=%s ORDER BY mention_id",
+                (tenant_id, entity_id),
+            ).fetchall()
+        return [_row_to_kg_mention(row) for row in rows]
+
+    def entity_count(self, tenant_id: str) -> int:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT count(*) FROM kg_entities WHERE tenant_id=%s",
+                (tenant_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+
+_KG_MENTION_COLUMNS = (
+    "mention_id, tenant_id, canonical_entity_id, document_id, chunk_id, "
+    "entity_type, normalized_value"
+)
+
+
+def _row_to_kg_entity(row: dict[str, Any]) -> KgEntity:
+    return KgEntity(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        entity_type=EntityType(row["entity_type"]),
+        normalized_value=row["normalized_value"],
+        metadata=row["metadata"] or {},
+    )
+
+
+def _row_to_kg_mention(row: dict[str, Any]) -> KgEntityMention:
+    return KgEntityMention(
+        mention_id=row["mention_id"],
+        tenant_id=row["tenant_id"],
+        canonical_entity_id=row["canonical_entity_id"],
+        document_id=row["document_id"],
+        chunk_id=row["chunk_id"],
+        entity_type=EntityType(row["entity_type"]),
+        normalized_value=row["normalized_value"],
+    )
 
 
 class PostgresStatsRepository:

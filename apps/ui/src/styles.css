@@ -1374,6 +1374,35 @@ tr.row-selected {
   margin: 0.75rem 0 0;
   font-weight: 600;
 }
+/* No-egress posture control: the badge + the user toggle that drives it. */
+.egress-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+  margin: 0 0 0.85rem;
+}
+.egress-control .egress-posture {
+  margin: 0;
+}
+.egress-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.egress-toggle input:disabled {
+  cursor: not-allowed;
+}
+.egress-toggle input:disabled + span {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.egress-lock-note {
+  font-size: 0.8rem;
+}
 .settings-actions {
   display: flex;
   align-items: center;

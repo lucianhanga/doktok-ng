@@ -112,7 +112,12 @@ class Settings(BaseSettings):
     # Max significant lexemes indexed per document as CUSTOM_TOKEN entities (M5.7, multilingual).
     lexical_terms_limit: int = 200
 
+    # The initial/default no-egress posture. The effective value is the in-app toggle (Settings >
+    # AI), which falls back to this when never set. See effective_no_egress().
     no_egress: bool = True
+    # Operator hard lock (host env): when true, no-egress is forced on and the in-app toggle is
+    # disabled, so a UI user cannot turn off the data-egress guard on a hardened deployment.
+    no_egress_lock: bool = False
 
     # Backup / DRP (M12 #368). The local backup repo dir (status sentinels live in <dir>/status,
     # read by the read-only DRP settings panel + /metrics). azure_* + the *_password presence drive

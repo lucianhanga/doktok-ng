@@ -15,6 +15,7 @@ class InMemoryAppSettingsRepository:
         self._ai_set = False
         self._ocr = OcrSettings()
         self._openai_key = ""
+        self._no_egress: bool | None = None
         self._heartbeat: datetime | None = None
         self._maintenance = False
         self.backup_status: dict[str, dict[str, object]] | None = None  # DRP test fixture (#368)
@@ -38,6 +39,12 @@ class InMemoryAppSettingsRepository:
 
     def set_openai_api_key(self, key: str) -> None:
         self._openai_key = key
+
+    def get_no_egress(self) -> bool | None:
+        return self._no_egress
+
+    def set_no_egress(self, value: bool) -> None:
+        self._no_egress = value
 
     def get_ocr_settings(self) -> OcrSettings:
         return self._ocr.model_copy(deep=True)

@@ -234,7 +234,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         # local embedder) fail the probe (503); SOFT deps (Gotenberg, and OpenAI when selected) are
         # reported but do not deroute the instance. Every check is bounded so the probe can't hang.
         import httpx
-        from doktok_core.security.egress import openai_egress_allowed
+        from doktok_core.security.egress import effective_no_egress, openai_egress_allowed
 
         from doktok_api.dependencies import _get_database
 
@@ -303,7 +303,12 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             ai = app_settings.get_ai_settings()
             key = app_settings.get_openai_api_key() or settings.openai_api_key
             selected = "openai" in (ai.pipeline.provider, ai.rag.provider)
-            if selected and openai_egress_allowed(key=key, no_egress=settings.no_egress):
+            no_egress = effective_no_egress(
+                app_settings.get_no_egress(),
+                env_default=settings.no_egress,
+                lock=settings.no_egress_lock,
+            )
+            if selected and openai_egress_allowed(key=key, no_egress=no_egress):
                 ok, detail = _http_ok(
                     "https://api.openai.com/v1/models",
                     headers={"Authorization": f"Bearer {key}"},

@@ -25,6 +25,7 @@ import {
   BackupPassphraseTooShortError,
   DrillRejectedError,
   EgressNotPermittedError,
+  NoEgressLockedError,
   RestoreConflictError,
   RestoreFileTooLargeError,
   RestoreNotConfirmedError,
@@ -1372,6 +1373,8 @@ export function SettingsPanel() {
   // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
   const [egressError, setEgressError] = useState<string | null>(null);
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
+  // A 422 `no_egress_locked` rejection (host-locked posture): a form-level message, no violations.
+  const [lockedError, setLockedError] = useState<string | null>(null);
 
   useEffect(() => {
     const c = new AbortController();
@@ -1396,6 +1399,22 @@ export function SettingsPanel() {
     return () => c.abort();
   }, []);
 
+  // Turning the no-egress toggle OFF (allowing egress) is a security downgrade — confirm first so it
+  // is never a one-click accident. Turning it back ON needs no confirmation. The change is staged in
+  // local state and persisted with the rest of the form on Save.
+  function toggleNoEgress(next: boolean) {
+    if (!ai) return;
+    if (!next) {
+      const ok = window.confirm(
+        "Allow remote models? Document content and chat context may be sent to external services " +
+          "such as OpenAI, leaving this host. You can turn this back on at any time.",
+      );
+      if (!ok) return;
+    }
+    setLockedError(null);
+    setAi({ ...ai, no_egress: next });
+  }
+
   function save() {
     if (!ai || !ocr) return;
     setSaving(true);
@@ -1403,14 +1422,17 @@ export function SettingsPanel() {
     setError(null);
     setEgressError(null);
     setViolations({});
+    setLockedError(null);
     // Persist AI + OCR together. The AI model applies immediately for chat/RAG; OCR parallelism is
     // live-reloaded by the worker within ~15s. Send the OpenAI key only if the user typed one.
+    // `no_egress` is sent only when the backend exposed it (omitted otherwise = leave unchanged).
     Promise.all([
       putAiSettings({
         pipeline: ai.pipeline,
         rag: ai.rag,
         embedding: ai.embedding,
         openai_api_key: openaiKey || null,
+        no_egress: ai.no_egress,
       }),
       putOcrSettings(ocr),
     ])
@@ -1429,6 +1451,10 @@ export function SettingsPanel() {
           const byPurpose: Partial<Record<AiPurpose, EgressViolation>> = {};
           for (const v of err.violations) byPurpose[v.purpose] = v;
           setViolations(byPurpose);
+        } else if (err instanceof NoEgressLockedError) {
+          // The host hard-locked the posture (the toggle should already be disabled; handle it
+          // defensively). Surface the server message at the form level without crashing.
+          setLockedError(err.message);
         } else {
           setError(err instanceof Error ? err.message : "could not save");
         }
@@ -1438,7 +1464,9 @@ export function SettingsPanel() {
 
   // The active no-egress policy gates the model pickers (greys out remote options) and, when a
   // persisted remote selection is loaded while the policy is on, blocks Save without rewriting it.
-  const noEgress = catalog?.no_egress ?? false;
+  // Driven by the editable AI posture (the toggle) so flipping it re-gates the pickers immediately
+  // and after Save; falls back to the catalog mirror for a pre-upgrade settings payload.
+  const noEgress = ai?.no_egress ?? catalog?.no_egress ?? false;
   const saveBlocked =
     !!catalog &&
     !!ai &&
@@ -1482,14 +1510,45 @@ export function SettingsPanel() {
           {/* Single source of truth for the host's data-egress posture. The wording (not just the
               colour) carries the state, so it stays legible without colour. */}
           {ai.no_egress !== undefined && (
-            <p
-              role="status"
-              className={`egress-posture ${
-                ai.no_egress ? "egress-posture-secure" : "egress-posture-open"
-              }`}
-            >
-              {ai.no_egress ? "Data stays on this host" : "Remote models permitted"}
-            </p>
+            <div className="egress-control">
+              <p
+                role="status"
+                className={`egress-posture ${
+                  ai.no_egress ? "egress-posture-secure" : "egress-posture-open"
+                }`}
+              >
+                {ai.no_egress ? "Data stays on this host" : "Remote models permitted"}
+              </p>
+              {/* User-configurable posture (formerly a host-only env switch). Disabled when an
+                  operator hard-locked it on the host — the reason rides in visible text + title +
+                  aria, never colour alone. */}
+              <label className="egress-toggle">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={ai.no_egress}
+                  disabled={!!ai.no_egress_locked}
+                  aria-describedby={ai.no_egress_locked ? "egress-lock-note" : undefined}
+                  title={
+                    ai.no_egress_locked
+                      ? "Enforced by the host (DOKTOK_NO_EGRESS_LOCK) — cannot be changed here"
+                      : undefined
+                  }
+                  onChange={(e) => toggleNoEgress(e.target.checked)}
+                />{" "}
+                <span>Keep data on this host (no-egress)</span>
+              </label>
+              {ai.no_egress_locked && (
+                <span id="egress-lock-note" className="muted egress-lock-note">
+                  Enforced by the host — cannot be changed here.
+                </span>
+              )}
+              {lockedError && (
+                <p role="alert" className="status-error egress-form-error">
+                  {lockedError}
+                </p>
+              )}
+            </div>
           )}
           {ai.egress_active && (
             <p className="status-error" role="status">

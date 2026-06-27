@@ -963,3 +963,79 @@ test("the posture badge reflects no_egress on and off", async () => {
     expect(screen.getByText("Remote models permitted")).toBeInTheDocument(),
   );
 });
+
+// ---- No-egress toggle (user-configurable posture) ----
+
+test("the no-egress toggle reflects the posture and is disabled when host-locked", async () => {
+  mockApi();
+  aiResponse = { ...AI, no_egress: true, no_egress_locked: true };
+  render(<SettingsPanel />);
+  const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
+  expect(toggle).toBeChecked();
+  expect(toggle).toBeDisabled();
+  // The reason is in visible text (not colour alone), with a matching aria-describedby/title.
+  expect(screen.getByText(/Enforced by the host/i)).toBeInTheDocument();
+});
+
+test("turning the no-egress toggle off confirms, then sends no_egress:false in the save PUT", async () => {
+  const calls = mockApi();
+  aiResponse = { ...AI, no_egress: true };
+  // Echo the PUT body so the saved posture round-trips back into the form.
+  aiPutResponder = (body) => new Response(body ?? "{}", { status: 200 });
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<SettingsPanel />);
+  const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
+  expect(toggle).toBeChecked();
+
+  // Turning OFF (allowing egress) must confirm first.
+  fireEvent.click(toggle);
+  expect(confirmSpy).toHaveBeenCalledTimes(1);
+  expect(toggle).not.toBeChecked();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => {
+    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
+    expect(put).toBeTruthy();
+    expect(JSON.parse(put!.body!).no_egress).toBe(false);
+  });
+});
+
+test("declining the confirm leaves the no-egress posture unchanged", async () => {
+  mockApi();
+  aiResponse = { ...AI, no_egress: true };
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+  render(<SettingsPanel />);
+  const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
+  fireEvent.click(toggle);
+  expect(confirmSpy).toHaveBeenCalledTimes(1);
+  // Cancelled: still on.
+  expect(toggle).toBeChecked();
+});
+
+test("a 422 no_egress_locked on save surfaces the message without throwing", async () => {
+  mockApi();
+  aiResponse = { ...AI, no_egress: true };
+  aiPutResponder = () =>
+    new Response(
+      JSON.stringify({
+        detail: {
+          code: "no_egress_locked",
+          message: "No-egress is enforced by the host and cannot be disabled from here.",
+        },
+      }),
+      { status: 422 },
+    );
+  render(<SettingsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  // The structured detail (no `violations`) must not throw: the form-level message renders.
+  await waitFor(() =>
+    expect(
+      screen.getByText(/enforced by the host and cannot be disabled from here/i),
+    ).toBeInTheDocument(),
+  );
+});

@@ -1025,6 +1025,16 @@ class PostgresKnowledgeGraphRepository:
     ) -> None:
         """Idempotently replace all edges contributed by this document."""
         with self._db.connection() as conn, conn.transaction():
+            # Edges that currently draw provenance from this document: they may lose evidence below
+            # (a removed/changed document), so they MUST be recomputed + considered for pruning even
+            # when they are not among the new edges/provenance - otherwise a now-orphaned edge keeps
+            # its stale evidence_count and is never pruned.
+            prior = conn.execute(
+                "SELECT DISTINCT edge_id FROM kg_edge_provenance "
+                "WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            ).fetchall()
+            prior_edge_ids = {row[0] for row in prior}
             # Step 1: remove old provenance for this document
             conn.execute(
                 "DELETE FROM kg_edge_provenance WHERE tenant_id=%s AND document_id=%s",
@@ -1062,8 +1072,11 @@ class PostgresKnowledgeGraphRepository:
                         prov.evidence,
                     ),
                 )
-            # Step 4: recompute evidence_count for all affected edges
-            edge_ids = list({e.id for e in edges} | {p.edge_id for p in provenance})
+            # Step 4: recompute evidence_count for all affected edges (new ones AND any that lost
+            # this document's provenance, so an emptied edge drops to 0 and is pruned in step 5)
+            edge_ids = list(
+                prior_edge_ids | {e.id for e in edges} | {p.edge_id for p in provenance}
+            )
             if edge_ids:
                 conn.execute(
                     "UPDATE kg_edges SET evidence_count = ("

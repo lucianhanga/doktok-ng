@@ -69,6 +69,14 @@ class InMemoryKnowledgeGraphRepository:
         edges: list[KgEdge],
         provenance: list[KgEdgeProvenance],
     ) -> None:
+        # Edges that currently draw provenance from this document - they may lose evidence below and
+        # must be recomputed + pruned even if absent from the new edges/provenance (parity with the
+        # Postgres repo; otherwise an orphaned edge keeps a stale evidence_count).
+        prior_edge_ids = {
+            p.edge_id
+            for p in self._provenance.values()
+            if p.tenant_id == tenant_id and p.document_id == document_id
+        }
         # Step 1: remove old provenance for this document
         self._provenance = {
             pid: p
@@ -82,8 +90,8 @@ class InMemoryKnowledgeGraphRepository:
         # Step 3: insert new provenance rows
         for prov in provenance:
             self._provenance[prov.id] = prov.model_copy(deep=True)
-        # Step 4: recompute evidence_count for all affected edges
-        all_edge_ids = {e.id for e in edges} | {p.edge_id for p in provenance}
+        # Step 4: recompute evidence_count for all affected edges (new + those that lost provenance)
+        all_edge_ids = prior_edge_ids | {e.id for e in edges} | {p.edge_id for p in provenance}
         for eid in all_edge_ids:
             count = sum(1 for p in self._provenance.values() if p.edge_id == eid)
             if eid in self._edges:

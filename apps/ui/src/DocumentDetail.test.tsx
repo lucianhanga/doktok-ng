@@ -8,10 +8,48 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Build a full DocumentRecordSummary with sane defaults so tests only spell out what they exercise.
+function summary(partial: Record<string, unknown> = {}) {
+  return {
+    total: 0,
+    by_currency: [],
+    by_type: [],
+    date_from: null,
+    date_to: null,
+    top_merchants: [],
+    confidence: { high: 0, medium: 0, low: 0, unscored: 0 },
+    low_confidence_count: 0,
+    ...partial,
+  };
+}
+
+// Build a full ExtractedRecord with defaults (confidence defaults to null = UNSCORED).
+function rec(partial: Record<string, unknown> = {}) {
+  return {
+    id: "r1",
+    tenant_id: "t1",
+    document_id: "d1",
+    record_type: "card_transaction",
+    source_page: 1,
+    raw_text: "",
+    occurred_on: "2026-01-01",
+    amount_minor: 1000,
+    currency: "EUR",
+    direction: "debit",
+    merchant_raw: null,
+    merchant_normalized: null,
+    description: null,
+    account_label: null,
+    confidence: null,
+    ...partial,
+  };
+}
+
 function mockDetail(
   features: unknown[] = [],
   docOverride: Record<string, unknown> = {},
   detailOverride: Record<string, unknown> = {},
+  recordsPage: Record<string, unknown> = { items: [], total: 0, next_offset: null },
 ) {
   const calls: { url: string; method: string }[] = [];
   const detail = {
@@ -26,7 +64,6 @@ function mockDetail(
       metadata: { page_count: 1 },
       ...docOverride,
     },
-    ...detailOverride,
     features,
     categories: [{ id: "c1", name: "Invoices" }],
     entities: {
@@ -46,6 +83,8 @@ function mockDetail(
         metadata: { summary: "Parsed plain text" },
       },
     ],
+    // Spread last so a test's detailOverride wins over the defaults (e.g. a custom `entities`).
+    ...detailOverride,
   };
   vi.stubGlobal(
     "fetch",
@@ -53,6 +92,8 @@ function mockDetail(
       const url = typeof input === "string" ? input : input.toString();
       calls.push({ url, method: init?.method ?? "GET" });
       if (url.endsWith("/detail")) return new Response(JSON.stringify(detail), { status: 200 });
+      if (url.includes("/records"))
+        return new Response(JSON.stringify(recordsPage), { status: 200 });
       if (url.endsWith("/retry"))
         return new Response(JSON.stringify({ status: "queued" }), { status: 200 });
       if (url.endsWith("/content"))
@@ -303,4 +344,126 @@ test("processing aside lists features and retries a failed one", async () => {
   await waitFor(() =>
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/entities/retry"))).toBe(true),
   );
+});
+
+// --- Records tab (document-understanding v1) ------------------------------------------------
+
+test("Records tab is absent when there are no records and present when records.total > 0", async () => {
+  mockDetail(); // no `records` key -> no tab
+  const { unmount } = render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /Records/ })).not.toBeInTheDocument();
+  unmount();
+
+  mockDetail([], {}, { records: summary({ total: 3 }) });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /Records \(3\)/ })).toBeInTheDocument();
+});
+
+test("totals card shows per-currency net + count and never sums across currencies", async () => {
+  mockDetail(
+    [],
+    {},
+    {
+      records: summary({
+        total: 16,
+        by_currency: [
+          { currency: "EUR", debit_minor: 15000, credit_minor: 3000, count: 12 },
+          { currency: "USD", debit_minor: 5000, credit_minor: 0, count: 4 },
+        ],
+      }),
+    },
+  );
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /Records \(16\)/ }));
+
+  // EUR net = 3000 - 15000 = -12000 -> -120.00 across 12 transactions.
+  await waitFor(() => expect(screen.getByText(/across 12 transactions/)).toBeInTheDocument());
+  expect(screen.getByText(/across 4 transactions/)).toBeInTheDocument();
+  // Both per-currency nets appear; a summed-across value (e.g. 170.00) must never appear.
+  expect(screen.getAllByText(/120\.00/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/50\.00/).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/170\.00/)).not.toBeInTheDocument();
+});
+
+test("confidence chip shows only for scored rows; low rows are flagged and the filter narrows to them", async () => {
+  mockDetail(
+    [],
+    {},
+    { records: summary({ total: 3, low_confidence_count: 1 }) },
+    {
+      items: [
+        rec({ id: "hi", merchant_normalized: "HighCo", confidence: 0.92 }),
+        rec({ id: "lo", merchant_normalized: "LowCo", confidence: 0.3 }),
+        rec({ id: "un", merchant_normalized: "UnscoredCo", confidence: null }),
+      ],
+      total: 3,
+      next_offset: null,
+    },
+  );
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /Records \(3\)/ }));
+
+  // The scored rows get word-led chips; the unscored row gets NO chip.
+  await waitFor(() => expect(screen.getByText("HighCo")).toBeInTheDocument());
+  expect(screen.getByText("High")).toBeInTheDocument();
+  expect(screen.getByText("Low · needs review")).toBeInTheDocument();
+  // The unscored row is present but carries no confidence chip (only High/Low chips exist).
+  expect(screen.getByText("UnscoredCo")).toBeInTheDocument();
+  expect(screen.queryByText("Medium")).not.toBeInTheDocument();
+
+  // The review filter narrows the loaded rows to just the low-confidence one.
+  await userEvent.click(screen.getByRole("button", { name: /Show low-confidence only/ }));
+  expect(screen.getByText("LowCo")).toBeInTheDocument();
+  expect(screen.queryByText("HighCo")).not.toBeInTheDocument();
+  expect(screen.queryByText("UnscoredCo")).not.toBeInTheDocument();
+});
+
+test("named entities and keywords render in distinct sections", async () => {
+  mockDetail(
+    [],
+    {},
+    {
+      entities: {
+        total: 2,
+        by_type: [
+          { entity_type: "PERSON", count: 1 },
+          { entity_type: "CUSTOM_TOKEN", count: 1 },
+        ],
+        top: [
+          { entity_type: "PERSON", normalized_value: "Ada Lovelace", frequency: 1 },
+          { entity_type: "CUSTOM_TOKEN", normalized_value: "invoice", frequency: 4 },
+        ],
+      },
+    },
+  );
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Entities \(2\)/ }));
+
+  expect(screen.getByRole("heading", { name: "Named entities" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Keywords" })).toBeInTheDocument();
+  expect(screen.getByText("Salient terms extracted from the text.")).toBeInTheDocument();
+  expect(screen.getByText("Ada Lovelace")).toBeInTheDocument(); // named entity
+  expect(screen.getByText("invoice")).toBeInTheDocument(); // keyword tag (plain language)
+  // The raw CUSTOM_TOKEN type label is not shown as a chip in the keywords section.
+  expect(screen.queryByText("CUSTOM_TOKEN")).not.toBeInTheDocument();
+});
+
+test("trust strip warns (amber) for an unidentifiable document", async () => {
+  mockDetail([], { unidentifiable: true });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  const strip = await screen.findByText(/could not confidently identify/i);
+  expect(strip).toHaveClass("trust-strip-warning"); // amber, not red
+});
+
+test("trust strip advises review when some transactions are low-confidence", async () => {
+  mockDetail([], {}, { records: summary({ total: 5, low_confidence_count: 2 }) });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  const strip = await screen.findByText(/2 transactions are low-confidence/i);
+  // Low-confidence-only is a calm advisory, not the amber unidentifiable treatment.
+  expect(strip).not.toHaveClass("trust-strip-warning");
 });

@@ -1,24 +1,38 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  confidenceLevel,
   documentFileUrl,
   documentThumbnailUrl,
   fetchDocumentContent,
   fetchDocumentDetail,
   fetchDocumentEntities,
+  fetchDocumentRecords,
   formatDuration,
+  formatMoneyMinor,
+  formatSignedMoneyMinor,
   formatTokens,
   reingestDocument,
   rotateDocument,
   retryDocumentFeature,
   type DocEntity,
   type DocumentDetailData,
+  type DocumentRecordSummary,
+  type ExtractedRecord,
   type ProcessingStep,
   type ProcessingTelemetry,
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
-type Tab = "content" | "entities" | "activity";
+type Tab = "content" | "entities" | "records" | "activity";
+
+// Named-entity types (PERSON/ORG/GPE/LOCATION/EMAIL/URL) get typed chips; CUSTOM_TOKEN is the
+// keyword/tag set. Anything that is NOT a keyword is treated as a named entity, so an unexpected new
+// type is surfaced rather than silently dropped.
+const KEYWORD_TYPE = "CUSTOM_TOKEN";
+
+// How many records to pull per page from the lazy records endpoint.
+const RECORDS_PAGE_SIZE = 50;
 
 const FEATURE_LABELS: Record<string, string> = {
   extract: "Text",
@@ -314,6 +328,299 @@ function DocumentThumbnail({ id, title }: { id: string; title: string }) {
   );
 }
 
+/** Confidence is shown as a WORD, never the raw decimal as truth. An UNSCORED row (confidence null)
+ * shows NO chip at all - that is the honest state for today's never-scored rows. The numeric score
+ * appears only as a secondary `title` tooltip. Low leads a "needs review" treatment. */
+function ConfidenceChip({ confidence }: { confidence: number | null }) {
+  const level = confidenceLevel(confidence);
+  if (level === null) return null; // unscored -> no chip (correct/honest)
+  const score = confidence != null ? `${Math.round(confidence * 100)}%` : "";
+  const title = score ? `Confidence score ${score}` : undefined;
+  if (level === "high") {
+    return (
+      <span className="conf-chip conf-high" title={title}>
+        High
+      </span>
+    );
+  }
+  if (level === "medium") {
+    return (
+      <span className="conf-chip conf-medium" title={title}>
+        Medium
+      </span>
+    );
+  }
+  return (
+    <span className="conf-chip conf-low" title={title}>
+      Low · needs review
+    </span>
+  );
+}
+
+/** Amount cell: signed + coloured by direction, with the +/- sign AND a debit/credit word so colour
+ * is never the only channel. A null-direction row shows the bare amount; a null amount shows nothing. */
+function RecordAmount({ record }: { record: ExtractedRecord }) {
+  if (record.amount_minor == null) {
+    return <span className="muted">—</span>;
+  }
+  const { amount_minor, currency, direction } = record;
+  if (direction === "credit") {
+    return (
+      <span className="rec-amount rec-credit">
+        {formatSignedMoneyMinor(amount_minor, currency)} <span className="rec-dir">credit</span>
+      </span>
+    );
+  }
+  if (direction === "debit") {
+    return (
+      <span className="rec-amount rec-debit">
+        {formatSignedMoneyMinor(-amount_minor, currency)} <span className="rec-dir">debit</span>
+      </span>
+    );
+  }
+  return <span className="rec-amount">{formatMoneyMinor(amount_minor, currency)}</span>;
+}
+
+/** Per-currency totals card: the friendly "Net {amount} across {count} transactions" framing plus a
+ * Spend / Refunds breakdown. Always per-currency - money is never summed across currencies. */
+function RecordTotals({ summary }: { summary: DocumentRecordSummary }) {
+  if (summary.by_currency.length === 0) return null;
+  return (
+    <div className="rec-totals-card">
+      <h4>Totals</h4>
+      <ul className="rec-totals-list">
+        {summary.by_currency.map((c) => {
+          const net = c.credit_minor - c.debit_minor;
+          return (
+            <li key={c.currency ?? "—"}>
+              <p className="rec-net">
+                Net{" "}
+                <strong className={net < 0 ? "rec-debit" : "rec-credit"}>
+                  {formatSignedMoneyMinor(net, c.currency)}
+                </strong>{" "}
+                across {c.count.toLocaleString()} transaction{c.count === 1 ? "" : "s"}
+                {c.currency ? ` (${c.currency})` : ""}
+              </p>
+              <p className="rec-breakdown muted">
+                Spend {formatMoneyMinor(c.debit_minor, c.currency)} · Refunds / Payments{" "}
+                {formatMoneyMinor(c.credit_minor, c.currency)}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/** The lazy Records tab: a per-currency totals card, a low-confidence filter (only when some rows
+ * need review), and an offset-paginated table (cards on mobile via CSS). Records are fetched on
+ * demand; the eager `summary` (from the detail payload) drives the totals + the review count. */
+function RecordsTab({ id, summary }: { id: string; summary: DocumentRecordSummary }) {
+  const [rows, setRows] = useState<ExtractedRecord[]>([]);
+  const [nextOffset, setNextOffset] = useState<number | null>(0);
+  const [state, setState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [lowOnly, setLowOnly] = useState(false);
+
+  const loadPage = useCallback(
+    (offset: number) => {
+      setState("loading");
+      fetchDocumentRecords(id, { limit: RECORDS_PAGE_SIZE, offset })
+        .then((page) => {
+          setRows((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
+          setNextOffset(page.next_offset);
+          setState("ok");
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : "unknown error");
+          setState("error");
+        });
+    },
+    [id],
+  );
+
+  // Load the first page once, when the tab mounts.
+  useEffect(() => {
+    loadPage(0);
+  }, [loadPage]);
+
+  const hasReview = summary.low_confidence_count > 0;
+  const visible = lowOnly
+    ? rows.filter((r) => confidenceLevel(r.confidence) === "low")
+    : rows;
+
+  return (
+    <div className="doc-section rec-section">
+      <RecordTotals summary={summary} />
+
+      {hasReview && (
+        <div className="rec-controls">
+          <button
+            type="button"
+            className={lowOnly ? "active" : ""}
+            aria-pressed={lowOnly}
+            onClick={() => setLowOnly((v) => !v)}
+          >
+            Show low-confidence only
+          </button>
+          <span className="rec-review-count muted">
+            {summary.low_confidence_count.toLocaleString()} need review
+          </span>
+        </div>
+      )}
+
+      {state === "error" && (
+        <p role="alert" className="status-error">
+          Could not load transactions: {error}
+        </p>
+      )}
+      {state === "loading" && rows.length === 0 && <p role="status">Loading transactions…</p>}
+      {state === "ok" && visible.length === 0 && (
+        <p className="empty">
+          {lowOnly ? "No low-confidence transactions in the loaded rows." : "No transactions."}
+        </p>
+      )}
+
+      {visible.length > 0 && (
+        <table className="rec-table">
+          <caption className="sr-only">
+            Extracted transactions. Totals are summarised per currency in the table footer.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Merchant</th>
+              <th scope="col">Description</th>
+              <th scope="col" className="rec-num">
+                Amount
+              </th>
+              <th scope="col">Confidence</th>
+              <th scope="col" className="rec-num">
+                Page
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((r) => {
+              const low = confidenceLevel(r.confidence) === "low";
+              const merchant = r.merchant_normalized ?? r.merchant_raw;
+              return (
+                <tr key={r.id} className={low ? "rec-row-low" : undefined}>
+                  <td data-label="Date">
+                    {r.occurred_on ? (
+                      <time dateTime={r.occurred_on}>{r.occurred_on}</time>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  <td data-label="Merchant">{merchant ?? <span className="muted">—</span>}</td>
+                  <td data-label="Description">
+                    {r.description ?? <span className="muted">—</span>}
+                  </td>
+                  <td data-label="Amount" className="rec-num">
+                    <RecordAmount record={r} />
+                  </td>
+                  <td data-label="Confidence">
+                    <ConfidenceChip confidence={r.confidence} />
+                  </td>
+                  <td data-label="Page" className="rec-num">
+                    {r.source_page != null ? r.source_page.toLocaleString() : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          {summary.by_currency.length > 0 && (
+            <tfoot>
+              {summary.by_currency.map((c) => {
+                const net = c.credit_minor - c.debit_minor;
+                return (
+                  <tr key={c.currency ?? "—"}>
+                    <th scope="row" colSpan={3}>
+                      Net · {c.currency ?? "Unknown"} ({c.count.toLocaleString()} txn
+                      {c.count === 1 ? "" : "s"})
+                    </th>
+                    <td
+                      className={`rec-num rec-amount ${net < 0 ? "rec-debit" : "rec-credit"}`}
+                      colSpan={3}
+                    >
+                      {formatSignedMoneyMinor(net, c.currency)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tfoot>
+          )}
+        </table>
+      )}
+
+      {!lowOnly && nextOffset != null && (
+        <button type="button" onClick={() => loadPage(nextOffset)} disabled={state === "loading"}>
+          {state === "loading" ? "Loading…" : "Load more transactions"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Split the entity area into typed Named entities (PERSON/ORG/GPE/LOCATION/EMAIL/URL) and a separate
+ * neutral, frequency-weighted Keywords (CUSTOM_TOKEN) tag set. The type label text is always present
+ * so colour is never the only channel. */
+function EntitiesSplit({
+  byType,
+  entities,
+}: {
+  byType: { entity_type: string; count: number }[];
+  entities: DocEntity[];
+}) {
+  const namedTypeCounts = byType.filter((b) => b.entity_type !== KEYWORD_TYPE);
+  const named = entities.filter((e) => e.entity_type !== KEYWORD_TYPE);
+  const keywords = entities.filter((e) => e.entity_type === KEYWORD_TYPE);
+  return (
+    <>
+      {named.length > 0 && (
+        <section className="entity-group">
+          <h4>Named entities</h4>
+          {namedTypeCounts.length > 0 && (
+            <p className="entity-types muted">
+              {namedTypeCounts.map((b) => (
+                <span key={b.entity_type} className="chip">
+                  {b.entity_type} {b.count.toLocaleString()}
+                </span>
+              ))}
+            </p>
+          )}
+          <ul className="entity-chips">
+            {named.map((e, i) => (
+              <li key={`${e.entity_type}:${e.normalized_value}:${i}`}>
+                <span className="badge">{e.entity_type}</span> {e.normalized_value}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {keywords.length > 0 && (
+        <section className="entity-group">
+          <h4>Keywords</h4>
+          <p className="muted help-text">Salient terms extracted from the text.</p>
+          <ul className="keyword-tags">
+            {keywords.map((e, i) => (
+              <li key={`kw:${e.normalized_value}:${i}`}>
+                <span className="tag">{e.normalized_value}</span>
+                {e.frequency > 1 && (
+                  <span className="tag-count muted"> ×{e.frequency.toLocaleString()}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
+  );
+}
+
 export function DocumentDetail({
   id,
   onClose,
@@ -350,6 +657,13 @@ export function DocumentDetail({
     load(c.signal);
     return () => c.abort();
   }, [load]);
+
+  // The Records tab only exists when the loaded document has records; if it does not (e.g. after
+  // navigating to a record-less document while the tab was open), fall back to Content.
+  const recordsTotal = data?.records?.total ?? 0;
+  useEffect(() => {
+    if (tab === "records" && data && recordsTotal === 0) setTab("content");
+  }, [tab, data, recordsTotal]);
 
   function retry(feature: string) {
     retryDocumentFeature(id, feature)
@@ -395,6 +709,55 @@ export function DocumentDetail({
 
   const doc = data?.document ?? null;
   const title = doc?.title ?? doc?.original_filename ?? id.slice(0, 8);
+
+  // Structured-records rollup is eager on the detail payload; optional for pre-records backends, so
+  // a missing/empty summary means "no Records tab" rather than a crash.
+  const records = data?.records;
+  const hasRecords = (records?.total ?? 0) > 0;
+  const lowConfidenceCount = records?.low_confidence_count ?? 0;
+
+  // Consolidated trust strip: ONE calm line. Unidentifiable is amber (a warning, not an error);
+  // low-confidence is an advisory to review totals. Both -> joined with " · ".
+  const trustMessages: string[] = [];
+  if (doc?.unidentifiable === true) {
+    trustMessages.push("DokTok could not confidently identify this document.");
+  }
+  if (lowConfidenceCount > 0) {
+    trustMessages.push(
+      lowConfidenceCount === 1
+        ? "1 transaction is low-confidence — review before trusting these totals."
+        : `${lowConfidenceCount.toLocaleString()} transactions are low-confidence — review before trusting these totals.`,
+    );
+  }
+
+  // Fact ribbon chips for the hero band: a quick-glance line of category / date / location /
+  // entities / per-currency financial net / pages. Each is only added when known.
+  const pageCount = data?.processing?.page_count ?? (doc?.metadata?.page_count as number | undefined);
+  const factChips: { key: string; label: string }[] = [];
+  for (const c of data?.categories ?? []) {
+    factChips.push({ key: `cat:${c.id}`, label: c.name });
+  }
+  if (doc?.document_date) factChips.push({ key: "date", label: `Dated ${doc.document_date}` });
+  if (doc?.location) factChips.push({ key: "loc", label: doc.location });
+  if (data && data.entities.total > 0) {
+    factChips.push({
+      key: "entities",
+      label: `${data.entities.total.toLocaleString()} entit${data.entities.total === 1 ? "y" : "ies"}`,
+    });
+  }
+  for (const cur of records?.by_currency ?? []) {
+    const net = cur.credit_minor - cur.debit_minor;
+    factChips.push({
+      key: `cur:${cur.currency ?? "—"}`,
+      label: `Net ${formatSignedMoneyMinor(net, cur.currency)} · ${cur.count.toLocaleString()} txn${cur.count === 1 ? "" : "s"}`,
+    });
+  }
+  if (typeof pageCount === "number" && pageCount > 0) {
+    factChips.push({
+      key: "pages",
+      label: `${pageCount.toLocaleString()} page${pageCount === 1 ? "" : "s"}`,
+    });
+  }
 
   return (
     <section aria-label="Document detail" className="panel doc-card">
@@ -472,11 +835,32 @@ export function DocumentDetail({
       {data && doc && (
         <div className="doc-card-body">
           <div className="doc-card-main">
-            <section className="doc-overview">
+            <section className="doc-overview doc-hero" aria-label="Document understanding">
               <DocumentThumbnail id={id} title={title} />
               <div className="doc-overview-text">
-                <h3>Summary</h3>
-                {doc.summary ? <p>{doc.summary}</p> : <p className="muted">No summary yet.</p>}
+                {doc.summary ? (
+                  <p className="doc-hero-summary">{doc.summary}</p>
+                ) : (
+                  <p className="muted">No summary yet.</p>
+                )}
+                {factChips.length > 0 && (
+                  <ul className="fact-ribbon" aria-label="Key facts">
+                    {factChips.map((f) => (
+                      <li key={f.key} className="chip">
+                        {f.label}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {trustMessages.length > 0 && (
+                  <p
+                    role="status"
+                    aria-live="polite"
+                    className={`trust-strip${doc.unidentifiable === true ? " trust-strip-warning" : ""}`}
+                  >
+                    {trustMessages.join(" · ")}
+                  </p>
+                )}
               </div>
             </section>
 
@@ -497,6 +881,16 @@ export function DocumentDetail({
               >
                 Entities ({data.entities.total})
               </button>
+              {hasRecords && records && (
+                <button
+                  type="button"
+                  className={tab === "records" ? "active" : ""}
+                  aria-pressed={tab === "records"}
+                  onClick={() => setTab("records")}
+                >
+                  Records ({records.total.toLocaleString()})
+                </button>
+              )}
               <button
                 type="button"
                 className={tab === "activity" ? "active" : ""}
@@ -532,20 +926,10 @@ export function DocumentDetail({
                   <p className="empty">No entities extracted.</p>
                 ) : (
                   <>
-                    <p className="entity-types muted">
-                      {data.entities.by_type.map((b) => (
-                        <span key={b.entity_type} className="chip">
-                          {b.entity_type} {b.count}
-                        </span>
-                      ))}
-                    </p>
-                    <ul className="entity-chips">
-                      {(fullEntities ?? data.entities.top).map((e, i) => (
-                        <li key={`${e.entity_type}:${e.normalized_value}:${i}`}>
-                          <span className="badge">{e.entity_type}</span> {e.normalized_value}
-                        </li>
-                      ))}
-                    </ul>
+                    <EntitiesSplit
+                      byType={data.entities.by_type}
+                      entities={fullEntities ?? data.entities.top}
+                    />
                     {fullEntities === null && data.entities.total > data.entities.top.length && (
                       <button type="button" onClick={showAllEntities}>
                         Show all {data.entities.total} entities
@@ -554,6 +938,10 @@ export function DocumentDetail({
                   </>
                 )}
               </div>
+            )}
+
+            {tab === "records" && records && (
+              <RecordsTab id={id} summary={records} />
             )}
 
             {tab === "activity" && (
@@ -607,18 +995,8 @@ export function DocumentDetail({
               </div>
             </dl>
 
-            {data.categories.length > 0 && (
-              <section className="doc-aside-section">
-                <h3>Categories</h3>
-                <span className="feature-chips">
-                  {data.categories.map((c) => (
-                    <span key={c.id} className="chip" title={c.name}>
-                      {c.name}
-                    </span>
-                  ))}
-                </span>
-              </section>
-            )}
+            {/* Categories now lead the hero fact ribbon (top of the view), so the aside no longer
+                repeats them. */}
 
             <section className="doc-aside-section">
               <h3>Processing</h3>

@@ -3156,3 +3156,239 @@ tr.row-selected {
 .datatable-row-highlight > td {
   background: var(--selected-fill, rgba(110, 168, 254, 0.15));
 }
+
+/* --- Document understanding detail view (v1) ----------------------------------------------- */
+
+/* Visually hidden but available to assistive tech (table captions, etc.). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Hero "understanding" band: thumbnail + the LLM summary as the lead. */
+.doc-hero-summary {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.5;
+}
+
+/* Fact ribbon: a wrap of calm, neutral chips under the summary. */
+.fact-ribbon {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.fact-ribbon .chip {
+  font-size: 0.8rem;
+}
+
+/* Consolidated trust strip: ONE calm advisory line. Amber (warning) for an unidentifiable doc -
+ * never red. The low-confidence-only variant stays neutral/muted. */
+.trust-strip {
+  margin: 0.7rem 0 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: rgba(127, 127, 127, 0.12);
+  border-left: 3px solid rgba(127, 127, 127, 0.5);
+}
+.trust-strip-warning {
+  background: rgba(214, 167, 0, 0.12);
+  border-left-color: var(--warning);
+}
+
+/* Records tab. */
+.rec-section {
+  display: grid;
+  gap: 1rem;
+}
+.rec-totals-card h4,
+.entity-group h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+}
+.rec-totals-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+.rec-totals-list li {
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+}
+.rec-net {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.rec-breakdown {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+}
+
+.rec-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.rec-controls button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.rec-review-count {
+  font-size: 0.85rem;
+}
+
+.rec-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.rec-table caption {
+  text-align: left;
+}
+.rec-table th,
+.rec-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+  text-align: left;
+  vertical-align: top;
+}
+.rec-table thead th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.7;
+}
+.rec-table .rec-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rec-table tfoot th,
+.rec-table tfoot td {
+  border-top: 2px solid rgba(127, 127, 127, 0.35);
+  border-bottom: none;
+  font-weight: 600;
+}
+/* A low-confidence row gets a red left border AND the "needs review" chip - colour is never alone. */
+.rec-row-low > td:first-child {
+  border-left: 3px solid var(--danger);
+}
+
+.rec-amount {
+  font-variant-numeric: tabular-nums;
+}
+.rec-credit {
+  color: var(--success);
+}
+.rec-debit {
+  color: var(--danger);
+}
+/* The direction word rides alongside the sign + colour so the channel is also textual. */
+.rec-dir {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.75;
+}
+
+/* Confidence chip: leads with the WORD; the numeric score lives only in the title tooltip. */
+.conf-chip {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  background: rgba(127, 127, 127, 0.18);
+}
+.conf-high {
+  background: rgba(46, 160, 67, 0.2);
+}
+.conf-medium {
+  background: rgba(214, 167, 0, 0.2);
+}
+.conf-low {
+  background: rgba(182, 2, 5, 0.2);
+}
+
+/* Records table collapses to stacked cards on narrow viewports (data-label drives the row labels). */
+@media (max-width: 640px) {
+  .rec-table,
+  .rec-table tbody,
+  .rec-table tr,
+  .rec-table td {
+    display: block;
+    width: 100%;
+  }
+  .rec-table thead,
+  .rec-table tfoot {
+    display: none;
+  }
+  .rec-table tr {
+    border: 1px solid rgba(127, 127, 127, 0.22);
+    border-radius: 8px;
+    margin-bottom: 0.6rem;
+    padding: 0.3rem 0.5rem;
+  }
+  .rec-table td {
+    border-bottom: none;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    text-align: right;
+  }
+  .rec-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    opacity: 0.7;
+    text-align: left;
+  }
+  .rec-table .rec-num {
+    text-align: right;
+  }
+}
+
+/* Named-entities vs keywords split. */
+.entity-group {
+  margin-bottom: 1rem;
+}
+.help-text {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+}
+.keyword-tags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.keyword-tags li {
+  display: inline-flex;
+  align-items: baseline;
+}
+.keyword-tags .tag {
+  padding: 0.1rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  background: rgba(127, 127, 127, 0.14);
+  border: 1px solid rgba(127, 127, 127, 0.22);
+}
+.keyword-tags .tag-count {
+  font-size: 0.72rem;
+  margin-left: 0.2rem;
+}

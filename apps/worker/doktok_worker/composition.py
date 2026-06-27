@@ -33,7 +33,12 @@ from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.extract_stage import ExtractStage
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
-from doktok_core.security.egress import openai_egress_allowed
+from doktok_core.security.egress import (
+    EgressBlocked,
+    openai_egress_allowed,
+    purpose_requires_egress,
+    url_requires_egress,
+)
 from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_core.settings.bootstrap import seed_ai_settings
 from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
@@ -278,13 +283,30 @@ def build_services(
         use_openai = pl.provider == "openai" and openai_egress_allowed(
             key=key, no_egress=settings.no_egress
         )
-        embedding = OllamaEmbeddingProvider(
-            settings.embedding_model,
-            emb_url,
-            timeout=timeout,
-            keep_alive=settings.embedding_keep_alive,
-            num_ctx=settings.embedding_num_ctx,
+        # Defense-in-depth (the PUT boundary already rejects these, but no_egress can be flipped on
+        # AFTER a remote config was saved): if a purpose's destination is off-host while no-egress
+        # is on, refuse to build the egressing client. Fail loud - never silently substitute or
+        # egress to a remote URL anyway. The reconciler marks the affected features FAILED with the
+        # message, so it surfaces in the activity log instead of a cryptic Connection refused.
+        default_url = settings.ollama_base_url
+        pipeline_egress_blocked = settings.no_egress and purpose_requires_egress(
+            pl.provider, pl.ollama_base_url, default_url=default_url
         )
+        embedding_egress_blocked = settings.no_egress and url_requires_egress(
+            ai.embedding.ollama_base_url, default_url=default_url
+        )
+        embedding: EmbeddingProvider
+        if embedding_egress_blocked:
+            logger.error("embedding URL is off-host but DOKTOK_NO_EGRESS is on; embedding blocked")
+            embedding = EgressBlocked("Embedding")
+        else:
+            embedding = OllamaEmbeddingProvider(
+                settings.embedding_model,
+                emb_url,
+                timeout=timeout,
+                keep_alive=settings.embedding_keep_alive,
+                num_ctx=settings.embedding_num_ctx,
+            )
         # The OCR-quality judge runs inside the ingestion pipeline, so it follows the SAME Data
         # Pipeline provider+model as the extractors below - never a separate hardcoded model. A
         # local pipeline keeps one model resident; an OpenAI pipeline sends the judge's tiny A/B
@@ -294,7 +316,18 @@ def build_services(
         category_classifier: CategoryClassifier
         record_extractor: RecordExtractor
         ner_extractor: EntityNerExtractor
-        if use_openai:
+        if pipeline_egress_blocked:
+            logger.error(
+                "Data pipeline destination is off-host but DOKTOK_NO_EGRESS is on; enrichment + "
+                "the OCR judge are blocked until Settings > AI is fixed or egress is enabled"
+            )
+            blocked = EgressBlocked("Data pipeline")
+            judge = blocked
+            metadata_extractor = blocked
+            category_classifier = blocked
+            record_extractor = blocked
+            ner_extractor = blocked
+        elif use_openai:
             logger.info("pipeline extraction via OpenAI %s (egress per AI settings)", pl.model)
             effort = openai_reasoning_effort(pl.reasoning, pl.model)
             judge = OpenAiChatModelProvider(pl.model, key, timeout=timeout, reasoning_effort=effort)

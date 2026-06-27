@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 from doktok_core.security.egress import (
+    EgressBlocked,
+    EgressBlockedError,
     is_loopback_url,
     purpose_requires_egress,
     url_requires_egress,
@@ -41,3 +43,17 @@ def test_purpose_requires_egress() -> None:
     assert purpose_requires_egress("ollama", "http://127.0.0.1:11434", default_url=DEFAULT) is False
     # A remote Ollama URL does - this is the vector the old OpenAI-only check missed.
     assert purpose_requires_egress("ollama", "http://10.0.0.28:11434", default_url=DEFAULT) is True
+
+
+def test_egress_blocked_fails_loud_on_every_method() -> None:
+    blocked = EgressBlocked("Data pipeline")
+    assert "DOKTOK_NO_EGRESS" in blocked.message
+    # Every provider surface raises rather than silently doing nothing or substituting.
+    for call in (
+        lambda: blocked.extract("x"),
+        lambda: blocked.classify("x", []),
+        lambda: blocked.complete("x"),
+        lambda: blocked.embed(["x"]),
+    ):
+        with pytest.raises(EgressBlockedError):
+            call()

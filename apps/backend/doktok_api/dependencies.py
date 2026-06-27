@@ -32,7 +32,11 @@ from doktok_contracts.ports import (
 )
 from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_tenant
-from doktok_core.security.egress import openai_egress_allowed
+from doktok_core.security.egress import (
+    EgressBlocked,
+    openai_egress_allowed,
+    purpose_requires_egress,
+)
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
@@ -191,6 +195,14 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
     openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     use_openai = openai_egress_allowed(key=openai_key, no_egress=settings.no_egress)
     model_provider: ChatModelProvider
+    # Defense-in-depth: if the RAG destination is off-host while no-egress is on (OpenAI, or a
+    # remote Ollama URL - which the OpenAI-only check missed), refuse to build it. The chat call
+    # then errors loudly instead of silently answering on a substituted model or egressing.
+    if settings.no_egress and purpose_requires_egress(
+        rag.provider, rag.ollama_base_url, default_url=settings.ollama_base_url
+    ):
+        logger.error("RAG destination is off-host but DOKTOK_NO_EGRESS is on; chat blocked")
+        return EgressBlocked("Document interrogation")
     if rag.provider == "openai" and use_openai:
         from doktok_provider_openai import OpenAiChatModelProvider
 

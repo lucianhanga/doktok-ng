@@ -416,6 +416,99 @@ export interface ProcessingTelemetry {
   total_tokens: number;
 }
 
+/** A structured line item extracted from a document (the lazy Records tab). Mirrors the Python
+ * `ExtractedRecord`. `confidence` is NULLABLE: null = UNSCORED (no model has scored this row), which
+ * is the honest default today - the UI must show NO confidence chip for those rows (a 1.0 default
+ * would dishonestly read as "100% confident"). `amount_minor` is integer minor units (cents). */
+export interface ExtractedRecord {
+  id: string;
+  tenant_id: string;
+  document_id: string;
+  record_type: string;
+  source_page: number | null;
+  raw_text: string;
+  occurred_on: string | null;
+  amount_minor: number | null;
+  currency: string | null;
+  direction: "debit" | "credit" | null;
+  merchant_raw: string | null;
+  merchant_normalized: string | null;
+  description: string | null;
+  account_label: string | null;
+  confidence: number | null;
+}
+
+/** A per-currency money rollup for one document's structured records. Money is NEVER summed across
+ * currencies. Rows with a null direction count toward `count` but neither total. */
+export interface RecordCurrencyRollup {
+  currency: string | null;
+  debit_minor: number; // spend
+  credit_minor: number; // refunds / payments
+  count: number;
+}
+
+/** A top merchant for one document, ranked by occurrence count. `total_minor` is a per-currency hint. */
+export interface MerchantRollup {
+  merchant: string;
+  count: number;
+  total_minor: number;
+  currency: string | null;
+}
+
+export interface RecordTypeCount {
+  record_type: string;
+  count: number;
+}
+
+/** Extraction-confidence distribution. Only rows with a non-null confidence are bucketed; null
+ * (never scored) rows are counted as `unscored`. Today nothing scores, so summaries are honestly
+ * almost entirely `unscored`. */
+export interface ConfidenceBuckets {
+  high: number; // confidence >= CONFIDENCE_HIGH
+  medium: number; // CONFIDENCE_MEDIUM <= confidence < CONFIDENCE_HIGH
+  low: number; // confidence < CONFIDENCE_MEDIUM
+  unscored: number; // confidence IS null
+}
+
+/** Compact structured-records rollup eager on the document detail card; the full row list is fetched
+ * on demand via `fetchDocumentRecords`. All money rollups are per-currency - never summed across. */
+export interface DocumentRecordSummary {
+  total: number;
+  by_currency: RecordCurrencyRollup[];
+  by_type: RecordTypeCount[];
+  date_from: string | null;
+  date_to: string | null;
+  top_merchants: MerchantRollup[];
+  confidence: ConfidenceBuckets;
+  // == confidence.low; surfaced flat for the trust strip (rows scored below CONFIDENCE_MEDIUM).
+  low_confidence_count: number;
+}
+
+/** A page of a document's structured records (the lazy Records tab). Offset-paginated;
+ * `next_offset` is null on the last page. */
+export interface DocumentRecordPage {
+  items: ExtractedRecord[];
+  total: number;
+  next_offset: number | null;
+}
+
+// Confidence-bucket thresholds, mirrored from contracts/doktok_contracts/schemas.py so the UI buckets
+// rows the same way the backend summary does. high >= HIGH; MEDIUM <= medium < HIGH; low < MEDIUM.
+export const CONFIDENCE_HIGH = 0.8;
+export const CONFIDENCE_MEDIUM = 0.5;
+
+export type ConfidenceLevel = "high" | "medium" | "low";
+
+/** Bucket a record's confidence by the shared thresholds. Returns null for an UNSCORED (null) row so
+ * the UI renders NO chip - the score is genuinely absent, not "low". The raw decimal must never be
+ * presented as the headline claim; lead with the bucket word, keep the number for a tooltip only. */
+export function confidenceLevel(confidence: number | null): ConfidenceLevel | null {
+  if (confidence == null) return null;
+  if (confidence >= CONFIDENCE_HIGH) return "high";
+  if (confidence >= CONFIDENCE_MEDIUM) return "medium";
+  return "low";
+}
+
 export interface DocumentDetailData {
   document: DokDocument;
   // Optional for resilience: a backend that has not been upgraded omits it, and the card degrades.
@@ -425,6 +518,9 @@ export interface DocumentDetailData {
   entities: DocEntitySummary;
   content: { length: number; excerpt: string };
   recent_activity: AuditEvent[];
+  // Structured-records rollup (additive; optional so a pre-records payload degrades to "no Records
+  // tab" rather than a crash). Default-empty for record-less documents.
+  records?: DocumentRecordSummary;
 }
 
 /** Format a millisecond duration compactly: <1s -> "NNNms", <60s -> "N.Ns", >=60s -> "Nm Ns".
@@ -489,6 +585,21 @@ export function fetchDocumentDetail(
   signal?: AbortSignal,
 ): Promise<DocumentDetailData> {
   return getJson<DocumentDetailData>(`/api/v1/documents/${encodeURIComponent(id)}/detail`, signal);
+}
+
+/** A page of a document's structured records (the lazy Records tab), offset-paginated. */
+export function fetchDocumentRecords(
+  id: string,
+  opts: { limit: number; offset: number },
+  signal?: AbortSignal,
+): Promise<DocumentRecordPage> {
+  const params = new URLSearchParams();
+  params.set("limit", String(opts.limit));
+  params.set("offset", String(opts.offset));
+  return getJson<DocumentRecordPage>(
+    `/api/v1/documents/${encodeURIComponent(id)}/records?${params.toString()}`,
+    signal,
+  );
 }
 
 /** Feature rows for the list badges, grouped by document_id. Scope to the documents on screen via
@@ -1568,6 +1679,16 @@ export async function aggregate(
     throw friendlyHttpError(response.status);
   }
   return (await response.json()) as AggregationResult;
+}
+
+/** Format signed minor units with an EXPLICIT leading +/- sign, e.g. credit +€12.42 / debit -€12.42.
+ * The sign is always shown so direction is never conveyed by colour alone (accessibility). Zero is
+ * rendered without a sign. */
+export function formatSignedMoneyMinor(amountMinor: number, currency: string | null): string {
+  const magnitude = formatMoneyMinor(Math.abs(amountMinor), currency);
+  if (amountMinor > 0) return `+${magnitude}`;
+  if (amountMinor < 0) return `-${magnitude}`;
+  return magnitude;
 }
 
 /** Format integer minor units (e.g. cents) as a currency string, e.g. 1242022 EUR -> "12,420.22 EUR". */

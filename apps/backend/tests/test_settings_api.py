@@ -19,17 +19,25 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
-def _client_with_audit(*, no_egress: bool = True) -> tuple[TestClient, InMemoryAuditLogRepository]:
+def _client_with_audit(
+    *, no_egress: bool = True, no_egress_lock: bool = False
+) -> tuple[TestClient, InMemoryAuditLogRepository]:
     registry = build_registry()
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
     audit = InMemoryAuditLogRepository()
     registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
-    settings = Settings(env="test", tenant_tokens=TOKENS, no_egress=no_egress, _env_file=None)  # type: ignore[call-arg]
+    settings = Settings(  # type: ignore[call-arg]
+        env="test",
+        tenant_tokens=TOKENS,
+        no_egress=no_egress,
+        no_egress_lock=no_egress_lock,
+        _env_file=None,
+    )
     return TestClient(create_app(settings=settings, registry=registry)), audit
 
 
-def _client(*, no_egress: bool = True) -> TestClient:
-    return _client_with_audit(no_egress=no_egress)[0]
+def _client(*, no_egress: bool = True, no_egress_lock: bool = False) -> TestClient:
+    return _client_with_audit(no_egress=no_egress, no_egress_lock=no_egress_lock)[0]
 
 
 AUTH = {"Authorization": "Bearer tok-a"}
@@ -461,3 +469,39 @@ def test_enabling_openai_egress_is_audited() -> None:
     )
     assert resp.status_code == 200 and resp.json()["egress_active"] is True
     assert "egress.enabled" in [e.event_type for e in audit.list_events("tenant-a")]
+
+
+def test_no_egress_toggle_persists_and_unblocks_openai_in_same_save() -> None:
+    client = _client(no_egress=True)
+    # Turn no-egress OFF and pick OpenAI in one save: validated against the NEW posture, so allowed.
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json=_ai_body(
+            {"provider": "openai", "model": "gpt-4o-mini", "num_ctx": 8192, "reasoning": "off"},
+            no_egress=False,
+            openai_api_key="sk-test",  # pragma: allowlist secret
+        ),
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["no_egress"] is False and body["no_egress_locked"] is False
+    # Persisted (the in-app toggle, not the env default).
+    assert client.get("/api/v1/settings/ai", headers=AUTH).json()["no_egress"] is False
+
+
+def test_host_lock_forces_no_egress_and_rejects_disable() -> None:
+    client = _client(no_egress=True, no_egress_lock=True)
+    body = client.get("/api/v1/settings/ai", headers=AUTH).json()
+    assert body["no_egress"] is True and body["no_egress_locked"] is True
+    # Turning it off from the UI is refused while the host holds the lock.
+    resp = client.put(
+        "/api/v1/settings/ai",
+        json=_ai_body(
+            {"provider": "ollama", "model": "qwen3.6:35b-a3b", "num_ctx": 8192, "reasoning": "off"},
+            no_egress=False,
+        ),
+        headers=AUTH,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "no_egress_locked"

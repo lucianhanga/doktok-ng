@@ -1587,6 +1587,13 @@ class PostgresAppSettingsRepository:
     def has_ai_settings(self) -> bool:
         return self._get("ai_settings") is not None
 
+    def get_no_egress(self) -> bool | None:
+        raw = self._get("no_egress")
+        return bool(raw) if raw is not None else None
+
+    def set_no_egress(self, value: bool) -> None:
+        self._set("no_egress", value)
+
     def get_openai_api_key(self) -> str:
         raw = self._get("openai_api_key")
         return decrypt_secret(str(raw), self._secrets_key) if raw else ""

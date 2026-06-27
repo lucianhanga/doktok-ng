@@ -35,6 +35,7 @@ from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.security.egress import (
     EgressBlocked,
+    effective_no_egress,
     openai_egress_allowed,
     purpose_requires_egress,
     url_requires_egress,
@@ -170,14 +171,20 @@ def build_services(
     # OCR engine: the Settings DB value wins, env (DOKTOK_OCR_ENGINE) is the fallback (M17 #375).
     # An engine change applies on the next worker restart (the pool/extractor is built once here).
     ocr_engine = _ocr_settings.engine or settings.ocr_engine
+    # Effective no-egress posture at startup (the in-app toggle / env default / host lock). The
+    # live build_ai_clients re-resolves it per reconcile; this startup copy gates the one-time path
+    # selection below, so a toggle change to it applies on the next worker restart.
+    no_egress_startup = effective_no_egress(
+        app_settings.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
+    )
     use_openai_pipeline = pipeline.provider == "openai" and openai_egress_allowed(
-        key=openai_key, no_egress=settings.no_egress
+        key=openai_key, no_egress=no_egress_startup
     )
     if pipeline.provider == "openai" and not use_openai_pipeline:
-        if openai_key and settings.no_egress:
+        if openai_key and no_egress_startup:
             logger.warning(
-                "pipeline is set to OpenAI but DOKTOK_NO_EGRESS is true; refusing to egress "
-                "document content - using Ollama defaults. Set DOKTOK_NO_EGRESS=false to enable it."
+                "pipeline is set to OpenAI but no-egress is on; refusing to egress document "
+                "content - using Ollama defaults. Turn off no-egress in Settings > AI to enable it."
             )
         else:
             logger.warning(
@@ -280,19 +287,24 @@ def build_services(
         pl_url = pl.ollama_base_url or settings.ollama_base_url  # per-purpose override (M13 #369)
         emb_url = ai.embedding.ollama_base_url or settings.ollama_base_url
         key = app_settings.get_openai_api_key() or settings.openai_api_key
-        use_openai = pl.provider == "openai" and openai_egress_allowed(
-            key=key, no_egress=settings.no_egress
+        # Effective no-egress posture: the in-app toggle (Settings > AI), or the env default, or
+        # forced on by a host lock. Live-reloaded with the AI settings (it is in the signature).
+        no_egress = effective_no_egress(
+            app_settings.get_no_egress(),
+            env_default=settings.no_egress,
+            lock=settings.no_egress_lock,
         )
+        use_openai = pl.provider == "openai" and openai_egress_allowed(key=key, no_egress=no_egress)
         # Defense-in-depth (the PUT boundary already rejects these, but no_egress can be flipped on
         # AFTER a remote config was saved): if a purpose's destination is off-host while no-egress
         # is on, refuse to build the egressing client. Fail loud - never silently substitute or
         # egress to a remote URL anyway. The reconciler marks the affected features FAILED with the
         # message, so it surfaces in the activity log instead of a cryptic Connection refused.
         default_url = settings.ollama_base_url
-        pipeline_egress_blocked = settings.no_egress and purpose_requires_egress(
+        pipeline_egress_blocked = no_egress and purpose_requires_egress(
             pl.provider, pl.ollama_base_url, default_url=default_url
         )
-        embedding_egress_blocked = settings.no_egress and url_requires_egress(
+        embedding_egress_blocked = no_egress and url_requires_egress(
             ai.embedding.ollama_base_url, default_url=default_url
         )
         embedding: EmbeddingProvider
@@ -404,6 +416,7 @@ def build_services(
             ai.embedding.ollama_base_url,
             bool(key),
             use_openai,
+            no_egress,
         )
         return _AiClients(
             embedding=embedding,

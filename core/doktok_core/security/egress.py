@@ -59,6 +59,14 @@ def purpose_requires_egress(
     return url_requires_egress(ollama_base_url, default_url=default_url)
 
 
+def effective_no_egress(stored: bool | None, *, env_default: bool, lock: bool) -> bool:
+    """Resolve the active no-egress posture. An operator host lock forces it on; otherwise the
+    in-app (UI) value wins, falling back to the env default when it was never set."""
+    if lock:
+        return True
+    return env_default if stored is None else stored
+
+
 class EgressBlockedError(RuntimeError):
     """Raised when an AI client whose destination is off-host is used while no-egress is on."""
 

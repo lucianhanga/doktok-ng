@@ -875,9 +875,12 @@ class AiSettingsResponse(AiSettings):
     # The effective default Ollama URL (DOKTOK_OLLAMA_BASE_URL) so the UI can show it as the
     # placeholder and "reset to default" target for each per-purpose override (M13 #369).
     ollama_base_url_default: str = ""
-    # The active no-egress policy (DOKTOK_NO_EGRESS). The UI reflects it - it does not toggle it
-    # (deploy-time env switch, ADR-0006/0008) - to gate/badge purposes that would leave the host.
+    # The active (effective) no-egress posture - the in-app toggle, or the env default, or forced on
+    # by a host lock. The UI reflects it to gate/badge purposes that would leave the host.
     no_egress: bool = True
+    # True when an operator hard-locked no-egress on the host (DOKTOK_NO_EGRESS_LOCK): it is forced
+    # on and the in-app toggle is disabled.
+    no_egress_locked: bool = False
     # Per-purpose runtime egress status, keyed "pipeline"|"rag"|"embedding": lets the UI show, per
     # row, "blocked by no-egress" vs "needs an API key" vs "running off-host", without redoing
     # loopback detection in the client.
@@ -890,9 +893,11 @@ class AiSettingsResponse(AiSettings):
 
 class AiSettingsUpdate(AiSettings):
     """AI settings update from the UI. ``openai_api_key`` is write-only: None leaves it unchanged,
-    "" clears it, a value sets it."""
+    "" clears it, a value sets it. ``no_egress`` is the in-app toggle: None leaves it unchanged; a
+    bool sets the posture (rejected when the host has hard-locked it)."""
 
     openai_api_key: str | None = None
+    no_egress: bool | None = None
 
 
 class OllamaTestRequest(BaseModel):

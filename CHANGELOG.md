@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **No-egress is now configurable from the UI, with an operator hard-lock.** A toggle in Settings →
+  AI sets the posture (persisted in-app, seeded from `DOKTOK_NO_EGRESS`); turning it off (allowing
+  egress) requires a confirm and is audited. A new `DOKTOK_NO_EGRESS_LOCK` env hard-locks it on and
+  disables the toggle ("Enforced by the host") for hardened deployments. Effective value =
+  `effective_no_egress(in-app toggle, env default, host lock)`, read by the API, both runtime sinks,
+  and the readiness probe; turning it off + selecting OpenAI in one save validates against the new
+  posture. Disabling a locked posture returns `422 no_egress_locked`.
 - **No-egress gate is now enforced end-to-end, visible, and fail-closed** (#413 boundary/read, #414
   sinks, UI gate). Previously `DOKTOK_NO_EGRESS` was enforced only at the worker, silently: the UI
   let you pick OpenAI under no-egress, the save was accepted, then the worker quietly fell back to a

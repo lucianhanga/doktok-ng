@@ -6,6 +6,7 @@ import pytest
 from doktok_core.security.egress import (
     EgressBlocked,
     EgressBlockedError,
+    effective_no_egress,
     is_loopback_url,
     purpose_requires_egress,
     url_requires_egress,
@@ -43,6 +44,17 @@ def test_purpose_requires_egress() -> None:
     assert purpose_requires_egress("ollama", "http://127.0.0.1:11434", default_url=DEFAULT) is False
     # A remote Ollama URL does - this is the vector the old OpenAI-only check missed.
     assert purpose_requires_egress("ollama", "http://10.0.0.28:11434", default_url=DEFAULT) is True
+
+
+def test_effective_no_egress_resolution() -> None:
+    # In-app toggle wins over the env default when set.
+    assert effective_no_egress(False, env_default=True, lock=False) is False
+    assert effective_no_egress(True, env_default=False, lock=False) is True
+    # Never set -> the env default applies.
+    assert effective_no_egress(None, env_default=True, lock=False) is True
+    assert effective_no_egress(None, env_default=False, lock=False) is False
+    # A host lock forces it on regardless of the stored toggle or the env default.
+    assert effective_no_egress(False, env_default=False, lock=True) is True
 
 
 def test_egress_blocked_fails_loud_on_every_method() -> None:

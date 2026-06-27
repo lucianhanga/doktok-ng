@@ -11,7 +11,7 @@ import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
 from doktok_contracts.ports import (
@@ -53,7 +53,7 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.backup.export import ExportPaths
-from doktok_core.security.egress import purpose_requires_egress
+from doktok_core.security.egress import effective_no_egress, purpose_requires_egress
 from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
@@ -158,11 +158,21 @@ def _egress_violations(
     return violations
 
 
+def _resolve_no_egress(repo: AppSettingsRepository, settings: Any) -> tuple[bool, bool]:
+    """The effective no-egress posture + whether the host has hard-locked it (toggle disabled)."""
+    locked = bool(settings.no_egress_lock)
+    no_egress = effective_no_egress(
+        repo.get_no_egress(), env_default=settings.no_egress, lock=locked
+    )
+    return no_egress, locked
+
+
 def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> AiSettingsResponse:
     settings = request.app.state.settings
+    no_egress, locked = _resolve_no_egress(repo, settings)
     key_set = bool(repo.get_openai_api_key() or settings.openai_api_key)
     status = _purpose_statuses(
-        ai, no_egress=settings.no_egress, default_url=settings.ollama_base_url, key_set=key_set
+        ai, no_egress=no_egress, default_url=settings.ollama_base_url, key_set=key_set
     )
     return AiSettingsResponse(
         **ai.model_dump(),
@@ -170,7 +180,8 @@ def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> 
         embedding_model=settings.embedding_model,
         embedding_num_ctx=settings.embedding_num_ctx,
         ollama_base_url_default=settings.ollama_base_url,
-        no_egress=settings.no_egress,
+        no_egress=no_egress,
+        no_egress_locked=locked,
         purpose_status=status,
         egress_active=any(s.requires_egress and s.usable for s in status.values()),
     )
@@ -189,11 +200,12 @@ def _validate_ollama_url(value: str | None, field: str) -> None:
 
 
 @router.get("/ai/catalog", response_model=ModelCatalog)
-def ai_model_catalog(request: Request, tenant: Tenant) -> ModelCatalog:
+def ai_model_catalog(request: Request, tenant: Tenant, repo: Repo) -> ModelCatalog:
     """The selectable models per AI purpose + the reasoning-density levels, plus the active
-    no-egress policy so the UI can disable/badge the egress-requiring options."""
+    no-egress posture so the UI can disable/badge the egress-requiring options."""
     _ = tenant  # auth-gated; the catalog is the same for everyone
-    return MODEL_CATALOG.model_copy(update={"no_egress": request.app.state.settings.no_egress})
+    no_egress, _locked = _resolve_no_egress(repo, request.app.state.settings)
+    return MODEL_CATALOG.model_copy(update={"no_egress": no_egress})
 
 
 @router.get("/ai", response_model=AiSettingsResponse)
@@ -232,11 +244,25 @@ def put_ai_settings(
     _validate_ollama_url(update.rag.ollama_base_url, "rag.ollama_base_url")
     _validate_ollama_url(update.embedding.ollama_base_url, "embedding.ollama_base_url")
     settings = request.app.state.settings
+    prior_no_egress, locked = _resolve_no_egress(repo, settings)
+    # The in-app no-egress toggle: None leaves it unchanged. A host lock forbids turning it off.
+    if update.no_egress is False and locked:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "no_egress_locked",
+                "message": (
+                    "No-egress is enforced by the host (DOKTOK_NO_EGRESS_LOCK) and cannot be "
+                    "turned off here."
+                ),
+            },
+        )
+    new_no_egress = prior_no_egress if (update.no_egress is None or locked) else update.no_egress
     ai = AiSettings(pipeline=update.pipeline, rag=update.rag, embedding=update.embedding)
     # Boundary gate: refuse a selection that would send content off-host while no-egress is on,
-    # before persisting. The worker/RAG sinks re-check (defense-in-depth), but this is the lock.
+    # evaluated against the posture THIS save applies. The sinks re-check (defense-in-depth).
     violations = _egress_violations(
-        ai, no_egress=settings.no_egress, default_url=settings.ollama_base_url
+        ai, no_egress=new_no_egress, default_url=settings.ollama_base_url
     )
     if violations:
         raise HTTPException(
@@ -244,8 +270,8 @@ def put_ai_settings(
             detail={
                 "code": "egress_not_permitted",
                 "message": (
-                    "DOKTOK_NO_EGRESS is on; these selections would send document content "
-                    "off-host. Set DOKTOK_NO_EGRESS=false on the host to allow remote models."
+                    "No-egress is on; these selections would send document content off-host. "
+                    "Turn off no-egress in Settings > AI to allow remote models."
                 ),
                 "violations": violations,
             },
@@ -256,11 +282,13 @@ def put_ai_settings(
         s.requires_egress and s.usable
         for s in _purpose_statuses(
             repo.get_ai_settings(),
-            no_egress=settings.no_egress,
+            no_egress=prior_no_egress,
             default_url=settings.ollama_base_url,
             key_set=prior_key_set,
         ).values()
     )
+    if update.no_egress is not None and not locked:
+        repo.set_no_egress(update.no_egress)
     repo.set_ai_settings(ai)
     new_key = update.openai_api_key  # None leaves it unchanged; "" clears it
     key_changed = new_key is not None
@@ -276,6 +304,8 @@ def put_ai_settings(
     )
     if key_changed:
         summary += ", OpenAI key updated"
+    if update.no_egress is not None and not locked and update.no_egress != prior_no_egress:
+        summary += f", no-egress turned {'on' if update.no_egress else 'off'}"
     record_activity(
         audit,
         tenant.tenant_id,

@@ -515,12 +515,24 @@ export interface AiSettings {
   ollama_base_url_default?: string;
   // True when a remote provider is active and content actually egresses to OpenAI (APP-11).
   egress_active?: boolean;
-  // The active no-egress policy (deploy-time DOKTOK_NO_EGRESS, ADR-0006/0008). Optional so a
-  // pre-upgrade backend (which omits it) degrades to "no gate shown" rather than a wrong posture.
+  // The effective no-egress posture (DOKTOK_NO_EGRESS, ADR-0006/0008), now user-configurable from
+  // the UI. Optional so a pre-upgrade backend (which omits it) degrades to "no gate shown" rather
+  // than a wrong posture.
   no_egress?: boolean;
+  // True when an operator hard-locked the posture on the host (DOKTOK_NO_EGRESS_LOCK): the UI must
+  // then DISABLE the toggle. Optional for pre-upgrade backends.
+  no_egress_locked?: boolean;
   // Per-purpose resolved egress state from the backend. Optional for the same reason.
   purpose_status?: Record<AiPurpose, PurposeEgressStatus>;
 }
+
+/** Body for PUT /settings/ai. Each field is optional: omit to leave it unchanged. `no_egress` sets
+ * the posture (true/false); omit to leave it as-is. `openai_api_key`: omit/null = unchanged, "" =
+ * clear, value = set. */
+export type AiSettingsUpdate = Partial<AiSettings> & {
+  openai_api_key?: string | null;
+  no_egress?: boolean;
+};
 
 export interface ModelOption {
   provider: string;
@@ -653,12 +665,24 @@ export class EgressNotPermittedError extends Error {
   }
 }
 
-/** Persist AI settings. openai_api_key: omit/null = unchanged, "" = clear, value = set.
- * Throws EgressNotPermittedError on a 422 `egress_not_permitted` so the caller can surface the
- * per-purpose violations inline (the detail is a structured object, NOT a string). */
-export async function putAiSettings(
-  body: AiSettings & { openai_api_key?: string | null },
-): Promise<AiSettings> {
+/** Thrown by putAiSettings on HTTP 422 with a structured `no_egress_locked` detail: the user tried
+ * to change a posture an operator hard-locked on the host (DOKTOK_NO_EGRESS_LOCK). Unlike
+ * EgressNotPermittedError this carries NO per-purpose violations — just the human `message` for a
+ * form-level error. The toggle should already be disabled in that state; this is the defensive lock
+ * behind it. */
+export class NoEgressLockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoEgressLockedError";
+  }
+}
+
+/** Persist AI settings. openai_api_key: omit/null = unchanged, "" = clear, value = set. no_egress:
+ * omit to leave unchanged, true/false to set the posture.
+ * Throws EgressNotPermittedError on a 422 `egress_not_permitted` (per-purpose violations) and
+ * NoEgressLockedError on a 422 `no_egress_locked` (host-locked posture) so the caller can surface
+ * each distinctly. Both details are structured objects, NOT strings. */
+export async function putAiSettings(body: AiSettingsUpdate): Promise<AiSettings> {
   const response = await fetch("/api/v1/settings/ai", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -679,6 +703,12 @@ export async function putAiSettings(
       throw new EgressNotPermittedError(
         detail.message || "This selection is not permitted while no-egress is on.",
         detail.violations ?? [],
+      );
+    }
+    if (detail?.code === "no_egress_locked") {
+      throw new NoEgressLockedError(
+        detail.message ||
+          "The no-egress posture is enforced by the host and cannot be changed here.",
       );
     }
     throw friendlyHttpError(422);

@@ -20,6 +20,7 @@ from doktok_core.features.processors import (
     EntitiesFeature,
     EntityGraphFeature,
     NerFeature,
+    RelationExtractFeature,
     StructuredRecordsFeature,
     ThumbnailFeature,
 )
@@ -59,6 +60,12 @@ FEATURE_CATALOG: list[FeatureSpec] = [
         EntityGraphFeature.version,
         "Entity graph",
         "Resolves entity mentions into canonical cross-document nodes (knowledge graph).",
+    ),
+    FeatureSpec(
+        RelationExtractFeature.name,
+        RelationExtractFeature.version,
+        "Relation graph",
+        "Extracts directed relation triples between named entities (knowledge graph edges).",
     ),
     FeatureSpec(
         DocMetadataFeature.name,

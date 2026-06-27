@@ -19,11 +19,15 @@ from doktok_contracts.schemas import EntityType
 
 # Stable namespace for KAG canonical-entity ids. NEVER change this: it is baked into every stored
 # node id, so altering it would orphan the entire graph. Derived once from a fixed DNS-style label.
-_KG_ENTITY_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "knowledge-graph.entities.doktok")
+KG_ENTITY_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "knowledge-graph.entities.doktok")
+# Legacy alias kept for internal use (not re-exported).
+_KG_ENTITY_NAMESPACE = KG_ENTITY_NAMESPACE
 
 # Unit separator: an in-band-safe delimiter between the key parts so values containing common
 # punctuation cannot collide (e.g. "a|b" + "c" vs "a" + "b|c").
-_SEP = "\x1f"
+KG_KEY_SEP = "\x1f"
+# Legacy alias kept for internal use (not re-exported).
+_SEP = KG_KEY_SEP
 
 # Entity types that become canonical knowledge-graph nodes. CUSTOM_TOKEN (lexical keyword tokens,
 # ~200/document) is excluded: those are search keywords, not real-world entities, and would bloat

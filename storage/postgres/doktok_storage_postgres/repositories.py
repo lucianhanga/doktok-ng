@@ -38,6 +38,8 @@ from doktok_contracts.schemas import (
     FeatureStatus,
     IngestionJob,
     JobStatus,
+    KgEdge,
+    KgEdgeProvenance,
     KgEntity,
     KgEntityMention,
     ListAnchor,
@@ -1012,6 +1014,90 @@ class PostgresKnowledgeGraphRepository:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    # ------------------------------------------------------------------ Phase 2: edges
+
+    def replace_edges_for_document(
+        self,
+        tenant_id: str,
+        document_id: str,
+        edges: list[KgEdge],
+        provenance: list[KgEdgeProvenance],
+    ) -> None:
+        """Idempotently replace all edges contributed by this document."""
+        with self._db.connection() as conn, conn.transaction():
+            # Step 1: remove old provenance for this document
+            conn.execute(
+                "DELETE FROM kg_edge_provenance WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            )
+            # Step 2: upsert edge rows (idempotent; DO UPDATE to refresh updated_at)
+            for edge in edges:
+                conn.execute(
+                    "INSERT INTO kg_edges "
+                    "(id, tenant_id, src_entity_id, predicate, "
+                    "dst_entity_id, evidence_count, metadata) "
+                    "VALUES (%s,%s,%s,%s,%s,0,%s) "
+                    "ON CONFLICT (id) DO UPDATE SET updated_at=now()",
+                    (
+                        edge.id,
+                        edge.tenant_id,
+                        edge.src_entity_id,
+                        edge.predicate,
+                        edge.dst_entity_id,
+                        Json(edge.metadata),
+                    ),
+                )
+            # Step 3: insert new provenance rows
+            for prov in provenance:
+                conn.execute(
+                    "INSERT INTO kg_edge_provenance "
+                    "(id, tenant_id, edge_id, document_id, chunk_id, evidence) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
+                    (
+                        prov.id,
+                        prov.tenant_id,
+                        prov.edge_id,
+                        prov.document_id,
+                        prov.chunk_id,
+                        prov.evidence,
+                    ),
+                )
+            # Step 4: recompute evidence_count for all affected edges
+            edge_ids = list({e.id for e in edges} | {p.edge_id for p in provenance})
+            if edge_ids:
+                conn.execute(
+                    "UPDATE kg_edges SET evidence_count = ("
+                    "  SELECT count(*) FROM kg_edge_provenance WHERE edge_id=kg_edges.id"
+                    ") WHERE id = ANY(%s)",
+                    (edge_ids,),
+                )
+            # Step 5: prune edges with zero evidence_count (no more provenance from any document)
+            conn.execute(
+                "DELETE FROM kg_edges WHERE tenant_id=%s AND evidence_count=0",
+                (tenant_id,),
+            )
+
+    def edges_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEdge]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, tenant_id, src_entity_id, predicate, dst_entity_id, "
+                "evidence_count, metadata "
+                "FROM kg_edges "
+                "WHERE tenant_id=%s AND (src_entity_id=%s OR dst_entity_id=%s) "
+                "ORDER BY id",
+                (tenant_id, entity_id, entity_id),
+            ).fetchall()
+        return [_row_to_kg_edge(row) for row in rows]
+
+    def edge_count(self, tenant_id: str) -> int:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT count(*) FROM kg_edges WHERE tenant_id=%s",
+                (tenant_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
 
 _KG_MENTION_COLUMNS = (
     "mention_id, tenant_id, canonical_entity_id, document_id, chunk_id, "
@@ -1038,6 +1124,18 @@ def _row_to_kg_mention(row: dict[str, Any]) -> KgEntityMention:
         chunk_id=row["chunk_id"],
         entity_type=EntityType(row["entity_type"]),
         normalized_value=row["normalized_value"],
+    )
+
+
+def _row_to_kg_edge(row: dict[str, Any]) -> KgEdge:
+    return KgEdge(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        src_entity_id=row["src_entity_id"],
+        predicate=row["predicate"],
+        dst_entity_id=row["dst_entity_id"],
+        evidence_count=row["evidence_count"],
+        metadata=row["metadata"] or {},
     )
 
 

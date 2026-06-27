@@ -29,6 +29,7 @@ from doktok_contracts.ports import (
     MetadataExtractor,
     RecordExtractor,
     RecordRepository,
+    RelationExtractor,
     Thumbnailer,
 )
 from doktok_contracts.schemas import (
@@ -36,6 +37,8 @@ from doktok_contracts.schemas import (
     DocumentEntity,
     EntityType,
     ExtractedRecord,
+    KgEdge,
+    KgEdgeProvenance,
     KgEntity,
     KgEntityMention,
 )
@@ -53,6 +56,11 @@ from doktok_core.enrichment import (
 from doktok_core.entities.language import detect_language, pg_config_for
 from doktok_core.entities.lexical import meaningful_terms
 from doktok_core.entities.ner import NER_ENTITY_TYPES, normalize_ner_name
+from doktok_core.knowledge_graph.predicates import (
+    ALLOWED_PREDICATES,
+    PREDICATE_TYPE_PAIRS,
+    canonical_edge_id,
+)
 from doktok_core.knowledge_graph.resolve import KG_NODE_TYPES, canonical_entity_id
 
 
@@ -406,6 +414,157 @@ class EntityGraphFeature:
         # Nodes first (the mentions FK-reference them), then replace this document's mention links.
         self._kg.upsert_entities(list(nodes.values()))
         self._kg.replace_mentions_for_document(tenant_id, document_id, links)
+
+
+# NER types that ground relation extraction — PERSON/ORG/GPE/LOCATION.
+_RELATION_ANCHOR_TYPES: frozenset[str] = frozenset({"PERSON", "ORG", "GPE", "LOCATION"})
+
+
+class RelationExtractFeature:
+    """Extract directed relation triples between named entities (KAG Phase 2).
+
+    Reads the document's NER entities (PERSON/ORG/GPE/LOCATION) as anchor nodes, runs the
+    relation extractor over windowed text, validates each triple via the circuit-breaker
+    (both endpoints must normalize to a document entity, predicate must be allowed, type pair
+    must match, evidence must be non-empty), resolves surviving endpoints to canonical node ids,
+    and idempotently replaces this document's edges. No confidence score anywhere.
+    """
+
+    name = "relations"
+    version = 1
+    dependencies = ("entities", "ner", "entity_graph")
+
+    def __init__(
+        self,
+        document_repo: DocumentRepository,
+        file_storage: FileStorage,
+        extractor: RelationExtractor,
+        entity_repo: EntityRepository,
+        knowledge_graph_repo: KnowledgeGraphRepository,
+    ) -> None:
+        self._documents = document_repo
+        self._files = file_storage
+        self._extractor = extractor
+        self._entities = entity_repo
+        self._kg = knowledge_graph_repo
+
+    def get_last_usage(self) -> LlmUsage | None:
+        return _delegate_usage(self._extractor)
+
+    @property
+    def model(self) -> str:
+        return _provider_model(self._extractor)
+
+    def process(self, tenant_id: str, document_id: str) -> None:
+        # 1. Load doc text
+        doc = self._documents.get(tenant_id, document_id)
+        if doc is None or not doc.storage_path:
+            return
+        content = _read_text(self._files, doc.storage_path, "content.md")
+        if not content.strip():
+            return
+
+        # 2. Load anchor entities (NER node types only)
+        all_entities = self._entities.list_for_document(tenant_id, document_id)
+        anchor_entities = [
+            e
+            for e in all_entities
+            if e.entity_type.value in _RELATION_ANCHOR_TYPES and e.normalized_value
+        ]
+        if not anchor_entities:
+            self._kg.replace_edges_for_document(tenant_id, document_id, [], [])
+            return
+
+        # 3. Build entity_list: (normalized_value, entity_type) pairs; deduplicated
+        entity_set: dict[str, str] = {}  # normalized_value -> entity_type
+        for e in anchor_entities:
+            if not e.normalized_value:
+                continue
+            nv = normalize_ner_name(e.normalized_value)
+            if nv and nv not in entity_set:
+                entity_set[nv] = e.entity_type.value
+        entity_list = list(entity_set.items())
+
+        # 4. Extract raw triples
+        raw_triples = self._extractor.extract(content, entity_list)
+
+        # 5. Circuit-breaker validation
+        valid_triples = []
+        dropped = 0
+        for triple in raw_triples:
+            subj_norm = normalize_ner_name(triple.subject)
+            obj_norm = normalize_ner_name(triple.object)
+            # Both endpoints must be grounded to document entities
+            if subj_norm not in entity_set:
+                dropped += 1
+                continue
+            if obj_norm not in entity_set:
+                dropped += 1
+                continue
+            # Predicate must be in the allowed vocabulary
+            if triple.predicate not in ALLOWED_PREDICATES:
+                dropped += 1
+                continue
+            # Type pair must match the predicate's allowed pairs
+            type_pair = (triple.subject_type, triple.object_type)
+            if type_pair not in PREDICATE_TYPE_PAIRS[triple.predicate]:
+                dropped += 1
+                continue
+            # Evidence must be non-empty
+            if not triple.evidence.strip():
+                dropped += 1
+                continue
+            valid_triples.append((triple, subj_norm, obj_norm))
+
+        if dropped:
+            logger.info(
+                "relations %s/%s: dropped %d invalid triples (circuit-breaker)",
+                tenant_id,
+                document_id,
+                dropped,
+            )
+
+        # 6. Resolve to canonical entity ids and build KgEdge + KgEdgeProvenance objects
+        edges_map: dict[str, KgEdge] = {}  # edge_id -> edge
+        provenance_rows: list[KgEdgeProvenance] = []
+        for triple, subj_norm, obj_norm in valid_triples:
+            subj_type = entity_set[subj_norm]
+            obj_type = entity_set[obj_norm]
+            src_id = canonical_entity_id(tenant_id, subj_type, subj_norm)
+            dst_id = canonical_entity_id(tenant_id, obj_type, obj_norm)
+            edge_id = canonical_edge_id(tenant_id, src_id, triple.predicate, dst_id)
+            if edge_id not in edges_map:
+                edges_map[edge_id] = KgEdge(
+                    id=edge_id,
+                    tenant_id=tenant_id,
+                    src_entity_id=src_id,
+                    predicate=triple.predicate,
+                    dst_entity_id=dst_id,
+                )
+            provenance_rows.append(
+                KgEdgeProvenance(
+                    id=uuid.uuid4().hex,
+                    tenant_id=tenant_id,
+                    edge_id=edge_id,
+                    document_id=document_id,
+                    chunk_id=None,  # window-level provenance, no stored chunk id in v1
+                    evidence=triple.evidence[:250],
+                )
+            )
+
+        logger.info(
+            "relations %s/%s: %d raw -> %d valid triples -> %d distinct edges",
+            tenant_id,
+            document_id,
+            len(raw_triples),
+            len(valid_triples),
+            len(edges_map),
+        )
+
+        # 7. Idempotently replace this document's edges
+        self._kg.replace_edges_for_document(
+            tenant_id, document_id, list(edges_map.values()), provenance_rows
+        )
 
 
 class DocMetadataFeature:

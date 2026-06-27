@@ -136,6 +136,18 @@ class ChatChunk:
 
 
 @dataclass
+class ExtractedRelation:
+    """A raw relation triple from one document window (pre-resolution). KAG Phase 2."""
+
+    subject: str  # entity name as extracted (must match a document entity)
+    predicate: str  # one of the controlled predicates
+    object: str  # entity name as extracted (must match a document entity)
+    subject_type: str  # ORG / PERSON / GPE / LOCATION
+    object_type: str  # ORG / PERSON / GPE / LOCATION
+    evidence: str  # verbatim source sentence(s), max ~250 chars
+
+
+@dataclass
 class LlmUsage:
     """Token counts and timing for one LLM call (M8). Exact when the provider reports them; else
     estimated (character-based) with ``estimated=True``. ``wall_ms`` is measured by the provider

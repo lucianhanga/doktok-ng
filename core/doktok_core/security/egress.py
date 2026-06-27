@@ -91,7 +91,7 @@ class EgressBlocked:
     def _blocked(self) -> NoReturn:
         raise EgressBlockedError(self.message)
 
-    def extract(self, text: str) -> Any:
+    def extract(self, text: str, *args: Any, **kwargs: Any) -> Any:
         self._blocked()
 
     def classify(self, text: str, existing: list[str]) -> list[str]:

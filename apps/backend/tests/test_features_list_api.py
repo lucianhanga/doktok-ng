@@ -128,6 +128,7 @@ def test_catalog_lists_reprocessable_features() -> None:
         "entities",
         "ner",
         "entity_graph",
+        "relations",
         "doc_metadata",
         "doc_classify",
         "structured_records",

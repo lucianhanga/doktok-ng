@@ -360,6 +360,34 @@ class KgEntityMention(BaseModel):
     normalized_value: str
 
 
+class KgEdge(BaseModel):
+    """A canonical directed relation triple between two entity nodes (KAG Phase 2).
+
+    One row per distinct ``(tenant_id, src_entity_id, predicate, dst_entity_id)``. The ``id`` is a
+    deterministic uuid5 of that quad (see ``knowledge_graph.predicates.canonical_edge_id``).
+    ``evidence_count`` is a denormalized count of ``KgEdgeProvenance`` rows for this edge.
+    """
+
+    id: str  # canonical_edge_id(tenant, src, predicate, dst)
+    tenant_id: str
+    src_entity_id: str
+    predicate: str
+    dst_entity_id: str
+    evidence_count: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KgEdgeProvenance(BaseModel):
+    """Per-extraction evidence for one edge: document/chunk + verbatim span."""
+
+    id: str
+    tenant_id: str
+    edge_id: str
+    document_id: str
+    chunk_id: str | None = None
+    evidence: str
+
+
 class SearchHit(BaseModel):
     """A hybrid-search result (brief section 17)."""
 

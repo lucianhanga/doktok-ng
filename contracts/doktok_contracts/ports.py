@@ -17,6 +17,7 @@ from doktok_contracts.media import (
     ChatChunk,
     ExtractedEntity,
     ExtractedMetadata,
+    ExtractedRelation,
     ExtractedTerm,
     ExtractedTransaction,
     LlmUsage,
@@ -52,6 +53,8 @@ from doktok_contracts.schemas import (
     ExtractedRecord,
     FeatureMetrics,
     IngestionJob,
+    KgEdge,
+    KgEdgeProvenance,
     KgEntity,
     KgEntityMention,
     ListAnchor,
@@ -594,6 +597,21 @@ class EntityNerExtractor(Protocol):
 
 
 @runtime_checkable
+class RelationExtractor(Protocol):
+    """Extract directed relation triples between named entities (KAG Phase 2).
+
+    ``entity_list`` is a list of ``(normalized_name, entity_type)`` pairs grounding the extraction
+    to entities already known to be in the document. The extractor MUST only return triples whose
+    subject and object appear in that list (the circuit-breaker in core enforces this too, but
+    well-behaved extractors can filter up front).
+    """
+
+    def extract(self, text: str, entity_list: list[tuple[str, str]]) -> list[ExtractedRelation]:
+        """Extract relation triples from text, grounded to entity_list (name, type) pairs."""
+        ...
+
+
+@runtime_checkable
 class LexicalTermExtractor(Protocol):
     """Extract significant lexemes (stopwords removed) from text, language-aware (M5.7)."""
 
@@ -676,6 +694,29 @@ class KnowledgeGraphRepository(Protocol):
 
     def entity_count(self, tenant_id: str) -> int:
         """Number of distinct canonical nodes for a tenant."""
+        ...
+
+    def replace_edges_for_document(
+        self,
+        tenant_id: str,
+        document_id: str,
+        edges: list[KgEdge],
+        provenance: list[KgEdgeProvenance],
+    ) -> None:
+        """Idempotently replace all edges sourced from this document.
+
+        Deletes all provenance rows for ``document_id``, upserts the new edge rows, inserts the
+        new provenance rows, then recomputes ``evidence_count`` and prunes edges whose count drops
+        to zero (no remaining provenance from any document).
+        """
+        ...
+
+    def edges_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEdge]:
+        """All edges where ``entity_id`` is the source or destination (inbound + outbound)."""
+        ...
+
+    def edge_count(self, tenant_id: str) -> int:
+        """Number of distinct directed edges for a tenant."""
         ...
 
 

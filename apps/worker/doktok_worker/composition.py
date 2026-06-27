@@ -15,6 +15,7 @@ from doktok_contracts.ports import (
     MetadataExtractor,
     OcrExtractor,
     RecordExtractor,
+    RelationExtractor,
 )
 from doktok_core.config import Settings
 from doktok_core.entities.extractor import RegexEntityExtractor
@@ -26,6 +27,7 @@ from doktok_core.features.processors import (
     EntitiesFeature,
     EntityGraphFeature,
     NerFeature,
+    RelationExtractFeature,
     StructuredRecordsFeature,
     ThumbnailFeature,
 )
@@ -62,6 +64,7 @@ from doktok_provider_ollama import (
     OllamaEntityNerExtractor,
     OllamaMetadataExtractor,
     OllamaRecordExtractor,
+    OllamaRelationExtractor,
     OllamaVisionOcr,
 )
 from doktok_provider_openai import (
@@ -70,6 +73,7 @@ from doktok_provider_openai import (
     OpenAiEntityNerExtractor,
     OpenAiMetadataExtractor,
     OpenAiRecordExtractor,
+    OpenAiRelationExtractor,
 )
 from doktok_provider_paddleocr import PaddleOcr
 from doktok_provider_projection import SklearnEmbeddingProjector
@@ -119,6 +123,7 @@ class _AiClients:
     category: CategoryClassifier
     record: RecordExtractor
     ner: EntityNerExtractor
+    relation: RelationExtractor
     signature: tuple[object, ...]
 
 
@@ -331,6 +336,7 @@ def build_services(
         category_classifier: CategoryClassifier
         record_extractor: RecordExtractor
         ner_extractor: EntityNerExtractor
+        relation_extractor: RelationExtractor
         if pipeline_egress_blocked:
             logger.error(
                 "Data pipeline destination is off-host but DOKTOK_NO_EGRESS is on; enrichment + "
@@ -342,6 +348,7 @@ def build_services(
             category_classifier = blocked
             record_extractor = blocked
             ner_extractor = blocked
+            relation_extractor = blocked
         elif use_openai:
             logger.info("pipeline extraction via OpenAI %s (egress per AI settings)", pl.model)
             effort = openai_reasoning_effort(pl.reasoning, pl.model)
@@ -356,6 +363,9 @@ def build_services(
                 pl.model, key, timeout=timeout, reasoning_effort=effort
             )
             ner_extractor = OpenAiEntityNerExtractor(
+                pl.model, key, timeout=timeout, reasoning_effort=effort
+            )
+            relation_extractor = OpenAiRelationExtractor(
                 pl.model, key, timeout=timeout, reasoning_effort=effort
             )
         else:
@@ -410,6 +420,15 @@ def build_services(
                 think=p_think,
                 keep_alive=settings.enrich_keep_alive,
             )
+            relation_extractor = OllamaRelationExtractor(
+                p_model,
+                p_repair,
+                pl_url,
+                timeout=timeout,
+                num_ctx=p_ctx,
+                think=p_think,
+                keep_alive=settings.enrich_keep_alive,
+            )
         signature: tuple[object, ...] = (
             pl.provider,
             pl.model,
@@ -428,6 +447,7 @@ def build_services(
             category=category_classifier,
             record=record_extractor,
             ner=ner_extractor,
+            relation=relation_extractor,
             signature=signature,
         )
 
@@ -444,6 +464,13 @@ def build_services(
             ),
             NerFeature(document_repo, file_storage, clients.ner, entity_repo),
             EntityGraphFeature(entity_repo, knowledge_graph_repo),
+            RelationExtractFeature(
+                document_repo,
+                file_storage,
+                clients.relation,
+                entity_repo,
+                knowledge_graph_repo,
+            ),
             DocMetadataFeature(document_repo, file_storage, clients.metadata),
             DocClassifyFeature(document_repo, file_storage, clients.category, category_repo),
             StructuredRecordsFeature(document_repo, file_storage, clients.record, record_repo),

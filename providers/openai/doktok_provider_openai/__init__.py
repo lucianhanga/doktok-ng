@@ -12,6 +12,7 @@ from doktok_provider_openai.client import (
 from doktok_provider_openai.metadata import OpenAiMetadataExtractor
 from doktok_provider_openai.ner import OpenAiEntityNerExtractor
 from doktok_provider_openai.records import OpenAiRecordExtractor
+from doktok_provider_openai.relations import OpenAiRelationExtractor
 
 __version__ = "0.2.0"
 
@@ -24,6 +25,7 @@ __all__ = [
     "OpenAiMetadataExtractor",
     "OpenAiRateLimitError",
     "OpenAiRecordExtractor",
+    "OpenAiRelationExtractor",
     "OpenAiServerError",
     "OpenAiTimeoutError",
 ]

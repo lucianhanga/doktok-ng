@@ -97,6 +97,8 @@ const FEATURE_LABELS: Record<string, string> = {
   entities: "ents",
   ner: "names",
   structured_records: "recs",
+  entity_graph: "graph",
+  relations: "rel",
   thumbnail: "thumb",
 };
 
@@ -108,6 +110,9 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   entities: "Entities & keywords extracted from the text",
   ner: "People & orgs — named people, organisations and places (LLM-assisted NER)",
   structured_records: "Structured records — extracts transactions/line items for aggregation",
+  entity_graph: "Knowledge graph — resolves entities into canonical cross-document nodes (KAG)",
+  relations:
+    "Relation graph — extracts how entities are connected (e.g. banks-with, insured-by), evidence-cited (KAG)",
   thumbnail: "Thumbnail — first-page preview image for the document card and grid/list views",
 };
 

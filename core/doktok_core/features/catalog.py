@@ -18,6 +18,7 @@ from doktok_core.features.processors import (
     DocClassifyFeature,
     DocMetadataFeature,
     EntitiesFeature,
+    EntityGraphFeature,
     NerFeature,
     StructuredRecordsFeature,
     ThumbnailFeature,
@@ -52,6 +53,12 @@ FEATURE_CATALOG: list[FeatureSpec] = [
         NerFeature.version,
         "People & orgs",
         "Recognises named people, organisations and places (LLM-assisted NER).",
+    ),
+    FeatureSpec(
+        EntityGraphFeature.name,
+        EntityGraphFeature.version,
+        "Entity graph",
+        "Resolves entity mentions into canonical cross-document nodes (knowledge graph).",
     ),
     FeatureSpec(
         DocMetadataFeature.name,

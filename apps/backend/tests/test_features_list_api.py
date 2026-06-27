@@ -127,6 +127,7 @@ def test_catalog_lists_reprocessable_features() -> None:
         "chunk_embed",
         "entities",
         "ner",
+        "entity_graph",
         "doc_metadata",
         "doc_classify",
         "structured_records",

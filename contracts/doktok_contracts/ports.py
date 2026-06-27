@@ -52,6 +52,8 @@ from doktok_contracts.schemas import (
     ExtractedRecord,
     FeatureMetrics,
     IngestionJob,
+    KgEntity,
+    KgEntityMention,
     ListAnchor,
     OcrSettings,
     ProjectionRequest,
@@ -641,6 +643,40 @@ class EntityRepository(Protocol):
         limit: int = 50,
         offset: int = 0,
     ) -> list[Document]: ...
+
+
+@runtime_checkable
+class KnowledgeGraphRepository(Protocol):
+    """Canonical entity-node graph built from ``document_entities`` mentions (KAG Phase 1).
+
+    Deterministic, tenant-scoped, idempotent. ``upsert_entities`` creates canonical nodes (existing
+    nodes are left untouched - the node identity is a pure function of type+value).
+    ``replace_mentions_for_document`` rebuilds one document's mention links in place, so the
+    reconciler can re-run a document or backfill the corpus safely.
+    """
+
+    def upsert_entities(self, entities: list[KgEntity]) -> None:
+        """Insert canonical nodes; nodes that already exist are left unchanged (idempotent)."""
+        ...
+
+    def replace_mentions_for_document(
+        self, tenant_id: str, document_id: str, mentions: list[KgEntityMention]
+    ) -> None:
+        """Idempotently replace a document's mention links (delete then insert)."""
+        ...
+
+    def get_entity(self, tenant_id: str, entity_id: str) -> KgEntity | None: ...
+
+    def mentions_for_document(self, tenant_id: str, document_id: str) -> list[KgEntityMention]: ...
+
+    def mentions_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEntityMention]:
+        """All mentions (across documents) resolving to one canonical node - the cross-document
+        readout and a Phase-3 traversal seed."""
+        ...
+
+    def entity_count(self, tenant_id: str) -> int:
+        """Number of distinct canonical nodes for a tenant."""
+        ...
 
 
 @runtime_checkable

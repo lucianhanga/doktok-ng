@@ -329,6 +329,37 @@ class EntitySummary(BaseModel):
     occurrences: int
 
 
+class KgEntity(BaseModel):
+    """A canonical cross-document entity node in the knowledge graph (KAG Phase 1).
+
+    One node per distinct ``(tenant_id, entity_type, normalized_value)``. The ``id`` is a
+    deterministic uuid5 of exactly that triple (see ``knowledge_graph.resolve``), so the same
+    normalized entity in two documents resolves to the same node with no clustering.
+    """
+
+    id: str
+    tenant_id: str
+    entity_type: EntityType
+    normalized_value: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KgEntityMention(BaseModel):
+    """Links one ``document_entities`` mention to its canonical ``KgEntity`` node, with provenance.
+
+    ``mention_id`` is the ``document_entities`` row id (the mention's identity, also the PK in
+    storage), so resolution is idempotent: re-running a document replaces its mention rows in place.
+    """
+
+    mention_id: str
+    tenant_id: str
+    canonical_entity_id: str
+    document_id: str
+    chunk_id: str | None = None
+    entity_type: EntityType
+    normalized_value: str
+
+
 class SearchHit(BaseModel):
     """A hybrid-search result (brief section 17)."""
 

@@ -24,13 +24,21 @@ from doktok_contracts.ports import (
     EntityNerExtractor,
     EntityRepository,
     FileStorage,
+    KnowledgeGraphRepository,
     LexicalTermExtractor,
     MetadataExtractor,
     RecordExtractor,
     RecordRepository,
     Thumbnailer,
 )
-from doktok_contracts.schemas import DocumentChunk, DocumentEntity, EntityType, ExtractedRecord
+from doktok_contracts.schemas import (
+    DocumentChunk,
+    DocumentEntity,
+    EntityType,
+    ExtractedRecord,
+    KgEntity,
+    KgEntityMention,
+)
 
 from doktok_core.aggregation import normalize_transaction
 from doktok_core.aggregation.windowing import stitch_windows, window_text
@@ -45,6 +53,7 @@ from doktok_core.enrichment import (
 from doktok_core.entities.language import detect_language, pg_config_for
 from doktok_core.entities.lexical import meaningful_terms
 from doktok_core.entities.ner import NER_ENTITY_TYPES, normalize_ner_name
+from doktok_core.knowledge_graph.resolve import KG_NODE_TYPES, canonical_entity_id
 
 
 def _read_text(file_storage: FileStorage, storage_path: str, name: str) -> str:
@@ -337,6 +346,66 @@ class NerFeature:
                 frequency=max(1, text.count(occ.entity_text)),
             )
         return list(aggregated.values())
+
+
+class EntityGraphFeature:
+    """Resolve a document's entity mentions into canonical cross-document graph nodes (KAG Phase 1).
+
+    Reads the document's ``document_entities`` (populated by ``entities`` + ``ner``), maps each
+    node-worthy mention to a canonical node whose id is a deterministic function of
+    ``(tenant_id, entity_type, normalized_value)``, upserts those nodes, and replaces the document's
+    mention links. Two documents naming the same normalized entity therefore share one node with no
+    clustering. Idempotent + re-runnable: re-running replaces the document's mentions in place and
+    leaves existing nodes untouched, so the reconciler backfills the corpus exactly like the other
+    versioned features. Deterministic exact-key only - the pgvector-fuzzy tier is deferred (Phase 2,
+    see ``knowledge_graph.resolve``). No LLM, no edges, no retrieval change.
+    """
+
+    name = "entity_graph"
+    version = 1
+    # Runs after both mention producers so the graph reflects every node-worthy entity in the doc.
+    dependencies = ("entities", "ner")
+
+    def __init__(
+        self,
+        entity_repo: EntityRepository,
+        knowledge_graph_repo: KnowledgeGraphRepository,
+        *,
+        node_types: tuple[str, ...] = KG_NODE_TYPES,
+    ) -> None:
+        self._entities = entity_repo
+        self._kg = knowledge_graph_repo
+        self._node_types = frozenset(node_types)
+
+    def process(self, tenant_id: str, document_id: str) -> None:
+        mentions_src = self._entities.list_for_document(tenant_id, document_id)
+        nodes: dict[str, KgEntity] = {}
+        links: list[KgEntityMention] = []
+        for mention in mentions_src:
+            value = mention.normalized_value
+            if mention.entity_type.value not in self._node_types or not value:
+                continue
+            node_id = canonical_entity_id(tenant_id, mention.entity_type.value, value)
+            nodes[node_id] = KgEntity(
+                id=node_id,
+                tenant_id=tenant_id,
+                entity_type=mention.entity_type,
+                normalized_value=value,
+            )
+            links.append(
+                KgEntityMention(
+                    mention_id=mention.id,
+                    tenant_id=tenant_id,
+                    canonical_entity_id=node_id,
+                    document_id=document_id,
+                    chunk_id=mention.chunk_id,
+                    entity_type=mention.entity_type,
+                    normalized_value=value,
+                )
+            )
+        # Nodes first (the mentions FK-reference them), then replace this document's mention links.
+        self._kg.upsert_entities(list(nodes.values()))
+        self._kg.replace_mentions_for_document(tenant_id, document_id, links)
 
 
 class DocMetadataFeature:

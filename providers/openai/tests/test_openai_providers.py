@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from unittest.mock import patch
 
 import httpx
@@ -47,6 +49,41 @@ def test_retries_429_then_succeeds() -> None:
         out = OpenAiChatModelProvider("gpt-4o-mini", "k").complete("hi")
     assert out == "ok"
     assert post.call_count == 2 and sleep.call_count == 1
+
+
+def test_global_semaphore_caps_concurrent_requests() -> None:
+    # All OpenAI callers share one process-wide ceiling (DOKTOK_OPENAI_MAX_CONCURRENCY) so a wide
+    # reconciler fan-out + the OCR judge can't stampede the API into 429s. Cap=2, fire 6 threads,
+    # assert no more than 2 requests are ever in flight at once.
+    in_flight = 0
+    max_seen = 0
+    lock = threading.Lock()
+
+    def fake_post(*_a: object, **_k: object) -> httpx.Response:
+        nonlocal in_flight, max_seen
+        with lock:
+            in_flight += 1
+            max_seen = max(max_seen, in_flight)
+        time.sleep(0.05)
+        with lock:
+            in_flight -= 1
+        return _resp("ok")
+
+    with (
+        patch("doktok_provider_openai.client._REQUEST_SEMAPHORE", threading.BoundedSemaphore(2)),
+        patch("doktok_provider_openai.client.httpx.post", side_effect=fake_post),
+    ):
+        threads = [
+            threading.Thread(
+                target=lambda: OpenAiChatModelProvider("gpt-4o-mini", "k").complete("hi")
+            )
+            for _ in range(6)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert max_seen == 2  # exactly the cap was reached, never exceeded
 
 
 def test_auth_error_fails_fast_without_retry() -> None:

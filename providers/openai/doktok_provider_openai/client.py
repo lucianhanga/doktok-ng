@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
+import threading
 import time
 from typing import Any
 
@@ -20,6 +22,22 @@ logger = logging.getLogger("doktok.provider.openai")
 
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 0.5  # seconds; doubled per attempt, plus jitter
+
+
+def _max_concurrency() -> int:
+    """Process-wide ceiling on concurrent OpenAI requests (DOKTOK_OPENAI_MAX_CONCURRENCY, default
+    5). This is the single 429 guard: the reconciler fan-out, the OCR-quality judge, and RAG all go
+    through this client, so without one cap they sum past the account's rate limit. Set it to match
+    your OpenAI tier's RPM/TPM."""
+    try:
+        return max(1, int(os.environ.get("DOKTOK_OPENAI_MAX_CONCURRENCY", "5")))
+    except ValueError:
+        return 5
+
+
+# A bounded semaphore (not per-instance) so ALL OpenAI callers in this process share one ceiling.
+# A request holds its slot for the whole retry+backoff loop, so retries can't stampede past the cap.
+_REQUEST_SEMAPHORE = threading.BoundedSemaphore(_max_concurrency())
 
 
 class OpenAiError(RuntimeError):
@@ -67,6 +85,28 @@ def _post_with_retry(
     """POST with bounded exponential backoff + jitter, honoring Retry-After. Retries 429/5xx and
     timeouts; fails fast on auth errors; raises a classified ``OpenAiError`` when out of retries."""
     last_error: OpenAiError = OpenAiError("OpenAI request failed")
+    # Hold a global concurrency slot for the whole attempt loop so the process never has more than
+    # DOKTOK_OPENAI_MAX_CONCURRENCY requests (incl. their backoff waits) in flight at once.
+    with _REQUEST_SEMAPHORE:
+        return _post_with_retry_locked(
+            url=url,
+            payload=payload,
+            headers=headers,
+            timeout=timeout,
+            max_retries=max_retries,
+            last_error=last_error,
+        )
+
+
+def _post_with_retry_locked(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout: float,
+    max_retries: int,
+    last_error: OpenAiError,
+) -> httpx.Response:
     for attempt in range(max_retries + 1):
         delay: float | None = None
         try:

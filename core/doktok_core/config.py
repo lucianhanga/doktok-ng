@@ -224,10 +224,13 @@ class Settings(BaseSettings):
     # Kept low by default because the enrichment features hit the LOCAL Ollama model (a single GPU
     # thrashes under high parallelism).
     reconcile_concurrency: int = 2
-    # When the pipeline runs on OpenAI (remote), the enrichment features are network-bound and the
-    # remote API handles high concurrency, so the reconciler can fan out much wider. Used in place
-    # of reconcile_concurrency whenever the pipeline provider is OpenAI.
-    openai_reconcile_concurrency: int = 10
+    # When the pipeline runs on OpenAI (remote), the enrichment features are network-bound, so the
+    # reconciler fans out wider than the local path. Used in place of reconcile_concurrency when the
+    # pipeline provider is OpenAI. NOTE: the hard 429 guard is DOKTOK_OPENAI_MAX_CONCURRENCY (a
+    # process-wide semaphore in the OpenAI client that also bounds the OCR judge + RAG); this value
+    # is just the reconciler's worker count and should be <= that ceiling to avoid idle blocked
+    # workers. Kept modest so a small OpenAI rate tier is not overwhelmed out of the box.
+    openai_reconcile_concurrency: int = 5
     # A job left in a non-terminal state (extracting/indexing/...) longer than this was abandoned by
     # a killed worker; the worker re-queues it (file back to ingest) so it never lingers invisibly.
     # Keep it above the slowest legitimate single-document extraction. Set to 0 to disable recovery.

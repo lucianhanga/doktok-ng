@@ -115,6 +115,28 @@ def test_loop_cited_answer_is_grounded() -> None:
     assert answer.grounded
 
 
+def test_loop_aggregates_usage_into_metrics() -> None:
+    from doktok_contracts.media import LlmUsage
+
+    model = _model(
+        [
+            ToolCallTurn(
+                tool_calls=[LlmToolCall(id="1", name="count_documents", arguments={"entity": "x"})],
+                usage=LlmUsage(prompt_tokens=100, answer_tokens=10, reasoning_tokens=0),
+            ),
+            ToolCallTurn(
+                text="answer [1]",
+                usage=LlmUsage(prompt_tokens=200, answer_tokens=40, reasoning_tokens=5),
+            ),
+        ]
+    )
+    answer = run_agent("t", "q", model=model, gateway=_gateway(), tool_specs=[])
+    assert answer.metrics is not None
+    assert answer.metrics.prompt_tokens == 300  # summed across both model calls
+    assert answer.metrics.answer_tokens == 50
+    assert answer.metrics.reasoning_tokens == 5
+
+
 def test_loop_dedupes_citations_across_tool_calls() -> None:
     call = ToolCallTurn(
         tool_calls=[

@@ -199,9 +199,12 @@ class OllamaChatModelProvider:
         }
         if self._keep_alive is not None:
             payload["keep_alive"] = self._keep_alive
+        t0 = time.monotonic()
         response = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
         response.raise_for_status()
-        message = response.json().get("message") or {}
+        wall_ms = round((time.monotonic() - t0) * 1000)
+        body = response.json()
+        message = body.get("message") or {}
         calls: list[LlmToolCall] = []
         for i, raw in enumerate(message.get("tool_calls") or []):
             fn = raw.get("function", {})
@@ -213,4 +216,15 @@ class OllamaChatModelProvider:
                     arguments=args if isinstance(args, dict) else {},
                 )
             )
-        return ToolCallTurn(text=str(message.get("content") or ""), tool_calls=calls)
+        text = str(message.get("content") or "")
+        eval_count = body.get("eval_count")
+        usage = LlmUsage(
+            prompt_tokens=_as_int(body.get("prompt_eval_count")),
+            answer_tokens=_as_int(eval_count) if eval_count is not None else _est_tokens(len(text)),
+            reasoning_tokens=0,  # think is off for the tool loop
+            wall_ms=wall_ms,
+            eval_ms=round(_as_int(body.get("eval_duration")) / 1_000_000) or None,
+            estimated=eval_count is None,
+        )
+        self._last_usage = usage
+        return ToolCallTurn(text=text, tool_calls=calls, usage=usage)

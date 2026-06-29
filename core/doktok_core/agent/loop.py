@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Iterator, Sequence
 
 from doktok_contracts.media import AgentMessage
 from doktok_contracts.ports import ToolCallingChatModel
-from doktok_contracts.schemas import ChatEvent, ChatTurn, Citation, RagAnswer
+from doktok_contracts.schemas import ChatEvent, ChatTurn, Citation, RagAnswer, TurnMetrics
 
 from doktok_core.tools.base import ToolGateway, ToolSpec
 
@@ -76,8 +77,23 @@ def run_agent_stream(
 
     citations: list[Citation] = []
     answer = ""
+    # Aggregate token usage across every model call in the loop; total_ms is the loop wall time.
+    prompt_tokens = answer_tokens = reasoning_tokens = 0
+    estimated = False
+    t0 = time.monotonic()
+
+    def _accumulate(turn_usage: object) -> None:
+        nonlocal prompt_tokens, answer_tokens, reasoning_tokens, estimated
+        if turn_usage is None:
+            return
+        prompt_tokens += getattr(turn_usage, "prompt_tokens", 0)
+        answer_tokens += getattr(turn_usage, "answer_tokens", 0)
+        reasoning_tokens += getattr(turn_usage, "reasoning_tokens", 0)
+        estimated = estimated or bool(getattr(turn_usage, "estimated", False))
+
     for _ in range(max_iterations):
         turn = model.chat_with_tools(messages, tools)
+        _accumulate(turn.usage)
         if not turn.tool_calls:
             answer = turn.text.strip()
             break
@@ -97,11 +113,23 @@ def run_agent_stream(
         # Budget exhausted with tools still pending: force one tool-free closing turn.
         yield ChatEvent(type="step", delta="Composing the answer")
         messages.append(AgentMessage(role="user", content=_CLOSE_PROMPT))
-        answer = model.chat_with_tools(messages, []).text.strip()
+        closing = model.chat_with_tools(messages, [])
+        _accumulate(closing.usage)
+        answer = closing.text.strip()
 
     deduped = _dedupe_citations(citations)
     yield ChatEvent(type="token", delta=answer)
     yield ChatEvent(type="sources", citations=deduped)
+    yield ChatEvent(
+        type="metrics",
+        metrics=TurnMetrics(
+            prompt_tokens=prompt_tokens,
+            answer_tokens=answer_tokens,
+            reasoning_tokens=reasoning_tokens,
+            total_ms=round((time.monotonic() - t0) * 1000),
+            estimated=estimated,
+        ),
+    )
     # Grounded only when the answer cites a source - a refusal cites nothing (mirrors classic RAG).
     yield ChatEvent(type="done", grounded=bool(_CITED_RE.search(answer)))
 
@@ -120,6 +148,7 @@ def run_agent(
     answer = ""
     citations: list[Citation] = []
     grounded = False
+    metrics: TurnMetrics | None = None
     for event in run_agent_stream(
         tenant_id,
         question,
@@ -133,10 +162,13 @@ def run_agent(
             answer = event.delta
         elif event.type == "sources":
             citations = event.citations
+        elif event.type == "metrics":
+            metrics = event.metrics
         elif event.type == "done":
             grounded = event.grounded
     return RagAnswer(
         answer=answer or "I could not find enough evidence to answer that.",
         citations=citations,
         grounded=grounded,
+        metrics=metrics,
     )

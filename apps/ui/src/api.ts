@@ -1339,6 +1339,8 @@ export interface Citation {
   page_end?: number | null;
   snippet: string;
   relevance?: number | null;
+  // How this source reached the model (ADR-0022): passage | graph | document | transaction.
+  source_kind?: string | null;
 }
 
 export interface QueryFilters {

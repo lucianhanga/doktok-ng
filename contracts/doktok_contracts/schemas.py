@@ -433,6 +433,10 @@ class Citation(BaseModel):
     # Importance of this source (M6.4): 0..1, 1.0 = most relevant, from the reranker's final order
     # (normalized rank). None = unscored. The UI shows it as a bar/percent per source.
     relevance: float | None = None
+    # How this source reached the model (ADR-0022): "passage" (hybrid retrieval), "graph" (KAG
+    # relationship), "document" (a counted/matched document), "transaction" (a financial record).
+    # None for legacy/plain RAG citations. The UI shows it as a small per-source badge.
+    source_kind: str | None = None
 
 
 class GraphTriple(BaseModel):

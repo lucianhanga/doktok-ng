@@ -174,6 +174,7 @@ def _citations(
                     original_filename=doc.original_filename,
                     title=doc.title,
                     snippet=snippet or "(document)",
+                    source_kind="document",
                 )
             )
     return out

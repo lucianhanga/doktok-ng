@@ -49,6 +49,7 @@ from doktok_api.dependencies import (
     get_record_repository,
     get_tool_registry,
 )
+from doktok_api.orchestration import run_graph, run_graph_stream
 
 logger = logging.getLogger("doktok.api.chat")
 
@@ -194,10 +195,11 @@ def chat(
             threads, get_chat_model(http_request), tenant_id, request.thread_id, history
         )
 
-    agent = _agent_model(http_request) if request.agent_mode == "agent" else None
+    agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
     if agent is not None:
         registry = get_tool_registry(http_request)
-        answer = run_agent(
+        runner = run_graph if request.agent_mode == "multi" else run_agent
+        answer = runner(
             tenant_id,
             question,
             model=agent,
@@ -258,14 +260,15 @@ def chat_stream(
         citations: list[Citation] = []
         ranking: list[RankedChunk] = []
         metrics: TurnMetrics | None = None
-        agent = _agent_model(http_request) if request.agent_mode == "agent" else None
+        agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
         structured = (
             None if agent is not None else _try_structured(question, http_request, tenant_id)
         )
         if agent is not None:
             registry = get_tool_registry(http_request)
+            stream = run_graph_stream if request.agent_mode == "multi" else run_agent_stream
             yield _sse(ChatEvent(type="meta"))
-            for event in run_agent_stream(
+            for event in stream(
                 tenant_id,
                 question,
                 model=agent,

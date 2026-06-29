@@ -19,6 +19,11 @@ expected text, and cited an expected source.
 
 - `core/doktok_core/rag/evaluation.py` — pure metric logic (`evaluate(cases, retriever, answerer)`),
   unit-tested in CI with fakes (no models).
+- `core/doktok_core/knowledge_graph/evaluation.py` — pure metric logic for the KAG **graph-quality**
+  tracks (`score_edges` for edge precision/recall/F1, `evaluate_provenance` for evidence validity),
+  unit-tested in CI with synthetic inputs (no models).
+- `eval/golden_edges.json` — the gold relationship triples over the corpus
+  (`{subject, predicate, object, source}`), the ground truth for edge precision/recall.
 - `eval/corpus/` + `eval/golden.json` — a tiny golden corpus and Q/A set. Cases are tagged by `kind`
   (`factoid`, `aggregation`, `refusal`, `conversation`, `relational`) so the report breaks down by
   type. A `conversation` case carries a `history` (prior turns); it is answered via `answer_thread`
@@ -39,6 +44,21 @@ make db            # if not already up
 make rag-eval      # ingests the corpus, runs the golden set, prints the report
 make enrich-eval   # ingests + enriches the corpus, scores title/date/location/category/summary
 ```
+
+### Eval model (`DOKTOK_EVAL_MODEL`)
+
+`make rag-eval` deliberately runs on a model that is **not** the system-configured one
+(`DOKTOK_DEFAULT_MODEL` / the saved Data-Pipeline selection): chat/answering, NER and relation
+extraction all use a fixed eval reference so the benchmark stays comparable across runs no matter
+what production is currently set to. The default is the dense `qwen3:14b` (de-configured from the
+system but kept as the eval baseline). Override it for a one-off run:
+
+```bash
+DOKTOK_EVAL_MODEL=qwen3.6:35b-a3b make rag-eval   # the chosen model must be pulled in the Ollama
+```
+
+Embeddings always use the real `DOKTOK_EMBEDDING_MODEL` (the index has to match what production
+queries against), so `DOKTOK_EVAL_MODEL` only swaps the generative/extraction model.
 
 ## Enrichment eval (M6.2)
 
@@ -79,3 +99,35 @@ relationship may also be answerable by pure RAG; the gap the graph closes shows 
 top-k retrieval may not surface together) and grows with corpus size. The graph is only as good as
 the extracted edges, so a weak relation-extraction model will show up here as missed relational
 cases — that is the point of measuring it.
+
+## Graph-quality tracks (KAG)
+
+The relational track above measures end-to-end *answers*. Two further tracks measure the **graph
+itself** — the relation extractor and its edge evidence — printed by the runner from the
+already-built `eval`-tenant graph (no rebuild). The pure scoring lives in
+`core/doktok_core/knowledge_graph/evaluation.py` and is unit-tested in CI.
+
+### Edge precision / recall (`=== KG edge quality ===`)
+
+Scores the extracted `kg_edges` against `eval/golden_edges.json` (the gold relationship triples).
+A match is on the normalized `(subject, predicate, object)` key (`normalize_ner_name` for the
+endpoints, upper-cased predicate — type-aware via the predicate), so casing/whitespace differences
+do not count as misses. The runner reports **precision / recall / F1 overall and per-predicate**,
+plus the **missed gold edges** (recall failures — the relationship is true but the extractor did not
+produce it) and the **spurious extracted edges** (precision failures — the extractor invented or
+mis-typed a relationship), so a low score is diagnosable. The gold set is kept deliberately small and
+**unambiguously true** (the three explicitly-stated household relationships); a borderline
+relationship (e.g. an org's office location) is intentionally excluded rather than risk a wrong gold.
+
+### Provenance correctness (`=== Provenance correctness ===`)
+
+For every edge, checks that its `kg_edge_provenance` evidence is **trustworthy**: the evidence span
+is non-empty, is a (whitespace-normalized) substring of the cited source document's text, and
+contains both endpoint surface forms. Reports the **valid-evidence rate** and lists the offending
+edges with the reason (empty evidence / not found in the document / endpoint missing from the span).
+This guards the citation contract: a graph-grounded answer cites the provenance document, so evidence
+that does not actually support the edge would be a silent grounding failure.
+
+Both tracks need the graph, which needs a live Ollama for the relation extractor, so they only run
+inside the local `make rag-eval`. A weak extractor surfaces here as low recall (missed edges) or low
+precision (spurious edges) — exactly the signal to hand back to the model/extractor work.

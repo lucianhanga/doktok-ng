@@ -1,0 +1,20 @@
+[
+  {
+    "subject": "Johanna Mertens",
+    "predicate": "INSURED_BY",
+    "object": "Allianz Versicherung AG",
+    "source": "insurance-policy.txt"
+  },
+  {
+    "subject": "Stefan Vogel",
+    "predicate": "BANKS_WITH",
+    "object": "Deutsche Bank",
+    "source": "bank-welcome.txt"
+  },
+  {
+    "subject": "Stefan Vogel",
+    "predicate": "EMPLOYED_BY",
+    "object": "Siemens AG",
+    "source": "employment-letter.txt"
+  }
+]

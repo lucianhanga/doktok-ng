@@ -9,6 +9,7 @@ gap is the whole point of measuring.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -24,6 +25,12 @@ from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices, process_file
 from doktok_core.knowledge_graph.alias import resolve_tenant_aliases
+from doktok_core.knowledge_graph.evaluation import (
+    EdgeTriple,
+    ProvenanceInput,
+    evaluate_provenance,
+    score_edges,
+)
 from doktok_core.knowledge_graph.retrieval import DefaultGraphRetriever
 from doktok_core.rag.answerer import DefaultRagAnswerer
 from doktok_core.rag.evaluation import RagCase, evaluate
@@ -55,6 +62,16 @@ from doktok_storage_postgres import (
 
 TENANT = "eval"
 ROOT = Path(__file__).resolve().parent.parent
+
+
+# The eval runs on a model deliberately NOT the system-configured one (DOKTOK_DEFAULT_MODEL / the
+# saved Data-Pipeline selection), so the benchmark is a fixed, independent reference rather than
+# whatever production is currently set to. Default is the dense qwen3:14b (de-configured from the
+# system this milestone). Override with DOKTOK_EVAL_MODEL=... (must be pulled in the target Ollama).
+def _eval_model() -> str:
+    return os.environ.get("DOKTOK_EVAL_MODEL", "qwen3:14b")
+
+
 GREEN, RED, YELLOW, NC = "\033[0;32m", "\033[0;31m", "\033[1;33m", "\033[0m"
 
 
@@ -109,8 +126,9 @@ def _build_knowledge_graph(settings: object, db: Database, document_ids: list[st
     """Build the KAG graph over the eval tenant, mirroring the worker composition's feature chain.
 
     Runs entities -> ner -> entity_graph -> relations (the real Ollama NER + relation extractors,
-    on the pipeline default model) over each ingested document, then folds aliases. The reconciler
-    is not running in the eval harness, so the features are driven directly in dependency order.
+    on the eval model - see _eval_model, deliberately NOT the system-configured model) over each
+    ingested document, then folds aliases. The reconciler is not running in the eval harness, so the
+    features are driven directly in dependency order.
     """
     entity_repo = PostgresEntityRepository(db)
     kg_repo = PostgresKnowledgeGraphRepository(db)
@@ -118,7 +136,7 @@ def _build_knowledge_graph(settings: object, db: Database, document_ids: list[st
     file_storage = LocalFileStorage()
     num_ctx = settings.enrich_num_ctx  # type: ignore[attr-defined]
     base_url = settings.ollama_base_url  # type: ignore[attr-defined]
-    model = settings.default_model  # type: ignore[attr-defined]
+    model = _eval_model()  # NOT the system-configured model - a fixed independent eval reference
     ner = OllamaEntityNerExtractor(model, model, base_url, num_ctx=num_ctx)
     relation = OllamaRelationExtractor(model, model, base_url, num_ctx=num_ctx)
     features = [
@@ -145,6 +163,106 @@ def _build_knowledge_graph(settings: object, db: Database, document_ids: list[st
     )
 
 
+def _load_graph(db: Database) -> tuple[list[EdgeTriple], list[ProvenanceInput]]:
+    """Read the just-built eval-tenant graph (no rebuild): the distinct edges (as labelled triples)
+    and one provenance row per evidence, each paired with its source document's text."""
+    corpus_text: dict[str, str] = {}
+
+    def _doc_text(filename: str) -> str:
+        if filename not in corpus_text:
+            path = ROOT / "eval" / "corpus" / filename
+            corpus_text[filename] = path.read_text() if path.exists() else ""
+        return corpus_text[filename]
+
+    with db.connection() as conn:
+        edge_rows = conn.execute(
+            "SELECT e.id, s.normalized_value, e.predicate, o.normalized_value "
+            "FROM kg_edges e "
+            "JOIN kg_entities s ON s.id = e.src_entity_id AND s.tenant_id = e.tenant_id "
+            "JOIN kg_entities o ON o.id = e.dst_entity_id AND o.tenant_id = e.tenant_id "
+            "WHERE e.tenant_id = %s",
+            (TENANT,),
+        ).fetchall()
+        prov_rows = conn.execute(
+            "SELECT p.edge_id, p.document_id, p.evidence, d.original_filename "
+            "FROM kg_edge_provenance p "
+            "JOIN documents d ON d.id = p.document_id AND d.tenant_id = p.tenant_id "
+            "WHERE p.tenant_id = %s",
+            (TENANT,),
+        ).fetchall()
+
+    edges = {row[0]: (row[1], row[2], row[3]) for row in edge_rows}
+    # First-seen source filename per edge, for the (informational) source field on the triple.
+    edge_source: dict[str, str] = {}
+    for edge_id, _doc_id, _evidence, filename in prov_rows:
+        edge_source.setdefault(edge_id, filename)
+
+    extracted = [
+        EdgeTriple(subject=s, predicate=p, object=o, source=edge_source.get(edge_id, ""))
+        for edge_id, (s, p, o) in edges.items()
+    ]
+    provenance = [
+        ProvenanceInput(
+            edge=EdgeTriple(
+                subject=edges[edge_id][0],
+                predicate=edges[edge_id][1],
+                object=edges[edge_id][2],
+                source=filename,
+            ),
+            document_id=document_id,
+            evidence=evidence,
+            document_text=_doc_text(filename),
+        )
+        for edge_id, document_id, evidence, filename in prov_rows
+        if edge_id in edges
+    ]
+    return extracted, provenance
+
+
+def _fmt_triple(triple: EdgeTriple) -> str:
+    src = f" [{triple.source}]" if triple.source else ""
+    return f"{triple.subject} {triple.predicate} {triple.object}{src}"
+
+
+def _score_graph(db: Database) -> None:
+    """Print the two graph-quality sections (edge P/R/F1 + provenance correctness) over the already
+    -built eval-tenant graph. Measurement only - it never rebuilds or mutates the graph."""
+    extracted, provenance = _load_graph(db)
+    gold = [EdgeTriple(**g) for g in json.loads((ROOT / "eval" / "golden_edges.json").read_text())]
+
+    edges_report = score_edges(extracted, gold)
+    ov = edges_report.overall
+    print(f"\n{YELLOW}=== KG edge quality ==={NC}")
+    color = GREEN if ov.f1 == 1.0 else (RED if ov.f1 == 0.0 else YELLOW)
+    print(
+        f"  {color}overall: P={ov.precision} R={ov.recall} F1={ov.f1}{NC} "
+        f"(TP={ov.true_positives}, gold={ov.gold_total}, extracted={ov.extracted_total})"
+    )
+    for predicate, sc in edges_report.per_predicate.items():
+        print(
+            f"    {predicate}: P={sc.precision} R={sc.recall} F1={sc.f1} "
+            f"(TP={sc.true_positives}, gold={sc.gold_total}, extracted={sc.extracted_total})"
+        )
+    if edges_report.missed_gold:
+        print(f"  {RED}missed gold edges ({len(edges_report.missed_gold)}):{NC}")
+        for triple in edges_report.missed_gold:
+            print(f"    - {_fmt_triple(triple)}")
+    if edges_report.spurious:
+        print(f"  {YELLOW}spurious extracted edges ({len(edges_report.spurious)}):{NC}")
+        for triple in edges_report.spurious:
+            print(f"    - {_fmt_triple(triple)}")
+
+    prov_report = evaluate_provenance(provenance)
+    pct = round(prov_report.rate * 100, 1)
+    color = GREEN if prov_report.rate == 1.0 else (RED if prov_report.rate == 0.0 else YELLOW)
+    print(f"\n{YELLOW}=== Provenance correctness ==={NC}")
+    print(
+        f"  {color}{prov_report.valid}/{prov_report.total} edges have valid evidence ({pct}%){NC}"
+    )
+    for check in prov_report.invalid:
+        print(f"    - {_fmt_triple(check.edge)} -> {check.reason}")
+
+
 def main() -> int:
     settings = get_settings()
     db = Database(settings.database_url)
@@ -169,13 +287,15 @@ def main() -> int:
     # Build the KAG graph so the relational golden cases have edges to traverse (the gap that pure
     # RAG may miss is exactly what the graph-augmented answerer is measured on).
     _build_knowledge_graph(settings, db, document_ids)
+    # Graph-quality tracks: score the just-built graph (edge P/R/F1 + provenance) - no rebuild.
+    _score_graph(db)
 
     cases = [RagCase(**c) for c in json.loads((ROOT / "eval" / "golden.json").read_text())]
     retriever = HybridPostgresRetriever(
         db, OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url)
     )
     chat = OllamaChatModelProvider(
-        settings.default_model, settings.ollama_base_url, num_ctx=settings.chat_num_ctx
+        _eval_model(), settings.ollama_base_url, num_ctx=settings.chat_num_ctx
     )
     graph_retriever = DefaultGraphRetriever(
         PostgresKnowledgeGraphRepository(db), documents=PostgresDocumentRepository(db)

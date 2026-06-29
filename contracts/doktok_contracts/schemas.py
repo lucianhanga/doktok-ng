@@ -654,6 +654,10 @@ class ChatRequest(BaseModel):
     # (Settings > AI > Document interrogation); True/False explicitly overrides it for this turn.
     # Enabling reasoning makes the answer noticeably slower (the model thinks before answering).
     reasoning: bool | None = None
+    # Chat mode (ADR-0022): "classic" = the deterministic RAG pipeline (default); "agent" = the
+    # tool-calling agent loop. The agent path is opt-in and falls back to classic when the
+    # configured model can't do tool-calling. A mis-behaving agent turn never affects the default.
+    agent_mode: str = "classic"
 
 
 class ChatMessage(BaseModel):

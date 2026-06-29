@@ -69,6 +69,20 @@ def test_requires_token() -> None:
     assert resp.status_code == 401
 
 
+def test_agent_mode_falls_back_to_classic_when_model_lacks_tool_calling() -> None:
+    # The configured model (_SemanticChat) can't tool-call, so agent_mode="agent" must degrade to
+    # the classic RAG path rather than erroring (ADR-0022: the agent path never breaks chat).
+    answerer = FakeRagAnswerer()
+    resp = _client(answerer).post(
+        "/api/v1/chat",
+        json={"question": "what is the total?", "agent_mode": "agent"},
+        headers={"Authorization": "Bearer tok-a"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["answer"] == "The total is 42 [1]."
+    assert answerer.seen is not None  # the classic answerer was used
+
+
 def test_thread_persists_turns_and_loads_history() -> None:
     answerer = FakeRagAnswerer()
     client = _client(answerer)

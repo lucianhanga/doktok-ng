@@ -42,6 +42,7 @@ from doktok_core.security.egress import (
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
+    from doktok_core.tools import ToolRegistry
     from doktok_core.visualizations.map_service import EmbeddingMapService
     from doktok_storage_postgres import Database
 
@@ -444,6 +445,27 @@ def get_stats_repository(request: Request) -> StatsRepository:
     repository = PostgresStatsRepository(_get_database(request))
     registry.register(StatsRepository, repository)
     return repository
+
+
+def get_tool_registry(request: Request) -> ToolRegistry:
+    """The agentic-chat tool set (ADR-0022 Phase 2b), wired to this tenant's repositories. Rebuilt
+    per request (cheap) so it always reflects the current providers/settings."""
+    from doktok_core.knowledge_graph.retrieval import DefaultGraphRetriever
+    from doktok_core.tools.library import build_default_registry
+
+    graph_retriever = DefaultGraphRetriever(
+        get_knowledge_graph_repository(request),
+        documents=get_document_repository(request),
+    )
+    return build_default_registry(
+        documents=get_document_repository(request),
+        entities=get_entity_repository(request),
+        retriever=get_retriever(request),
+        records=get_record_repository(request),
+        graph_retriever=graph_retriever,
+        stats=get_stats_repository(request),
+        categories=get_category_repository(request),
+    )
 
 
 Tenant = Annotated[TenantContext, Depends(require_tenant)]

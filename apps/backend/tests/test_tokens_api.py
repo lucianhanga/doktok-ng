@@ -36,6 +36,9 @@ class FakeEntityRepository:
     def documents_for_entity(self, tenant_id, entity_type, normalized_value, *, limit=50, offset=0):  # type: ignore[no-untyped-def]
         return []
 
+    def mention_document_ids(self, tenant_id, term, *, entity_type=None, cap=10_000):  # type: ignore[no-untyped-def]
+        return [], 0, False
+
     def suggest_tokens(
         self,
         tenant_id: str,

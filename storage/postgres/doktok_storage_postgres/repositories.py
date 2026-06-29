@@ -825,6 +825,36 @@ class PostgresEntityRepository:
             ).fetchall()
         return [_row_to_document(row) for row in rows]
 
+    def mention_document_ids(
+        self,
+        tenant_id: str,
+        term: str,
+        *,
+        entity_type: EntityType | None = None,
+        cap: int = 10_000,
+    ) -> tuple[list[str], int, bool]:
+        like = _like_contains(term)
+        params: list[Any] = [tenant_id, like]
+        type_clause = ""
+        if entity_type is not None:
+            type_clause = "AND e.entity_type=%s "
+            params.append(entity_type.value)
+        base = (
+            "FROM documents d "
+            "JOIN document_entities e ON e.document_id=d.id AND e.tenant_id=d.tenant_id "
+            "WHERE d.tenant_id=%s AND d.status='active' "
+            "AND e.normalized_value ILIKE %s " + type_clause
+        )
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT DISTINCT d.id {base}ORDER BY d.id LIMIT %s",
+                (*params, cap),
+            ).fetchall()
+            total_row = cur.execute(f"SELECT COUNT(DISTINCT d.id) AS n {base}", params).fetchone()
+        total = int(total_row["n"]) if total_row else 0
+        return [r["id"] for r in rows], total, total > cap
+
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)

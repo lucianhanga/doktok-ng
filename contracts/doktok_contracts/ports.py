@@ -647,6 +647,23 @@ class EntityRepository(Protocol):
         limit: int = 50,
         offset: int = 0,
     ) -> list[Document]: ...
+    def mention_document_ids(
+        self,
+        tenant_id: str,
+        term: str,
+        *,
+        entity_type: EntityType | None = None,
+        cap: int = 10_000,
+    ) -> tuple[list[str], int, bool]:
+        """Active documents that mention ``term`` - any entity whose ``normalized_value`` contains
+        it as a case-insensitive substring (so a surface form like "m-net" matches the CUSTOM_TOKEN
+        ``m-net``, the ORG ``m-net telekommunikations gmbh`` and its alias variants alike),
+        optionally constrained to ``entity_type``. Returns ``(ids, total, truncated)`` like
+        ``DocumentRepository.list_document_ids``: an exact COUNT(DISTINCT document) plus the first
+        ``cap`` ids by id. The deterministic "how many documents mention X" count (ADR-0022).
+        """
+        ...
+
     def suggest_tokens(
         self,
         tenant_id: str,

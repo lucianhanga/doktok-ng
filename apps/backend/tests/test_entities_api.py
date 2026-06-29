@@ -38,6 +38,16 @@ class FakeEntityRepository:
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
         return []
 
+    def mention_document_ids(
+        self,
+        tenant_id: str,
+        term: str,
+        *,
+        entity_type: EntityType | None = None,
+        cap: int = 10_000,
+    ) -> tuple[list[str], int, bool]:
+        return [], 0, False
+
     def suggest_tokens(
         self,
         tenant_id: str,

@@ -126,6 +126,9 @@ class _AiClients:
     ner: EntityNerExtractor
     relation: RelationExtractor
     signature: tuple[object, ...]
+    # Human-readable summary of the active pipeline (provider/model/egress), logged at startup and
+    # on a live change - NOT on every rebuild, so the worker log stays quiet between settings edits.
+    description: str
 
 
 def build_services(
@@ -351,8 +354,9 @@ def build_services(
             record_extractor = blocked
             ner_extractor = blocked
             relation_extractor = blocked
+            description = "blocked (data-pipeline destination off-host while no-egress is on)"
         elif use_openai:
-            logger.info("pipeline extraction via OpenAI %s (egress per AI settings)", pl.model)
+            description = f"OpenAI {pl.model} (egress per AI settings)"
             effort = openai_reasoning_effort(pl.reasoning, pl.model)
             judge = OpenAiChatModelProvider(pl.model, key, timeout=timeout, reasoning_effort=effort)
             metadata_extractor = OpenAiMetadataExtractor(
@@ -377,6 +381,7 @@ def build_services(
             p_ctx = pl.num_ctx if pl.provider == "ollama" else settings.enrich_num_ctx
             p_think = ollama_think_for(pl.reasoning, p_model, structured=True)
             p_repair = p_model  # JSON-repair on the same model: keeps a single model resident
+            description = f"local Ollama {p_model} at {pl_url}"
             judge = OllamaChatModelProvider(
                 p_model,
                 pl_url,
@@ -451,6 +456,7 @@ def build_services(
             ner=ner_extractor,
             relation=relation_extractor,
             signature=signature,
+            description=description,
         )
 
     def build_processors(clients: _AiClients) -> list[FeatureProcessor]:
@@ -509,6 +515,7 @@ def build_services(
     ai_clients = build_ai_clients()
     processors = build_processors(ai_clients)
     ai_signature = ai_clients.signature
+    logger.info("pipeline extraction: %s", ai_clients.description)
     stage_ledger = [(p.name, p.version) for p in processors]
 
     # Fan the reconciler wider when the pipeline is remote (OpenAI): its enrichment features are
@@ -540,7 +547,11 @@ def build_services(
         if clients.signature != ai_signature:
             reconciler.set_processors(build_processors(clients))
             ai_signature = clients.signature
-            logger.info("AI settings changed; rebuilt enrichment clients live (no restart)")
+            logger.info(
+                "AI settings changed; rebuilt enrichment clients live (no restart) - "
+                "pipeline extraction: %s",
+                clients.description,
+            )
 
     # KAG alias folding: a tenant-level, cross-document maintenance pass run by the worker after the
     # per-document features drain. It folds entity surface variants into one canonical node and is

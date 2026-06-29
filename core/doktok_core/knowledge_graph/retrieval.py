@@ -48,7 +48,11 @@ _REL_HINTS = re.compile(
     r"linked|link|links|associated|association|associate|"
     r"between|both|together|tied to|involved with|involved in|"
     r"works? with|work with|deal(s)? with|relation(s)?|"
-    r"trace|chain|path from|path between|how (is|are|does)"
+    r"trace|chain|path from|path between|how (is|are|does)|"
+    # Household relationship cues (the predicate vocabulary's real-world verbs): an explicit
+    # relation word is itself the signal, e.g. "who is X insured by", "who does X bank with".
+    r"insured|insurer|insure|employer|employed|employ(s|er)?|"
+    r"banks? with|account with|policy holder|customer of|member of"
     r")\b",
     re.IGNORECASE,
 )

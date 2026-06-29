@@ -122,6 +122,38 @@ def test_conversation_case_uses_answer_thread_and_rewrite_for_retrieval() -> Non
     assert result.retrieved is True and result.citation_correct is True
 
 
+def test_relational_case_passes_and_reports_under_its_kind() -> None:
+    # A relational (KAG) case is scored like any other answerable case: graph augmentation surfaces
+    # the cross-document relationship as a grounded, cited answer. The by-kind report must include
+    # the new "relational" kind so the track is measured separately.
+    retriever = FakeRetriever({"What organisations is Stefan Vogel connected to?": []})
+    answerer = FakeAnswerer(
+        {
+            "What organisations is Stefan Vogel connected to?": _answer(
+                "Stefan Vogel banks with Deutsche Bank [1] and is employed by Siemens AG [2].",
+                ["bank-welcome.txt", "employment-letter.txt"],
+            )
+        }
+    )
+    case = RagCase(
+        "rel",
+        "What organisations is Stefan Vogel connected to?",
+        "relational",
+        expected_sources=["bank-welcome.txt", "employment-letter.txt"],
+        expected_contains=["Deutsche Bank", "Siemens"],
+    )
+    report = evaluate([case], retriever=retriever, answerer=answerer, tenant_id="t1")
+
+    result = report.results[0]
+    # Pure-RAG retrieval recall misses (the gap), yet the case still passes on the graph-backed
+    # citation + answer text - exactly the behaviour the relational track is meant to capture.
+    assert result.retrieved is False
+    assert result.passed is True and result.citation_correct is True
+    by_kind = report.summary()["by_kind"]
+    assert isinstance(by_kind, dict)
+    assert by_kind["relational"] == {"total": 1, "passed": 1}
+
+
 def test_missing_citation_fails_even_if_text_matches() -> None:
     retriever = FakeRetriever({"Q1": ["a.txt"]})
     answerer = FakeAnswerer({"Q1": _answer("The answer is 42.", [])})  # no citations

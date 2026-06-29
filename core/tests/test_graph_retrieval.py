@@ -93,6 +93,13 @@ def test_looks_relational_fires_on_relational_cues() -> None:
     assert looks_relational("trace the chain from Alice to Hamburg")
 
 
+def test_looks_relational_fires_on_household_relationship_cues() -> None:
+    # The predicate vocabulary's real-world verbs are themselves the signal.
+    assert looks_relational("Who is Johanna Mertens insured by?")
+    assert looks_relational("Who does Stefan Vogel bank with?")
+    assert looks_relational("Who is Stefan Vogel's employer?")
+
+
 def test_looks_relational_skips_ordinary_questions() -> None:
     assert not looks_relational("what is the invoice total for March?")
     assert not looks_relational("summarize the contract")

@@ -34,6 +34,7 @@ from doktok_core.aggregation import (
     parse_count_intent,
     route_to_intent,
 )
+from doktok_core.chat.summary import prepare_context
 from doktok_core.tools import ToolGateway
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -187,6 +188,11 @@ def chat(
     history = request.history
     if request.thread_id:
         history = _load_thread(threads, tenant_id, request.thread_id, question)
+        # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted summary so long
+        # threads stay within the context window. No-op for short threads (behaviour unchanged).
+        history = prepare_context(
+            threads, get_chat_model(http_request), tenant_id, request.thread_id, history
+        )
 
     agent = _agent_model(http_request) if request.agent_mode == "agent" else None
     if agent is not None:
@@ -240,6 +246,11 @@ def chat_stream(
     history = request.history
     if request.thread_id:
         history = _load_thread(threads, tenant_id, request.thread_id, question)
+        # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted summary so long
+        # threads stay within the context window. No-op for short threads (behaviour unchanged).
+        history = prepare_context(
+            threads, get_chat_model(http_request), tenant_id, request.thread_id, history
+        )
 
     def events() -> Iterator[str]:
         parts: list[str] = []

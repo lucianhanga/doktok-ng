@@ -12,6 +12,15 @@ class InMemoryChatThreadRepository:
     def __init__(self) -> None:
         self._threads: dict[tuple[str, str], ChatThread] = {}
         self._messages: dict[tuple[str, str], list[ChatMessage]] = {}
+        self._summaries: dict[tuple[str, str], tuple[str, int]] = {}
+
+    def get_summary(self, tenant_id: str, thread_id: str) -> tuple[str, int]:
+        return self._summaries.get((tenant_id, thread_id), ("", 0))
+
+    def update_summary(
+        self, tenant_id: str, thread_id: str, summary: str, summary_through: int
+    ) -> None:
+        self._summaries[(tenant_id, thread_id)] = (summary, summary_through)
 
     def create_thread(self, tenant_id: str, title: str = "") -> ChatThread:
         now = datetime.now(UTC)

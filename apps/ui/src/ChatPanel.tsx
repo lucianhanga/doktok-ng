@@ -741,6 +741,20 @@ export function ChatPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [streaming]);
 
+  // Jump-to-latest: watch a sentinel at the end of the transcript; when it scrolls out of view,
+  // offer a button to return to the newest turn (container-agnostic via the viewport).
+  const endRef = useRef<HTMLDivElement>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  useEffect(() => {
+    const el = endRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const obs = new IntersectionObserver(([e]) => setAtBottom(e.isIntersecting), {
+      rootMargin: "0px 0px -40px 0px",
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
   const LOCAL_KEY = "__local__"; // stream key when persistence is unavailable (no thread id)
   const currentKey = () => threadRef.current ?? LOCAL_KEY;
 
@@ -1115,6 +1129,16 @@ export function ChatPanel({
               </li>
             ))}
           </ol>
+          <div ref={endRef} aria-hidden="true" />
+          {!atBottom && turns.length > 0 && (
+            <button
+              type="button"
+              className="chat-jump"
+              onClick={() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })}
+            >
+              ↓ Jump to latest
+            </button>
+          )}
 
           <form onSubmit={ask} className="search-form chat-ask-form">
             <textarea

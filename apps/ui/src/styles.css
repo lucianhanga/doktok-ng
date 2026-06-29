@@ -2930,6 +2930,24 @@ tr.row-selected {
   color: var(--accent, #6ea8fe);
 }
 
+/* Floating "Jump to latest" pill, shown when the transcript end is scrolled out of view. */
+.chat-jump {
+  position: fixed;
+  bottom: 6.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 999px;
+  background: var(--surface, #1b2330);
+  color: var(--accent, #6ea8fe);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
 /* Per-turn context composition + fullness meter (ADR-0022 P2-B/P2-A). */
 .chat-context {
   margin: 0.4rem 0 0;

@@ -25,9 +25,11 @@ from doktok_contracts.schemas import (
     RagAnswer,
     RankedChunk,
     RetrieveResponse,
+    TraceStep,
     TurnMetrics,
 )
 from doktok_core.agent import run_agent, run_agent_stream
+from doktok_core.agent.trace import step, step_event
 from doktok_core.aggregation import (
     aggregation_answer,
     count_answer,
@@ -304,7 +306,7 @@ def chat_stream(
         reason_parts: list[str] = []
         citations: list[Citation] = []
         ranking: list[RankedChunk] = []
-        steps: list[str] = []
+        steps: list[TraceStep] = []
         metrics: TurnMetrics | None = None
         agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
         structured = (
@@ -314,6 +316,10 @@ def chat_stream(
             registry = get_tool_registry(http_request)
             gateway, specs = ToolGateway(registry), registry.specs()
             yield _sse(ChatEvent(type="meta"))
+            if request.remember:
+                recall = step("recall", "Recalling memories from past chats")
+                steps.append(recall)
+                yield _sse(step_event(recall))
             if request.agent_mode == "multi":
                 agent_events = run_graph_stream(
                     tenant_id,
@@ -339,7 +345,7 @@ def chat_stream(
                 elif event.type == "sources":
                     citations = event.citations
                 elif event.type == "step":
-                    steps.append(event.delta)
+                    steps.append(event.trace_step or TraceStep(kind="step", label=event.delta))
                 yield _sse(event)
         elif structured is not None:
             yield _sse(ChatEvent(type="meta"))
@@ -363,7 +369,7 @@ def chat_stream(
                 elif event.type == "metrics":
                     metrics = event.metrics
                 elif event.type == "step":
-                    steps.append(event.delta)
+                    steps.append(event.trace_step or TraceStep(kind="step", label=event.delta))
                 yield _sse(event)
         answer_text = "".join(parts).strip()
         if request.remember and answer_text:

@@ -2929,6 +2929,30 @@ tr.row-selected {
   border-color: var(--accent, #6ea8fe);
   color: var(--accent, #6ea8fe);
 }
+/* Per-kind tinting of the chronological trace chips (ADR-0022): the structured TraceStep.kind drives
+ * a subtle accent so the steps read as a pipeline (understand -> retrieve/graph/count -> compose). */
+.chat-step-understand {
+  border-color: var(--accent, #6ea8fe);
+  color: var(--accent, #6ea8fe);
+}
+.chat-step-retrieve,
+.chat-step-graph,
+.chat-step-count,
+.chat-step-aggregate,
+.chat-step-stats,
+.chat-step-categories {
+  border-color: var(--success, #5ac8a8);
+  color: var(--success, #5ac8a8);
+}
+.chat-step-recall {
+  border-color: var(--warning, #d9a441);
+  color: var(--warning, #d9a441);
+}
+.chat-step-compose,
+.chat-step-finalize {
+  border-color: var(--text, #c9d4e3);
+  color: var(--text, #c9d4e3);
+}
 
 /* Floating "Jump to latest" pill, shown when the transcript end is scrolled out of view. */
 .chat-jump {

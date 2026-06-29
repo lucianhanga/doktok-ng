@@ -11,6 +11,7 @@ from doktok_contracts.schemas import (
     Citation,
     Memory,
     RankedChunk,
+    TraceStep,
     TurnMetrics,
 )
 
@@ -111,7 +112,7 @@ class InMemoryChatThreadRepository:
         citations: list[Citation] | None = None,
         ranking: list[RankedChunk] | None = None,
         metrics: TurnMetrics | None = None,
-        steps: list[str] | None = None,
+        steps: list[TraceStep] | None = None,
     ) -> ChatMessage:
         message = ChatMessage(
             id=uuid.uuid4().hex,

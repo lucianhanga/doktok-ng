@@ -1450,9 +1450,22 @@ export async function chat(
 
 // ---- Streaming chat (M6.4, ADR-0018 Phase 3): Server-Sent Events over a fetch POST ----
 
+/** One chronological step in a turn's activity trace (ADR-0022): emitted live during streaming and
+ * persisted with the assistant message so a resumed thread re-shows the composition bar. `kind` is a
+ * coarse category (understand|retrieve|graph|count|aggregate|recall|compose|plan|...) used for
+ * styling; `label` is the human line; `detail` is an optional one-line elaboration. Shared by the
+ * single-agent loop and the multi-agent graph. */
+export interface TraceStep {
+  kind: string;
+  label: string;
+  detail?: string;
+}
+
 export interface ChatEvent {
   type: string; // meta | step | reasoning | token | sources | ranking | metrics | done | error
   delta?: string;
+  // Structured step payload on a `step` event (newer backends). Older frames carry only `delta`.
+  trace_step?: TraceStep | null;
   rewritten_query?: string | null;
   filters?: QueryFilters | null;
   citations?: Citation[];
@@ -1460,6 +1473,13 @@ export interface ChatEvent {
   message?: string;
   ranking?: RankedChunk[];
   metrics?: TurnMetrics | null;
+}
+
+/** Coerce a `step` SSE frame to a TraceStep, tolerating older delta-only frames (label = delta). */
+export function eventToTraceStep(event: ChatEvent): TraceStep | null {
+  if (event.trace_step) return event.trace_step;
+  if (event.delta) return { kind: "step", label: event.delta };
+  return null;
 }
 
 /**
@@ -1488,7 +1508,7 @@ export function parseSse(buffer: string): { events: ChatEvent[]; rest: string } 
 
 export interface ChatStreamHandlers {
   onMeta?: (rewrittenQuery: string | null, filters: QueryFilters | null) => void;
-  onStep?: (label: string) => void;
+  onStep?: (step: TraceStep) => void;
   onReasoning?: (delta: string) => void;
   onToken?: (delta: string) => void;
   onSources?: (citations: Citation[]) => void;
@@ -1557,9 +1577,11 @@ export async function chatStream(
         case "meta":
           handlers.onMeta?.(event.rewritten_query ?? null, event.filters ?? null);
           break;
-        case "step":
-          if (event.delta) handlers.onStep?.(event.delta);
+        case "step": {
+          const traceStep = eventToTraceStep(event);
+          if (traceStep) handlers.onStep?.(traceStep);
           break;
+        }
         case "reasoning":
           if (event.delta) handlers.onReasoning?.(event.delta);
           break;
@@ -1611,7 +1633,7 @@ export interface ChatMessage {
   ranking?: RankedChunk[];
   metrics?: TurnMetrics | null;
   // The persisted per-turn activity trace, so a resumed turn re-shows the composition bar.
-  steps?: string[];
+  steps?: TraceStep[];
 }
 
 /** A stored long-term memory (ADR-0022). */

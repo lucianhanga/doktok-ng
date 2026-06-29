@@ -56,6 +56,7 @@ from doktok_contracts.schemas import (
     StatsSummary,
     TokenMatch,
     TokenSuggestion,
+    TraceStep,
     TurnMetrics,
 )
 from doktok_core.knowledge_graph.predicates import canonical_edge_id
@@ -2540,13 +2541,13 @@ class PostgresChatThreadRepository:
         citations: list[Citation] | None = None,
         ranking: list[RankedChunk] | None = None,
         metrics: TurnMetrics | None = None,
-        steps: list[str] | None = None,
+        steps: list[TraceStep] | None = None,
     ) -> ChatMessage:
         message_id = uuid.uuid4().hex
         citation_json = Json([c.model_dump() for c in (citations or [])])
         ranking_json = Json([rc.model_dump() for rc in (ranking or [])])
         metrics_json = Json(metrics.model_dump() if metrics is not None else {})
-        steps_json = Json(list(steps or []))
+        steps_json = Json([s.model_dump() for s in (steps or [])])
         with self._db.connection() as conn, conn.transaction():
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(

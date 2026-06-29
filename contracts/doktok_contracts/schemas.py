@@ -15,7 +15,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class JobStatus(StrEnum):
@@ -720,9 +720,17 @@ class ChatMessage(BaseModel):
     # rows + user turns valid.
     ranking: list[RankedChunk] = Field(default_factory=list)
     metrics: TurnMetrics | None = None
-    # The per-turn activity trace (agent tool / pipeline step labels) so a resumed thread re-shows
-    # the composition bar (ADR-0022); assistant turns only, empty for old rows + user turns.
-    steps: list[str] = Field(default_factory=list)
+    # The per-turn chronological activity trace so a resumed thread re-shows the composition bar
+    # (ADR-0022); assistant turns only, empty for user turns.
+    steps: list[TraceStep] = Field(default_factory=list)
+
+    @field_validator("steps", mode="before")
+    @classmethod
+    def _coerce_steps(cls, value: object) -> object:
+        # Old rows persisted plain step-label strings; coerce them to TraceStep so history loads.
+        if isinstance(value, list):
+            return [{"kind": "step", "label": v} if isinstance(v, str) else v for v in value]
+        return value
 
 
 class ChatThread(BaseModel):
@@ -776,15 +784,28 @@ class RagAnswer(BaseModel):
     metrics: TurnMetrics | None = None
 
 
+class TraceStep(BaseModel):
+    """One step in a turn's chronological activity trace (ADR-0022). A reusable, typed unit emitted
+    by both the single-agent loop and the multi-agent graph so the UI renders one consistent trace.
+
+    ``kind`` drives the per-step icon/colour: understand | recall | retrieve | graph | count |
+    aggregate | stats | categories | tool | compose | plan | gather | merge | research | review |
+    finalize | step. ``label`` is the human-readable line; ``detail`` is an optional one-liner."""
+
+    kind: str = "step"
+    label: str
+    detail: str = ""
+
+
 class ChatEvent(BaseModel):
     """One event in a streamed chat turn (M6.4, ADR-0018 Phase 3). ``type`` is one of meta / step /
     reasoning / token / sources / ranking / metrics / done / error; relevant field(s) set per type.
-    ``step`` is
-    a human-readable pipeline-phase label (understanding / searching / answering) for the activity
-    window - the deterministic-RAG analogue of tool-call traces."""
+    A ``step`` event carries ``delta`` (the label, legacy) and ``trace_step`` (the typed step) for
+    the chronological activity trace."""
 
     type: str
     delta: str = ""  # reasoning / token / step (the step label)
+    trace_step: TraceStep | None = None  # step (the typed activity-trace step, ADR-0022)
     rewritten_query: str | None = None  # meta
     filters: QueryFilters | None = None  # meta (inferred retrieval filters, M6.4 Phase 2)
     citations: list[Citation] = Field(default_factory=list)  # sources

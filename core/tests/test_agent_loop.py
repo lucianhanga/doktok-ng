@@ -80,8 +80,18 @@ def test_loop_streams_step_events_per_tool_call() -> None:
     events = list(run_agent_stream("t", "q", model=model, gateway=_gateway(), tool_specs=[]))
     types = [e.type for e in events]
     assert "step" in types and types[-1] == "done"
-    step = next(e for e in events if e.type == "step")
-    assert "count_documents" in step.delta
+    kinds = [e.trace_step.kind for e in events if e.type == "step" and e.trace_step]
+    # the chronological trace: understand -> the count tool -> compose
+    assert kinds[0] == "understand"
+    assert "count" in kinds  # the count_documents tool, by kind
+    assert kinds[-1] == "compose"
+    count = next(
+        e.trace_step
+        for e in events
+        if e.type == "step" and e.trace_step
+        if e.trace_step.kind == "count"
+    )
+    assert count.label == "Counting matching documents"
 
 
 def test_loop_forces_close_when_budget_exhausted() -> None:

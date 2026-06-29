@@ -632,6 +632,8 @@ export function ChatPanel({
   // Chat mode (ADR-0022): "classic" deterministic RAG | "agent" tool loop | "multi" multi-agent
   // graph. Agent/multi compute counts via tools instead of estimating them from passages.
   const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">("classic");
+  // Long-term memory (ADR-0022): recall facts from past chats + store one. Off by default (private).
+  const [remember, setRemember] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -800,6 +802,7 @@ export function ChatPanel({
           controller.signal,
           tid,
           chatMode,
+          remember,
         );
         completeStream(key, grounded);
       } catch (err) {
@@ -1070,6 +1073,19 @@ export function ChatPanel({
               disabled={streaming !== null}
             />
             <span className="muted">Show reasoning</span>
+          </label>
+
+          <label
+            className="chat-reasoning-toggle"
+            title="Recall facts from your past conversations and remember this one. Off = private (nothing stored or recalled)."
+          >
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              disabled={streaming !== null}
+            />
+            <span className="muted">Remember</span>
           </label>
 
           <label className="chat-mode-select" title="Classic = deterministic RAG. Agent = the assistant calls tools (exact counts, search, totals). Multi-agent = a plan/gather/review graph over the same tools.">

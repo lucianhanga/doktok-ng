@@ -21,10 +21,12 @@ from doktok_contracts.ports import (
     ChunkRepository,
     DocumentRepository,
     EmbeddingProjectionRepository,
+    EmbeddingProvider,
     EntityRepository,
     FeatureRepository,
     IngestionJobRepository,
     KnowledgeGraphRepository,
+    MemoryRepository,
     ProjectionRequestRepository,
     RagAnswerer,
     RecordRepository,
@@ -444,6 +446,38 @@ def get_stats_repository(request: Request) -> StatsRepository:
 
     repository = PostgresStatsRepository(_get_database(request))
     registry.register(StatsRepository, repository)
+    return repository
+
+
+def get_embedding_provider(request: Request) -> EmbeddingProvider:
+    registry = request.app.state.registry
+    if registry.is_registered(EmbeddingProvider):
+        return cast(EmbeddingProvider, registry.resolve(EmbeddingProvider))
+
+    from doktok_provider_ollama import OllamaEmbeddingProvider
+
+    settings = request.app.state.settings
+    embedding = get_app_settings_repository(request).get_ai_settings().embedding
+    provider = OllamaEmbeddingProvider(
+        settings.embedding_model,
+        embedding.ollama_base_url or settings.ollama_base_url,
+        timeout=settings.rag_timeout_seconds,
+        keep_alive=settings.embedding_keep_alive,
+        num_ctx=settings.embedding_num_ctx,
+    )
+    registry.register(EmbeddingProvider, provider)
+    return provider
+
+
+def get_memory_repository(request: Request) -> MemoryRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(MemoryRepository):
+        return cast(MemoryRepository, registry.resolve(MemoryRepository))
+
+    from doktok_storage_postgres import PostgresMemoryRepository
+
+    repository = PostgresMemoryRepository(_get_database(request))
+    registry.register(MemoryRepository, repository)
     return repository
 
 

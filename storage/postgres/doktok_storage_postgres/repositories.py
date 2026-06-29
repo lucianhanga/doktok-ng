@@ -44,6 +44,7 @@ from doktok_contracts.schemas import (
     KgEntity,
     KgEntityMention,
     ListAnchor,
+    Memory,
     MerchantRollup,
     OcrSettings,
     ProjectionPoint,
@@ -2651,3 +2652,50 @@ class PostgresChatThreadRepository:
                 (thread_id, tenant_id),
             )
         return removed
+
+
+class PostgresMemoryRepository:
+    """``MemoryRepository`` on PostgreSQL: long-term memory with cosine recall (ADR-0022)."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def remember(self, tenant_id: str, memory: Memory, embedding: list[float]) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO chat_memories (id, tenant_id, kind, text, embedding, confidence, "
+                "superseded, source) VALUES (%s, %s, %s, %s, %s::vector, %s, %s, %s) "
+                "ON CONFLICT (id) DO NOTHING",
+                (
+                    memory.id,
+                    tenant_id,
+                    memory.kind,
+                    memory.text,
+                    to_vector_literal(embedding),
+                    memory.confidence,
+                    memory.superseded,
+                    Json(memory.source),
+                ),
+            )
+
+    def recall(self, tenant_id: str, embedding: list[float], *, limit: int = 5) -> list[Memory]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, kind, text, confidence, superseded, source, created_at "
+                "FROM chat_memories WHERE tenant_id=%s AND superseded=false "
+                "AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector LIMIT %s",
+                (tenant_id, to_vector_literal(embedding), limit),
+            ).fetchall()
+        return [
+            Memory(
+                id=r["id"],
+                kind=r["kind"],
+                text=r["text"],
+                confidence=r["confidence"],
+                superseded=r["superseded"],
+                source=r["source"] or {},
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]

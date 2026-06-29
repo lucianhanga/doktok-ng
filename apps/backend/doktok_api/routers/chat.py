@@ -35,6 +35,7 @@ from doktok_core.aggregation import (
     parse_count_intent,
     route_to_intent,
 )
+from doktok_core.chat.memory import recall_context, remember_turn
 from doktok_core.chat.summary import prepare_context
 from doktok_core.tools import ToolGateway
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -45,7 +46,9 @@ from doktok_api.dependencies import (
     get_chat_model,
     get_chat_thread_repository,
     get_document_repository,
+    get_embedding_provider,
     get_entity_repository,
+    get_memory_repository,
     get_rag_answerer,
     get_record_repository,
     get_tool_registry,
@@ -111,6 +114,34 @@ def _agent_model(http_request: Request) -> ToolCallingChatModel | None:
     """The configured chat model if it supports tool-calling, else None (-> classic fallback)."""
     model = get_chat_model(http_request)
     return model if isinstance(model, ToolCallingChatModel) else None
+
+
+def _recall_memories(
+    http_request: Request, tenant_id: str, question: str, history: list[ChatTurn]
+) -> list[ChatTurn]:
+    """Prepend relevant long-term memories to the turn's history (ADR-0022). No-op when nothing is
+    recalled; never raises (memory is best-effort)."""
+    memories = recall_context(
+        get_memory_repository(http_request),
+        get_embedding_provider(http_request),
+        tenant_id,
+        question,
+    )
+    return [*memories, *history]
+
+
+def _remember_turn(
+    http_request: Request, tenant_id: str, question: str, answer: str, thread_id: str | None
+) -> None:
+    """Store a memory for a completed turn (ADR-0022). Best-effort."""
+    remember_turn(
+        get_memory_repository(http_request),
+        get_embedding_provider(http_request),
+        tenant_id,
+        question,
+        answer,
+        thread_id=thread_id,
+    )
 
 
 def _load_thread(threads: Threads, tenant_id: str, thread_id: str, question: str) -> list[ChatTurn]:
@@ -195,6 +226,8 @@ def chat(
         history = prepare_context(
             threads, get_chat_model(http_request), tenant_id, request.thread_id, history
         )
+    if request.remember:
+        history = _recall_memories(http_request, tenant_id, question, history)
 
     agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
     if agent is not None:
@@ -215,6 +248,8 @@ def chat(
             if structured is not None
             else answerer.answer_thread(tenant_id, history, question, limit)
         )
+    if request.remember and answer.answer:
+        _remember_turn(http_request, tenant_id, question, answer.answer, request.thread_id)
     if request.thread_id:
         threads.append_message(
             tenant_id,
@@ -254,6 +289,8 @@ def chat_stream(
         history = prepare_context(
             threads, get_chat_model(http_request), tenant_id, request.thread_id, history
         )
+    if request.remember:
+        history = _recall_memories(http_request, tenant_id, question, history)
 
     def events() -> Iterator[str]:
         parts: list[str] = []
@@ -305,6 +342,8 @@ def chat_stream(
                     metrics = event.metrics
                 yield _sse(event)
         answer_text = "".join(parts).strip()
+        if request.remember and answer_text:
+            _remember_turn(http_request, tenant_id, question, answer_text, request.thread_id)
         if request.thread_id and answer_text:
             threads.append_message(
                 tenant_id,

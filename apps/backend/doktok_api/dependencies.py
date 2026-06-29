@@ -24,6 +24,7 @@ from doktok_contracts.ports import (
     EntityRepository,
     FeatureRepository,
     IngestionJobRepository,
+    KnowledgeGraphRepository,
     ProjectionRequestRepository,
     RagAnswerer,
     RecordRepository,
@@ -158,6 +159,18 @@ def get_entity_repository(request: Request) -> EntityRepository:
     return repository
 
 
+def get_knowledge_graph_repository(request: Request) -> KnowledgeGraphRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(KnowledgeGraphRepository):
+        return cast(KnowledgeGraphRepository, registry.resolve(KnowledgeGraphRepository))
+
+    from doktok_storage_postgres import PostgresKnowledgeGraphRepository
+
+    repository = PostgresKnowledgeGraphRepository(_get_database(request))
+    registry.register(KnowledgeGraphRepository, repository)
+    return repository
+
+
 def get_retriever(request: Request) -> Retriever:
     registry = request.app.state.registry
     if registry.is_registered(Retriever):
@@ -286,12 +299,21 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
             num_predict=settings.rerank_num_predict,
             keep_alive=settings.chat_keep_alive,
         )
+    # KAG Phase 3 (additive): a deterministic graph retriever fuses an entity-neighborhood / path
+    # subgraph into retrieval on relational questions; non-relational turns are unaffected.
+    from doktok_core.knowledge_graph.retrieval import DefaultGraphRetriever
+
+    graph_retriever = DefaultGraphRetriever(
+        get_knowledge_graph_repository(request),
+        documents=get_document_repository(request),
+    )
     answerer = DefaultRagAnswerer(
         get_retriever(request),
         chat_model,
         reranker=LlmReranker(rerank_model),
         retrieve_k=settings.rag_retrieve_k,
         min_score=settings.rag_min_score,
+        graph_retriever=graph_retriever,
     )
     registry.register(RagAnswerer, answerer)
     return answerer

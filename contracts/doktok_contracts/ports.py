@@ -53,6 +53,7 @@ from doktok_contracts.schemas import (
     EntityType,
     ExtractedRecord,
     FeatureMetrics,
+    GraphRetrieval,
     IngestionJob,
     KgEdge,
     KgEdgeProvenance,
@@ -720,6 +721,37 @@ class KnowledgeGraphRepository(Protocol):
         """Number of distinct directed edges for a tenant."""
         ...
 
+    # ------------------------------------------------------------------ Phase 3: traversal
+
+    def neighborhood(
+        self,
+        tenant_id: str,
+        entity_ids: Sequence[str],
+        *,
+        hops: int = 1,
+        edge_limit: int = 64,
+    ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
+        """The bounded ``hops``-hop edge neighborhood around the seed ``entity_ids`` (KAG Phase 3).
+
+        Returns the edges of the connected subgraph reachable within ``hops`` of any seed (both
+        endpoints inside the reached set), capped at ``edge_limit`` (highest-evidence first), plus
+        every provenance row for those edges. Tenant-scoped, cycle-safe, deterministic.
+        """
+        ...
+
+    def path_between(
+        self,
+        tenant_id: str,
+        src_entity_id: str,
+        dst_entity_id: str,
+        *,
+        max_hops: int = 2,
+        edge_limit: int = 64,
+    ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
+        """A shortest edge path (treating edges as undirected) between two entities within
+        ``max_hops``, plus the provenance of the edges on it; ``([], [])`` when none exists."""
+        ...
+
     # ------------------------------------------------------------------ alias-folding tier
 
     def list_entities(self, tenant_id: str) -> list[KgEntity]:
@@ -755,6 +787,20 @@ class Retriever(Protocol):
         *,
         filters: QueryFilters | None = None,
     ) -> list[SearchHit]: ...
+
+
+@runtime_checkable
+class GraphRetriever(Protocol):
+    """Retrieve a grounded relationship subgraph for a relational/multi-hop question (KAG Phase 3).
+
+    Deterministic and additive: it links the question's terms to canonical knowledge-graph nodes,
+    traverses a bounded neighborhood / path, and returns chunk-grounded hits (to fuse into the
+    hybrid candidate pool) plus compact relationship triples (to scaffold the grounded prompt).
+    Returns an empty ``GraphRetrieval`` when nothing links or no edges are found - the caller then
+    behaves exactly as a plain hybrid-RAG turn.
+    """
+
+    def retrieve(self, tenant_id: str, question: str, *, limit: int = 10) -> GraphRetrieval: ...
 
 
 @runtime_checkable

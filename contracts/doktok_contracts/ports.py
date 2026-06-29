@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from datetime import date, datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from doktok_contracts.media import (
+    AgentMessage,
     ChatChunk,
     ExtractedEntity,
     ExtractedMetadata,
@@ -25,6 +26,7 @@ from doktok_contracts.media import (
     ProjectionResult,
     RenderedPage,
     TextChunk,
+    ToolCallTurn,
 )
 from doktok_contracts.schemas import (
     AggregationIntent,
@@ -487,6 +489,19 @@ class StreamingChatModelProvider(Protocol):
         ``think=None`` uses the provider's configured reasoning (from settings); True/False
         overrides it for this call."""
         ...
+
+
+@runtime_checkable
+class ToolCallingChatModel(Protocol):
+    """Optional capability (ADR-0022 Phase 2b): provider-native function calling. Given the running
+    conversation and the available tool specs, return the model's next turn - final text and/or a
+    list of tool calls to execute. The agentic chat loop checks for this capability; providers that
+    don't implement it can't drive the agent path. ``tools`` are JSON function specs
+    (``{name, description, parameters}``)."""
+
+    def chat_with_tools(
+        self, messages: list[AgentMessage], tools: list[dict[str, Any]]
+    ) -> ToolCallTurn: ...
 
 
 @runtime_checkable

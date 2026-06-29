@@ -28,6 +28,14 @@ def _resp(content: str) -> httpx.Response:
     )
 
 
+def _tool_resp(message: dict[str, object]) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": message}]},
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+    )
+
+
 def _status(code: int, *, headers: dict[str, str] | None = None) -> httpx.Response:
     return httpx.Response(
         code,
@@ -164,6 +172,48 @@ def test_ner_caps_output_and_extracts_types() -> None:
     # The schema bounds each array so dense documents can't overrun the output and truncate.
     schema = post.call_args.kwargs["json"]["response_format"]["json_schema"]["schema"]
     assert schema["properties"]["people"]["maxItems"] == 60
+
+
+def test_chat_with_tools_parses_tool_calls() -> None:
+    from doktok_contracts.media import AgentMessage
+
+    message: dict[str, object] = {
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "count_documents", "arguments": '{"entity": "m-net"}'},
+            }
+        ],
+    }
+    with patch(
+        "doktok_provider_openai.client.httpx.post", return_value=_tool_resp(message)
+    ) as post:
+        turn = OpenAiChatModelProvider("gpt-4o-mini", "k").chat_with_tools(
+            [AgentMessage(role="user", content="how many m-net invoices")],
+            [{"name": "count_documents", "description": "d", "parameters": {}}],
+        )
+    assert len(turn.tool_calls) == 1
+    call = turn.tool_calls[0]
+    assert call.name == "count_documents" and call.arguments == {"entity": "m-net"}
+    assert turn.text == ""
+    # the tools are forwarded as OpenAI function specs
+    body = post.call_args.kwargs["json"]
+    assert body["tools"][0]["type"] == "function"
+    assert body["tools"][0]["function"]["name"] == "count_documents"
+
+
+def test_chat_with_tools_final_text() -> None:
+    from doktok_contracts.media import AgentMessage
+
+    with patch(
+        "doktok_provider_openai.client.httpx.post", return_value=_tool_resp({"content": "done"})
+    ):
+        turn = OpenAiChatModelProvider("gpt-4o-mini", "k").chat_with_tools(
+            [AgentMessage(role="user", content="hi")], []
+        )
+    assert turn.text == "done" and not turn.tool_calls
 
 
 def test_ner_repairs_truncated_json() -> None:

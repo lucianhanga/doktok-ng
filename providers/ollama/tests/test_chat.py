@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from doktok_contracts.media import AgentMessage
 from doktok_provider_ollama import OllamaChatModelProvider
 
 
@@ -151,3 +152,51 @@ def test_stream_records_split_usage(monkeypatch: Any) -> None:
     assert usage.reasoning_tokens > 0 and usage.answer_tokens > 0
     assert usage.eval_ms == 1000
     assert usage.estimated is False
+
+
+class _ToolResponse:
+    def __init__(self, message: dict[str, Any]) -> None:
+        self._message = message
+
+    def raise_for_status(self) -> None: ...
+
+    def json(self) -> dict[str, Any]:
+        return {"message": self._message}
+
+
+def test_chat_with_tools_parses_tool_calls(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_post(url: str, *, json: dict[str, Any], timeout: float) -> _ToolResponse:
+        captured["json"] = json
+        return _ToolResponse(
+            {
+                "tool_calls": [
+                    {"function": {"name": "count_documents", "arguments": {"entity": "x"}}}
+                ]
+            }
+        )
+
+    monkeypatch.setattr("doktok_provider_ollama.chat.httpx.post", fake_post)
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434")
+    turn = provider.chat_with_tools(
+        [AgentMessage(role="user", content="how many x")],
+        [{"name": "count_documents", "description": "d", "parameters": {}}],
+    )
+    assert len(turn.tool_calls) == 1
+    assert turn.tool_calls[0].name == "count_documents"
+    assert turn.tool_calls[0].arguments == {"entity": "x"}
+    assert turn.text == ""
+    # think is forced off for the tool loop; tools are forwarded
+    assert captured["json"]["think"] is False
+    assert captured["json"]["tools"][0]["function"]["name"] == "count_documents"
+
+
+def test_chat_with_tools_final_text(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "doktok_provider_ollama.chat.httpx.post",
+        lambda url, *, json, timeout: _ToolResponse({"content": "the answer"}),
+    )
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434")
+    turn = provider.chat_with_tools([AgentMessage(role="user", content="hi")], [])
+    assert turn.text == "the answer" and not turn.tool_calls

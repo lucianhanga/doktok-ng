@@ -2,11 +2,30 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
+from typing import Any
 
-from doktok_contracts.media import ChatChunk, LlmUsage
+from doktok_contracts.media import AgentMessage, ChatChunk, LlmToolCall, LlmUsage, ToolCallTurn
 
-from doktok_provider_openai.client import openai_chat_with_usage
+from doktok_provider_openai.client import openai_chat_with_tools, openai_chat_with_usage
+
+
+def _to_openai_message(msg: AgentMessage) -> dict[str, Any]:
+    """Map a contract AgentMessage to an OpenAI chat message."""
+    if msg.role == "tool":
+        return {"role": "tool", "tool_call_id": msg.tool_call_id or "", "content": msg.content}
+    out: dict[str, Any] = {"role": msg.role, "content": msg.content}
+    if msg.tool_calls:
+        out["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+            }
+            for tc in msg.tool_calls
+        ]
+    return out
 
 
 class OpenAiChatModelProvider:
@@ -49,3 +68,32 @@ class OpenAiChatModelProvider:
         # full answer as a single chunk so the streaming UI still works (degrades gracefully).
         _ = think
         yield ChatChunk(kind="answer", text=self.complete(prompt))
+
+    def chat_with_tools(
+        self, messages: list[AgentMessage], tools: list[dict[str, Any]]
+    ) -> ToolCallTurn:
+        message = openai_chat_with_tools(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            model=self._model,
+            messages=[_to_openai_message(m) for m in messages],
+            tools=tools,
+            timeout=self._timeout,
+            reasoning_effort=self._reasoning_effort,
+        )
+        text = str(message.get("content") or "")
+        calls: list[LlmToolCall] = []
+        for raw in message.get("tool_calls") or []:
+            fn = raw.get("function", {})
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            calls.append(
+                LlmToolCall(
+                    id=str(raw.get("id") or fn.get("name", "")),
+                    name=fn.get("name", ""),
+                    arguments=args if isinstance(args, dict) else {},
+                )
+            )
+        return ToolCallTurn(text=text, tool_calls=calls)

@@ -9,9 +9,28 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
+from typing import Any
 
 import httpx
-from doktok_contracts.media import ChatChunk, LlmUsage
+from doktok_contracts.media import (
+    AgentMessage,
+    ChatChunk,
+    LlmToolCall,
+    LlmUsage,
+    ToolCallTurn,
+)
+
+
+def _to_ollama_message(msg: AgentMessage) -> dict[str, Any]:
+    """Map a contract AgentMessage to an Ollama /api/chat message."""
+    out: dict[str, Any] = {"role": msg.role, "content": msg.content}
+    if msg.role == "tool" and msg.name:
+        out["tool_name"] = msg.name
+    if msg.tool_calls:
+        out["tool_calls"] = [
+            {"function": {"name": tc.name, "arguments": tc.arguments}} for tc in msg.tool_calls
+        ]
+    return out
 
 
 def _split_tokens(eval_count: int, reasoning_chars: int, answer_chars: int) -> tuple[int, int]:
@@ -161,3 +180,37 @@ class OllamaChatModelProvider:
             eval_ms=round(_as_int(eval_ns) / 1_000_000) if eval_ns else None,
             estimated=eval_count is None,
         )
+
+    def chat_with_tools(
+        self, messages: list[AgentMessage], tools: list[dict[str, Any]]
+    ) -> ToolCallTurn:
+        """One tool-calling turn via /api/chat (non-streaming). ``think`` is forced off: reasoning
+        plus tool-calling is unreliable on the local MoE, and the loop needs clean tool calls."""
+        options: dict[str, object] = {"temperature": 0}
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
+        payload: dict[str, object] = {
+            "model": self._model,
+            "messages": [_to_ollama_message(m) for m in messages],
+            "tools": [{"type": "function", "function": spec} for spec in tools],
+            "stream": False,
+            "think": False,
+            "options": options,
+        }
+        if self._keep_alive is not None:
+            payload["keep_alive"] = self._keep_alive
+        response = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=self._timeout)
+        response.raise_for_status()
+        message = response.json().get("message") or {}
+        calls: list[LlmToolCall] = []
+        for i, raw in enumerate(message.get("tool_calls") or []):
+            fn = raw.get("function", {})
+            args = fn.get("arguments")
+            calls.append(
+                LlmToolCall(
+                    id=str(fn.get("name", "")) + f":{i}",
+                    name=str(fn.get("name", "")),
+                    arguments=args if isinstance(args, dict) else {},
+                )
+            )
+        return ToolCallTurn(text=str(message.get("content") or ""), tool_calls=calls)

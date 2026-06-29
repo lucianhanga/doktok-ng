@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from doktok_contracts.schemas import EntityType
 
@@ -168,3 +169,39 @@ class LlmUsage:
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.answer_tokens + self.reasoning_tokens
+
+
+@dataclass
+class LlmToolCall:
+    """A tool the model asked to call during a tool-calling turn (ADR-0022 Phase 2b). ``arguments``
+    is the already-parsed argument object; ``id`` ties the later tool result back to this call."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentMessage:
+    """One message in a tool-calling conversation (ADR-0022 Phase 2b).
+
+    ``role`` is "system" | "user" | "assistant" | "tool". An assistant turn that requested tools
+    carries ``tool_calls``; a "tool" message carries the result of one call, identified by
+    ``tool_call_id`` (and ``name`` for providers that key on the function name).
+    """
+
+    role: str
+    content: str = ""
+    tool_calls: list[LlmToolCall] = field(default_factory=list)
+    tool_call_id: str | None = None
+    name: str | None = None
+
+
+@dataclass
+class ToolCallTurn:
+    """The model's response inside a tool-calling loop: final ``text`` and/or ``tool_calls`` to run
+    (both may be present; an empty ``tool_calls`` means the model is done)."""
+
+    text: str = ""
+    tool_calls: list[LlmToolCall] = field(default_factory=list)
+    usage: LlmUsage | None = None

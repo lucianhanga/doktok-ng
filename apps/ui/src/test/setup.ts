@@ -1,5 +1,21 @@
 import "@testing-library/jest-dom";
 
+// jsdom does not implement IntersectionObserver (used for the chat jump-to-latest sentinel). A
+// no-op stand-in keeps components that observe an element from crashing under test.
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  globalThis.IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+    root = null;
+    rootMargin = "";
+    thresholds = [];
+  } as unknown as typeof globalThis.IntersectionObserver;
+}
+
 // jsdom does not implement matchMedia; the theme toggle uses it. Provide a no-op (dark default).
 if (typeof globalThis.matchMedia === "undefined") {
   globalThis.matchMedia = ((query: string) => ({

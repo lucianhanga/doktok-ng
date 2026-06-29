@@ -74,6 +74,7 @@ from doktok_contracts.schemas import (
     StatsSummary,
     TokenMatch,
     TokenSuggestion,
+    TraceStep,
     TurnMetrics,
 )
 
@@ -888,7 +889,7 @@ class ChatThreadRepository(Protocol):
         citations: list[Citation] | None = None,
         ranking: list[RankedChunk] | None = None,
         metrics: TurnMetrics | None = None,
-        steps: list[str] | None = None,
+        steps: list[TraceStep] | None = None,
     ) -> ChatMessage: ...
     def thread_exists(self, tenant_id: str, thread_id: str) -> bool: ...
     def delete_thread(self, tenant_id: str, thread_id: str) -> None: ...

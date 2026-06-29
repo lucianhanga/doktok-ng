@@ -16,8 +16,9 @@ from typing import Annotated, Any, TypedDict
 
 from doktok_contracts.media import AgentMessage
 from doktok_contracts.ports import ToolCallingChatModel
-from doktok_contracts.schemas import ChatEvent, ChatTurn, Citation, RagAnswer
+from doktok_contracts.schemas import ChatEvent, ChatTurn, Citation, RagAnswer, TraceStep
 from doktok_core.agent import evidence_block, merge_evidence, run_agent
+from doktok_core.agent.trace import step, step_event
 from doktok_core.aggregation.counting import parse_count_intent
 from doktok_core.knowledge_graph.retrieval import looks_relational
 from doktok_core.tools.base import ToolGateway, ToolResult, ToolSpec
@@ -45,7 +46,7 @@ class _State(TypedDict, total=False):
     grounded: bool
     attempts: int
     critique: str
-    trace: Annotated[list[str], operator.add]
+    trace: Annotated[list[TraceStep], operator.add]
 
 
 def _plan(question: str) -> list[tuple[str, dict[str, object]]]:
@@ -83,7 +84,7 @@ def build_chat_graph(
     """Compile the LangGraph chat graph closed over the per-turn model + gateway + tool specs."""
 
     def planner(state: _State) -> _State:
-        return {"attempts": 0, "trace": ["Planning the approach"]}
+        return {"attempts": 0, "trace": [step("plan", "Planning the approach")]}
 
     def gather(state: _State) -> _State:
         # The gateway here is tenant-bound (see _TenantGateway), so the tenant arg is ignored.
@@ -93,7 +94,7 @@ def build_chat_graph(
         return {
             "evidence": evidence,
             "evidence_text": summaries,
-            "trace": [f"Gathering from: {', '.join(names)}"],
+            "trace": [step("gather", f"Gathering from: {', '.join(names)}")],
         }
 
     def researcher(state: _State) -> _State:
@@ -119,7 +120,7 @@ def build_chat_graph(
             "citations": citations,
             "grounded": answer.grounded,
             "attempts": state.get("attempts", 0) + 1,
-            "trace": ["Researching the answer"],
+            "trace": [step("research", "Researching the answer")],
         }
 
     def critic(state: _State) -> _State:
@@ -133,7 +134,7 @@ def build_chat_graph(
         critique = (
             "" if verdict.upper().startswith("OK") else verdict.removeprefix("REVISE:").strip()
         )
-        return {"critique": critique, "trace": ["Reviewing the answer"]}
+        return {"critique": critique, "trace": [step("review", "Reviewing the answer")]}
 
     def _route_after_critic(state: _State) -> str:
         if state.get("critique") and state.get("attempts", 0) < _MAX_ATTEMPTS:
@@ -141,7 +142,7 @@ def build_chat_graph(
         return END
 
     def finalize(state: _State) -> _State:
-        return {"trace": ["Finalizing"]}
+        return {"trace": [step("finalize", "Finalizing")]}
 
     graph = StateGraph(_State)
     graph.add_node("planner", planner)
@@ -180,10 +181,10 @@ def run_graph_stream(
         {"question": question, "history": list(history), "tenant_id": tenant_id, "attempts": 0},
         stream_mode="updates",
     ):
-        # ``update`` is {node_name: state_delta}; emit that node's trace lines live and accumulate.
+        # ``update`` is {node_name: state_delta}; emit that node's trace steps live and accumulate.
         for delta in update.values():
-            for label in delta.get("trace", []):
-                yield ChatEvent(type="step", delta=label)
+            for trace_step in delta.get("trace", []):
+                yield step_event(trace_step)
             state.update({k: v for k, v in delta.items() if k != "trace"})
     yield ChatEvent(type="token", delta=state.get("answer", ""))
     yield ChatEvent(type="sources", citations=state.get("citations") or state.get("evidence") or [])

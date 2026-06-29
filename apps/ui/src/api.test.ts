@@ -1,6 +1,27 @@
 import { expect, test } from "vitest";
 
-import { formatDuration, formatTokens, parseSse, processingRollup, type ProcessingSummary } from "./api";
+import {
+  eventToTraceStep,
+  formatDuration,
+  formatTokens,
+  parseSse,
+  processingRollup,
+  type ProcessingSummary,
+} from "./api";
+
+test("eventToTraceStep prefers the structured payload and coerces delta-only frames", () => {
+  // Newer backend: a structured TraceStep travels on the event.
+  expect(
+    eventToTraceStep({ type: "step", trace_step: { kind: "count", label: "Counting" } }),
+  ).toEqual({ kind: "count", label: "Counting" });
+  // Older backend: only a delta -> coerced to a generic step so the composition bar still renders.
+  expect(eventToTraceStep({ type: "step", delta: "Using count_documents" })).toEqual({
+    kind: "step",
+    label: "Using count_documents",
+  });
+  // Nothing to show -> null (skipped by the handler).
+  expect(eventToTraceStep({ type: "step" })).toBeNull();
+});
 
 test("parseSse extracts complete frames and carries the trailing partial", () => {
   const buffer =

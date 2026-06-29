@@ -25,6 +25,7 @@ from doktok_contracts.schemas import (
     TurnMetrics,
 )
 
+from doktok_core.agent.trace import step, step_event, tool_step
 from doktok_core.tools.base import ToolGateway, ToolSpec
 
 logger = logging.getLogger("doktok.agent")
@@ -119,6 +120,7 @@ def run_agent_stream(
         reasoning_tokens += getattr(turn_usage, "reasoning_tokens", 0)
         estimated = estimated or bool(getattr(turn_usage, "estimated", False))
 
+    yield step_event(step("understand", "Understanding your question"))
     for _ in range(max_iterations):
         turn = model.chat_with_tools(messages, tools)
         _accumulate(turn.usage)
@@ -129,7 +131,7 @@ def run_agent_stream(
             AgentMessage(role="assistant", content=turn.text, tool_calls=turn.tool_calls)
         )
         for call in turn.tool_calls:
-            yield ChatEvent(type="step", delta=f"Using {call.name}")
+            yield step_event(tool_step(call.name))
             result = gateway.invoke(tenant_id, call.name, call.arguments)
             messages.append(
                 AgentMessage(
@@ -139,12 +141,12 @@ def run_agent_stream(
             citations.extend(result.citations)
     if not answer:
         # Budget exhausted with tools still pending: force one tool-free closing turn.
-        yield ChatEvent(type="step", delta="Composing the answer")
         messages.append(AgentMessage(role="user", content=_CLOSE_PROMPT))
         closing = model.chat_with_tools(messages, [])
         _accumulate(closing.usage)
         answer = closing.text.strip()
 
+    yield step_event(step("compose", "Composing the answer"))
     deduped = _dedupe_citations(citations)
     yield ChatEvent(type="token", delta=answer)
     yield ChatEvent(type="sources", citations=deduped)

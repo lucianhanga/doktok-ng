@@ -17,6 +17,7 @@ import {
   type QueryFilters,
   type RagAnswer,
   type RankedChunk,
+  type TraceStep,
   type TurnMetrics,
 } from "./api";
 import { DocumentDetail } from "./DocumentDetail";
@@ -47,7 +48,7 @@ interface Exchange {
   question: string;
   answer: RagAnswer;
   reasoning?: string;
-  steps?: string[]; // live pipeline activity; kept in-session, not persisted to the DB
+  steps?: TraceStep[]; // live chronological trace; persisted with the assistant message
   ranking?: RankedChunk[];
   metrics?: TurnMetrics | null;
   stopped?: boolean; // the user pressed Stop (or Esc) mid-stream
@@ -58,7 +59,7 @@ interface Streaming {
   question: string;
   answer: string;
   reasoning: string;
-  steps: string[];
+  steps: TraceStep[];
   citations: Citation[];
   rewrittenQuery: string | null;
   filters: QueryFilters | null;
@@ -71,7 +72,7 @@ interface Streaming {
 interface TurnView {
   question: string;
   reasoning: string;
-  steps: string[];
+  steps: TraceStep[];
   answer: string;
   citations: Citation[];
   rewrittenQuery: string | null;
@@ -438,8 +439,12 @@ function AnswerBlock({
       {turn.steps.length > 0 && (
         <div className="chat-composition" aria-label="How this answer was built">
           {turn.steps.map((step, i) => (
-            <span key={i} className="chat-composition-chip">
-              {step}
+            <span
+              key={i}
+              className={`chat-composition-chip chat-step-${step.kind}`}
+              title={step.detail || undefined}
+            >
+              {step.label}
             </span>
           ))}
           {sourceBreakdown(turn.citations).map((part) => (
@@ -880,7 +885,7 @@ export function ChatPanel({
           showReasoning || undefined,
           {
             onMeta: (rq, flt) => patchThread(key, (s) => ({ ...s, rewrittenQuery: rq, filters: flt })),
-            onStep: (label) => patchThread(key, (s) => ({ ...s, steps: [...s.steps, label] })),
+            onStep: (step) => patchThread(key, (s) => ({ ...s, steps: [...s.steps, step] })),
             onReasoning: (d) => patchThread(key, (s) => ({ ...s, reasoning: s.reasoning + d })),
             onToken: (d) => patchThread(key, (s) => ({ ...s, answer: s.answer + d })),
             onSources: (c) => patchThread(key, (s) => ({ ...s, citations: c })),

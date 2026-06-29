@@ -96,13 +96,15 @@ test("agent mode toggle sends agent_mode=agent on the stream request", async () 
   );
 
   render(<ChatPanel />);
-  await userEvent.click(screen.getByLabelText(/agent mode/i));
+  await userEvent.selectOptions(screen.getByLabelText(/mode/i), "agent");
   await userEvent.type(screen.getByLabelText("Question"), "how many m-net invoices?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   await waitFor(() => expect(screen.getByText(/There are 57 documents/)).toBeInTheDocument());
   expect(streamBody).not.toBeNull();
   expect(streamBody!.agent_mode).toBe("agent");
+  // the agent's tool steps render as a context-composition bar
+  expect(screen.getByText("Using count_documents")).toBeInTheDocument();
 });
 
 test("shows inferred retrieval filters from the meta event", async () => {
@@ -196,7 +198,7 @@ test("requests reasoning by default and renders it in a collapsible panel", asyn
 
   await waitFor(() => expect(screen.getByText("It is 42 [1].")).toBeInTheDocument());
   // The reasoning shows in the activity window.
-  expect(screen.getByText(/Reasoning & steps/i)).toBeInTheDocument();
+  expect(screen.getByText(/Reasoning & ranking/i)).toBeInTheDocument();
   expect(screen.getByText(/Let me check the invoice totals\./)).toBeInTheDocument();
   // The stream request asked the model to think.
   expect(JSON.parse(String(streamInit?.body)).reasoning).toBe(true);

@@ -2892,6 +2892,44 @@ tr.row-selected {
   color: var(--accent, #6ea8fe);
 }
 
+/* Chat mode selector (Classic / Agent / Multi-agent) in the composer (ADR-0022). */
+.chat-mode-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+.chat-mode-select select {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 6px;
+  background: var(--surface, transparent);
+  color: var(--text, inherit);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+/* Per-turn context-composition bar: compact chips showing how the answer was built (ADR-0022). */
+.chat-composition {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.5rem;
+}
+.chat-composition-chip {
+  padding: 0.12rem 0.55rem;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 999px;
+  background: var(--surface-2, rgba(110, 168, 254, 0.08));
+  color: var(--muted, #8b97a8);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+.chat-composition-chip.is-sources {
+  border-color: var(--accent, #6ea8fe);
+  color: var(--accent, #6ea8fe);
+}
+
 /* Inline [n] citation marker rendered as a clickable reference inside the answer. */
 .citation-ref {
   border: none;

@@ -97,6 +97,7 @@ class InMemoryChatThreadRepository:
         citations: list[Citation] | None = None,
         ranking: list[RankedChunk] | None = None,
         metrics: TurnMetrics | None = None,
+        steps: list[str] | None = None,
     ) -> ChatMessage:
         message = ChatMessage(
             id=uuid.uuid4().hex,
@@ -107,6 +108,7 @@ class InMemoryChatThreadRepository:
             citations=list(citations or []),
             ranking=list(ranking or []),
             metrics=metrics,
+            steps=list(steps or []),
         )
         self._messages.setdefault((tenant_id, thread_id), []).append(message)
         thread = self._threads.get((tenant_id, thread_id))

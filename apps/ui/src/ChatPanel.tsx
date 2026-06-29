@@ -914,6 +914,7 @@ export function ChatPanel({
           restored.push({
             question: messages[i].content,
             reasoning: reply?.reasoning || undefined,
+            steps: reply?.steps ?? [],
             ranking: reply?.ranking ?? [],
             metrics: reply?.metrics ?? null,
             answer: {

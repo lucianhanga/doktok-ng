@@ -707,6 +707,9 @@ class ChatMessage(BaseModel):
     # rows + user turns valid.
     ranking: list[RankedChunk] = Field(default_factory=list)
     metrics: TurnMetrics | None = None
+    # The per-turn activity trace (agent tool / pipeline step labels) so a resumed thread re-shows
+    # the composition bar (ADR-0022); assistant turns only, empty for old rows + user turns.
+    steps: list[str] = Field(default_factory=list)
 
 
 class ChatThread(BaseModel):

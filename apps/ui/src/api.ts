@@ -1591,6 +1591,8 @@ export interface ChatMessage {
   citations?: Citation[];
   ranking?: RankedChunk[];
   metrics?: TurnMetrics | null;
+  // The persisted per-turn activity trace, so a resumed turn re-shows the composition bar.
+  steps?: string[];
 }
 
 export function listChatThreads(signal?: AbortSignal): Promise<ChatThread[]> {

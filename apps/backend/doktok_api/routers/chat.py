@@ -297,6 +297,7 @@ def chat_stream(
         reason_parts: list[str] = []
         citations: list[Citation] = []
         ranking: list[RankedChunk] = []
+        steps: list[str] = []
         metrics: TurnMetrics | None = None
         agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
         structured = (
@@ -318,6 +319,8 @@ def chat_stream(
                     parts.append(event.delta)
                 elif event.type == "sources":
                     citations = event.citations
+                elif event.type == "step":
+                    steps.append(event.delta)
                 yield _sse(event)
         elif structured is not None:
             yield _sse(ChatEvent(type="meta"))
@@ -340,6 +343,8 @@ def chat_stream(
                     ranking = event.ranking
                 elif event.type == "metrics":
                     metrics = event.metrics
+                elif event.type == "step":
+                    steps.append(event.delta)
                 yield _sse(event)
         answer_text = "".join(parts).strip()
         if request.remember and answer_text:
@@ -354,6 +359,7 @@ def chat_stream(
                 citations=citations,
                 ranking=ranking,
                 metrics=metrics,
+                steps=steps,
             )
 
     return StreamingResponse(

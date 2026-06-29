@@ -2515,14 +2515,16 @@ class PostgresChatThreadRepository:
             citations=[Citation(**c) for c in (r["citations"] or [])],
             ranking=[RankedChunk(**rc) for rc in (r.get("ranking") or [])],
             metrics=TurnMetrics(**metrics) if metrics else None,
+            steps=list(r.get("steps") or []),
         )
 
     def get_messages(self, tenant_id: str, thread_id: str) -> list[ChatMessage]:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT id, role, content, created_at, reasoning, citations, ranking, metrics "
-                "FROM chat_messages WHERE tenant_id=%s AND thread_id=%s ORDER BY created_at, id",
+                "SELECT id, role, content, created_at, reasoning, citations, ranking, metrics, "
+                "steps FROM chat_messages WHERE tenant_id=%s AND thread_id=%s "
+                "ORDER BY created_at, id",
                 (tenant_id, thread_id),
             ).fetchall()
         return [self._to_message(r) for r in rows]
@@ -2538,18 +2540,21 @@ class PostgresChatThreadRepository:
         citations: list[Citation] | None = None,
         ranking: list[RankedChunk] | None = None,
         metrics: TurnMetrics | None = None,
+        steps: list[str] | None = None,
     ) -> ChatMessage:
         message_id = uuid.uuid4().hex
         citation_json = Json([c.model_dump() for c in (citations or [])])
         ranking_json = Json([rc.model_dump() for rc in (ranking or [])])
         metrics_json = Json(metrics.model_dump() if metrics is not None else {})
+        steps_json = Json(list(steps or []))
         with self._db.connection() as conn, conn.transaction():
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
                 "INSERT INTO chat_messages "
-                "(id, thread_id, tenant_id, role, content, reasoning, citations, ranking, metrics) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "RETURNING id, role, content, created_at, reasoning, citations, ranking, metrics",
+                "(id, thread_id, tenant_id, role, content, reasoning, citations, ranking, metrics, "
+                "steps) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING id, role, content, created_at, reasoning, citations, ranking, metrics, "
+                "steps",
                 (
                     message_id,
                     thread_id,
@@ -2560,6 +2565,7 @@ class PostgresChatThreadRepository:
                     citation_json,
                     ranking_json,
                     metrics_json,
+                    steps_json,
                 ),
             ).fetchone()
             # Bump the thread's activity time; seed the title from this message only while it is

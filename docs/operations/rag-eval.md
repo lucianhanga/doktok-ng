@@ -20,14 +20,17 @@ expected text, and cited an expected source.
 - `core/doktok_core/rag/evaluation.py` — pure metric logic (`evaluate(cases, retriever, answerer)`),
   unit-tested in CI with fakes (no models).
 - `eval/corpus/` + `eval/golden.json` — a tiny golden corpus and Q/A set. Cases are tagged by `kind`
-  (`factoid`, `aggregation`, `refusal`, `conversation`) so the report breaks down by type. A
-  `conversation` case carries a `history` (prior turns); it is answered via `answer_thread` so the
-  follow-up `question` is rewritten against that history, and retrieval recall is measured against
-  the rewritten query (M6.4 multi-turn).
+  (`factoid`, `aggregation`, `refusal`, `conversation`, `relational`) so the report breaks down by
+  type. A `conversation` case carries a `history` (prior turns); it is answered via `answer_thread`
+  so the follow-up `question` is rewritten against that history, and retrieval recall is measured
+  against the rewritten query (M6.4 multi-turn). A `relational` case is a multi-hop / cross-document
+  relationship question answered with the KAG graph-augmented retriever (see below).
 - `scripts/_rag_eval.py` (`make rag-eval`) — the **local** runner: ingests the corpus into a throwaway
-  `eval` tenant, indexes it with the real embedding model, runs the golden set against the real hybrid
-  retriever + RAG answerer, and prints a per-case + aggregate report. Needs a running Ollama and DB
-  (`make db`); it is not run in CI.
+  `eval` tenant, indexes it with the real embedding model, **builds the KAG knowledge graph** over
+  the eval tenant (the entities → ner → entity_graph → relations feature chain + alias folding, using
+  the real Ollama NER + relation extractors), wires a `DefaultGraphRetriever` into the answerer, runs
+  the golden set, and prints a per-case + aggregate report. Needs a running Ollama and DB
+  (`make db`); it is not run in CI. The `eval`-tenant `kg_*` rows are cleaned up alongside the rest.
 
 ## Running it
 
@@ -58,3 +61,21 @@ extraction + deterministic aggregation track (see
 transaction, similarity search misses some and the LLM mis-sums the rest. To exercise that gap, grow
 the aggregation fixtures (e.g. a year of statements with many transactions each) so the relevant lines
 exceed what top-k retrieval returns.
+
+## Relational track (KAG, Phase 3)
+
+The golden set includes **relational** cases — multi-hop / cross-document relationship questions
+("who is Johanna Mertens insured by?", "what organisations is Stefan Vogel connected to?") over the
+household corpus (`insurance-policy.txt`, `bank-welcome.txt`, `employment-letter.txt`), each with a
+clear, explicitly-stated relationship matching the closed predicate vocabulary
+(`INSURED_BY` / `BANKS_WITH` / `EMPLOYED_BY`).
+
+These measure the gain from graph-augmented retrieval. On relational questions the answerer's
+deterministic gate (`looks_relational`) fires, links the question's entities to canonical graph
+nodes, traverses a bounded neighborhood / path, and fuses the cross-document relationship — with its
+source document as a citation — into the grounded answer. On this *tiny* corpus a single-document
+relationship may also be answerable by pure RAG; the gap the graph closes shows on the
+**cross-document** case (e.g. Stefan Vogel's bank *and* employer live in two separate letters, which
+top-k retrieval may not surface together) and grows with corpus size. The graph is only as good as
+the extracted edges, so a weak relation-extraction model will show up here as missed relational
+cases — that is the point of measuring it.

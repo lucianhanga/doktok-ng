@@ -47,5 +47,47 @@
     ],
     "expected_sources": ["invoice.txt"],
     "expected_contains": ["Acme"]
+  },
+  {
+    "id": "rel-insured-by",
+    "question": "Who is Johanna Mertens insured by?",
+    "kind": "relational",
+    "expected_sources": ["insurance-policy.txt"],
+    "expected_contains": ["Allianz"]
+  },
+  {
+    "id": "rel-banks-with",
+    "question": "Who does Stefan Vogel bank with?",
+    "kind": "relational",
+    "expected_sources": ["bank-welcome.txt"],
+    "expected_contains": ["Deutsche Bank"]
+  },
+  {
+    "id": "rel-employed-by",
+    "question": "Who is Stefan Vogel's employer?",
+    "kind": "relational",
+    "expected_sources": ["employment-letter.txt"],
+    "expected_contains": ["Siemens"]
+  },
+  {
+    "id": "rel-stefan-organisations",
+    "question": "What organisations is Stefan Vogel connected to?",
+    "kind": "relational",
+    "expected_sources": ["bank-welcome.txt", "employment-letter.txt"],
+    "expected_contains": ["Deutsche Bank", "Siemens"]
+  },
+  {
+    "id": "rel-mertens-allianz",
+    "question": "What is the relationship between Johanna Mertens and Allianz?",
+    "kind": "relational",
+    "expected_sources": ["insurance-policy.txt"],
+    "expected_contains": ["Allianz"]
+  },
+  {
+    "id": "rel-who-with-siemens",
+    "question": "Who is connected to Siemens AG?",
+    "kind": "relational",
+    "expected_sources": ["employment-letter.txt"],
+    "expected_contains": ["Stefan Vogel"]
   }
 ]

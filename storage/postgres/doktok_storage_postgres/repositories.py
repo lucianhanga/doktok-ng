@@ -2608,6 +2608,27 @@ class PostgresChatThreadRepository:
             message_count=row["message_count"],
         )
 
+    def get_summary(self, tenant_id: str, thread_id: str) -> tuple[str, int]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT summary, summary_through FROM chat_threads WHERE id=%s AND tenant_id=%s",
+                (thread_id, tenant_id),
+            ).fetchone()
+        if row is None:
+            return "", 0
+        return row["summary"] or "", int(row["summary_through"] or 0)
+
+    def update_summary(
+        self, tenant_id: str, thread_id: str, summary: str, summary_through: int
+    ) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE chat_threads SET summary=%s, summary_through=%s "
+                "WHERE id=%s AND tenant_id=%s",
+                (summary, summary_through, thread_id, tenant_id),
+            )
+
     def delete_messages_from(self, tenant_id: str, thread_id: str, message_id: str) -> int:
         with self._db.connection() as conn, conn.transaction():
             cur = conn.cursor(row_factory=dict_row)

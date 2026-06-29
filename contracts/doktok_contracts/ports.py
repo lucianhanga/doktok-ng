@@ -901,6 +901,18 @@ class ChatThreadRepository(Protocol):
         does not belong to the tenant."""
         ...
 
+    def get_summary(self, tenant_id: str, thread_id: str) -> tuple[str, int]:
+        """The thread's rolling summary and its watermark (ADR-0022 Phase 3): ``(summary,
+        summary_through)`` where ``summary_through`` is the number of leading messages already
+        folded in. ``("", 0)`` for an unknown thread or one with no summary yet."""
+        ...
+
+    def update_summary(
+        self, tenant_id: str, thread_id: str, summary: str, summary_through: int
+    ) -> None:
+        """Persist the recomputed rolling summary + watermark. Idempotent overwrite."""
+        ...
+
 
 @runtime_checkable
 class StatsRepository(Protocol):

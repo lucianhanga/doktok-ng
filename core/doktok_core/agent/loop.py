@@ -10,6 +10,7 @@ never to estimate them. Bounded by ``max_iterations`` with a forced tool-free cl
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator, Sequence
 
 from doktok_contracts.media import AgentMessage
@@ -31,6 +32,10 @@ _SYSTEM = (
 
 _MAX_ITERATIONS = 6
 _CLOSE_PROMPT = "Now answer the question using the tool results above. Cite passages with [n]."
+# The agent is "grounded" when its answer actually cites a source (a [n] marker); a refusal /
+# "I can't answer from the corpus" cites nothing, so this preserves the refusal signal the classic
+# answerer gets from its evidence floor (without it, every non-empty answer reads as grounded).
+_CITED_RE = re.compile(r"\[\d+\]")
 
 
 def _specs_as_dicts(specs: Sequence[ToolSpec]) -> list[dict[str, object]]:
@@ -97,7 +102,8 @@ def run_agent_stream(
     deduped = _dedupe_citations(citations)
     yield ChatEvent(type="token", delta=answer)
     yield ChatEvent(type="sources", citations=deduped)
-    yield ChatEvent(type="done", grounded=bool(answer))
+    # Grounded only when the answer cites a source - a refusal cites nothing (mirrors classic RAG).
+    yield ChatEvent(type="done", grounded=bool(_CITED_RE.search(answer)))
 
 
 def run_agent(

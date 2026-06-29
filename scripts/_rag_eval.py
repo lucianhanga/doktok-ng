@@ -74,12 +74,12 @@ TENANT = "eval"
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# The eval runs on a model deliberately NOT the system-configured one (DOKTOK_DEFAULT_MODEL / the
-# saved Data-Pipeline selection), so the benchmark is a fixed, independent reference rather than
-# whatever production is currently set to. Default is the dense qwen3:14b (de-configured from the
-# system this milestone). Override with DOKTOK_EVAL_MODEL=... (must be pulled in the target Ollama).
+# The eval runs on the system-configured model (DOKTOK_DEFAULT_MODEL) by default, so the benchmark
+# reflects what production actually runs - important now that the agent/multi chat modes depend on
+# the configured model's tool-calling behaving as it will in production. Override per run with
+# DOKTOK_EVAL_MODEL=... (it must be pulled in the target Ollama) for an A/B against another model.
 def _eval_model() -> str:
-    return os.environ.get("DOKTOK_EVAL_MODEL", "qwen3:14b")
+    return os.environ.get("DOKTOK_EVAL_MODEL") or get_settings().default_model
 
 
 # Which chat path to evaluate (ADR-0022): "classic" (default - the deterministic RAG answerer),
@@ -189,9 +189,9 @@ def _build_knowledge_graph(settings: object, db: Database, document_ids: list[st
     """Build the KAG graph over the eval tenant, mirroring the worker composition's feature chain.
 
     Runs entities -> ner -> entity_graph -> relations (the real Ollama NER + relation extractors,
-    on the eval model - see _eval_model, deliberately NOT the system-configured model) over each
-    ingested document, then folds aliases. The reconciler is not running in the eval harness, so the
-    features are driven directly in dependency order.
+    on the eval model - see _eval_model, the system-configured model by default) over each ingested
+    document, then folds aliases. The reconciler is not running in the eval harness, so the features
+    are driven directly in dependency order.
     """
     entity_repo = PostgresEntityRepository(db)
     kg_repo = PostgresKnowledgeGraphRepository(db)
@@ -199,7 +199,7 @@ def _build_knowledge_graph(settings: object, db: Database, document_ids: list[st
     file_storage = LocalFileStorage()
     num_ctx = settings.enrich_num_ctx  # type: ignore[attr-defined]
     base_url = settings.ollama_base_url  # type: ignore[attr-defined]
-    model = _eval_model()  # NOT the system-configured model - a fixed independent eval reference
+    model = _eval_model()  # the configured model by default (DOKTOK_EVAL_MODEL overrides)
     ner = OllamaEntityNerExtractor(model, model, base_url, num_ctx=num_ctx)
     relation = OllamaRelationExtractor(model, model, base_url, num_ctx=num_ctx)
     features = [

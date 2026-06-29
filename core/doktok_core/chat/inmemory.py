@@ -41,6 +41,20 @@ class InMemoryMemoryRepository:
         scored.sort(key=lambda s: s[0], reverse=True)
         return [m for _, m in scored[:limit]]
 
+    def list_memories(self, tenant_id: str, *, limit: int = 200) -> list[Memory]:
+        rows = [m for tid, m, _ in self._rows if tid == tenant_id and not m.superseded]
+        return list(reversed(rows))[:limit]
+
+    def delete_memory(self, tenant_id: str, memory_id: str) -> None:
+        self._rows = [
+            row for row in self._rows if not (row[0] == tenant_id and row[1].id == memory_id)
+        ]
+
+    def forget_all(self, tenant_id: str) -> int:
+        before = len(self._rows)
+        self._rows = [row for row in self._rows if row[0] != tenant_id]
+        return before - len(self._rows)
+
 
 class InMemoryChatThreadRepository:
     def __init__(self) -> None:

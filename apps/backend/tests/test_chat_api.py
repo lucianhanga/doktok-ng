@@ -69,6 +69,34 @@ def test_requires_token() -> None:
     assert resp.status_code == 401
 
 
+def test_memory_management_endpoints() -> None:
+    # list / delete / forget-all over an in-memory store registered for the test (ADR-0022 P2-C).
+    from doktok_contracts.ports import ChatModelProvider, ChatThreadRepository, MemoryRepository
+    from doktok_contracts.schemas import Memory
+    from doktok_core.chat.inmemory import InMemoryChatThreadRepository, InMemoryMemoryRepository
+
+    mem = InMemoryMemoryRepository()
+    mem.remember("tenant-a", Memory(id="m1", text="Rent is 900 EUR"), [1.0, 0.0])
+    mem.remember("tenant-a", Memory(id="m2", text="Insured by Allianz"), [0.0, 1.0])
+    registry = build_registry()
+    registry.register(RagAnswerer, FakeRagAnswerer())  # type: ignore[type-abstract]
+    registry.register(ChatModelProvider, _SemanticChat())  # type: ignore[type-abstract]
+    registry.register(ChatThreadRepository, InMemoryChatThreadRepository())  # type: ignore[type-abstract]
+    registry.register(MemoryRepository, mem)  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+    auth = {"Authorization": "Bearer tok-a"}
+
+    listed = client.get("/api/v1/chat/memories", headers=auth)
+    assert listed.status_code == 200 and {m["id"] for m in listed.json()} == {"m1", "m2"}
+
+    assert client.delete("/api/v1/chat/memories/m1", headers=auth).status_code == 204
+    assert {m["id"] for m in client.get("/api/v1/chat/memories", headers=auth).json()} == {"m2"}
+
+    assert client.delete("/api/v1/chat/memories", headers=auth).status_code == 204
+    assert client.get("/api/v1/chat/memories", headers=auth).json() == []
+
+
 def test_retrieve_endpoint_is_read_only_and_echoes_query() -> None:
     # The Retrieval Explorer never errors the UI: with no tool repos wired it returns the query and
     # an empty evidence list (best-effort), proving the route + response shape (ADR-0022).

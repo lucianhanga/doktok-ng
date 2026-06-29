@@ -809,3 +809,43 @@ test("Enter in the composer sends the question (Shift+Enter does not)", async ()
   await userEvent.type(box, "{Enter}");
   await waitFor(() => expect(screen.getByText(/Answer \[1\]\./)).toBeInTheDocument());
 });
+
+test("shows the usage footer and context composition from metrics", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "Answer [1]." }),
+        frame("sources", { citations: [] }),
+        frame("metrics", {
+          metrics: {
+            prompt_tokens: 300,
+            answer_tokens: 50,
+            reasoning_tokens: 0,
+            overhead_tokens: 0,
+            reasoning_ms: 0,
+            answer_ms: 0,
+            total_ms: 1200,
+            reused_previous_results: false,
+            estimated: false,
+            context_limit: 32768,
+            context: [
+              { label: "Tool: retrieve_passages", chars: 1200, tokens: 300 },
+              { label: "Instructions", chars: 200, tokens: 50 },
+            ],
+          },
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "what?{Enter}");
+  await waitFor(() => expect(screen.getByText(/Answer \[1\]\./)).toBeInTheDocument());
+  // usage footer (350 total tokens summed locally) + 1.2s
+  expect(screen.getByText(/350 tok · 1\.2s/)).toBeInTheDocument();
+  // context composition summary with the fullness % against the budget
+  expect(screen.getByText(/Context · ~350 tok · 1% of budget/)).toBeInTheDocument();
+  expect(screen.getByText("Tool: retrieve_passages")).toBeInTheDocument();
+});

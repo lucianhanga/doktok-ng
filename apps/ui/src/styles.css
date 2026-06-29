@@ -2930,6 +2930,64 @@ tr.row-selected {
   color: var(--accent, #6ea8fe);
 }
 
+/* Per-turn context composition + fullness meter (ADR-0022 P2-B/P2-A). */
+.chat-context {
+  margin: 0.4rem 0 0;
+  font-size: 0.74rem;
+}
+.chat-context > summary {
+  cursor: pointer;
+}
+.context-meter {
+  display: block;
+  height: 5px;
+  margin: 0.4rem 0;
+  border-radius: 999px;
+  background: var(--surface-2, rgba(110, 168, 254, 0.12));
+  overflow: hidden;
+}
+.context-meter-fill {
+  display: block;
+  height: 100%;
+}
+.context-meter.is-low .context-meter-fill {
+  background: var(--success, #2a9d4a);
+}
+.context-meter.is-mid .context-meter-fill {
+  background: var(--warning);
+}
+.context-meter.is-high .context-meter-fill {
+  background: var(--danger, #b00020);
+}
+.context-segments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.context-segments li {
+  display: grid;
+  grid-template-columns: minmax(7rem, 10rem) 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+.context-seg-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2, rgba(110, 168, 254, 0.12));
+  overflow: hidden;
+}
+.context-seg-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent, #6ea8fe);
+}
+.context-seg-tok {
+  font-size: 0.7rem;
+}
+
 /* Long-term memory management panel (Settings > Memory, ADR-0022). */
 .memory-head {
   display: flex;

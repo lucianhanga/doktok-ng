@@ -439,6 +439,14 @@ class Citation(BaseModel):
     source_kind: str | None = None
 
 
+class RetrieveResponse(BaseModel):
+    """Retrieve-only result (ADR-0022 Retrieval Explorer): the evidence the agent would ground on
+    for ``query``, without generating an answer - one fused, source-kind-labelled citation list."""
+
+    query: str
+    citations: list[Citation] = Field(default_factory=list)
+
+
 class GraphTriple(BaseModel):
     """One grounded relationship surfaced by graph retrieval (KAG Phase 3).
 

@@ -4,6 +4,6 @@ Adapter-only: LangGraph supplies the graph topology + typed state here; the mode
 gateway stay on doktok_core / doktok_contracts ports and are called directly. core/contracts never
 import langgraph (enforced by lint-imports)."""
 
-from doktok_api.orchestration.graph import run_graph, run_graph_stream
+from doktok_api.orchestration.graph import gather_evidence, run_graph, run_graph_stream
 
-__all__ = ["run_graph", "run_graph_stream"]
+__all__ = ["gather_evidence", "run_graph", "run_graph_stream"]

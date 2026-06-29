@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   chatStream,
+  exploreRetrieval,
   createChatThread,
   deleteChatThread,
   deleteMessagesFrom,
@@ -24,10 +25,12 @@ import { loadJSON, saveJSON } from "./persist";
 const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
 const REASONING_KEY = "doktok.chat.reasoningCollapsed";
 
-/** The shared right rail: closed, showing a turn's sources, or previewing a document. */
+/** The shared right rail: closed, a turn's sources, retrieve-only "explore" evidence, or a
+ * document preview. */
 type RailState =
   | { mode: "none" }
   | { mode: "sources"; turnIndex: number }
+  | { mode: "explore"; query: string; citations: Citation[] }
   | { mode: "preview"; docId: string; from: "sources" | "citation"; turnIndex: number | null };
 
 function fmtMs(ms: number): string {
@@ -718,6 +721,21 @@ export function ChatPanel({
     if (!activeRef.current) onBackgroundDone?.(); // also flag the Chat tab unread when off-tab
   }
 
+  // Retrieval Explorer (ADR-0022): show the evidence the agent would ground on, without answering.
+  function explore() {
+    const q = question.trim();
+    if (!q || streaming) return;
+    setErrorMsg(null);
+    void (async () => {
+      try {
+        const citations = await exploreRetrieval(q);
+        setRail({ mode: "explore", query: q, citations });
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : "retrieval failed");
+      }
+    })();
+  }
+
   function ask(e: React.FormEvent) {
     e.preventDefault();
     const q = question.trim();
@@ -1033,6 +1051,15 @@ export function ChatPanel({
             ) : (
               <button type="submit">Ask</button>
             )}
+            <button
+              type="button"
+              className="chat-explore-btn link-button"
+              onClick={explore}
+              disabled={streaming !== null || !question.trim()}
+              title="Show the evidence that would be retrieved for this question, without generating an answer."
+            >
+              Explore
+            </button>
           </form>
 
           <label className="chat-reasoning-toggle">
@@ -1080,7 +1107,11 @@ export function ChatPanel({
             ) : (
               <div className="chat-rail-sources">
                 <div className="chat-rail-head">
-                  <h3>Sources ({turns[rail.turnIndex]?.citations.length ?? 0})</h3>
+                  <h3>
+                    {rail.mode === "explore"
+                      ? `Evidence for “${rail.query}” (${rail.citations.length})`
+                      : `Sources (${turns[rail.turnIndex]?.citations.length ?? 0})`}
+                  </h3>
                   <button
                     type="button"
                     className="chat-rail-close link-button"
@@ -1090,8 +1121,17 @@ export function ChatPanel({
                     &times;
                   </button>
                 </div>
+                {rail.mode === "explore" && (
+                  <p className="muted chat-explore-note">
+                    Retrieved evidence only — no answer was generated.
+                  </p>
+                )}
                 <SourcesList
-                  citations={turns[rail.turnIndex]?.citations ?? []}
+                  citations={
+                    rail.mode === "explore"
+                      ? rail.citations
+                      : (turns[rail.turnIndex]?.citations ?? [])
+                  }
                   onOpenDocument={onOpenDocument}
                 />
               </div>

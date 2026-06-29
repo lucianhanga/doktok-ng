@@ -69,6 +69,20 @@ def test_requires_token() -> None:
     assert resp.status_code == 401
 
 
+def test_retrieve_endpoint_is_read_only_and_echoes_query() -> None:
+    # The Retrieval Explorer never errors the UI: with no tool repos wired it returns the query and
+    # an empty evidence list (best-effort), proving the route + response shape (ADR-0022).
+    resp = _client(FakeRagAnswerer()).post(
+        "/api/v1/chat/retrieve",
+        json={"question": "what is the rent?"},
+        headers={"Authorization": "Bearer tok-a"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["query"] == "what is the rent?"
+    assert body["citations"] == []
+
+
 def test_agent_mode_falls_back_to_classic_when_model_lacks_tool_calling() -> None:
     # The configured model (_SemanticChat) can't tool-call, so agent_mode="agent" must degrade to
     # the classic RAG path rather than erroring (ADR-0022: the agent path never breaks chat).

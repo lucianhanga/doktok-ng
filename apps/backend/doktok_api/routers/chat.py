@@ -233,15 +233,21 @@ def chat(
     agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
     if agent is not None:
         registry = get_tool_registry(http_request)
-        runner = run_graph if request.agent_mode == "multi" else run_agent
-        answer = runner(
-            tenant_id,
-            question,
-            model=agent,
-            gateway=ToolGateway(registry),
-            tool_specs=registry.specs(),
-            history=history,
-        )
+        gateway, specs = ToolGateway(registry), registry.specs()
+        if request.agent_mode == "multi":
+            answer = run_graph(
+                tenant_id, question, model=agent, gateway=gateway, tool_specs=specs, history=history
+            )
+        else:
+            answer = run_agent(
+                tenant_id,
+                question,
+                model=agent,
+                gateway=gateway,
+                tool_specs=specs,
+                history=history,
+                context_limit=http_request.app.state.settings.chat_num_ctx,
+            )
     else:
         structured = _try_structured(question, http_request, tenant_id)
         answer = (
@@ -306,16 +312,28 @@ def chat_stream(
         )
         if agent is not None:
             registry = get_tool_registry(http_request)
-            stream = run_graph_stream if request.agent_mode == "multi" else run_agent_stream
+            gateway, specs = ToolGateway(registry), registry.specs()
             yield _sse(ChatEvent(type="meta"))
-            for event in stream(
-                tenant_id,
-                question,
-                model=agent,
-                gateway=ToolGateway(registry),
-                tool_specs=registry.specs(),
-                history=history,
-            ):
+            if request.agent_mode == "multi":
+                agent_events = run_graph_stream(
+                    tenant_id,
+                    question,
+                    model=agent,
+                    gateway=gateway,
+                    tool_specs=specs,
+                    history=history,
+                )
+            else:
+                agent_events = run_agent_stream(
+                    tenant_id,
+                    question,
+                    model=agent,
+                    gateway=gateway,
+                    tool_specs=specs,
+                    history=history,
+                    context_limit=http_request.app.state.settings.chat_num_ctx,
+                )
+            for event in agent_events:
                 if event.type == "token":
                     parts.append(event.delta)
                 elif event.type == "sources":

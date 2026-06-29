@@ -503,6 +503,15 @@ class RankedChunk(BaseModel):
     cited: bool = False  # the answer actually referenced it with [n]
 
 
+class ContextSegment(BaseModel):
+    """One slice of the assembled context for a turn (ADR-0022): how much each part contributed
+    (instructions / conversation / each tool result). ``tokens`` is a chars/4 estimate."""
+
+    label: str
+    chars: int
+    tokens: int
+
+
 class TurnMetrics(BaseModel):
     """Per-assistant-turn LLM token/timing metrics (M8 #2/#3/#11). ``reasoning_tokens`` powers the
     collapsed Reasoning & Steps badge; ``overhead_tokens`` is the query-rewrite/filter call. Totals
@@ -518,6 +527,10 @@ class TurnMetrics(BaseModel):
     reused_previous_results: bool = False  # the follow-up was rewritten using the conversation
     rewritten_query: str | None = None
     estimated: bool = False
+    # Context transparency (ADR-0022): how the prompt was composed this turn + the configured chat
+    # context budget (0 = unknown). Populated by the agent loop; empty for the classic path.
+    context: list[ContextSegment] = Field(default_factory=list)
+    context_limit: int = 0
 
     @property
     def total_tokens(self) -> int:

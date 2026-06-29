@@ -9,6 +9,7 @@ import {
   documentThumbnailUrl,
   getThreadMessages,
   listChatThreads,
+  metricsTotalTokens,
   renameChatThread,
   type ChatThread,
   type ChatTurn,
@@ -313,6 +314,49 @@ function ActivityPanel({
   );
 }
 
+/** Per-turn context transparency (ADR-0022 P2-B/P2-A): how the prompt was composed (per-segment
+ * token shares) + a fullness meter against the configured chat context budget. Collapsed by default. */
+function ContextComposition({ metrics }: { metrics: TurnMetrics }) {
+  const segs = metrics.context ?? [];
+  const total = segs.reduce((s, x) => s + x.tokens, 0) || 1;
+  const limit = metrics.context_limit ?? 0;
+  const pct = limit > 0 ? Math.round((total / limit) * 100) : null;
+  const meterClass = pct == null ? "" : pct >= 90 ? "is-high" : pct >= 70 ? "is-mid" : "is-low";
+  return (
+    <details className="chat-context">
+      <summary className="muted">
+        Context · ~{fmtTokens(total)} tok{pct != null ? ` · ${pct}% of budget` : ""}
+      </summary>
+      {pct != null && (
+        <span
+          className={`context-meter ${meterClass}`}
+          role="meter"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Context is ${pct} percent of the ${limit}-token budget`}
+        >
+          <span className="context-meter-fill" style={{ width: `${Math.min(pct, 100)}%` }} />
+        </span>
+      )}
+      <ul className="context-segments">
+        {segs.map((seg) => (
+          <li key={seg.label}>
+            <span className="context-seg-label">{seg.label}</span>
+            <span className="context-seg-bar" aria-hidden="true">
+              <span
+                className="context-seg-fill"
+                style={{ width: `${Math.round((seg.tokens / total) * 100)}%` }}
+              />
+            </span>
+            <span className="muted context-seg-tok">~{fmtTokens(seg.tokens)}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function AnswerBlock({
   turn,
   onOpenDocument,
@@ -432,14 +476,17 @@ function AnswerBlock({
           Generation stopped.
         </p>
       )}
-      {!turn.streaming && turn.metrics && (turn.metrics.total_tokens ?? 0) > 0 && (
+      {!turn.streaming && turn.metrics && metricsTotalTokens(turn.metrics) > 0 && (
         <p
           className="muted chat-usage"
-          title={`${turn.metrics.prompt_tokens ?? 0} prompt + ${turn.metrics.answer_tokens ?? 0} reply = ${turn.metrics.total_tokens ?? 0} tokens in ${fmtMs(turn.metrics.total_ms ?? 0)}`}
+          title={`${turn.metrics.prompt_tokens ?? 0} prompt + ${turn.metrics.answer_tokens ?? 0} reply = ${metricsTotalTokens(turn.metrics)} tokens in ${fmtMs(turn.metrics.total_ms ?? 0)}`}
         >
           {turn.metrics.estimated ? "~" : ""}
-          {fmtTokens(turn.metrics.total_tokens ?? 0)} tok · {fmtMs(turn.metrics.total_ms ?? 0)}
+          {fmtTokens(metricsTotalTokens(turn.metrics))} tok · {fmtMs(turn.metrics.total_ms ?? 0)}
         </p>
+      )}
+      {!turn.streaming && turn.metrics && (turn.metrics.context?.length ?? 0) > 0 && (
+        <ContextComposition metrics={turn.metrics} />
       )}
     </div>
   );

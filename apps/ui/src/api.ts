@@ -1360,6 +1360,12 @@ export interface RankedChunk {
   cited: boolean;
 }
 
+export interface ContextSegment {
+  label: string;
+  chars: number;
+  tokens: number;
+}
+
 export interface TurnMetrics {
   prompt_tokens: number;
   answer_tokens: number;
@@ -1372,6 +1378,19 @@ export interface TurnMetrics {
   rewritten_query?: string | null;
   estimated: boolean;
   total_tokens?: number; // convenience; backend computes via property (not serialized) - sum locally
+  // Context transparency (ADR-0022): how the prompt was composed + the chat context budget.
+  context?: ContextSegment[];
+  context_limit?: number;
+}
+
+/** Sum the token fields locally (the backend's total_tokens is a property, not serialized). */
+export function metricsTotalTokens(m: TurnMetrics): number {
+  return (
+    (m.prompt_tokens ?? 0) +
+    (m.answer_tokens ?? 0) +
+    (m.reasoning_tokens ?? 0) +
+    (m.overhead_tokens ?? 0)
+  );
 }
 
 export interface RagAnswer {

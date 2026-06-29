@@ -16,7 +16,14 @@ from collections.abc import Iterator, Sequence
 
 from doktok_contracts.media import AgentMessage
 from doktok_contracts.ports import ToolCallingChatModel
-from doktok_contracts.schemas import ChatEvent, ChatTurn, Citation, RagAnswer, TurnMetrics
+from doktok_contracts.schemas import (
+    ChatEvent,
+    ChatTurn,
+    Citation,
+    ContextSegment,
+    RagAnswer,
+    TurnMetrics,
+)
 
 from doktok_core.tools.base import ToolGateway, ToolSpec
 
@@ -45,6 +52,26 @@ def _specs_as_dicts(specs: Sequence[ToolSpec]) -> list[dict[str, object]]:
     ]
 
 
+def _context_segments(messages: Sequence[AgentMessage]) -> list[ContextSegment]:
+    """Group the assembled context by part (instructions / conversation / each tool result) with a
+    chars/4 token estimate, largest first - the per-turn 'how the prompt was composed' breakdown."""
+    buckets: dict[str, int] = {}
+    for m in messages:
+        if m.role == "system":
+            label = "Instructions"
+        elif m.role == "tool":
+            label = f"Tool: {m.name or 'result'}"
+        else:
+            label = "Conversation"
+        buckets[label] = buckets.get(label, 0) + len(m.content)
+    segments = [
+        ContextSegment(label=label, chars=chars, tokens=round(chars / 4))
+        for label, chars in buckets.items()
+        if chars > 0
+    ]
+    return sorted(segments, key=lambda s: s.chars, reverse=True)
+
+
 def _dedupe_citations(citations: list[Citation]) -> list[Citation]:
     """Keep the first citation per (document_id, chunk_id), re-indexed 1..n in encounter order."""
     seen: set[tuple[str, str]] = set()
@@ -67,6 +94,7 @@ def run_agent_stream(
     tool_specs: Sequence[ToolSpec],
     history: Sequence[ChatTurn] = (),
     max_iterations: int = _MAX_ITERATIONS,
+    context_limit: int = 0,
 ) -> Iterator[ChatEvent]:
     """Drive the tool loop: yield a ``step`` per tool call, then ``token``/``sources``/``done``.
     Mirrors the answerer's streamed event shape so the chat endpoint and UI need no special case."""
@@ -128,6 +156,8 @@ def run_agent_stream(
             reasoning_tokens=reasoning_tokens,
             total_ms=round((time.monotonic() - t0) * 1000),
             estimated=estimated,
+            context=_context_segments(messages),
+            context_limit=context_limit,
         ),
     )
     # Grounded only when the answer cites a source - a refusal cites nothing (mirrors classic RAG).
@@ -143,6 +173,7 @@ def run_agent(
     tool_specs: Sequence[ToolSpec],
     history: Sequence[ChatTurn] = (),
     max_iterations: int = _MAX_ITERATIONS,
+    context_limit: int = 0,
 ) -> RagAnswer:
     """Non-streaming wrapper: drain ``run_agent_stream`` into a RagAnswer (the JSON endpoint)."""
     answer = ""
@@ -157,6 +188,7 @@ def run_agent(
         tool_specs=tool_specs,
         history=history,
         max_iterations=max_iterations,
+        context_limit=context_limit,
     ):
         if event.type == "token":
             answer = event.delta

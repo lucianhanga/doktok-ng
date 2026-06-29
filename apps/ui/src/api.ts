@@ -1485,8 +1485,8 @@ export async function chatStream(
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
   threadId?: string | null,
-  // true = the tool-calling agent (ADR-0022); false/omitted = the classic deterministic RAG path.
-  agentMode?: boolean,
+  // Chat mode (ADR-0022): "classic" (default) | "agent" (tool loop) | "multi" (multi-agent graph).
+  mode?: string,
 ): Promise<{ grounded: boolean }> {
   const response = await fetch("/api/v1/chat/stream", {
     method: "POST",
@@ -1498,7 +1498,7 @@ export async function chatStream(
       history,
       reasoning,
       thread_id: threadId ?? null,
-      agent_mode: agentMode ? "agent" : "classic",
+      agent_mode: mode ?? "classic",
     }),
     signal,
   });

@@ -225,7 +225,6 @@ function RankedChunks({
  * streaming it auto-expands and pins to the bottom. Shown only when there is something to show.
  */
 function ActivityPanel({
-  steps,
   reasoning,
   streaming,
   caret,
@@ -233,7 +232,6 @@ function ActivityPanel({
   ranking,
   onOpenDocument,
 }: {
-  steps: string[];
   reasoning: string;
   streaming: boolean;
   caret: boolean;
@@ -248,11 +246,12 @@ function ActivityPanel({
   useEffect(() => {
     if (streaming && open && bodyRef.current)
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [steps, reasoning, streaming, open]);
-  if (steps.length === 0 && !reasoning && ranking.length === 0) return null;
+  }, [reasoning, streaming, open]);
+  // Steps render in the always-visible composition bar (AnswerBlock); this panel holds the model's
+  // reasoning + the chunk-ranking trace, shown only when there is something to show.
+  if (!reasoning && ranking.length === 0) return null;
 
   const summary: string[] = [];
-  if (steps.length) summary.push(`${steps.length} steps`);
   if (metrics && metrics.reasoning_tokens > 0) {
     summary.push(`${metrics.estimated ? "~" : ""}${fmtTokens(metrics.reasoning_tokens)} tokens`);
   }
@@ -271,19 +270,11 @@ function ActivityPanel({
         }}
         disabled={streaming}
       >
-        <span aria-hidden="true">{open ? "▾" : "▸"}</span> Reasoning &amp; steps
+        <span aria-hidden="true">{open ? "▾" : "▸"}</span> Reasoning &amp; ranking
         {summary.length > 0 && <span className="muted"> — {summary.join(" · ")}</span>}
       </button>
       {open && (
         <div className="chat-activity-body" ref={bodyRef}>
-          {steps.map((s, i) => (
-            <div
-              key={i}
-              className={streaming && i === steps.length - 1 ? "chat-step active" : "chat-step"}
-            >
-              {s}
-            </div>
-          ))}
           {reasoning && <Markdown>{reasoning}</Markdown>}
           {caret && <span className="chat-caret" aria-hidden="true" />}
           <RankedChunks ranking={ranking} onOpenDocument={onOpenDocument} />
@@ -371,8 +362,21 @@ function AnswerBlock({
       {describeFilters(turn.filters) && (
         <p className="muted chat-rewritten">filtered to: {describeFilters(turn.filters)}</p>
       )}
+      {turn.steps.length > 0 && (
+        <div className="chat-composition" aria-label="How this answer was built">
+          {turn.steps.map((step, i) => (
+            <span key={i} className="chat-composition-chip">
+              {step}
+            </span>
+          ))}
+          {turn.citations.length > 0 && (
+            <span className="chat-composition-chip is-sources">
+              {turn.citations.length} source{turn.citations.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+      )}
       <ActivityPanel
-        steps={turn.steps}
         reasoning={turn.reasoning}
         streaming={turn.streaming}
         caret={reasoningStreaming}
@@ -599,9 +603,9 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Agent mode (ADR-0022): the tool-calling agent that computes counts via tools instead of
-  // estimating them from retrieved passages. Off = the classic deterministic RAG path.
-  const [agentMode, setAgentMode] = useState(false);
+  // Chat mode (ADR-0022): "classic" deterministic RAG | "agent" tool loop | "multi" multi-agent
+  // graph. Agent/multi compute counts via tools instead of estimating them from passages.
+  const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">("classic");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -754,7 +758,7 @@ export function ChatPanel({
           },
           controller.signal,
           tid,
-          agentMode,
+          chatMode,
         );
         completeStream(key, grounded);
       } catch (err) {
@@ -1018,17 +1022,17 @@ export function ChatPanel({
             <span className="muted">Show reasoning</span>
           </label>
 
-          <label
-            className="chat-reasoning-toggle"
-            title="Let the assistant use tools (exact document counts, search, totals) instead of estimating from retrieved passages."
-          >
-            <input
-              type="checkbox"
-              checked={agentMode}
-              onChange={(e) => setAgentMode(e.target.checked)}
+          <label className="chat-mode-select" title="Classic = deterministic RAG. Agent = the assistant calls tools (exact counts, search, totals). Multi-agent = a plan/gather/review graph over the same tools.">
+            <span className="muted">Mode</span>
+            <select
+              value={chatMode}
+              onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
               disabled={streaming !== null}
-            />
-            <span className="muted">Agent mode</span>
+            >
+              <option value="classic">Classic</option>
+              <option value="agent">Agent</option>
+              <option value="multi">Multi-agent</option>
+            </select>
           </label>
 
           {errorMsg && (

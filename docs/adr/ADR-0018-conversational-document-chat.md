@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted - amended by ADR-0022 (agentic chat with tool-calling). The deterministic pipeline below
+remains the default `classic` chat mode; ADR-0022 adds an opt-in `agent` mode and revisits the
+"not an agent" decision in the Decision section.
 
 Evolves the one-shot M6 chat into a grounded multi-turn conversation - "a conversation with my
 documents, like searching but intelligently." Designed with the agentic-ai-architect and the

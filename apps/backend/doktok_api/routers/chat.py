@@ -25,7 +25,14 @@ from doktok_contracts.schemas import (
     RankedChunk,
     TurnMetrics,
 )
-from doktok_core.aggregation import aggregation_answer, looks_like_aggregation, route_to_intent
+from doktok_core.aggregation import (
+    aggregation_answer,
+    count_answer,
+    count_documents,
+    looks_like_aggregation,
+    parse_count_intent,
+    route_to_intent,
+)
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -34,6 +41,7 @@ from doktok_api.dependencies import (
     get_chat_model,
     get_chat_thread_repository,
     get_document_repository,
+    get_entity_repository,
     get_rag_answerer,
     get_record_repository,
 )
@@ -44,6 +52,24 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 Answerer = Annotated[RagAnswerer, Depends(get_rag_answerer)]
 Threads = Annotated[ChatThreadRepository, Depends(get_chat_thread_repository)]
+
+
+def _try_count(question: str, http_request: Request, tenant_id: str) -> RagAnswer | None:
+    """Deterministic document-count answer ("how many m-net invoices") via exact SQL COUNT, or None
+    to fall back. Tried before aggregation so a document count is never miscounted as transactions
+    (ADR-0022). Best-effort: any failure returns None so chat always degrades to RAG."""
+    intent = parse_count_intent(question)
+    if intent is None:
+        return None
+    try:
+        documents = get_document_repository(http_request)
+        report = count_documents(
+            tenant_id, intent, documents=documents, entities=get_entity_repository(http_request)
+        )
+        return count_answer(report, documents, tenant_id)  # None when nothing matched -> RAG
+    except Exception:  # noqa: BLE001 - routing is additive; never break chat
+        logger.debug("count routing failed; falling back to RAG", exc_info=True)
+        return None
 
 
 def _try_aggregation(question: str, http_request: Request, tenant_id: str) -> RagAnswer | None:
@@ -65,6 +91,14 @@ def _try_aggregation(question: str, http_request: Request, tenant_id: str) -> Ra
     except Exception:  # noqa: BLE001 - routing is additive; never break chat
         logger.debug("aggregation routing failed; falling back to RAG", exc_info=True)
         return None
+
+
+def _try_structured(question: str, http_request: Request, tenant_id: str) -> RagAnswer | None:
+    """The deterministic shortcuts, in precedence order: a document count first (most specific),
+    then record aggregation. None means neither matched - the caller falls back to semantic RAG."""
+    return _try_count(question, http_request, tenant_id) or _try_aggregation(
+        question, http_request, tenant_id
+    )
 
 
 def _load_thread(threads: Threads, tenant_id: str, thread_id: str, question: str) -> list[ChatTurn]:
@@ -145,7 +179,7 @@ def chat(
     if request.thread_id:
         history = _load_thread(threads, tenant_id, request.thread_id, question)
 
-    structured = _try_aggregation(question, http_request, tenant_id)
+    structured = _try_structured(question, http_request, tenant_id)
     answer = (
         structured
         if structured is not None
@@ -192,7 +226,7 @@ def chat_stream(
         citations: list[Citation] = []
         ranking: list[RankedChunk] = []
         metrics: TurnMetrics | None = None
-        structured = _try_aggregation(question, http_request, tenant_id)
+        structured = _try_structured(question, http_request, tenant_id)
         if structured is not None:
             yield _sse(ChatEvent(type="meta"))
             yield _sse(ChatEvent(type="token", delta=structured.answer))

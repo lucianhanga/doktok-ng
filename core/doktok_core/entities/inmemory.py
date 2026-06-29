@@ -81,6 +81,26 @@ class InMemoryEntityRepository:
         # Document resolution requires the document repository; not available in-memory.
         return []
 
+    def mention_document_ids(
+        self,
+        tenant_id: str,
+        term: str,
+        *,
+        entity_type: EntityType | None = None,
+        cap: int = 10_000,
+    ) -> tuple[list[str], int, bool]:
+        term_lower = term.lower()
+        matched: set[str] = set()
+        for e in self.entities:
+            if e.tenant_id != tenant_id or not e.normalized_value:
+                continue
+            if entity_type is not None and e.entity_type != entity_type:
+                continue
+            if term_lower in e.normalized_value.lower():
+                matched.add(e.document_id)
+        ids = sorted(matched)
+        return ids[:cap], len(ids), len(ids) > cap
+
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
         return [
             e.model_copy(deep=True)

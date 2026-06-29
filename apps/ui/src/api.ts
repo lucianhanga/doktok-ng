@@ -1479,6 +1479,19 @@ export interface ChatStreamHandlers {
 }
 
 /** Stream a conversational answer, dispatching SSE events to handlers. Resolves when `done`. */
+/** Retrieval Explorer (ADR-0022): fetch the evidence the agent would ground on for `question`,
+ * without generating an answer. Returns the fused, source-kind-labelled citations. */
+export async function exploreRetrieval(question: string): Promise<Citation[]> {
+  const response = await fetch("/api/v1/chat/retrieve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!response.ok) throw friendlyHttpError(response.status);
+  const data = (await response.json()) as { citations?: Citation[] };
+  return data.citations ?? [];
+}
+
 export async function chatStream(
   question: string,
   history: ChatTurn[],

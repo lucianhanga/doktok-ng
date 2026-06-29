@@ -64,6 +64,19 @@ def _plan(question: str) -> list[tuple[str, dict[str, object]]]:
     return plan
 
 
+def gather_evidence(
+    tenant_id: str, question: str, gateway: ToolGateway, *, limit: int = _RETRIEVE_LIMIT
+) -> tuple[list[Citation], str, list[str]]:
+    """Run the deterministic source plan through the gateway and RRF-merge the citations. Returns
+    ``(merged_citations, evidence_text, source_names)``. Shared by the graph's gather node and the
+    retrieve-only endpoint, so 'Explore' shows exactly what the agent would ground on."""
+    plan = _plan(question)
+    results: list[ToolResult] = [gateway.invoke(tenant_id, name, args) for name, args in plan]
+    evidence = merge_evidence([r.citations for r in results if r.ok], limit=limit)
+    summaries = "\n\n".join(r.as_message() for r in results if r.ok and r.summary)
+    return evidence, summaries, [name for name, _ in plan]
+
+
 def build_chat_graph(
     model: ToolCallingChatModel, gateway: ToolGateway, tool_specs: Sequence[ToolSpec]
 ) -> object:
@@ -73,17 +86,14 @@ def build_chat_graph(
         return {"attempts": 0, "trace": ["Planning the approach"]}
 
     def gather(state: _State) -> _State:
-        question = state["question"]
-        plan = _plan(question)
         # The gateway here is tenant-bound (see _TenantGateway), so the tenant arg is ignored.
-        results: list[ToolResult] = [gateway.invoke("", name, args) for name, args in plan]
-        evidence = merge_evidence([r.citations for r in results if r.ok], limit=_RETRIEVE_LIMIT)
-        summaries = "\n\n".join(r.as_message() for r in results if r.ok and r.summary)
-        names = ", ".join(name for name, _ in plan)
+        evidence, summaries, names = gather_evidence(
+            state.get("tenant_id", ""), state["question"], gateway
+        )
         return {
             "evidence": evidence,
             "evidence_text": summaries,
-            "trace": [f"Gathering from: {names}"],
+            "trace": [f"Gathering from: {', '.join(names)}"],
         }
 
     def researcher(state: _State) -> _State:

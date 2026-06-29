@@ -23,6 +23,7 @@ from doktok_contracts.schemas import (
     Citation,
     RagAnswer,
     RankedChunk,
+    RetrieveResponse,
     TurnMetrics,
 )
 from doktok_core.agent import run_agent, run_agent_stream
@@ -49,7 +50,7 @@ from doktok_api.dependencies import (
     get_record_repository,
     get_tool_registry,
 )
-from doktok_api.orchestration import run_graph, run_graph_stream
+from doktok_api.orchestration import gather_evidence, run_graph, run_graph_stream
 
 logger = logging.getLogger("doktok.api.chat")
 
@@ -321,3 +322,18 @@ def chat_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/retrieve", response_model=RetrieveResponse)
+def chat_retrieve(request: ChatRequest, http_request: Request, tenant: Tenant) -> RetrieveResponse:
+    """Retrieval Explorer (ADR-0022): run retrieval (hybrid + graph/count per the deterministic
+    plan) WITHOUT generating an answer, returning the fused, source-kind-labelled evidence so the
+    user can inspect what the agent would ground on. Best-effort: failures return empty."""
+    try:
+        citations, _text, _names = gather_evidence(
+            tenant.tenant_id, request.question, ToolGateway(get_tool_registry(http_request))
+        )
+    except Exception:  # noqa: BLE001 - explorer is read-only; never error the UI
+        logger.debug("retrieval explorer failed", exc_info=True)
+        citations = []
+    return RetrieveResponse(query=request.question, citations=citations)

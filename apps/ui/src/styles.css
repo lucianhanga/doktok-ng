@@ -2930,6 +2930,21 @@ tr.row-selected {
   color: var(--accent, #6ea8fe);
 }
 
+/* Amber "Generation stopped." marker - distinct from the red error banner (user cancel vs failure). */
+.chat-stopped {
+  margin: 0.4rem 0 0;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--warning);
+  color: var(--warning);
+  font-size: 0.8rem;
+}
+
+/* Compact per-answer usage footer (tokens / time); full prompt+reply breakdown on hover. */
+.chat-usage {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+}
+
 /* "How this source reached the model" badge on a source card (ADR-0022). */
 .chat-source-kind {
   margin-left: 0.4rem;

@@ -101,6 +101,20 @@ def test_loop_forces_close_when_budget_exhausted() -> None:
     assert answer.answer == "forced final answer"
 
 
+def test_loop_refusal_is_not_grounded() -> None:
+    # A final answer that cites nothing (a refusal / "can't answer from the corpus") must report
+    # grounded=False, so the refusal signal survives the agent path (eval refusal accuracy).
+    model = _model([ToolCallTurn(text="I can't answer that from your documents.")])
+    answer = run_agent("t", "capital of France?", model=model, gateway=_gateway(), tool_specs=[])
+    assert not answer.grounded
+
+
+def test_loop_cited_answer_is_grounded() -> None:
+    model = _model([ToolCallTurn(text="The rent is 900 EUR [1].")])
+    answer = run_agent("t", "rent?", model=model, gateway=_gateway(), tool_specs=[])
+    assert answer.grounded
+
+
 def test_loop_dedupes_citations_across_tool_calls() -> None:
     call = ToolCallTurn(
         tool_calls=[

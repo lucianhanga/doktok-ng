@@ -435,6 +435,32 @@ class Citation(BaseModel):
     relevance: float | None = None
 
 
+class GraphTriple(BaseModel):
+    """One grounded relationship surfaced by graph retrieval (KAG Phase 3).
+
+    Display labels are the canonical nodes' normalized values; ``document_id``/``chunk_id`` tie the
+    relationship to the source evidence so it can be cited with the same [n] as its excerpt.
+    """
+
+    subject: str
+    predicate: str
+    object: str
+    document_id: str = ""
+    chunk_id: str | None = None
+    evidence: str = ""
+
+
+class GraphRetrieval(BaseModel):
+    """Result of a ``GraphRetriever`` (KAG Phase 3): chunk-grounded ``hits`` that fuse into the
+    hybrid candidate pool (reranked + cited like any retrieval result) plus the compact relationship
+    ``triples`` injected into the grounded prompt as a scaffold. Both empty = no graph signal for
+    this question (gate missed, nothing linked, or no edges) - the caller behaves exactly as today.
+    """
+
+    hits: list[SearchHit] = Field(default_factory=list)
+    triples: list[GraphTriple] = Field(default_factory=list)
+
+
 class RankedChunk(BaseModel):
     """One candidate chunk in a turn's retrieval/ranking trace (M8 #4/#7). The reranker returns an
     order, not a score, so ``relevance`` is the normalized rank (best=1.0) and ``retrieval_score``

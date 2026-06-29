@@ -1113,6 +1113,103 @@ class PostgresKnowledgeGraphRepository:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    # ------------------------------------------------------------------ Phase 3: traversal
+
+    def neighborhood(
+        self,
+        tenant_id: str,
+        entity_ids: Sequence[str],
+        *,
+        hops: int = 1,
+        edge_limit: int = 64,
+    ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
+        seeds = list(entity_ids)
+        if not seeds:
+            return [], []
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            # Reachable nodes within `hops` of any seed. UNION (not UNION ALL) dedups (id, depth)
+            # rows; the depth guard bounds the recursion so it always terminates (cycle-safe).
+            reached_rows = cur.execute(
+                "WITH RECURSIVE reach(id, depth) AS ("
+                "  SELECT unnest(%s::text[]), 0"
+                "  UNION"
+                "  SELECT CASE WHEN e.src_entity_id = r.id THEN e.dst_entity_id "
+                "              ELSE e.src_entity_id END, r.depth + 1"
+                "  FROM reach r JOIN kg_edges e "
+                "    ON e.tenant_id = %s AND (e.src_entity_id = r.id OR e.dst_entity_id = r.id)"
+                "  WHERE r.depth < %s"
+                ") SELECT DISTINCT id FROM reach",
+                (seeds, tenant_id, max(0, hops)),
+            ).fetchall()
+            reached = [row["id"] for row in reached_rows]
+            if not reached:
+                return [], []
+            # Edges of the connected subgraph (both endpoints reached), strongest first, capped.
+            edge_rows = cur.execute(
+                "SELECT id, tenant_id, src_entity_id, predicate, dst_entity_id, "
+                "evidence_count, metadata FROM kg_edges "
+                "WHERE tenant_id = %s AND src_entity_id = ANY(%s) AND dst_entity_id = ANY(%s) "
+                "ORDER BY evidence_count DESC, id LIMIT %s",
+                (tenant_id, reached, reached, edge_limit),
+            ).fetchall()
+            edges = [_row_to_kg_edge(row) for row in edge_rows]
+            prov = self._provenance_for_edges(conn, tenant_id, [e.id for e in edges])
+        return edges, prov
+
+    def path_between(
+        self,
+        tenant_id: str,
+        src_entity_id: str,
+        dst_entity_id: str,
+        *,
+        max_hops: int = 2,
+        edge_limit: int = 64,
+    ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
+        if src_entity_id == dst_entity_id:
+            return [], []
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            # Walk outward accumulating the edge path; never reuse an edge (cycle guard), bounded
+            # by depth. ORDER BY depth LIMIT 1 takes the shortest path found within max_hops.
+            row = cur.execute(
+                "WITH RECURSIVE walk(node, edges, depth) AS ("
+                "  SELECT %s::text, ARRAY[]::text[], 0"
+                "  UNION ALL"
+                "  SELECT CASE WHEN e.src_entity_id = w.node THEN e.dst_entity_id "
+                "              ELSE e.src_entity_id END, w.edges || e.id, w.depth + 1"
+                "  FROM walk w JOIN kg_edges e "
+                "    ON e.tenant_id = %s AND (e.src_entity_id = w.node OR e.dst_entity_id = w.node)"
+                "  WHERE w.depth < %s AND NOT (e.id = ANY(w.edges))"
+                ") SELECT edges FROM walk WHERE node = %s ORDER BY depth LIMIT 1",
+                (src_entity_id, tenant_id, max(1, max_hops), dst_entity_id),
+            ).fetchone()
+            if not row or not row["edges"]:
+                return [], []
+            edge_ids = list(row["edges"])[:edge_limit]
+            edge_rows = cur.execute(
+                "SELECT id, tenant_id, src_entity_id, predicate, dst_entity_id, "
+                "evidence_count, metadata FROM kg_edges WHERE tenant_id = %s AND id = ANY(%s)",
+                (tenant_id, edge_ids),
+            ).fetchall()
+            edges = [_row_to_kg_edge(row) for row in edge_rows]
+            prov = self._provenance_for_edges(conn, tenant_id, edge_ids)
+        return edges, prov
+
+    def _provenance_for_edges(
+        self, conn: Any, tenant_id: str, edge_ids: Sequence[str]
+    ) -> list[KgEdgeProvenance]:
+        ids = list(edge_ids)
+        if not ids:
+            return []
+        cur = conn.cursor(row_factory=dict_row)
+        rows = cur.execute(
+            "SELECT id, tenant_id, edge_id, document_id, chunk_id, evidence "
+            "FROM kg_edge_provenance WHERE tenant_id = %s AND edge_id = ANY(%s)",
+            (tenant_id, ids),
+        ).fetchall()
+        return [_row_to_kg_provenance(row) for row in rows]
+
     # ------------------------------------------------------------------ alias-folding tier
 
     def list_entities(self, tenant_id: str) -> list[KgEntity]:
@@ -1264,6 +1361,17 @@ def _row_to_kg_edge(row: dict[str, Any]) -> KgEdge:
         dst_entity_id=row["dst_entity_id"],
         evidence_count=row["evidence_count"],
         metadata=row["metadata"] or {},
+    )
+
+
+def _row_to_kg_provenance(row: dict[str, Any]) -> KgEdgeProvenance:
+    return KgEdgeProvenance(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        edge_id=row["edge_id"],
+        document_id=row["document_id"],
+        chunk_id=row["chunk_id"],
+        evidence=row["evidence"],
     )
 
 

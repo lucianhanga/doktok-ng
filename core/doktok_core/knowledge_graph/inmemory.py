@@ -7,6 +7,9 @@ delete-then-insert a document's mention/provenance rows.
 
 from __future__ import annotations
 
+from collections import deque
+from collections.abc import Sequence
+
 from doktok_contracts.schemas import (
     AliasFold,
     KgEdge,
@@ -120,6 +123,78 @@ class InMemoryKnowledgeGraphRepository:
 
     def edge_count(self, tenant_id: str) -> int:
         return sum(1 for e in self._edges.values() if e.tenant_id == tenant_id)
+
+    # ------------------------------------------------------------------ Phase 3: traversal
+
+    def neighborhood(
+        self,
+        tenant_id: str,
+        entity_ids: Sequence[str],
+        *,
+        hops: int = 1,
+        edge_limit: int = 64,
+    ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
+        tenant_edges = [e for e in self._edges.values() if e.tenant_id == tenant_id]
+        reached: set[str] = set(entity_ids)
+        frontier: set[str] = set(entity_ids)
+        for _ in range(max(0, hops)):
+            nxt: set[str] = set()
+            for e in tenant_edges:
+                if e.src_entity_id in frontier and e.dst_entity_id not in reached:
+                    nxt.add(e.dst_entity_id)
+                if e.dst_entity_id in frontier and e.src_entity_id not in reached:
+                    nxt.add(e.src_entity_id)
+            if not nxt:
+                break
+            reached |= nxt
+            frontier = nxt
+        edges = [
+            e for e in tenant_edges if e.src_entity_id in reached and e.dst_entity_id in reached
+        ]
+        edges.sort(key=lambda e: (e.evidence_count, e.id), reverse=True)
+        edges = edges[:edge_limit]
+        prov = self._provenance_for(tenant_id, {e.id for e in edges})
+        return [e.model_copy(deep=True) for e in edges], prov
+
+    def path_between(
+        self,
+        tenant_id: str,
+        src_entity_id: str,
+        dst_entity_id: str,
+        *,
+        max_hops: int = 2,
+        edge_limit: int = 64,
+    ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
+        if src_entity_id == dst_entity_id:
+            return [], []
+        adjacency: dict[str, list[tuple[str, KgEdge]]] = {}
+        for e in self._edges.values():
+            if e.tenant_id != tenant_id:
+                continue
+            adjacency.setdefault(e.src_entity_id, []).append((e.dst_entity_id, e))
+            adjacency.setdefault(e.dst_entity_id, []).append((e.src_entity_id, e))
+        queue: deque[tuple[str, list[KgEdge]]] = deque([(src_entity_id, [])])
+        visited: set[str] = {src_entity_id}
+        while queue:
+            node, path = queue.popleft()
+            if len(path) >= max(1, max_hops):
+                continue
+            for neighbor, edge in adjacency.get(node, []):
+                if neighbor == dst_entity_id:
+                    edges = (path + [edge])[:edge_limit]
+                    prov = self._provenance_for(tenant_id, {e.id for e in edges})
+                    return [e.model_copy(deep=True) for e in edges], prov
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [edge]))
+        return [], []
+
+    def _provenance_for(self, tenant_id: str, edge_ids: set[str]) -> list[KgEdgeProvenance]:
+        return [
+            p.model_copy(deep=True)
+            for p in self._provenance.values()
+            if p.tenant_id == tenant_id and p.edge_id in edge_ids
+        ]
 
     # ------------------------------------------------------------------ alias-folding tier
 

@@ -12,7 +12,7 @@ import logging
 from collections.abc import Iterator
 from typing import Annotated
 
-from doktok_contracts.ports import ChatThreadRepository, RagAnswerer
+from doktok_contracts.ports import ChatThreadRepository, RagAnswerer, ToolCallingChatModel
 from doktok_contracts.schemas import (
     ChatEvent,
     ChatMessage,
@@ -25,6 +25,7 @@ from doktok_contracts.schemas import (
     RankedChunk,
     TurnMetrics,
 )
+from doktok_core.agent import run_agent, run_agent_stream
 from doktok_core.aggregation import (
     aggregation_answer,
     count_answer,
@@ -33,6 +34,7 @@ from doktok_core.aggregation import (
     parse_count_intent,
     route_to_intent,
 )
+from doktok_core.tools import ToolGateway
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -44,6 +46,7 @@ from doktok_api.dependencies import (
     get_entity_repository,
     get_rag_answerer,
     get_record_repository,
+    get_tool_registry,
 )
 
 logger = logging.getLogger("doktok.api.chat")
@@ -99,6 +102,12 @@ def _try_structured(question: str, http_request: Request, tenant_id: str) -> Rag
     return _try_count(question, http_request, tenant_id) or _try_aggregation(
         question, http_request, tenant_id
     )
+
+
+def _agent_model(http_request: Request) -> ToolCallingChatModel | None:
+    """The configured chat model if it supports tool-calling, else None (-> classic fallback)."""
+    model = get_chat_model(http_request)
+    return model if isinstance(model, ToolCallingChatModel) else None
 
 
 def _load_thread(threads: Threads, tenant_id: str, thread_id: str, question: str) -> list[ChatTurn]:
@@ -179,12 +188,24 @@ def chat(
     if request.thread_id:
         history = _load_thread(threads, tenant_id, request.thread_id, question)
 
-    structured = _try_structured(question, http_request, tenant_id)
-    answer = (
-        structured
-        if structured is not None
-        else answerer.answer_thread(tenant_id, history, question, limit)
-    )
+    agent = _agent_model(http_request) if request.agent_mode == "agent" else None
+    if agent is not None:
+        registry = get_tool_registry(http_request)
+        answer = run_agent(
+            tenant_id,
+            question,
+            model=agent,
+            gateway=ToolGateway(registry),
+            tool_specs=registry.specs(),
+            history=history,
+        )
+    else:
+        structured = _try_structured(question, http_request, tenant_id)
+        answer = (
+            structured
+            if structured is not None
+            else answerer.answer_thread(tenant_id, history, question, limit)
+        )
     if request.thread_id:
         threads.append_message(
             tenant_id,
@@ -226,8 +247,27 @@ def chat_stream(
         citations: list[Citation] = []
         ranking: list[RankedChunk] = []
         metrics: TurnMetrics | None = None
-        structured = _try_structured(question, http_request, tenant_id)
-        if structured is not None:
+        agent = _agent_model(http_request) if request.agent_mode == "agent" else None
+        structured = (
+            None if agent is not None else _try_structured(question, http_request, tenant_id)
+        )
+        if agent is not None:
+            registry = get_tool_registry(http_request)
+            yield _sse(ChatEvent(type="meta"))
+            for event in run_agent_stream(
+                tenant_id,
+                question,
+                model=agent,
+                gateway=ToolGateway(registry),
+                tool_specs=registry.specs(),
+                history=history,
+            ):
+                if event.type == "token":
+                    parts.append(event.delta)
+                elif event.type == "sources":
+                    citations = event.citations
+                yield _sse(event)
+        elif structured is not None:
             yield _sse(ChatEvent(type="meta"))
             yield _sse(ChatEvent(type="token", delta=structured.answer))
             yield _sse(ChatEvent(type="sources", citations=structured.citations))

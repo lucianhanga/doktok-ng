@@ -1502,6 +1502,8 @@ export async function chatStream(
   threadId?: string | null,
   // Chat mode (ADR-0022): "classic" (default) | "agent" (tool loop) | "multi" (multi-agent graph).
   mode?: string,
+  // Long-term memory (ADR-0022): recall past facts + store one after this turn. Default off/private.
+  remember?: boolean,
 ): Promise<{ grounded: boolean }> {
   const response = await fetch("/api/v1/chat/stream", {
     method: "POST",
@@ -1514,6 +1516,7 @@ export async function chatStream(
       reasoning,
       thread_id: threadId ?? null,
       agent_mode: mode ?? "classic",
+      remember: remember ?? false,
     }),
     signal,
   });

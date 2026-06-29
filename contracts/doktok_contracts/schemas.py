@@ -439,6 +439,21 @@ class Citation(BaseModel):
     source_kind: str | None = None
 
 
+class Memory(BaseModel):
+    """A long-term semantic memory: a salient fact recalled across conversations (ADR-0022).
+
+    ``source`` carries provenance (e.g. the thread/message it came from); ``superseded`` retires a
+    memory a correction has replaced without deleting it. The embedding is stored, not surfaced."""
+
+    id: str
+    kind: str = "conversation"
+    text: str
+    confidence: float = 1.0
+    superseded: bool = False
+    source: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+
 class RetrieveResponse(BaseModel):
     """Retrieve-only result (ADR-0022 Retrieval Explorer): the evidence the agent would ground on
     for ``query``, without generating an answer - one fused, source-kind-labelled citation list."""
@@ -671,6 +686,10 @@ class ChatRequest(BaseModel):
     # agent/multi paths are opt-in and fall back to classic when the configured model can't do
     # tool-calling. A mis-behaving agent turn never affects the default path.
     agent_mode: str = "classic"
+    # Long-term memory (ADR-0022): when true, recall relevant facts from past conversations into the
+    # context and store a memory after this turn. Default false = private ("incognito") - no recall,
+    # no write. Each direction costs one embedding call, so it is opt-in.
+    remember: bool = False
 
 
 class ChatMessage(BaseModel):

@@ -62,6 +62,7 @@ from doktok_contracts.schemas import (
     KgEntity,
     KgEntityMention,
     ListAnchor,
+    Memory,
     OcrSettings,
     ProjectionRequest,
     QueryFilters,
@@ -911,6 +912,20 @@ class ChatThreadRepository(Protocol):
         self, tenant_id: str, thread_id: str, summary: str, summary_through: int
     ) -> None:
         """Persist the recomputed rolling summary + watermark. Idempotent overwrite."""
+        ...
+
+
+@runtime_checkable
+class MemoryRepository(Protocol):
+    """Long-term semantic memory store (ADR-0022). Tenant-scoped; recall is cosine-nearest over the
+    stored embeddings, skipping superseded rows."""
+
+    def remember(self, tenant_id: str, memory: Memory, embedding: list[float]) -> None:
+        """Persist a memory with its embedding (idempotent on ``memory.id``)."""
+        ...
+
+    def recall(self, tenant_id: str, embedding: list[float], *, limit: int = 5) -> list[Memory]:
+        """The ``limit`` non-superseded memories nearest ``embedding`` (cosine), nearest first."""
         ...
 
 

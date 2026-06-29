@@ -5,7 +5,41 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from doktok_contracts.schemas import ChatMessage, ChatThread, Citation, RankedChunk, TurnMetrics
+from doktok_contracts.schemas import (
+    ChatMessage,
+    ChatThread,
+    Citation,
+    Memory,
+    RankedChunk,
+    TurnMetrics,
+)
+
+
+class InMemoryMemoryRepository:
+    """In-memory ``MemoryRepository`` for tests/dev: cosine recall over stored embeddings."""
+
+    def __init__(self) -> None:
+        self._rows: list[tuple[str, Memory, list[float]]] = []
+
+    def remember(self, tenant_id: str, memory: Memory, embedding: list[float]) -> None:
+        if any(m.id == memory.id for _, m, _ in self._rows):
+            return
+        self._rows.append((tenant_id, memory, embedding))
+
+    def recall(self, tenant_id: str, embedding: list[float], *, limit: int = 5) -> list[Memory]:
+        def cosine(a: list[float], b: list[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b, strict=False))
+            na = sum(x * x for x in a) ** 0.5
+            nb = sum(y * y for y in b) ** 0.5
+            return dot / (na * nb) if na and nb else 0.0
+
+        scored = [
+            (cosine(embedding, vec), m)
+            for tid, m, vec in self._rows
+            if tid == tenant_id and not m.superseded
+        ]
+        scored.sort(key=lambda s: s[0], reverse=True)
+        return [m for _, m in scored[:limit]]
 
 
 class InMemoryChatThreadRepository:

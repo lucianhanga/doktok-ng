@@ -1100,6 +1100,9 @@ export function ChatPanel({
               <option value="multi">Multi-agent</option>
             </select>
           </label>
+          {chatMode === "multi" && (
+            <span className="muted chat-mode-hint">Multi-agent runs several steps — slower.</span>
+          )}
 
           {errorMsg && (
             <p role="alert" className="status-error">

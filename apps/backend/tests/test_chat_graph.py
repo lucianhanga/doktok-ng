@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from doktok_api.orchestration import run_graph
+from doktok_api.orchestration import run_graph, run_graph_stream
 from doktok_contracts.media import AgentMessage, ToolCallTurn
 from doktok_contracts.ports import ToolCallingChatModel
 from doktok_contracts.schemas import Citation
@@ -100,3 +100,17 @@ def test_graph_stops_after_max_attempts() -> None:
         tool_specs=[],
     )
     assert answer.answer == "draft 2"  # second (final) attempt, not looped forever
+
+
+def test_graph_stream_emits_steps_live_then_final() -> None:
+    model = _model([ToolCallTurn(text="grounded answer [1]"), ToolCallTurn(text="OK")])
+    events = list(
+        run_graph_stream("t", "what is the rent", model=model, gateway=_gateway(), tool_specs=[])
+    )
+    types = [e.type for e in events]
+    steps = [e.delta for e in events if e.type == "step"]
+    # step trace streams (planner/gather/research/review), then exactly one token, sources, done.
+    assert any("Gathering from" in s for s in steps)
+    assert types[-3:] == ["token", "sources", "done"]
+    token = next(e for e in events if e.type == "token")
+    assert "grounded answer" in token.delta

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Iterator, Sequence
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from doktok_contracts.media import AgentMessage
 from doktok_contracts.ports import ToolCallingChatModel
@@ -169,19 +169,25 @@ def run_graph_stream(
     tool_specs: Sequence[ToolSpec],
     history: Sequence[ChatTurn] = (),
 ) -> Iterator[ChatEvent]:
-    """Run the graph and replay it as the chat event stream (step trace, then token/sources/done).
-    The graph runs to completion first (not token-streamed); the activity trace shows the path."""
+    """Run the graph, emitting each node's ``step`` trace LIVE as it completes, then the final
+    token/sources/done. Uses LangGraph's ``stream`` (updates mode) so the activity panel fills in
+    while the graph works instead of after it finishes (the answer itself is not token-streamed)."""
     # The gateway is tenant-bound at call time; bind the tenant by wrapping invoke for this run.
     bound = _TenantGateway(gateway, tenant_id)
     compiled = build_chat_graph(model, bound, tool_specs)  # type: ignore[arg-type]
-    final: _State = compiled.invoke(  # type: ignore[attr-defined]
-        {"question": question, "history": list(history), "tenant_id": tenant_id, "attempts": 0}
-    )
-    for label in final.get("trace", []):
-        yield ChatEvent(type="step", delta=label)
-    yield ChatEvent(type="token", delta=final.get("answer", ""))
-    yield ChatEvent(type="sources", citations=final.get("citations") or final.get("evidence") or [])
-    yield ChatEvent(type="done", grounded=bool(final.get("grounded")))
+    state: dict[str, Any] = {}
+    for update in compiled.stream(  # type: ignore[attr-defined]
+        {"question": question, "history": list(history), "tenant_id": tenant_id, "attempts": 0},
+        stream_mode="updates",
+    ):
+        # ``update`` is {node_name: state_delta}; emit that node's trace lines live and accumulate.
+        for delta in update.values():
+            for label in delta.get("trace", []):
+                yield ChatEvent(type="step", delta=label)
+            state.update({k: v for k, v in delta.items() if k != "trace"})
+    yield ChatEvent(type="token", delta=state.get("answer", ""))
+    yield ChatEvent(type="sources", citations=state.get("citations") or state.get("evidence") or [])
+    yield ChatEvent(type="done", grounded=bool(state.get("grounded")))
 
 
 def run_graph(

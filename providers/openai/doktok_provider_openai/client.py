@@ -182,6 +182,41 @@ def openai_chat(
     return str(choices[0].get("message", {}).get("content") or "")
 
 
+def openai_chat_with_tools(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    timeout: float = 120.0,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    """One provider-native tool-calling turn. ``messages`` are already OpenAI-shaped; ``tools`` are
+    JSON function specs. Returns the raw assistant ``message`` dict (``content`` and/or
+    ``tool_calls``). The caller maps it to the contract ``ToolCallTurn``."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "tools": [{"type": "function", "function": spec} for spec in tools],
+    }
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
+    else:
+        payload["temperature"] = 0
+    response = _post_with_retry(
+        url=f"{base_url.rstrip('/')}/chat/completions",
+        payload=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        timeout=timeout,
+    )
+    choices = response.json().get("choices", [])
+    if not choices:
+        return {}
+    message = choices[0].get("message", {})
+    return message if isinstance(message, dict) else {}
+
+
 def openai_chat_with_usage(
     *,
     api_key: str,

@@ -12,7 +12,12 @@ import json
 import os
 import shutil
 from pathlib import Path
+from typing import cast
 
+from doktok_api.orchestration import run_graph
+from doktok_contracts.ports import RagAnswerer
+from doktok_contracts.schemas import ChatEvent, ChatTurn, RagAnswer
+from doktok_core.agent import run_agent
 from doktok_core.config import get_settings
 from doktok_core.entities.extractor import RegexEntityExtractor
 from doktok_core.features.processors import (
@@ -36,6 +41,8 @@ from doktok_core.rag.answerer import DefaultRagAnswerer
 from doktok_core.rag.evaluation import RagCase, evaluate
 from doktok_core.rag.reranker import LlmReranker
 from doktok_core.security.policy import DefaultSecurityPolicy
+from doktok_core.tools import ToolGateway
+from doktok_core.tools.library import build_default_registry
 from doktok_modalities_files import (
     DirectTextExtractor,
     LibmagicMimeDetector,
@@ -51,12 +58,15 @@ from doktok_retrieval_hybrid import HybridPostgresRetriever
 from doktok_storage_filesystem import LocalFileStorage, QuarantineService, Sha256HashService
 from doktok_storage_postgres import (
     Database,
+    PostgresCategoryRepository,
     PostgresChunkRepository,
     PostgresDocumentRepository,
     PostgresEntityRepository,
     PostgresIngestionJobRepository,
     PostgresKnowledgeGraphRepository,
     PostgresLexicalTermExtractor,
+    PostgresRecordRepository,
+    PostgresStatsRepository,
     migrate,
 )
 
@@ -70,6 +80,59 @@ ROOT = Path(__file__).resolve().parent.parent
 # system this milestone). Override with DOKTOK_EVAL_MODEL=... (must be pulled in the target Ollama).
 def _eval_model() -> str:
     return os.environ.get("DOKTOK_EVAL_MODEL", "qwen3:14b")
+
+
+# Which chat path to evaluate (ADR-0022): "classic" (default - the deterministic RAG answerer),
+# "agent" (single-agent tool loop) or "multi" (the LangGraph graph). Set DOKTOK_EVAL_CHAT_MODE to
+# benchmark whether the agent paths actually beat classic on the golden set.
+def _chat_mode() -> str:
+    mode = os.environ.get("DOKTOK_EVAL_CHAT_MODE", "classic").lower()
+    return mode if mode in ("classic", "agent", "multi") else "classic"
+
+
+class _AgentAnswerer:
+    """Adapts the agent/multi chat paths to the ``RagAnswerer`` interface the evaluator calls, so
+    the golden set is scored through them with the same metrics as classic RAG."""
+
+    def __init__(
+        self, mode: str, *, model: object, gateway: ToolGateway, tool_specs: object
+    ) -> None:
+        self._mode = mode
+        self._model = model
+        self._gateway = gateway
+        self._specs = tool_specs
+
+    def _run(self, tenant_id: str, history: list[ChatTurn], question: str) -> RagAnswer:
+        runner = run_graph if self._mode == "multi" else run_agent
+        return runner(
+            tenant_id,
+            question,
+            model=self._model,  # type: ignore[arg-type]
+            gateway=self._gateway,
+            tool_specs=self._specs,  # type: ignore[arg-type]
+            history=history,
+        )
+
+    def answer(self, tenant_id: str, question: str, limit: int = 8) -> RagAnswer:
+        return self._run(tenant_id, [], question)
+
+    def answer_thread(
+        self, tenant_id: str, history: list[ChatTurn], question: str, limit: int = 8
+    ) -> RagAnswer:
+        return self._run(tenant_id, history, question)
+
+    def answer_thread_stream(
+        self,
+        tenant_id: str,
+        history: list[ChatTurn],
+        question: str,
+        limit: int = 8,
+        *,
+        reasoning: bool | None = None,
+    ):  # noqa: ANN201 - generator, not used by the evaluator (kept for protocol completeness)
+        answer = self._run(tenant_id, history, question)
+        yield ChatEvent(type="token", delta=answer.answer)
+        yield ChatEvent(type="done", grounded=answer.grounded)
 
 
 GREEN, RED, YELLOW, NC = "\033[0;32m", "\033[0;31m", "\033[1;33m", "\033[0m"
@@ -300,7 +363,7 @@ def main() -> int:
     graph_retriever = DefaultGraphRetriever(
         PostgresKnowledgeGraphRepository(db), documents=PostgresDocumentRepository(db)
     )
-    answerer = DefaultRagAnswerer(
+    answerer: RagAnswerer = DefaultRagAnswerer(
         retriever,
         chat,
         reranker=LlmReranker(chat),
@@ -308,7 +371,27 @@ def main() -> int:
         graph_retriever=graph_retriever,
     )
 
-    print(f"{YELLOW}Running {len(cases)} golden cases...{NC}\n")
+    # Agent/multi modes (ADR-0022): route every golden case through the tool-calling loop or the
+    # multi-agent graph instead of classic RAG, scored with the identical metrics for comparison.
+    mode = _chat_mode()
+    if mode in ("agent", "multi"):
+        registry = build_default_registry(
+            documents=PostgresDocumentRepository(db),
+            entities=PostgresEntityRepository(db),
+            retriever=retriever,
+            records=PostgresRecordRepository(db),
+            graph_retriever=graph_retriever,
+            stats=PostgresStatsRepository(db),
+            categories=PostgresCategoryRepository(db),
+        )
+        answerer = cast(
+            RagAnswerer,
+            _AgentAnswerer(
+                mode, model=chat, gateway=ToolGateway(registry), tool_specs=registry.specs()
+            ),
+        )
+
+    print(f"{YELLOW}Running {len(cases)} golden cases (chat mode: {mode})...{NC}\n")
     report = evaluate(cases, retriever=retriever, answerer=answerer, tenant_id=TENANT)
     for result in report.results:
         mark = f"{GREEN}PASS{NC}" if result.passed else f"{RED}FAIL{NC}"

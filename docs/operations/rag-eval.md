@@ -60,6 +60,22 @@ DOKTOK_EVAL_MODEL=qwen3.6:35b-a3b make rag-eval   # the chosen model must be pul
 Embeddings always use the real `DOKTOK_EMBEDDING_MODEL` (the index has to match what production
 queries against), so `DOKTOK_EVAL_MODEL` only swaps the generative/extraction model.
 
+### Chat mode (`DOKTOK_EVAL_CHAT_MODE`)
+
+By default the golden set is scored through the **classic** deterministic RAG answerer. Set
+`DOKTOK_EVAL_CHAT_MODE` to benchmark the agentic paths (ADR-0022) with the identical metrics, so you
+can see whether they actually beat classic on counting/relational/aggregation cases (and at what
+cost):
+
+```bash
+DOKTOK_EVAL_CHAT_MODE=agent make rag-eval   # the single-agent tool-calling loop
+DOKTOK_EVAL_CHAT_MODE=multi make rag-eval   # the LangGraph plan/gather/merge/critic graph
+```
+
+`agent`/`multi` need a tool-calling model — the eval model (`DOKTOK_EVAL_MODEL`) is used, so pick one
+whose tool-calling is reliable (a dense model is safer than the local MoE). These modes run several
+model calls per case, so they are markedly slower than `classic`.
+
 ## Enrichment eval (M6.2)
 
 `make enrich-eval` (`scripts/_enrich_eval.py`) ingests the same corpus into a throwaway `eval` tenant,

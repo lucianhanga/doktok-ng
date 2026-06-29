@@ -72,7 +72,7 @@ class OpenAiChatModelProvider:
     def chat_with_tools(
         self, messages: list[AgentMessage], tools: list[dict[str, Any]]
     ) -> ToolCallTurn:
-        message = openai_chat_with_tools(
+        message, usage = openai_chat_with_tools(
             api_key=self._api_key,
             base_url=self._base_url,
             model=self._model,
@@ -81,6 +81,7 @@ class OpenAiChatModelProvider:
             timeout=self._timeout,
             reasoning_effort=self._reasoning_effort,
         )
+        self._last_usage = usage
         text = str(message.get("content") or "")
         calls: list[LlmToolCall] = []
         for raw in message.get("tool_calls") or []:
@@ -96,4 +97,4 @@ class OpenAiChatModelProvider:
                     arguments=args if isinstance(args, dict) else {},
                 )
             )
-        return ToolCallTurn(text=text, tool_calls=calls)
+        return ToolCallTurn(text=text, tool_calls=calls, usage=usage)

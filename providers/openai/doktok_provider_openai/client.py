@@ -182,6 +182,21 @@ def openai_chat(
     return str(choices[0].get("message", {}).get("content") or "")
 
 
+def _usage_from_body(body: dict[str, Any], wall_ms: int) -> LlmUsage:
+    """Build LlmUsage from an OpenAI response body's ``usage`` block (exact when present)."""
+    usage_obj = body.get("usage") or {}
+    details = usage_obj.get("completion_tokens_details") or {}
+    reasoning = int(details.get("reasoning_tokens") or 0)
+    completion = int(usage_obj.get("completion_tokens") or 0)
+    return LlmUsage(
+        prompt_tokens=int(usage_obj.get("prompt_tokens") or 0),
+        answer_tokens=max(0, completion - reasoning),
+        reasoning_tokens=reasoning,
+        wall_ms=wall_ms,
+        estimated=not usage_obj,
+    )
+
+
 def openai_chat_with_tools(
     *,
     api_key: str,
@@ -191,10 +206,10 @@ def openai_chat_with_tools(
     tools: list[dict[str, Any]],
     timeout: float = 120.0,
     reasoning_effort: str | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], LlmUsage]:
     """One provider-native tool-calling turn. ``messages`` are already OpenAI-shaped; ``tools`` are
     JSON function specs. Returns the raw assistant ``message`` dict (``content`` and/or
-    ``tool_calls``). The caller maps it to the contract ``ToolCallTurn``."""
+    ``tool_calls``) plus token/timing usage. The caller maps it to the contract ``ToolCallTurn``."""
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -204,17 +219,18 @@ def openai_chat_with_tools(
         payload["reasoning_effort"] = reasoning_effort
     else:
         payload["temperature"] = 0
+    t0 = time.monotonic()
     response = _post_with_retry(
         url=f"{base_url.rstrip('/')}/chat/completions",
         payload=payload,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         timeout=timeout,
     )
-    choices = response.json().get("choices", [])
-    if not choices:
-        return {}
-    message = choices[0].get("message", {})
-    return message if isinstance(message, dict) else {}
+    wall_ms = round((time.monotonic() - t0) * 1000)
+    body = response.json()
+    choices = body.get("choices", [])
+    message = choices[0].get("message", {}) if choices else {}
+    return (message if isinstance(message, dict) else {}), _usage_from_body(body, wall_ms)
 
 
 def openai_chat_with_usage(

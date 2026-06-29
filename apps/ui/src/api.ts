@@ -1485,13 +1485,21 @@ export async function chatStream(
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
   threadId?: string | null,
+  // true = the tool-calling agent (ADR-0022); false/omitted = the classic deterministic RAG path.
+  agentMode?: boolean,
 ): Promise<{ grounded: boolean }> {
   const response = await fetch("/api/v1/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     // With a thread_id the server loads history from the DB and persists this turn.
     // `reasoning` is omitted when undefined so the server falls back to the configured setting.
-    body: JSON.stringify({ question, history, reasoning, thread_id: threadId ?? null }),
+    body: JSON.stringify({
+      question,
+      history,
+      reasoning,
+      thread_id: threadId ?? null,
+      agent_mode: agentMode ? "agent" : "classic",
+    }),
     signal,
   });
   if (!response.ok || !response.body) {

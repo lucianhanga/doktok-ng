@@ -102,6 +102,9 @@ function SourceCard({
   const subtitle =
     citation.title && citation.title !== citation.original_filename ? citation.title : null;
   const pct = citation.relevance != null ? Math.round(citation.relevance * 100) : null;
+  // A qualitative strength word alongside the bar - friendlier than a bare number, and the score is
+  // a rank-normalized relevance, not a raw cosine (UI/UX guidance).
+  const strength = pct == null ? null : pct >= 80 ? "Strong" : pct >= 50 ? "Moderate" : "Weak";
   return (
     <li>
       <button
@@ -124,7 +127,7 @@ function SourceCard({
               <span className="importance-fill" style={{ width: `${pct}%` }} />
             </span>
             <span className="importance-label muted">
-              {pct}% &middot; #{rank}
+              {strength} match &middot; {pct}% &middot; #{rank}
             </span>
           </span>
         )}
@@ -596,6 +599,9 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
+  // Agent mode (ADR-0022): the tool-calling agent that computes counts via tools instead of
+  // estimating them from retrieved passages. Off = the classic deterministic RAG path.
+  const [agentMode, setAgentMode] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -748,6 +754,7 @@ export function ChatPanel({
           },
           controller.signal,
           tid,
+          agentMode,
         );
         completeStream(key, grounded);
       } catch (err) {
@@ -1009,6 +1016,19 @@ export function ChatPanel({
               disabled={streaming !== null}
             />
             <span className="muted">Show reasoning</span>
+          </label>
+
+          <label
+            className="chat-reasoning-toggle"
+            title="Let the assistant use tools (exact document counts, search, totals) instead of estimating from retrieved passages."
+          >
+            <input
+              type="checkbox"
+              checked={agentMode}
+              onChange={(e) => setAgentMode(e.target.checked)}
+              disabled={streaming !== null}
+            />
+            <span className="muted">Agent mode</span>
           </label>
 
           {errorMsg && (

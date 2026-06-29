@@ -15,10 +15,15 @@ from pathlib import Path
 from typing import cast
 
 from doktok_api.orchestration import run_graph
-from doktok_contracts.ports import RagAnswerer
-from doktok_contracts.schemas import ChatEvent, ChatTurn, RagAnswer
+from doktok_contracts.ports import (
+    ChatModelProvider,
+    EntityNerExtractor,
+    RagAnswerer,
+    RelationExtractor,
+)
+from doktok_contracts.schemas import AiSettings, ChatEvent, ChatTurn, RagAnswer
 from doktok_core.agent import run_agent
-from doktok_core.config import get_settings
+from doktok_core.config import Settings, get_settings
 from doktok_core.entities.extractor import RegexEntityExtractor
 from doktok_core.features.processors import (
     EntitiesFeature,
@@ -40,7 +45,9 @@ from doktok_core.knowledge_graph.retrieval import DefaultGraphRetriever
 from doktok_core.rag.answerer import DefaultRagAnswerer
 from doktok_core.rag.evaluation import RagCase, evaluate
 from doktok_core.rag.reranker import LlmReranker
+from doktok_core.security.egress import effective_no_egress, openai_egress_allowed
 from doktok_core.security.policy import DefaultSecurityPolicy
+from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
 from doktok_core.tools import ToolGateway
 from doktok_core.tools.library import build_default_registry
 from doktok_modalities_files import (
@@ -54,10 +61,16 @@ from doktok_provider_ollama import (
     OllamaEntityNerExtractor,
     OllamaRelationExtractor,
 )
+from doktok_provider_openai import (
+    OpenAiChatModelProvider,
+    OpenAiEntityNerExtractor,
+    OpenAiRelationExtractor,
+)
 from doktok_retrieval_hybrid import HybridPostgresRetriever
 from doktok_storage_filesystem import LocalFileStorage, QuarantineService, Sha256HashService
 from doktok_storage_postgres import (
     Database,
+    PostgresAppSettingsRepository,
     PostgresCategoryRepository,
     PostgresChunkRepository,
     PostgresDocumentRepository,
@@ -74,12 +87,75 @@ TENANT = "eval"
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# The eval runs on the system-configured model (DOKTOK_DEFAULT_MODEL) by default, so the benchmark
-# reflects what production actually runs - important now that the agent/multi chat modes depend on
-# the configured model's tool-calling behaving as it will in production. Override per run with
-# DOKTOK_EVAL_MODEL=... (it must be pulled in the target Ollama) for an A/B against another model.
-def _eval_model() -> str:
-    return os.environ.get("DOKTOK_EVAL_MODEL") or get_settings().default_model
+# The eval runs on EXACTLY the live system AI configuration (Settings > AI, DB-backed): the RAG
+# purpose drives chat/answering, the pipeline purpose drives NER/relation extraction. No fallback -
+# if a purpose is set to OpenAI but the key/egress isn't usable, the run aborts loudly rather than
+# silently substituting a local model, so the benchmark always reflects what production runs.
+def _ai_config(settings: Settings, db: Database) -> tuple[AiSettings, str, bool]:
+    app = PostgresAppSettingsRepository(db)
+    key = app.get_openai_api_key() or settings.openai_api_key
+    no_egress = effective_no_egress(
+        app.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
+    )
+    return app.get_ai_settings(), key, no_egress
+
+
+def _require_openai(purpose: str, key: str, no_egress: bool) -> None:
+    if not openai_egress_allowed(key=key, no_egress=no_egress):
+        why = "no-egress is on" if no_egress else "no OpenAI key is configured"
+        raise SystemExit(
+            f"{RED}{purpose} is configured for OpenAI but {why}. Fix Settings > AI or egress - the "
+            f"eval uses only what is configured (no fallback).{NC}"
+        )
+
+
+def _build_chat_model(
+    settings: Settings, ai: AiSettings, key: str, no_egress: bool
+) -> tuple[ChatModelProvider, str]:
+    """The chat/answer model from the configured RAG purpose - OpenAI or Ollama, no fallback."""
+    rag = ai.rag
+    if rag.provider == "openai":
+        _require_openai("Document interrogation (RAG)", key, no_egress)
+        return (
+            OpenAiChatModelProvider(
+                rag.model,
+                key,
+                timeout=settings.rag_timeout_seconds,
+                reasoning_effort=openai_reasoning_effort(rag.reasoning, rag.model),
+            ),
+            f"OpenAI {rag.model}",
+        )
+    return (
+        OllamaChatModelProvider(
+            rag.model,
+            rag.ollama_base_url or settings.ollama_base_url,
+            timeout=settings.rag_timeout_seconds,
+            num_ctx=rag.num_ctx,
+            think=ollama_think_for(rag.reasoning, rag.model, structured=False),
+        ),
+        f"Ollama {rag.model}",
+    )
+
+
+def _build_extractors(
+    settings: Settings, ai: AiSettings, key: str, no_egress: bool
+) -> tuple[EntityNerExtractor, RelationExtractor, str]:
+    """The NER + relation extractors from the configured pipeline purpose - no fallback."""
+    pl = ai.pipeline
+    if pl.provider == "openai":
+        _require_openai("Data pipeline", key, no_egress)
+        effort = openai_reasoning_effort(pl.reasoning, pl.model)
+        ner = OpenAiEntityNerExtractor(
+            pl.model, key, timeout=settings.rag_timeout_seconds, reasoning_effort=effort
+        )
+        relation = OpenAiRelationExtractor(
+            pl.model, key, timeout=settings.rag_timeout_seconds, reasoning_effort=effort
+        )
+        return ner, relation, f"OpenAI {pl.model}"
+    base = pl.ollama_base_url or settings.ollama_base_url
+    ner_o = OllamaEntityNerExtractor(pl.model, pl.model, base, num_ctx=settings.enrich_num_ctx)
+    rel_o = OllamaRelationExtractor(pl.model, pl.model, base, num_ctx=settings.enrich_num_ctx)
+    return ner_o, rel_o, f"Ollama {pl.model}"
 
 
 # Which chat path to evaluate (ADR-0022): "classic" (default - the deterministic RAG answerer),
@@ -185,23 +261,24 @@ def _clear_tenant(db: Database) -> None:
             conn.execute(f"DELETE FROM {table} WHERE tenant_id=%s", (TENANT,))
 
 
-def _build_knowledge_graph(settings: object, db: Database, document_ids: list[str]) -> None:
+def _build_knowledge_graph(
+    settings: object,
+    db: Database,
+    document_ids: list[str],
+    ner: EntityNerExtractor,
+    relation: RelationExtractor,
+) -> None:
     """Build the KAG graph over the eval tenant, mirroring the worker composition's feature chain.
 
-    Runs entities -> ner -> entity_graph -> relations (the real Ollama NER + relation extractors,
-    on the eval model - see _eval_model, the system-configured model by default) over each ingested
-    document, then folds aliases. The reconciler is not running in the eval harness, so the features
-    are driven directly in dependency order.
+    Runs entities -> ner -> entity_graph -> relations using the NER + relation extractors built from
+    the configured pipeline purpose (see _build_extractors - OpenAI or Ollama, no fallback) over
+    each document, then folds aliases. The reconciler isn't running in the eval harness, so the
+    features are driven directly in dependency order.
     """
     entity_repo = PostgresEntityRepository(db)
     kg_repo = PostgresKnowledgeGraphRepository(db)
     document_repo = PostgresDocumentRepository(db)
     file_storage = LocalFileStorage()
-    num_ctx = settings.enrich_num_ctx  # type: ignore[attr-defined]
-    base_url = settings.ollama_base_url  # type: ignore[attr-defined]
-    model = _eval_model()  # the configured model by default (DOKTOK_EVAL_MODEL overrides)
-    ner = OllamaEntityNerExtractor(model, model, base_url, num_ctx=num_ctx)
-    relation = OllamaRelationExtractor(model, model, base_url, num_ctx=num_ctx)
     features = [
         EntitiesFeature(
             document_repo,
@@ -331,6 +408,20 @@ def main() -> int:
     db = Database(settings.database_url)
     migrate(db)
 
+    # Build EVERYTHING from the live system AI configuration (no fallback). Fails loudly here if a
+    # purpose is set to OpenAI but unusable, before any work is done.
+    ai, key, no_egress = _ai_config(settings, db)
+    ner, relation, extract_desc = _build_extractors(settings, ai, key, no_egress)
+    chat, chat_desc = _build_chat_model(settings, ai, key, no_egress)
+    mode = _chat_mode()
+    print(f"{YELLOW}=== Eval environment ==={NC}")
+    print(f"  extraction (pipeline): {extract_desc}")
+    print(f"  chat (interrogation):  {chat_desc}")
+    print(f"  embedding:             Ollama {settings.embedding_model}")
+    print(f"  no-egress:             {no_egress}")
+    print(f"  chat mode:             {mode}")
+    print(f"  tenant:                {TENANT}\n")
+
     _clear_tenant(db)
     services, layout = _services(settings, db)
     shutil.rmtree(layout.base, ignore_errors=True)
@@ -349,16 +440,13 @@ def main() -> int:
 
     # Build the KAG graph so the relational golden cases have edges to traverse (the gap that pure
     # RAG may miss is exactly what the graph-augmented answerer is measured on).
-    _build_knowledge_graph(settings, db, document_ids)
+    _build_knowledge_graph(settings, db, document_ids, ner, relation)
     # Graph-quality tracks: score the just-built graph (edge P/R/F1 + provenance) - no rebuild.
     _score_graph(db)
 
     cases = [RagCase(**c) for c in json.loads((ROOT / "eval" / "golden.json").read_text())]
     retriever = HybridPostgresRetriever(
         db, OllamaEmbeddingProvider(settings.embedding_model, settings.ollama_base_url)
-    )
-    chat = OllamaChatModelProvider(
-        _eval_model(), settings.ollama_base_url, num_ctx=settings.chat_num_ctx
     )
     graph_retriever = DefaultGraphRetriever(
         PostgresKnowledgeGraphRepository(db), documents=PostgresDocumentRepository(db)
@@ -373,7 +461,6 @@ def main() -> int:
 
     # Agent/multi modes (ADR-0022): route every golden case through the tool-calling loop or the
     # multi-agent graph instead of classic RAG, scored with the identical metrics for comparison.
-    mode = _chat_mode()
     if mode in ("agent", "multi"):
         registry = build_default_registry(
             documents=PostgresDocumentRepository(db),

@@ -45,20 +45,30 @@ make rag-eval      # ingests the corpus, runs the golden set, prints the report
 make enrich-eval   # ingests + enriches the corpus, scores title/date/location/category/summary
 ```
 
-### Eval model (`DOKTOK_EVAL_MODEL`)
+### Eval model (the live system configuration)
 
-`make rag-eval` runs on the **system-configured model** (`DOKTOK_DEFAULT_MODEL`) by default for
-chat/answering, NER and relation extraction, so the benchmark reflects what production actually runs
-— important now that the agent/multi chat modes depend on the configured model's tool-calling. Pin a
-different model for a one-off A/B (e.g. a fixed baseline, or a dense model with reliable tool-calling
-for the agent modes):
+`make rag-eval` runs on **exactly the live system AI configuration** (Settings → AI, DB-backed) —
+**no fallback**: the **pipeline** purpose drives NER/relation extraction and the **interrogation
+(RAG)** purpose drives chat/answering, each on its configured provider (OpenAI *or* local Ollama).
+So if the system is set to OpenAI, the eval runs on OpenAI; the benchmark always reflects what
+production actually runs. If a purpose is set to OpenAI but the key/egress isn't usable, the run
+**aborts loudly** rather than silently substituting a local model.
 
-```bash
-DOKTOK_EVAL_MODEL=qwen3:14b make rag-eval   # the chosen model must be pulled in the Ollama
+The run prints an **environment banner** first, e.g.:
+
+```
+=== Eval environment ===
+  extraction (pipeline): OpenAI gpt-4o-mini
+  chat (interrogation):  OpenAI gpt-4o-mini
+  embedding:             Ollama qwen3-embedding:0.6b
+  no-egress:             False
+  chat mode:             agent
+  tenant:                eval
 ```
 
-Embeddings always use the real `DOKTOK_EMBEDDING_MODEL` (the index has to match what production
-queries against), so `DOKTOK_EVAL_MODEL` only swaps the generative/extraction model.
+To A/B a different model, change the model in Settings → AI (there is no env override — the eval
+uses only what is configured). Embeddings always use the real `DOKTOK_EMBEDDING_MODEL` (the index
+has to match what production queries against).
 
 ### Chat mode (`DOKTOK_EVAL_CHAT_MODE`)
 

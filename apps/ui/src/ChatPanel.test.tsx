@@ -79,6 +79,32 @@ test("streams a grounded answer with sources", async () => {
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
+test("agent mode toggle sends agent_mode=agent on the stream request", async () => {
+  let streamBody: Record<string, unknown> | null = null;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      streamBody = JSON.parse((init?.body as string) ?? "{}");
+      return sseResponse([
+        frame("meta", {}),
+        frame("step", { delta: "Using count_documents" }),
+        frame("token", { delta: "There are 57 documents [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.click(screen.getByLabelText(/agent mode/i));
+  await userEvent.type(screen.getByLabelText("Question"), "how many m-net invoices?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText(/There are 57 documents/)).toBeInTheDocument());
+  expect(streamBody).not.toBeNull();
+  expect(streamBody!.agent_mode).toBe("agent");
+});
+
 test("shows inferred retrieval filters from the meta event", async () => {
   vi.stubGlobal(
     "fetch",

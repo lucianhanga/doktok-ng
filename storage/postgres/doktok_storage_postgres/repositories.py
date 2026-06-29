@@ -2693,15 +2693,38 @@ class PostgresMemoryRepository:
                 "AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector LIMIT %s",
                 (tenant_id, to_vector_literal(embedding), limit),
             ).fetchall()
-        return [
-            Memory(
-                id=r["id"],
-                kind=r["kind"],
-                text=r["text"],
-                confidence=r["confidence"],
-                superseded=r["superseded"],
-                source=r["source"] or {},
-                created_at=r["created_at"],
+        return [self._to_memory(r) for r in rows]
+
+    @staticmethod
+    def _to_memory(r: dict[str, Any]) -> Memory:
+        return Memory(
+            id=r["id"],
+            kind=r["kind"],
+            text=r["text"],
+            confidence=r["confidence"],
+            superseded=r["superseded"],
+            source=r["source"] or {},
+            created_at=r["created_at"],
+        )
+
+    def list_memories(self, tenant_id: str, *, limit: int = 200) -> list[Memory]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, kind, text, confidence, superseded, source, created_at "
+                "FROM chat_memories WHERE tenant_id=%s AND superseded=false "
+                "ORDER BY created_at DESC LIMIT %s",
+                (tenant_id, limit),
+            ).fetchall()
+        return [self._to_memory(r) for r in rows]
+
+    def delete_memory(self, tenant_id: str, memory_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM chat_memories WHERE id=%s AND tenant_id=%s", (memory_id, tenant_id)
             )
-            for r in rows
-        ]
+
+    def forget_all(self, tenant_id: str) -> int:
+        with self._db.connection() as conn:
+            cur = conn.execute("DELETE FROM chat_memories WHERE tenant_id=%s", (tenant_id,))
+            return cur.rowcount

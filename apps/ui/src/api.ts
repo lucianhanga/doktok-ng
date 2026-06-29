@@ -1595,6 +1595,34 @@ export interface ChatMessage {
   steps?: string[];
 }
 
+/** A stored long-term memory (ADR-0022). */
+export interface Memory {
+  id: string;
+  kind: string;
+  text: string;
+  confidence: number;
+  superseded: boolean;
+  source: Record<string, unknown>;
+  created_at?: string | null;
+}
+
+/** List the long-term memories DokTok has stored (newest first). */
+export async function fetchMemories(): Promise<Memory[]> {
+  const r = await fetch("/api/v1/chat/memories");
+  if (!r.ok) throw friendlyHttpError(r.status);
+  return (await r.json()) as Memory[];
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  const r = await fetch(`/api/v1/chat/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!r.ok) throw friendlyHttpError(r.status);
+}
+
+export async function forgetAllMemories(): Promise<void> {
+  const r = await fetch("/api/v1/chat/memories", { method: "DELETE" });
+  if (!r.ok) throw friendlyHttpError(r.status);
+}
+
 export function listChatThreads(signal?: AbortSignal): Promise<ChatThread[]> {
   return getJson<ChatThread[]>("/api/v1/chat/threads", signal);
 }

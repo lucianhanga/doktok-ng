@@ -21,6 +21,7 @@ from doktok_contracts.schemas import (
     ChatThreadUpdate,
     ChatTurn,
     Citation,
+    Memory,
     RagAnswer,
     RankedChunk,
     RetrieveResponse,
@@ -382,3 +383,21 @@ def chat_retrieve(request: ChatRequest, http_request: Request, tenant: Tenant) -
         logger.debug("retrieval explorer failed", exc_info=True)
         citations = []
     return RetrieveResponse(query=request.question, citations=citations)
+
+
+# ---- Long-term memory management (ADR-0022): inspect + prune what DokTok remembers ----
+
+
+@router.get("/memories", response_model=list[Memory])
+def list_memories(tenant: Tenant, http_request: Request) -> list[Memory]:
+    return get_memory_repository(http_request).list_memories(tenant.tenant_id)
+
+
+@router.delete("/memories", status_code=204)
+def forget_all_memories(tenant: Tenant, http_request: Request) -> None:
+    get_memory_repository(http_request).forget_all(tenant.tenant_id)
+
+
+@router.delete("/memories/{memory_id}", status_code=204)
+def delete_memory(memory_id: str, tenant: Tenant, http_request: Request) -> None:
+    get_memory_repository(http_request).delete_memory(tenant.tenant_id, memory_id)

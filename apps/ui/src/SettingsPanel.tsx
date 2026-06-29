@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { MemoryPanel } from "./MemoryPanel";
 import {
   applyRestore,
   downloadBackupArchive,
@@ -1369,7 +1370,7 @@ export function SettingsPanel() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiTesting, setOpenaiTesting] = useState(false);
   const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [tab, setTab] = useState<"settings" | "drp">("settings");
+  const [tab, setTab] = useState<"settings" | "drp" | "memory">("settings");
   // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
   const [egressError, setEgressError] = useState<string | null>(null);
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
@@ -1494,6 +1495,15 @@ export function SettingsPanel() {
           onClick={() => setTab("drp")}
         >
           DRP
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "memory"}
+          className={tab === "memory" ? "active" : ""}
+          onClick={() => setTab("memory")}
+        >
+          Memory
         </button>
       </div>
       {error && (
@@ -1770,6 +1780,7 @@ export function SettingsPanel() {
         ))}
 
       {tab === "drp" && <DrpSection />}
+      {tab === "memory" && <MemoryPanel />}
     </section>
   );
 }

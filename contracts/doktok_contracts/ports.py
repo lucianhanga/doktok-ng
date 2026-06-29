@@ -929,6 +929,18 @@ class MemoryRepository(Protocol):
         """The ``limit`` non-superseded memories nearest ``embedding`` (cosine), nearest first."""
         ...
 
+    def list_memories(self, tenant_id: str, *, limit: int = 200) -> list[Memory]:
+        """All non-superseded memories for the tenant, newest first - for the management UI."""
+        ...
+
+    def delete_memory(self, tenant_id: str, memory_id: str) -> None:
+        """Delete one memory by id (tenant-scoped). Idempotent."""
+        ...
+
+    def forget_all(self, tenant_id: str) -> int:
+        """Delete every memory for the tenant; returns the count removed."""
+        ...
+
 
 @runtime_checkable
 class StatsRepository(Protocol):

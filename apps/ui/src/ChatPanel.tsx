@@ -94,6 +94,18 @@ const SOURCE_KIND_LABELS: Record<string, string> = {
   transaction: "Transaction",
 };
 
+/** Per-source-kind counts for the composition bar, e.g. [{label:"retrieved", count:4}, ...]. Falls
+ * back to a single "source(s)" bucket for classic citations that carry no source_kind. */
+function sourceBreakdown(citations: Citation[]): { label: string; count: number }[] {
+  if (citations.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const c of citations) counts.set(c.source_kind ?? "", (counts.get(c.source_kind ?? "") ?? 0) + 1);
+  return [...counts.entries()].map(([kind, count]) => ({
+    label: (SOURCE_KIND_LABELS[kind] ?? "source").toLowerCase() + (kind ? "" : count === 1 ? "" : "s"),
+    count,
+  }));
+}
+
 function SourceCard({
   citation,
   rank,
@@ -380,11 +392,11 @@ function AnswerBlock({
               {step}
             </span>
           ))}
-          {turn.citations.length > 0 && (
-            <span className="chat-composition-chip is-sources">
-              {turn.citations.length} source{turn.citations.length === 1 ? "" : "s"}
+          {sourceBreakdown(turn.citations).map((part) => (
+            <span key={part.label} className="chat-composition-chip is-sources">
+              {part.count} {part.label}
             </span>
-          )}
+          ))}
         </div>
       )}
       <ActivityPanel

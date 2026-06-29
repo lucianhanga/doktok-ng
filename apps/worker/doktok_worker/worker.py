@@ -49,6 +49,8 @@ class IngestionWorker:
         ocr_reload_interval: float = 15.0,
         ai_reload: Callable[[], None] | None = None,
         ai_reload_interval: float = 15.0,
+        post_reconcile: Callable[[], None] | None = None,
+        post_reconcile_interval: float = 30.0,
         heartbeat: Callable[[], None] | None = None,
         heartbeat_interval: float = 15.0,
         is_quiesced: Callable[[], bool] | None = None,
@@ -72,6 +74,11 @@ class IngestionWorker:
         # enrichment clients if the AI model/provider/Ollama-URL settings changed (no restart).
         self._ai_reload = ai_reload
         self._ai_reload_interval = ai_reload_interval
+        # Tenant-level maintenance run after the per-document features drain (KAG alias folding):
+        # a cross-document pass that must not block ingestion and is idempotent. Throttled, and only
+        # on an idle reconcile cycle so it never competes with active backfill.
+        self._post_reconcile = post_reconcile
+        self._post_reconcile_interval = post_reconcile_interval
         # Liveness heartbeat (APP-5): stamped periodically so an external probe can spot a dead one.
         self._heartbeat = heartbeat
         self._heartbeat_interval = heartbeat_interval
@@ -274,6 +281,14 @@ class IngestionWorker:
         except Exception:  # noqa: BLE001 - an AI-settings reload failure must not stop reconciling
             logger.exception("AI settings reload failed")
 
+    def _safe_post_reconcile(self) -> None:  # pragma: no cover - long-running loop helper
+        if self._post_reconcile is None or self._quiesced():
+            return
+        try:
+            self._post_reconcile()
+        except Exception:  # noqa: BLE001 - a maintenance-pass failure must not stop reconciling
+            logger.exception("post-reconcile maintenance pass failed")
+
     def _recover_features(self) -> None:  # pragma: no cover - long-running loop helper
         if self._reconciler is None:
             return
@@ -291,6 +306,7 @@ class IngestionWorker:
         # restart doesn't leave them stuck for the full lease window.
         self._recover_features()
         last_ai_reload = 0.0
+        last_post_reconcile = 0.0
         while not stop.is_set():
             processed = 0
             try:
@@ -302,6 +318,14 @@ class IngestionWorker:
             if self._clock() - last_ai_reload >= self._ai_reload_interval:
                 self._safe_ai_reload()
                 last_ai_reload = self._clock()
+            # Run the tenant-level maintenance pass only when the per-document backlog is drained
+            # (processed == 0) and the throttle has elapsed, so it never starves active reconciling.
+            if (
+                processed == 0
+                and self._clock() - last_post_reconcile >= self._post_reconcile_interval
+            ):
+                self._safe_post_reconcile()
+                last_post_reconcile = self._clock()
             # Keep draining while there is work; back off to a poll cadence when idle.
             stop.wait(0.1 if processed else self._reconcile_interval)
 

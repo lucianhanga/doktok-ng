@@ -16,6 +16,7 @@ from doktok_contracts.schemas import (
     AggregationIntent,
     AggregationResult,
     AiSettings,
+    AliasFold,
     AuditEvent,
     Category,
     CategorySummary,
@@ -56,6 +57,7 @@ from doktok_contracts.schemas import (
     TokenSuggestion,
     TurnMetrics,
 )
+from doktok_core.knowledge_graph.predicates import canonical_edge_id
 from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -1110,6 +1112,119 @@ class PostgresKnowledgeGraphRepository:
                 (tenant_id,),
             ).fetchone()
         return int(row[0]) if row else 0
+
+    # ------------------------------------------------------------------ alias-folding tier
+
+    def list_entities(self, tenant_id: str) -> list[KgEntity]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, tenant_id, entity_type, normalized_value, metadata "
+                "FROM kg_entities WHERE tenant_id=%s ORDER BY id",
+                (tenant_id,),
+            ).fetchall()
+        return [_row_to_kg_entity(row) for row in rows]
+
+    def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT entity_type, alias_normalized, canonical_entity_id "
+                "FROM kg_entity_aliases WHERE tenant_id=%s",
+                (tenant_id,),
+            ).fetchall()
+        return {(row[0], row[1]): row[2] for row in rows}
+
+    def resolve_aliases(self, tenant_id: str, folds: list[AliasFold]) -> int:
+        if not folds:
+            return 0
+        # One transaction under a per-tenant advisory lock: concurrent workers serialize on the same
+        # tenant so two passes never double-process. The xact lock releases at commit/rollback.
+        merged = 0
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"kg_alias:{tenant_id}",))
+            for fold in folds:
+                merged += self._apply_fold(conn, tenant_id, fold)
+        return merged
+
+    def _apply_fold(self, conn: Any, tenant_id: str, fold: AliasFold) -> int:
+        # 1. Record the mapping so the merge survives re-ingestion (idempotent upsert).
+        conn.execute(
+            "INSERT INTO kg_entity_aliases "
+            "(tenant_id, entity_type, alias_normalized, canonical_entity_id) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (tenant_id, entity_type, alias_normalized) "
+            "DO UPDATE SET canonical_entity_id = EXCLUDED.canonical_entity_id",
+            (tenant_id, fold.alias_type, fold.alias_normalized, fold.canonical_id),
+        )
+        # 1b. Re-point any alias rows that targeted the folded node (chained merge across passes),
+        # so deleting the node below cascade-deletes nothing.
+        conn.execute(
+            "UPDATE kg_entity_aliases SET canonical_entity_id=%s "
+            "WHERE tenant_id=%s AND canonical_entity_id=%s",
+            (fold.canonical_id, tenant_id, fold.alias_id),
+        )
+        # If the node is already gone (prior run), the mapping is recorded; nothing else to do.
+        exists = conn.execute(
+            "SELECT 1 FROM kg_entities WHERE tenant_id=%s AND id=%s",
+            (tenant_id, fold.alias_id),
+        ).fetchone()
+        if not exists:
+            return 0
+        # 2. Re-point this node's mentions onto the canonical node.
+        conn.execute(
+            "UPDATE kg_entity_mentions SET canonical_entity_id=%s "
+            "WHERE tenant_id=%s AND canonical_entity_id=%s",
+            (fold.canonical_id, tenant_id, fold.alias_id),
+        )
+        # 3. Re-point edges, merging any now-duplicate edge into the survivor.
+        self._repoint_edges(conn, tenant_id, fold.alias_id, fold.canonical_id)
+        # 4. Delete the folded node - its mentions/edges are re-pointed, so nothing cascades.
+        conn.execute(
+            "DELETE FROM kg_entities WHERE tenant_id=%s AND id=%s",
+            (tenant_id, fold.alias_id),
+        )
+        return 1
+
+    def _repoint_edges(self, conn: Any, tenant_id: str, alias_id: str, canonical_id: str) -> None:
+        affected = conn.execute(
+            "SELECT id, src_entity_id, predicate, dst_entity_id FROM kg_edges "
+            "WHERE tenant_id=%s AND (src_entity_id=%s OR dst_entity_id=%s)",
+            (tenant_id, alias_id, alias_id),
+        ).fetchall()
+        touched: set[str] = set()
+        for edge_id, src, predicate, dst in affected:
+            new_src = canonical_id if src == alias_id else src
+            new_dst = canonical_id if dst == alias_id else dst
+            new_id = canonical_edge_id(tenant_id, new_src, predicate, new_dst)
+            if new_id == edge_id:
+                continue
+            # Ensure the surviving target edge exists (DO NOTHING if it already did = merge case).
+            conn.execute(
+                "INSERT INTO kg_edges (id, tenant_id, src_entity_id, predicate, "
+                "dst_entity_id, evidence_count, metadata) "
+                "VALUES (%s, %s, %s, %s, %s, 0, '{}'::jsonb) ON CONFLICT (id) DO NOTHING",
+                (new_id, tenant_id, new_src, predicate, new_dst),
+            )
+            # Move the old edge's provenance onto the survivor, then drop the old edge.
+            conn.execute(
+                "UPDATE kg_edge_provenance SET edge_id=%s WHERE edge_id=%s",
+                (new_id, edge_id),
+            )
+            conn.execute("DELETE FROM kg_edges WHERE id=%s", (edge_id,))
+            touched.add(new_id)
+        if touched:
+            ids = list(touched)
+            conn.execute(
+                "UPDATE kg_edges SET evidence_count = ("
+                "  SELECT count(*) FROM kg_edge_provenance WHERE edge_id=kg_edges.id"
+                ") WHERE id = ANY(%s)",
+                (ids,),
+            )
+            # Safety: prune any survivor that somehow ended with no provenance.
+            conn.execute(
+                "DELETE FROM kg_edges WHERE id = ANY(%s) AND evidence_count=0",
+                (ids,),
+            )
 
 
 _KG_MENTION_COLUMNS = (

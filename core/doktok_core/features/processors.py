@@ -387,24 +387,32 @@ class EntityGraphFeature:
 
     def process(self, tenant_id: str, document_id: str) -> None:
         mentions_src = self._entities.list_for_document(tenant_id, document_id)
+        # Alias-aware resolve: a mention of a folded surface form ('M-net') must point straight at
+        # its canonical node ('M-net Telekommunikations GmbH'), so an earlier merge survives this
+        # re-derivation instead of resurrecting the alias node (KAG alias-folding tier).
+        aliases = self._kg.alias_map(tenant_id)
         nodes: dict[str, KgEntity] = {}
         links: list[KgEntityMention] = []
         for mention in mentions_src:
             value = mention.normalized_value
             if mention.entity_type.value not in self._node_types or not value:
                 continue
-            node_id = canonical_entity_id(tenant_id, mention.entity_type.value, value)
-            nodes[node_id] = KgEntity(
-                id=node_id,
-                tenant_id=tenant_id,
-                entity_type=mention.entity_type,
-                normalized_value=value,
-            )
+            direct_id = canonical_entity_id(tenant_id, mention.entity_type.value, value)
+            resolved_id = aliases.get((mention.entity_type.value, value), direct_id)
+            # Only create a node for non-aliased mentions; an aliased mention's canonical node
+            # already exists (the alias-table FK guarantees it).
+            if resolved_id == direct_id:
+                nodes[direct_id] = KgEntity(
+                    id=direct_id,
+                    tenant_id=tenant_id,
+                    entity_type=mention.entity_type,
+                    normalized_value=value,
+                )
             links.append(
                 KgEntityMention(
                     mention_id=mention.id,
                     tenant_id=tenant_id,
-                    canonical_entity_id=node_id,
+                    canonical_entity_id=resolved_id,
                     document_id=document_id,
                     chunk_id=mention.chunk_id,
                     entity_type=mention.entity_type,
@@ -524,14 +532,21 @@ class RelationExtractFeature:
                 dropped,
             )
 
-        # 6. Resolve to canonical entity ids and build KgEdge + KgEdgeProvenance objects
+        # 6. Resolve to canonical entity ids and build KgEdge + KgEdgeProvenance objects.
+        # Alias-aware: fold an aliased endpoint to its canonical node so edges attach to the merged
+        # node (and never resurrect a folded alias node, which would break the edge's FK).
+        aliases = self._kg.alias_map(tenant_id)
         edges_map: dict[str, KgEdge] = {}  # edge_id -> edge
         provenance_rows: list[KgEdgeProvenance] = []
         for triple, subj_norm, obj_norm in valid_triples:
             subj_type = entity_set[subj_norm]
             obj_type = entity_set[obj_norm]
-            src_id = canonical_entity_id(tenant_id, subj_type, subj_norm)
-            dst_id = canonical_entity_id(tenant_id, obj_type, obj_norm)
+            src_id = aliases.get(
+                (subj_type, subj_norm), canonical_entity_id(tenant_id, subj_type, subj_norm)
+            )
+            dst_id = aliases.get(
+                (obj_type, obj_norm), canonical_entity_id(tenant_id, obj_type, obj_norm)
+            )
             edge_id = canonical_edge_id(tenant_id, src_id, triple.predicate, dst_id)
             if edge_id not in edges_map:
                 edges_map[edge_id] = KgEdge(

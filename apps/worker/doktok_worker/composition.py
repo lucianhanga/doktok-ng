@@ -36,6 +36,7 @@ from doktok_core.indexing.chunker import FixedWindowChunker
 from doktok_core.ingestion.extract_stage import ExtractStage
 from doktok_core.ingestion.layout import FilesystemLayout
 from doktok_core.ingestion.pipeline import IngestionServices
+from doktok_core.knowledge_graph.alias import resolve_tenant_aliases
 from doktok_core.security.egress import (
     EgressBlocked,
     effective_no_egress,
@@ -135,6 +136,7 @@ def build_services(
     ProjectionRunner,
     Database,
     Callable[[], None] | None,
+    Callable[[], None],
     Callable[[], None],
     Callable[[], None],
     Callable[[], None],
@@ -540,6 +542,13 @@ def build_services(
             ai_signature = clients.signature
             logger.info("AI settings changed; rebuilt enrichment clients live (no restart)")
 
+    # KAG alias folding: a tenant-level, cross-document maintenance pass run by the worker after the
+    # per-document features drain. It folds entity surface variants into one canonical node and is
+    # idempotent, so re-running is a no-op once the graph is stable.
+    def post_reconcile() -> None:
+        for tenant_id in tenant_ids(settings):
+            resolve_tenant_aliases(knowledge_graph_repo, tenant_id)
+
     # Insights embedding map (ADR-0016, M7.1): a tenant-aggregate projection job, drained from the
     # recompute queue. The reducer reuses the chunk repo's embeddings; projections are cached.
     projection_runner = ProjectionRunner(
@@ -622,6 +631,7 @@ def build_services(
         db,
         ocr_reload,
         ai_reload,
+        post_reconcile,
         cleanup,
         heartbeat,
         is_quiesced,

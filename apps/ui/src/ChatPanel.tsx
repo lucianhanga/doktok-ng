@@ -49,6 +49,7 @@ interface Exchange {
   steps?: string[]; // live pipeline activity; kept in-session, not persisted to the DB
   ranking?: RankedChunk[];
   metrics?: TurnMetrics | null;
+  stopped?: boolean; // the user pressed Stop (or Esc) mid-stream
 }
 
 /** The in-progress turn while tokens stream in. */
@@ -62,6 +63,7 @@ interface Streaming {
   filters: QueryFilters | null;
   ranking: RankedChunk[];
   metrics: TurnMetrics | null;
+  stopped: boolean;
 }
 
 /** A unified view of either a completed exchange or the streaming turn, for rendering. */
@@ -77,6 +79,7 @@ interface TurnView {
   streaming: boolean;
   ranking: RankedChunk[];
   metrics: TurnMetrics | null;
+  stopped: boolean;
 }
 
 /** Render the inferred retrieval filters (category / date range) as a short readable phrase. */
@@ -410,7 +413,7 @@ function AnswerBlock({
         ranking={turn.ranking}
         onOpenDocument={onOpenDocument}
       />
-      {!turn.streaming && !turn.grounded && (
+      {!turn.streaming && !turn.grounded && !turn.stopped && (
         <p role="status" className="banner-warning">
           This answer isn't grounded in your documents - no supporting sources were found, so treat
           it with caution.
@@ -424,6 +427,20 @@ function AnswerBlock({
           <span className="chat-caret" aria-hidden="true" />
         )}
       </div>
+      {!turn.streaming && turn.stopped && (
+        <p role="note" className="chat-stopped">
+          Generation stopped.
+        </p>
+      )}
+      {!turn.streaming && turn.metrics && (turn.metrics.total_tokens ?? 0) > 0 && (
+        <p
+          className="muted chat-usage"
+          title={`${turn.metrics.prompt_tokens ?? 0} prompt + ${turn.metrics.answer_tokens ?? 0} reply = ${turn.metrics.total_tokens ?? 0} tokens in ${fmtMs(turn.metrics.total_ms ?? 0)}`}
+        >
+          {turn.metrics.estimated ? "~" : ""}
+          {fmtTokens(turn.metrics.total_tokens ?? 0)} tok · {fmtMs(turn.metrics.total_ms ?? 0)}
+        </p>
+      )}
     </div>
   );
 }
@@ -667,6 +684,16 @@ export function ChatPanel({
 
   useEffect(refreshThreads, []);
 
+  // Esc stops the in-flight turn (mirrors the Stop button). Only bound while streaming.
+  useEffect(() => {
+    if (streaming === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") stop();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [streaming]);
+
   const LOCAL_KEY = "__local__"; // stream key when persistence is unavailable (no thread id)
   const currentKey = () => threadRef.current ?? LOCAL_KEY;
 
@@ -698,6 +725,7 @@ export function ChatPanel({
         steps: s.steps,
         ranking: s.ranking,
         metrics: s.metrics,
+        stopped: s.stopped,
         answer: {
           answer: s.answer,
           citations: s.citations,
@@ -739,8 +767,8 @@ export function ChatPanel({
     })();
   }
 
-  function ask(e: React.FormEvent) {
-    e.preventDefault();
+  function ask(e?: { preventDefault: () => void }) {
+    e?.preventDefault();
     const q = question.trim();
     if (!q || streaming) return; // one in-flight turn per conversation
     setQuestion("");
@@ -755,6 +783,7 @@ export function ChatPanel({
       filters: null,
       ranking: [],
       metrics: null,
+      stopped: false,
     };
     setStreaming(init); // instant feedback in the current view
 
@@ -808,6 +837,7 @@ export function ChatPanel({
         completeStream(key, grounded);
       } catch (err) {
         if (controller.signal.aborted) {
+          patchThread(key, (s) => ({ ...s, stopped: true })); // mark the turn as user-stopped
           completeStream(key, false); // keep whatever streamed before Stop
           return;
         }
@@ -943,6 +973,7 @@ export function ChatPanel({
     streaming: false,
     ranking: ex.ranking ?? [],
     metrics: ex.metrics ?? null,
+    stopped: ex.stopped ?? false,
   }));
   if (streaming) {
     turns.push({
@@ -957,6 +988,7 @@ export function ChatPanel({
       streaming: true,
       ranking: streaming.ranking,
       metrics: streaming.metrics,
+      stopped: false,
     });
   }
 
@@ -1042,8 +1074,17 @@ export function ChatPanel({
               rows={3}
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter sends; Shift+Enter is a newline. IME-safe (don't send mid-composition).
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  if (streaming === null && question.trim()) ask(e);
+                }
+              }}
               placeholder={
-                turns.length ? "Ask a follow-up..." : "Ask a question about your documents..."
+                turns.length
+                  ? "Ask a follow-up...  (Enter to send, Shift+Enter for newline)"
+                  : "Ask a question about your documents...  (Enter to send)"
               }
               aria-label="Question"
               disabled={streaming !== null}

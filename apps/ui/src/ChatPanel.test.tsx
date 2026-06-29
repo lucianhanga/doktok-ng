@@ -787,3 +787,25 @@ test("Explore shows retrieved evidence in the rail without generating an answer"
   expect(screen.getByText(/Retrieved evidence only/)).toBeInTheDocument();
   expect(screen.getByText(/lease.pdf/)).toBeInTheDocument();
 });
+
+test("Enter in the composer sends the question (Shift+Enter does not)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "Answer [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+  render(<ChatPanel />);
+  const box = screen.getByLabelText("Question");
+  // Shift+Enter inserts a newline, does not send.
+  await userEvent.type(box, "line one{Shift>}{Enter}{/Shift}line two");
+  expect(screen.queryByText(/Answer \[1\]\./)).not.toBeInTheDocument();
+  // Plain Enter sends.
+  await userEvent.type(box, "{Enter}");
+  await waitFor(() => expect(screen.getByText(/Answer \[1\]\./)).toBeInTheDocument());
+});

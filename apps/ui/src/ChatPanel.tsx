@@ -87,6 +87,13 @@ function describeFilters(f: QueryFilters | null): string | null {
 
 /** A compact source card: thumbnail + title + page + snippet + an importance bar. Clicking opens
  * the document. Mirrors the document-card style but slim, for the chat sources column. */
+const SOURCE_KIND_LABELS: Record<string, string> = {
+  passage: "Retrieved",
+  graph: "Knowledge graph",
+  document: "Document match",
+  transaction: "Transaction",
+};
+
 function SourceCard({
   citation,
   rank,
@@ -105,6 +112,9 @@ function SourceCard({
   // A qualitative strength word alongside the bar - friendlier than a bare number, and the score is
   // a rank-normalized relevance, not a raw cosine (UI/UX guidance).
   const strength = pct == null ? null : pct >= 80 ? "Strong" : pct >= 50 ? "Moderate" : "Weak";
+  // How this source reached the model (ADR-0022) - shown as a small badge so multi-source agent
+  // answers are legible (a retrieved passage vs a knowledge-graph link vs a counted document).
+  const kindLabel = SOURCE_KIND_LABELS[citation.source_kind ?? ""] ?? null;
   return (
     <li>
       <button
@@ -147,6 +157,7 @@ function SourceCard({
             <span className="chat-source-title">
               [{citation.index}] {label}
               {citation.page_start ? <span className="muted"> p.{citation.page_start}</span> : null}
+              {kindLabel && <span className="chat-source-kind">{kindLabel}</span>}
             </span>
             {subtitle && <span className="chat-source-doctitle">{subtitle}</span>}
             {citation.snippet && <span className="snippet">{citation.snippet}</span>}

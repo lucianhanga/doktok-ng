@@ -108,6 +108,7 @@ class RetrievePassagesTool:
                 page_start=h.page_start,
                 page_end=h.page_end,
                 snippet=h.snippet,
+                source_kind="passage",
             )
             for i, h in enumerate(hits)
         ]
@@ -197,6 +198,7 @@ class GraphLookupTool:
                 page_start=h.page_start,
                 page_end=h.page_end,
                 snippet=h.snippet,
+                source_kind="graph",
             )
             for i, h in enumerate(retrieval.hits)
         ]

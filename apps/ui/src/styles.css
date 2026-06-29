@@ -2930,6 +2930,19 @@ tr.row-selected {
   color: var(--accent, #6ea8fe);
 }
 
+/* "How this source reached the model" badge on a source card (ADR-0022). */
+.chat-source-kind {
+  margin-left: 0.4rem;
+  padding: 0.02rem 0.4rem;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(110, 168, 254, 0.12));
+  color: var(--muted, #8b97a8);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+
 /* Inline [n] citation marker rendered as a clickable reference inside the answer. */
 .citation-ref {
   border: none;

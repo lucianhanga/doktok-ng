@@ -109,6 +109,7 @@ def _citations(
                 original_filename=doc.original_filename if doc else None,
                 title=doc.title if doc else None,
                 snippet=snippet,
+                source_kind="transaction",
             )
         )
     return out

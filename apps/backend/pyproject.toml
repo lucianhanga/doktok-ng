@@ -16,6 +16,7 @@ dependencies = [
     "doktok-modalities-files",  # rotate_source for the document-rotate endpoint (PyMuPDF/Pillow)
     "fastapi>=0.115",
     "uvicorn>=0.30",
+    "langgraph>=1.2,<2",  # ADR-0022 Phase 2c: multi-agent chat orchestration (adapter-only)
 ]
 
 [tool.hatch.build.targets.wheel]

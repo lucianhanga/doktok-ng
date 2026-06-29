@@ -655,8 +655,9 @@ class ChatRequest(BaseModel):
     # Enabling reasoning makes the answer noticeably slower (the model thinks before answering).
     reasoning: bool | None = None
     # Chat mode (ADR-0022): "classic" = the deterministic RAG pipeline (default); "agent" = the
-    # tool-calling agent loop. The agent path is opt-in and falls back to classic when the
-    # configured model can't do tool-calling. A mis-behaving agent turn never affects the default.
+    # single-agent tool-calling loop; "multi" = the LangGraph plan/gather/merge/critic graph. The
+    # agent/multi paths are opt-in and fall back to classic when the configured model can't do
+    # tool-calling. A mis-behaving agent turn never affects the default path.
     agent_mode: str = "classic"
 
 

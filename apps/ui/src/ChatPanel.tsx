@@ -629,9 +629,10 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Chat mode (ADR-0022): "classic" deterministic RAG | "agent" tool loop | "multi" multi-agent
-  // graph. Agent/multi compute counts via tools instead of estimating them from passages.
-  const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">("classic");
+  // Chat mode (ADR-0022): "agent" tool loop (default) | "classic" deterministic RAG. Agent computes
+  // counts via tools instead of estimating them from passages. (The multi-agent graph exists in the
+  // backend but is set aside for now - tracked as an improvement; not offered in the UI.)
+  const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">("agent");
   // Long-term memory (ADR-0022): recall facts from past chats + store one. Off by default (private).
   const [remember, setRemember] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -1088,21 +1089,17 @@ export function ChatPanel({
             <span className="muted">Remember</span>
           </label>
 
-          <label className="chat-mode-select" title="Classic = deterministic RAG. Agent = the assistant calls tools (exact counts, search, totals). Multi-agent = a plan/gather/review graph over the same tools.">
+          <label className="chat-mode-select" title="Agent = the assistant calls tools (exact counts, search, totals) - recommended. Classic = the deterministic RAG pipeline (no tools).">
             <span className="muted">Mode</span>
             <select
               value={chatMode}
               onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
               disabled={streaming !== null}
             >
-              <option value="classic">Classic</option>
               <option value="agent">Agent</option>
-              <option value="multi">Multi-agent</option>
+              <option value="classic">Classic</option>
             </select>
           </label>
-          {chatMode === "multi" && (
-            <span className="muted chat-mode-hint">Multi-agent runs several steps — slower.</span>
-          )}
 
           {errorMsg && (
             <p role="alert" className="status-error">

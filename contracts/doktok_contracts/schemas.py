@@ -681,11 +681,11 @@ class ChatRequest(BaseModel):
     # (Settings > AI > Document interrogation); True/False explicitly overrides it for this turn.
     # Enabling reasoning makes the answer noticeably slower (the model thinks before answering).
     reasoning: bool | None = None
-    # Chat mode (ADR-0022): "classic" = the deterministic RAG pipeline (default); "agent" = the
-    # single-agent tool-calling loop; "multi" = the LangGraph plan/gather/merge/critic graph. The
-    # agent/multi paths are opt-in and fall back to classic when the configured model can't do
-    # tool-calling. A mis-behaving agent turn never affects the default path.
-    agent_mode: str = "classic"
+    # Chat mode (ADR-0022): "agent" = the single-agent tool-calling loop (default); "classic" = the
+    # deterministic RAG pipeline; "multi" = the LangGraph plan/gather/merge/critic graph. The
+    # agent/multi paths fall back to classic when the configured model can't do tool-calling, so a
+    # non-tool-calling model still works. A mis-behaving agent turn never crashes chat.
+    agent_mode: str = "agent"
     # Long-term memory (ADR-0022): when true, recall relevant facts from past conversations into the
     # context and store a memory after this turn. Default false = private ("incognito") - no recall,
     # no write. Each direction costs one embedding call, so it is opt-in.

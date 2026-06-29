@@ -7,7 +7,15 @@ delete-then-insert a document's mention/provenance rows.
 
 from __future__ import annotations
 
-from doktok_contracts.schemas import KgEdge, KgEdgeProvenance, KgEntity, KgEntityMention
+from doktok_contracts.schemas import (
+    AliasFold,
+    KgEdge,
+    KgEdgeProvenance,
+    KgEntity,
+    KgEntityMention,
+)
+
+from doktok_core.knowledge_graph.predicates import canonical_edge_id
 
 
 class InMemoryKnowledgeGraphRepository:
@@ -20,6 +28,8 @@ class InMemoryKnowledgeGraphRepository:
         self._edges: dict[str, KgEdge] = {}
         # provenance id -> provenance
         self._provenance: dict[str, KgEdgeProvenance] = {}
+        # (tenant_id, entity_type, alias_normalized) -> canonical_entity_id
+        self._aliases: dict[tuple[str, str, str], str] = {}
 
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         for entity in entities:
@@ -110,3 +120,79 @@ class InMemoryKnowledgeGraphRepository:
 
     def edge_count(self, tenant_id: str) -> int:
         return sum(1 for e in self._edges.values() if e.tenant_id == tenant_id)
+
+    # ------------------------------------------------------------------ alias-folding tier
+
+    def list_entities(self, tenant_id: str) -> list[KgEntity]:
+        return [
+            e.model_copy(deep=True) for e in self._entities.values() if e.tenant_id == tenant_id
+        ]
+
+    def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
+        return {
+            (etype, alias): canonical
+            for (tid, etype, alias), canonical in self._aliases.items()
+            if tid == tenant_id
+        }
+
+    def resolve_aliases(self, tenant_id: str, folds: list[AliasFold]) -> int:
+        merged = 0
+        for fold in folds:
+            # Record the mapping (so the merge survives re-ingestion) even if the node is already
+            # gone - keeps the pass idempotent and the alias map complete.
+            self._aliases[(tenant_id, fold.alias_type, fold.alias_normalized)] = fold.canonical_id
+            # Re-point alias rows that targeted the folded node (chained merge across passes).
+            for key, canonical in list(self._aliases.items()):
+                if key[0] == tenant_id and canonical == fold.alias_id:
+                    self._aliases[key] = fold.canonical_id
+            if fold.alias_id not in self._entities:
+                continue  # already folded in a prior run -> no-op
+            self._repoint_mentions(tenant_id, fold.alias_id, fold.canonical_id)
+            self._repoint_edges(tenant_id, fold.alias_id, fold.canonical_id)
+            del self._entities[fold.alias_id]
+            merged += 1
+        return merged
+
+    def _repoint_mentions(self, tenant_id: str, alias_id: str, canonical_id: str) -> None:
+        for mid, m in list(self._mentions.items()):
+            if m.tenant_id == tenant_id and m.canonical_entity_id == alias_id:
+                self._mentions[mid] = m.model_copy(update={"canonical_entity_id": canonical_id})
+
+    def _repoint_edges(self, tenant_id: str, alias_id: str, canonical_id: str) -> None:
+        affected = [
+            e
+            for e in self._edges.values()
+            if e.tenant_id == tenant_id
+            and (e.src_entity_id == alias_id or e.dst_entity_id == alias_id)
+        ]
+        touched: set[str] = set()
+        for edge in affected:
+            new_src = canonical_id if edge.src_entity_id == alias_id else edge.src_entity_id
+            new_dst = canonical_id if edge.dst_entity_id == alias_id else edge.dst_entity_id
+            new_id = canonical_edge_id(tenant_id, new_src, edge.predicate, new_dst)
+            if new_id == edge.id:
+                continue
+            # Ensure the surviving target edge exists (DO NOTHING if it already did - merge case).
+            if new_id not in self._edges:
+                self._edges[new_id] = edge.model_copy(
+                    update={
+                        "id": new_id,
+                        "src_entity_id": new_src,
+                        "dst_entity_id": new_dst,
+                        "evidence_count": 0,
+                    }
+                )
+            # Move the old edge's provenance onto the survivor, then drop the old edge.
+            for pid, p in list(self._provenance.items()):
+                if p.edge_id == edge.id:
+                    self._provenance[pid] = p.model_copy(update={"edge_id": new_id})
+            del self._edges[edge.id]
+            touched.add(new_id)
+        # Recompute evidence_count for survivors and prune any that ended up with none.
+        for eid in touched:
+            count = sum(1 for p in self._provenance.values() if p.edge_id == eid)
+            if eid in self._edges:
+                if count == 0:
+                    del self._edges[eid]
+                else:
+                    self._edges[eid] = self._edges[eid].model_copy(update={"evidence_count": count})

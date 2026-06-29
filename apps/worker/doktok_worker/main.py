@@ -112,6 +112,7 @@ def main() -> None:
         db,
         ocr_reload,
         ai_reload,
+        post_reconcile,
         cleanup,
         heartbeat,
         is_quiesced,
@@ -129,6 +130,7 @@ def main() -> None:
         projection_runner=projection_runner,
         ocr_reload=ocr_reload,
         ai_reload=ai_reload,
+        post_reconcile=post_reconcile,
         heartbeat=heartbeat,
         is_quiesced=is_quiesced,
     )

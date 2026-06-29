@@ -388,6 +388,21 @@ class KgEdgeProvenance(BaseModel):
     evidence: str
 
 
+class AliasFold(BaseModel):
+    """A decision to fold one node (the alias) into another (the canonical), KAG alias tier.
+
+    Produced by ``knowledge_graph.alias.compute_alias_folds`` (pure domain logic) and applied
+    transactionally by ``KnowledgeGraphRepository.resolve_aliases``: the alias node's mentions and
+    edges are re-pointed to ``canonical_id``, an alias row records the mapping so the merge survives
+    re-ingestion, and the alias node is deleted.
+    """
+
+    alias_id: str  # the canonical_entity_id of the node being folded away
+    alias_type: str  # entity_type (folds never cross types)
+    alias_normalized: str  # the folded node's normalized_value (the alias-table key)
+    canonical_id: str  # the surviving canonical node's id
+
+
 class SearchHit(BaseModel):
     """A hybrid-search result (brief section 17)."""
 

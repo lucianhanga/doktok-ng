@@ -30,6 +30,7 @@ from doktok_contracts.schemas import (
     AggregationIntent,
     AggregationResult,
     AiSettings,
+    AliasFold,
     AuditEvent,
     Category,
     CategorySummary,
@@ -717,6 +718,30 @@ class KnowledgeGraphRepository(Protocol):
 
     def edge_count(self, tenant_id: str) -> int:
         """Number of distinct directed edges for a tenant."""
+        ...
+
+    # ------------------------------------------------------------------ alias-folding tier
+
+    def list_entities(self, tenant_id: str) -> list[KgEntity]:
+        """Every canonical node for a tenant - the input to the alias-folding pass."""
+        ...
+
+    def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
+        """``(entity_type, alias_normalized) -> canonical_entity_id`` for every folded alias.
+
+        The alias-aware resolve path consults this so a mention of a folded surface form points
+        straight at the canonical node, making the merge survive document re-ingestion.
+        """
+        ...
+
+    def resolve_aliases(self, tenant_id: str, folds: list[AliasFold]) -> int:
+        """Apply alias folds transactionally under a per-tenant advisory lock; return the count.
+
+        For each fold: record the alias mapping, re-point the alias node's mentions and edges
+        (merging any now-duplicate edge by moving its provenance and recomputing the count),
+        re-point any alias rows that targeted the folded node, then delete the folded node.
+        Idempotent: folds whose node is already gone are no-ops.
+        """
         ...
 
 

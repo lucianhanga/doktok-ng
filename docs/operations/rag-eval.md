@@ -47,14 +47,14 @@ make enrich-eval   # ingests + enriches the corpus, scores title/date/location/c
 
 ### Eval model (`DOKTOK_EVAL_MODEL`)
 
-`make rag-eval` deliberately runs on a model that is **not** the system-configured one
-(`DOKTOK_DEFAULT_MODEL` / the saved Data-Pipeline selection): chat/answering, NER and relation
-extraction all use a fixed eval reference so the benchmark stays comparable across runs no matter
-what production is currently set to. The default is the dense `qwen3:14b` (de-configured from the
-system but kept as the eval baseline). Override it for a one-off run:
+`make rag-eval` runs on the **system-configured model** (`DOKTOK_DEFAULT_MODEL`) by default for
+chat/answering, NER and relation extraction, so the benchmark reflects what production actually runs
+— important now that the agent/multi chat modes depend on the configured model's tool-calling. Pin a
+different model for a one-off A/B (e.g. a fixed baseline, or a dense model with reliable tool-calling
+for the agent modes):
 
 ```bash
-DOKTOK_EVAL_MODEL=qwen3.6:35b-a3b make rag-eval   # the chosen model must be pulled in the Ollama
+DOKTOK_EVAL_MODEL=qwen3:14b make rag-eval   # the chosen model must be pulled in the Ollama
 ```
 
 Embeddings always use the real `DOKTOK_EMBEDDING_MODEL` (the index has to match what production
@@ -72,9 +72,10 @@ DOKTOK_EVAL_CHAT_MODE=agent make rag-eval   # the single-agent tool-calling loop
 DOKTOK_EVAL_CHAT_MODE=multi make rag-eval   # the LangGraph plan/gather/merge/critic graph
 ```
 
-`agent`/`multi` need a tool-calling model — the eval model (`DOKTOK_EVAL_MODEL`) is used, so pick one
-whose tool-calling is reliable (a dense model is safer than the local MoE). These modes run several
-model calls per case, so they are markedly slower than `classic`.
+`agent`/`multi` need a tool-calling model. They use the eval model — by default the configured
+`DOKTOK_DEFAULT_MODEL`; if its tool-calling is unreliable (e.g. the local MoE), pin a dense model for
+the run with `DOKTOK_EVAL_MODEL=qwen3:14b`. These modes run several model calls per case, so they are
+markedly slower than `classic`.
 
 ## Enrichment eval (M6.2)
 

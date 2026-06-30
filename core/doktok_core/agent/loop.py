@@ -25,6 +25,7 @@ from doktok_contracts.schemas import (
     TurnMetrics,
 )
 
+from doktok_core.agent.merge import merge_evidence
 from doktok_core.agent.trace import step, step_event, tool_step
 from doktok_core.tools.base import ToolGateway, ToolSpec
 
@@ -73,19 +74,6 @@ def _context_segments(messages: Sequence[AgentMessage]) -> list[ContextSegment]:
     return sorted(segments, key=lambda s: s.chars, reverse=True)
 
 
-def _dedupe_citations(citations: list[Citation]) -> list[Citation]:
-    """Keep the first citation per (document_id, chunk_id), re-indexed 1..n in encounter order."""
-    seen: set[tuple[str, str]] = set()
-    out: list[Citation] = []
-    for c in citations:
-        key = (c.document_id, c.chunk_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(c.model_copy(update={"index": len(out) + 1}))
-    return out
-
-
 def run_agent_stream(
     tenant_id: str,
     question: str,
@@ -104,7 +92,9 @@ def run_agent_stream(
     messages += [AgentMessage(role=t.role, content=t.content) for t in history]
     messages.append(AgentMessage(role="user", content=question))
 
-    citations: list[Citation] = []
+    # Per-tool citation lists, RRF-fused at the end (relevance + ranking) like the retrieve endpoint
+    # + multi-agent graph - so the default single-agent path ships ranked, deduped sources.
+    tool_sources: list[list[Citation]] = []
     answer = ""
     # Aggregate token usage across every model call in the loop; total_ms is the loop wall time.
     prompt_tokens = answer_tokens = reasoning_tokens = 0
@@ -138,7 +128,8 @@ def run_agent_stream(
                     role="tool", content=result.as_message(), tool_call_id=call.id, name=call.name
                 )
             )
-            citations.extend(result.citations)
+            if result.citations:
+                tool_sources.append(list(result.citations))
     if not answer:
         # Budget exhausted with tools still pending: force one tool-free closing turn.
         messages.append(AgentMessage(role="user", content=_CLOSE_PROMPT))
@@ -147,9 +138,9 @@ def run_agent_stream(
         answer = closing.text.strip()
 
     yield step_event(step("compose", "Composing the answer"))
-    deduped = _dedupe_citations(citations)
+    ranked = merge_evidence(tool_sources)
     yield ChatEvent(type="token", delta=answer)
-    yield ChatEvent(type="sources", citations=deduped)
+    yield ChatEvent(type="sources", citations=ranked)
     yield ChatEvent(
         type="metrics",
         metrics=TurnMetrics(

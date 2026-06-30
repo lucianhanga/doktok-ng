@@ -103,8 +103,8 @@ test("agent mode toggle sends agent_mode=agent on the stream request", async () 
   await waitFor(() => expect(screen.getByText(/There are 57 documents/)).toBeInTheDocument());
   expect(streamBody).not.toBeNull();
   expect(streamBody!.agent_mode).toBe("agent");
-  // the agent's tool steps render as a context-composition bar
-  expect(screen.getByText("Using count_documents")).toBeInTheDocument();
+  // the agent's tool steps render in the composition bar (and in the timeline)
+  expect(screen.getAllByText("Using count_documents").length).toBeGreaterThan(0);
 });
 
 test("shows inferred retrieval filters from the meta event", async () => {
@@ -197,8 +197,7 @@ test("requests reasoning by default and renders it in a collapsible panel", asyn
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   await waitFor(() => expect(screen.getByText("It is 42 [1].")).toBeInTheDocument());
-  // The reasoning shows in the activity window.
-  expect(screen.getByText(/Reasoning & ranking/i)).toBeInTheDocument();
+  // The reasoning shows in the right-pane activity timeline.
   expect(screen.getByText(/Let me check the invoice totals\./)).toBeInTheDocument();
   // The stream request asked the model to think.
   expect(JSON.parse(String(streamInit?.body)).reasoning).toBe(true);
@@ -270,7 +269,7 @@ test("shows the sources column with importance and opens a document", async () =
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText(/Total is 42/)).toBeInTheDocument());
 
-  // Open the per-turn Sources chip -> the shared right rail shows the ranked sources.
+  // Open the per-turn Sources chip -> the shared right pane shows the ranked sources.
   await userEvent.click(screen.getByRole("button", { name: /Sources \(2\)/ }));
   expect(screen.getByLabelText("Sources")).toBeInTheDocument();
   expect(screen.getByText(/100% . #1/)).toBeInTheDocument();
@@ -278,9 +277,9 @@ test("shows the sources column with importance and opens a document", async () =
   const meters = screen.getAllByRole("meter");
   expect(meters[0].getAttribute("aria-valuenow")).toBe("100");
 
-  // Clicking a source opens the FULL document card (app handler), not the in-chat rail.
+  // Clicking a source in the right pane opens DocumentDetail inside the pane (not the app handler).
   await userEvent.click(screen.getByRole("button", { name: /top\.pdf/ }));
-  expect(onOpen).toHaveBeenCalledWith("d2");
+  expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
   // The inline [2] marker is clickable too.
   expect(screen.getByTitle("Open source [2]")).toBeInTheDocument();
 });
@@ -425,8 +424,9 @@ test("streams pipeline steps into the activity window", async () => {
   await userEvent.type(screen.getByLabelText("Question"), "find it");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText("Answer [1].")).toBeInTheDocument());
-  expect(screen.getByText("Understanding your question")).toBeInTheDocument();
-  expect(screen.getByText("Searching and ranking your documents")).toBeInTheDocument();
+  // Steps appear in the composition bar and also in the activity timeline.
+  expect(screen.getAllByText("Understanding your question").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Searching and ranking your documents").length).toBeGreaterThan(0);
 });
 
 test("renames a conversation via the rename button", async () => {
@@ -556,12 +556,11 @@ test("reasoning panel shows a token/time summary and ranked chunks; ranked doc o
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText("Answer here.")).toBeInTheDocument());
 
-  // Summary: steps + ~tokens (estimated) + time.
-  expect(screen.getByText(/1\.2k tokens/)).toBeInTheDocument();
-  expect(screen.getByText(/2\.5s/)).toBeInTheDocument();
-  // Ranked chunks rendered with RRF score.
-  expect(screen.getByText(/RRF 0\.812/)).toBeInTheDocument();
-  // Clicking a ranked doc opens the drawer.
+  // Reasoning text is visible in the right-pane activity timeline (newest turn expanded).
+  expect(screen.getByText(/weighing the rows/)).toBeInTheDocument();
+  // The selected source (win.pdf) appears in the timeline sources node.
+  expect(screen.getByRole("button", { name: /win\.pdf/ })).toBeInTheDocument();
+  // Clicking the source opens Document preview in the right pane.
   await userEvent.click(screen.getByRole("button", { name: /win\.pdf/ }));
   expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
 });
@@ -845,7 +844,67 @@ test("shows the usage footer and context composition from metrics", async () => 
   await waitFor(() => expect(screen.getByText(/Answer \[1\]\./)).toBeInTheDocument());
   // usage footer (350 total tokens summed locally) + 1.2s
   expect(screen.getByText(/350 tok · 1\.2s/)).toBeInTheDocument();
-  // context composition summary with the fullness % against the budget
-  expect(screen.getByText(/Context · ~350 tok · 1% of budget/)).toBeInTheDocument();
-  expect(screen.getByText("Tool: retrieve_passages")).toBeInTheDocument();
+  // context composition summary in the right-pane activity timeline
+  expect(screen.getByText(/~350 tok · 1% of budget/)).toBeInTheDocument();
+  expect(screen.getByText(/Tool: retrieve_passages/)).toBeInTheDocument();
+});
+
+test("collapses and expands the right activity pane, expanding the chat column", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("[]", { status: 200 })),
+  );
+  render(<ChatPanel />);
+  // The right pane is visible by default with the Activity label.
+  await waitFor(() =>
+    expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument(),
+  );
+  // Collapse the right pane: only the expand button remains.
+  await userEvent.click(screen.getByRole("button", { name: "Collapse activity panel" }));
+  expect(screen.getByRole("button", { name: "Expand activity panel" })).toBeInTheDocument();
+  // The pane is still present as an aside (landmark), but collapsed.
+  expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  // Expand it again: the header is visible once more.
+  await userEvent.click(screen.getByRole("button", { name: "Expand activity panel" }));
+  expect(screen.getByRole("button", { name: "Collapse activity panel" })).toBeInTheDocument();
+});
+
+test("right pane shows Activity by default and switches to DocumentDetail on source click", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", { rewritten_query: null }),
+        frame("reasoning", { delta: "Thinking about it." }),
+        frame("token", { delta: "See the document for details [1]." }),
+        frame("sources", {
+          citations: [
+            { index: 1, document_id: "dX", chunk_id: "cX", original_filename: "ref.pdf", snippet: "ref" },
+          ],
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "explain");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/See the document for details/)).toBeInTheDocument());
+
+  // Right pane defaults to Activity mode: reasoning text is shown in the timeline.
+  expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  expect(screen.getByText(/Thinking about it\./)).toBeInTheDocument();
+
+  // Opening sources switches the pane to Sources mode.
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
+  expect(screen.getByRole("complementary", { name: "Sources" })).toBeInTheDocument();
+
+  // Clicking a source in the right pane opens DocumentDetail there (not a new page).
+  await userEvent.click(screen.getByRole("button", { name: /ref\.pdf/ }));
+  expect(screen.getByRole("complementary", { name: "Document preview" })).toBeInTheDocument();
+
+  // Back arrow returns to Activity mode.
+  await userEvent.click(screen.getByRole("button", { name: "Back to activity" }));
+  expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
 });

@@ -20,12 +20,14 @@ import {
   type TraceStep,
   type TurnMetrics,
 } from "./api";
+import { ChatActivityTimeline } from "./ChatActivityTimeline";
 import { DocumentDetail } from "./DocumentDetail";
+import { DocumentsUsedBar } from "./DocumentsUsedBar";
 import { Markdown } from "./Markdown";
 import { loadJSON, saveJSON } from "./persist";
 
 const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
-const REASONING_KEY = "doktok.chat.reasoningCollapsed";
+const RIGHT_PANE_KEY = "doktok.chat.rightPaneCollapsed";
 
 /** The shared right rail: closed, a turn's sources, retrieve-only "explore" evidence, or a
  * document preview. */
@@ -175,6 +177,7 @@ function SourceCard({
           )}
           <span className="chat-source-body">
             <span className="chat-source-title">
+              <em className="source-rank" aria-hidden="true">#{rank}</em>
               [{citation.index}] {label}
               {citation.page_start ? <span className="muted"> p.{citation.page_start}</span> : null}
               {kindLabel && <span className="chat-source-kind">{kindLabel}</span>}
@@ -207,157 +210,6 @@ function SourcesList({
 }
 
 /** The per-turn ranked candidate chunks (M8 #4/#7): winners first, with RRF score + rank %. */
-function RankedChunks({
-  ranking,
-  onOpenDocument,
-}: {
-  ranking: RankedChunk[];
-  onOpenDocument?: (id: string) => void;
-}) {
-  if (ranking.length === 0) return null;
-  const winners = ranking.filter((r) => r.selected).length;
-  return (
-    <div className="chat-ranking">
-      <div className="chat-ranking-head muted">
-        Chunk ranking — {winners} of {ranking.length} selected
-      </div>
-      <ol className="chat-ranking-list">
-        {ranking.map((rc) => {
-          const label = rc.original_filename ?? rc.document_id.slice(0, 8);
-          const pct = rc.relevance != null ? `${Math.round(rc.relevance * 100)}%` : "—";
-          return (
-            <li key={rc.chunk_id} className={rc.selected ? "selected" : "dropped"}>
-              <button
-                type="button"
-                className="link-button chat-ranking-doc"
-                onClick={() => onOpenDocument?.(rc.document_id)}
-                disabled={!onOpenDocument}
-                title={`Open ${label}`}
-              >
-                {label}
-                {rc.page_start ? <span className="muted"> p.{rc.page_start}</span> : null}
-              </button>
-              <span className="muted chat-ranking-scores">
-                RRF {rc.retrieval_score.toFixed(3)} · rank {pct}
-                {rc.selected ? " · selected" : ""}
-                {rc.cited ? " · cited" : ""}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </div>
-  );
-}
-
-/**
- * Collapsible "Reasoning & Steps" panel (M8 #2/#3/#4): pipeline steps + the model's reasoning +
- * the per-turn chunk ranking. Collapsed it shows a one-line summary (steps · tokens · time); while
- * streaming it auto-expands and pins to the bottom. Shown only when there is something to show.
- */
-function ActivityPanel({
-  reasoning,
-  streaming,
-  caret,
-  metrics,
-  ranking,
-  onOpenDocument,
-}: {
-  reasoning: string;
-  streaming: boolean;
-  caret: boolean;
-  metrics: TurnMetrics | null;
-  ranking: RankedChunk[];
-  onOpenDocument?: (id: string) => void;
-}) {
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState<boolean>(() => loadJSON(REASONING_KEY, false));
-  // While streaming, force-expand so the user watches it think; restore their preference after.
-  const open = streaming || !collapsed;
-  useEffect(() => {
-    if (streaming && open && bodyRef.current)
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [reasoning, streaming, open]);
-  // Steps render in the always-visible composition bar (AnswerBlock); this panel holds the model's
-  // reasoning + the chunk-ranking trace, shown only when there is something to show.
-  if (!reasoning && ranking.length === 0) return null;
-
-  const summary: string[] = [];
-  if (metrics && metrics.reasoning_tokens > 0) {
-    summary.push(`${metrics.estimated ? "~" : ""}${fmtTokens(metrics.reasoning_tokens)} tokens`);
-  }
-  if (metrics && metrics.reasoning_ms > 0) summary.push(fmtMs(metrics.reasoning_ms));
-
-  return (
-    <div className="chat-activity">
-      <button
-        type="button"
-        className="chat-activity-label link-button"
-        aria-expanded={open}
-        onClick={() => {
-          const next = !collapsed;
-          setCollapsed(next);
-          saveJSON(REASONING_KEY, next);
-        }}
-        disabled={streaming}
-      >
-        <span aria-hidden="true">{open ? "▾" : "▸"}</span> Reasoning &amp; ranking
-        {summary.length > 0 && <span className="muted"> — {summary.join(" · ")}</span>}
-      </button>
-      {open && (
-        <div className="chat-activity-body" ref={bodyRef}>
-          {reasoning && <Markdown>{reasoning}</Markdown>}
-          {caret && <span className="chat-caret" aria-hidden="true" />}
-          <RankedChunks ranking={ranking} onOpenDocument={onOpenDocument} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Per-turn context transparency (ADR-0022 P2-B/P2-A): how the prompt was composed (per-segment
- * token shares) + a fullness meter against the configured chat context budget. Collapsed by default. */
-function ContextComposition({ metrics }: { metrics: TurnMetrics }) {
-  const segs = metrics.context ?? [];
-  const total = segs.reduce((s, x) => s + x.tokens, 0) || 1;
-  const limit = metrics.context_limit ?? 0;
-  const pct = limit > 0 ? Math.round((total / limit) * 100) : null;
-  const meterClass = pct == null ? "" : pct >= 90 ? "is-high" : pct >= 70 ? "is-mid" : "is-low";
-  return (
-    <details className="chat-context">
-      <summary className="muted">
-        Context · ~{fmtTokens(total)} tok{pct != null ? ` · ${pct}% of budget` : ""}
-      </summary>
-      {pct != null && (
-        <span
-          className={`context-meter ${meterClass}`}
-          role="meter"
-          aria-valuenow={pct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={`Context is ${pct} percent of the ${limit}-token budget`}
-        >
-          <span className="context-meter-fill" style={{ width: `${Math.min(pct, 100)}%` }} />
-        </span>
-      )}
-      <ul className="context-segments">
-        {segs.map((seg) => (
-          <li key={seg.label}>
-            <span className="context-seg-label">{seg.label}</span>
-            <span className="context-seg-bar" aria-hidden="true">
-              <span
-                className="context-seg-fill"
-                style={{ width: `${Math.round((seg.tokens / total) * 100)}%` }}
-              />
-            </span>
-            <span className="muted context-seg-tok">~{fmtTokens(seg.tokens)}</span>
-          </li>
-        ))}
-      </ul>
-    </details>
-  );
-}
-
 function AnswerBlock({
   turn,
   onOpenDocument,
@@ -375,9 +227,9 @@ function AnswerBlock({
   onDelete?: () => void;
   canModify?: boolean;
 }) {
-  // While streaming, the caret sits in the activity window until answer tokens begin, then moves
-  // to the answer below.
-  const reasoningStreaming = turn.streaming && turn.answer.length === 0;
+  const [questionExpanded, setQuestionExpanded] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const isLongQuestion = turn.question.length > 200;
   // Map citation index -> document, so a clicked [n] marker in the answer opens that document.
   const citeMap = new Map(turn.citations.map((c) => [c.index, c.document_id]));
   const citationIndices = new Set(turn.citations.map((c) => c.index));
@@ -390,108 +242,143 @@ function AnswerBlock({
       : undefined;
   return (
     <div className="chat-answer-block">
-      <div className="chat-question-row">
-        <p className="chat-question" title={turn.question}>
-          {turn.question}
-        </p>
-        <div className="chat-question-actions">
-          {turn.citations.length > 0 && onShowSources && (
-            <button
-              type="button"
-              className="chat-sources-chip"
-              aria-expanded={sourcesActive}
-              aria-controls="chat-right-rail"
-              onClick={onShowSources}
-            >
-              Sources ({turn.citations.length})
-            </button>
-          )}
-          {canModify && !turn.streaming && onEdit && (
-            <button
-              type="button"
-              className="chat-q-action link-button"
-              aria-label="Edit this question and resubmit"
-              title="Edit & resubmit"
-              onClick={onEdit}
-            >
-              &#9998;
-            </button>
-          )}
-          {canModify && !turn.streaming && onDelete && (
-            <button
-              type="button"
-              className="chat-q-action link-button"
-              aria-label="Delete this question and everything after it"
-              title="Delete from here"
-              onClick={onDelete}
-            >
-              &times;
-            </button>
-          )}
+      <div className="chat-question-bubble">
+        <div className="chat-question-row">
+          {/* Collapse toggle: hides the AI answer section, leaving the question visible. */}
+          <button
+            type="button"
+            className="chat-collapse-toggle"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "Expand answer" : "Collapse answer"}
+            disabled={!!turn.streaming}
+            onClick={() => setCollapsed((c) => !c)}
+          >
+            {collapsed ? "▸" : "▾"}
+          </button>
+          <p
+            className={`chat-question${isLongQuestion && !questionExpanded ? " is-clamped" : ""}`}
+            title={turn.question}
+          >
+            <span className="chat-turn-who">You:</span>
+            {" "}
+            {turn.question}
+          </p>
+          <div className="chat-question-actions">
+            {turn.citations.length > 0 && onShowSources && (
+              <button
+                type="button"
+                className="chat-sources-chip"
+                aria-expanded={sourcesActive}
+                aria-controls="chat-right-pane"
+                onClick={onShowSources}
+              >
+                Sources ({turn.citations.length})
+              </button>
+            )}
+            {canModify && !turn.streaming && onEdit && (
+              <button
+                type="button"
+                className="chat-q-action link-button"
+                aria-label="Edit this question and resubmit"
+                title="Edit & resubmit"
+                onClick={onEdit}
+              >
+                &#9998;
+              </button>
+            )}
+            {canModify && !turn.streaming && onDelete && (
+              <button
+                type="button"
+                className="chat-q-action link-button"
+                aria-label="Delete this question and everything after it"
+                title="Delete from here"
+                onClick={onDelete}
+              >
+                &times;
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-      {turn.rewrittenQuery && (
-        <p className="muted chat-rewritten">searched for: {turn.rewrittenQuery}</p>
-      )}
-      {describeFilters(turn.filters) && (
-        <p className="muted chat-rewritten">filtered to: {describeFilters(turn.filters)}</p>
-      )}
-      {turn.steps.length > 0 && (
-        <div className="chat-composition" aria-label="How this answer was built">
-          {turn.steps.map((step, i) => (
-            <span
-              key={i}
-              className={`chat-composition-chip chat-step-${step.kind}`}
-              title={step.detail || undefined}
-            >
-              {step.label}
-            </span>
-          ))}
-          {sourceBreakdown(turn.citations).map((part) => (
-            <span key={part.label} className="chat-composition-chip is-sources">
-              {part.count} {part.label}
-            </span>
-          ))}
-        </div>
-      )}
-      <ActivityPanel
-        reasoning={turn.reasoning}
-        streaming={turn.streaming}
-        caret={reasoningStreaming}
-        metrics={turn.metrics}
-        ranking={turn.ranking}
-        onOpenDocument={onOpenDocument}
-      />
-      {!turn.streaming && !turn.grounded && !turn.stopped && (
-        <p role="status" className="banner-warning">
-          This answer isn't grounded in your documents - no supporting sources were found, so treat
-          it with caution.
-        </p>
-      )}
-      <div className={turn.grounded || turn.streaming ? "answer" : "answer empty"}>
-        <Markdown citationIndices={citationIndices} onCitationClick={onCitationClick}>
-          {turn.answer}
-        </Markdown>
-        {turn.streaming && turn.answer.length > 0 && (
-          <span className="chat-caret" aria-hidden="true" />
+        {isLongQuestion && (
+          <button
+            type="button"
+            className="chat-question-expand"
+            onClick={() => setQuestionExpanded((e) => !e)}
+            aria-expanded={questionExpanded}
+          >
+            {questionExpanded ? "Show less" : "Show more"}
+          </button>
         )}
       </div>
-      {!turn.streaming && turn.stopped && (
-        <p role="note" className="chat-stopped">
-          Generation stopped.
-        </p>
-      )}
-      {!turn.streaming && turn.metrics && metricsTotalTokens(turn.metrics) > 0 && (
-        <p
-          className="muted chat-usage"
-          title={`${turn.metrics.prompt_tokens ?? 0} prompt + ${turn.metrics.answer_tokens ?? 0} reply = ${metricsTotalTokens(turn.metrics)} tokens in ${fmtMs(turn.metrics.total_ms ?? 0)}`}
-        >
-          {turn.metrics.estimated ? "~" : ""}
-          {fmtTokens(metricsTotalTokens(turn.metrics))} tok · {fmtMs(turn.metrics.total_ms ?? 0)}
-        </p>
-      )}
-      {!turn.streaming && turn.metrics && (turn.metrics.context?.length ?? 0) > 0 && (
-        <ContextComposition metrics={turn.metrics} />
+      {!collapsed && (
+        <>
+          {turn.rewrittenQuery && (
+            <p className="muted chat-rewritten">searched for: {turn.rewrittenQuery}</p>
+          )}
+          {describeFilters(turn.filters) && (
+            <p className="muted chat-rewritten">filtered to: {describeFilters(turn.filters)}</p>
+          )}
+          {turn.steps.length > 0 && (
+            <div className="chat-composition" aria-label="How this answer was built">
+              {turn.steps.map((step, i) => (
+                <span
+                  key={i}
+                  className={`chat-composition-chip chat-step-${step.kind}`}
+                  title={step.detail || undefined}
+                >
+                  {step.label}
+                </span>
+              ))}
+              {sourceBreakdown(turn.citations).map((part) => (
+                <span key={part.label} className="chat-composition-chip is-sources">
+                  {part.count} {part.label}
+                </span>
+              ))}
+            </div>
+          )}
+          <DocumentsUsedBar
+            citations={turn.citations}
+            steps={turn.steps}
+            streaming={turn.streaming}
+            onOpen={onOpenDocument}
+            onShowAll={onShowSources}
+            isLatest={turn.streaming}
+          />
+          {!turn.streaming && !turn.grounded && !turn.stopped && (
+            <p role="status" className="banner-warning">
+              This answer isn't grounded in your documents - no supporting sources were found, so
+              treat it with caution.
+            </p>
+          )}
+          <div
+            className={turn.grounded || turn.streaming ? "answer" : "answer empty"}
+            aria-live={turn.streaming ? "polite" : undefined}
+            aria-atomic={turn.streaming ? "false" : undefined}
+          >
+            <p className="chat-turn-who chat-turn-who--ai">AI:</p>
+            <Markdown citationIndices={citationIndices} onCitationClick={onCitationClick}>
+              {turn.answer}
+            </Markdown>
+            {turn.streaming && turn.answer.length > 0 && (
+              <span className="chat-caret" aria-hidden="true" />
+            )}
+          </div>
+          {!turn.streaming && turn.stopped && (
+            <p role="note" className="chat-stopped">
+              Generation stopped.
+            </p>
+          )}
+          {!turn.streaming && turn.metrics && metricsTotalTokens(turn.metrics) > 0 && (
+            <p
+              className="muted chat-usage"
+              title={`${turn.metrics.prompt_tokens ?? 0} prompt + ${turn.metrics.answer_tokens ?? 0} reply = ${metricsTotalTokens(turn.metrics)} tokens in ${fmtMs(turn.metrics.total_ms ?? 0)}`}
+            >
+              {turn.metrics.estimated ? "~" : ""}
+              {fmtTokens(metricsTotalTokens(turn.metrics))} tok ·{" "}
+              {fmtMs(turn.metrics.total_ms ?? 0)}
+            </p>
+          )}
+        </>
       )}
     </div>
   );
@@ -717,6 +604,10 @@ export function ChatPanel({
   );
   // The shared right rail: a turn's Sources list, or a document Preview (M8). One at a time.
   const [rail, setRail] = useState<RailState>({ mode: "none" });
+  // Persistent right pane collapse state (independent of rail content mode).
+  const [rightPaneCollapsed, setRightPaneCollapsed] = useState<boolean>(() =>
+    loadJSON(RIGHT_PANE_KEY, false),
+  );
   // Live accumulator + abort controller PER thread key, so a background stream survives a switch.
   const liveRef = useRef<Map<string, Streaming>>(new Map());
   const controllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -746,19 +637,25 @@ export function ChatPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [streaming]);
 
-  // Jump-to-latest: watch a sentinel at the end of the transcript; when it scrolls out of view,
-  // offer a button to return to the newest turn (container-agnostic via the viewport).
-  const endRef = useRef<HTMLDivElement>(null);
+  // Jump-to-latest: track scroll position on the transcript <ol> itself (the scroll container).
+  // IntersectionObserver on a sentinel outside the <ol> would not fire once the <ol> scrolls
+  // internally — the sentinel never leaves the viewport.
+  const transcriptRef = useRef<HTMLOListElement>(null);
   const [atBottom, setAtBottom] = useState(true);
+  function handleTranscriptScroll(e: React.UIEvent<HTMLOListElement>) {
+    const el = e.currentTarget;
+    setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 80);
+  }
+  function scrollTranscriptToBottom(smooth = false) {
+    const el = transcriptRef.current;
+    if (!el || typeof el.scrollTo !== "function") return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+  }
+  // Auto-scroll to bottom on each streamed chunk — but only if the user is already at the bottom.
+  // Dependency: streaming answer text only; scrollTranscriptToBottom uses a ref (stable).
   useEffect(() => {
-    const el = endRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    const obs = new IntersectionObserver(([e]) => setAtBottom(e.isIntersecting), {
-      rootMargin: "0px 0px -40px 0px",
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
+    if (atBottom) scrollTranscriptToBottom();
+  }, [streaming?.answer]);
 
   const LOCAL_KEY = "__local__"; // stream key when persistence is unavailable (no thread id)
   const currentKey = () => threadRef.current ?? LOCAL_KEY;
@@ -826,6 +723,7 @@ export function ChatPanel({
     void (async () => {
       try {
         const citations = await exploreRetrieval(q);
+        expandRightPane();
         setRail({ mode: "explore", query: q, citations });
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : "retrieval failed");
@@ -1028,6 +926,21 @@ export function ChatPanel({
     });
   }
 
+  function toggleRightPane() {
+    setRightPaneCollapsed((c) => {
+      saveJSON(RIGHT_PANE_KEY, !c);
+      return !c;
+    });
+  }
+
+  /** Ensure the right pane is open (e.g. when navigating to a source or opening explore). */
+  function expandRightPane() {
+    setRightPaneCollapsed((c) => {
+      if (c) saveJSON(RIGHT_PANE_KEY, false);
+      return false;
+    });
+  }
+
   const turns: TurnView[] = exchanges.map((ex) => ({
     question: ex.question,
     reasoning: ex.reasoning ?? "",
@@ -1059,21 +972,28 @@ export function ChatPanel({
     });
   }
 
+  // Scroll to bottom when a new exchange completes (e.g., after question submission + answer).
+  useEffect(() => { scrollTranscriptToBottom(); }, [turns.length]);
+
   // Right-rail handlers. The "Sources (n)" chip opens a turn's sources; a citation/source-card
   // opens the document preview. Both share one rail track (never two right columns at once).
-  const showSources = (turnIndex: number) =>
+  const showSources = (turnIndex: number) => {
+    expandRightPane();
     setRail((r) =>
       r.mode === "sources" && r.turnIndex === turnIndex
         ? { mode: "none" }
         : { mode: "sources", turnIndex },
     );
-  const openInRail = (docId: string) =>
+  };
+  const openInRail = (docId: string) => {
+    expandRightPane();
     setRail((r) => ({
       mode: "preview",
       docId,
       from: r.mode === "sources" ? "sources" : "citation",
       turnIndex: r.mode === "sources" ? r.turnIndex : null,
     }));
+  };
   const closeRail = () => setRail({ mode: "none" });
   const backFromPreview = () =>
     setRail((r) =>
@@ -1081,8 +1001,6 @@ export function ChatPanel({
         ? { mode: "sources", turnIndex: r.turnIndex }
         : { mode: "none" },
     );
-  const railOpen = rail.mode !== "none";
-
   // Per-chat totals for the active conversation (M8 #11), from the server-computed thread figures.
   const activeThread = threads.find((t) => t.id === threadId);
   const threadTokens = activeThread?.total_tokens ?? 0;
@@ -1091,10 +1009,7 @@ export function ChatPanel({
 
   return (
     <section aria-label="Chat" className="panel chat-page">
-      <div className="chat-page-head">
-        <h2>Chat with your documents</h2>
-      </div>
-      <div className={`chat-layout${railOpen ? " chat-layout-rail" : ""}`}>
+      <div className="chat-layout">
         <ThreadList
           threads={threads}
           activeId={threadId}
@@ -1119,7 +1034,13 @@ export function ChatPanel({
             </h3>
           </div>
 
-          <ol className="chat-transcript" aria-label="Conversation">
+          <ol
+            ref={transcriptRef}
+            onScroll={handleTranscriptScroll}
+            className="chat-transcript"
+            role="log"
+            aria-label="Conversation"
+          >
             {turns.map((turn, i) => (
               <li key={i} className="chat-exchange">
                 <AnswerBlock
@@ -1134,14 +1055,13 @@ export function ChatPanel({
               </li>
             ))}
           </ol>
-          <div ref={endRef} aria-hidden="true" />
           {!atBottom && turns.length > 0 && (
             <button
               type="button"
               className="chat-jump"
-              onClick={() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })}
+              onClick={() => scrollTranscriptToBottom(true)}
             >
-              ↓ Jump to latest
+              &#8595; Jump to latest
             </button>
           )}
 
@@ -1225,51 +1145,101 @@ export function ChatPanel({
             </p>
           )}
         </div>
-        {rail.mode !== "none" && (
+        {/* Right pane: persistent and collapsible. Activity by default; sources/preview on demand. */}
+        {rightPaneCollapsed ? (
           <aside
-            id="chat-right-rail"
-            className="chat-right-rail"
-            aria-label={rail.mode === "preview" ? "Document preview" : "Sources"}
+            id="chat-right-pane"
+            className="chat-right-pane chat-right-pane--collapsed"
+            aria-label="Activity"
           >
-            {rail.mode === "preview" ? (
-              <DocumentDetail
-                key={rail.docId}
-                id={rail.docId}
-                onClose={backFromPreview}
-                onOpenDocument={onOpenDocument}
-              />
-            ) : (
-              <div className="chat-rail-sources">
-                <div className="chat-rail-head">
-                  <h3>
-                    {rail.mode === "explore"
-                      ? `Evidence for “${rail.query}” (${rail.citations.length})`
-                      : `Sources (${turns[rail.turnIndex]?.citations.length ?? 0})`}
-                  </h3>
+            <button
+              type="button"
+              className="chat-right-pane-expand link-button"
+              onClick={toggleRightPane}
+              aria-expanded={false}
+              aria-label="Expand activity panel"
+              title="Expand activity panel"
+            >
+              &#9664;
+            </button>
+          </aside>
+        ) : (
+          <aside
+            id="chat-right-pane"
+            className="chat-right-pane"
+            aria-label={
+              rail.mode === "preview"
+                ? "Document preview"
+                : rail.mode === "sources" || rail.mode === "explore"
+                  ? "Sources"
+                  : "Activity"
+            }
+          >
+            <div className="chat-rail-head chat-right-pane-head">
+              <h3>
+                {rail.mode === "preview"
+                  ? "Document"
+                  : rail.mode === "explore"
+                    ? `Evidence for "${rail.query}" (${rail.citations.length})`
+                    : rail.mode === "sources"
+                      ? `Sources (${turns[rail.turnIndex]?.citations.length ?? 0})`
+                      : "Activity"}
+              </h3>
+              <div className="chat-rail-head-actions">
+                {rail.mode !== "none" && (
                   <button
                     type="button"
                     className="chat-rail-close link-button"
-                    aria-label="Close sources"
+                    aria-label="Back to activity"
                     onClick={closeRail}
                   >
-                    &times;
+                    &larr;
                   </button>
-                </div>
-                {rail.mode === "explore" && (
-                  <p className="muted chat-explore-note">
-                    Retrieved evidence only — no answer was generated.
-                  </p>
                 )}
-                <SourcesList
-                  citations={
-                    rail.mode === "explore"
-                      ? rail.citations
-                      : (turns[rail.turnIndex]?.citations ?? [])
-                  }
+                <button
+                  type="button"
+                  className="chat-threads-toggle link-button"
+                  onClick={toggleRightPane}
+                  aria-expanded={true}
+                  aria-label="Collapse activity panel"
+                  title="Collapse activity panel"
+                >
+                  &#9654;
+                </button>
+              </div>
+            </div>
+            <div className="chat-right-pane-body">
+              {rail.mode === "preview" ? (
+                <DocumentDetail
+                  key={rail.docId}
+                  id={rail.docId}
+                  onClose={backFromPreview}
                   onOpenDocument={onOpenDocument}
                 />
-              </div>
-            )}
+              ) : rail.mode === "sources" || rail.mode === "explore" ? (
+                <div className="chat-rail-sources">
+                  {rail.mode === "explore" && (
+                    <p className="muted chat-explore-note">
+                      Retrieved evidence only — no answer was generated.
+                    </p>
+                  )}
+                  <SourcesList
+                    citations={
+                      rail.mode === "explore"
+                        ? rail.citations
+                        : (turns[rail.turnIndex]?.citations ?? [])
+                    }
+                    onOpenDocument={openInRail}
+                  />
+                </div>
+              ) : (
+                <ChatActivityTimeline
+                  turns={turns}
+                  streaming={streaming}
+                  onOpenDocument={openInRail}
+                />
+              )}
+            </div>
           </aside>
         )}
       </div>

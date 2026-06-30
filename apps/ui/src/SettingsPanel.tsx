@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { InfoHint } from "./InfoHint";
 import { MemoryPanel } from "./MemoryPanel";
 import {
   applyRestore,
@@ -52,10 +53,6 @@ import {
 import { Ellipsis } from "./Ellipsis";
 
 const MIN_PASSPHRASE = 8;
-
-function ctxLabel(n: number): string {
-  return n % 1024 === 0 ? `${n / 1024}k` : String(n);
-}
 
 function relAge(seconds: number | null): string {
   if (seconds == null) return "never";
@@ -1221,11 +1218,22 @@ function EgressStatusNote({ status }: { status?: PurposeEgressStatus }) {
   return null;
 }
 
+// Per-stage explanations, shown as an (i) popover after the label in BOTH Model-stack cards.
+const STAGE_INFO = {
+  pipeline: "Feature extraction during ingestion (titles, dates, categories, structured records).",
+  rag: "RAG chat, agents, tools and structured output over your documents.",
+  ner: "Model that finds people, organizations and places in your documents.",
+  keg: "Model that extracts relationships between entities for the knowledge graph.",
+  embedding:
+    "The model that embeds your documents for semantic search. Read-only: changing it would require re-indexing the whole corpus.",
+} as const;
+
 function PurposeEditor({
   title,
   description,
   options,
   value,
+  defaultValue,
   reasoningLevels,
   ollamaUrlDefault,
   noEgress,
@@ -1237,6 +1245,8 @@ function PurposeEditor({
   description: string;
   options: ModelOption[];
   value: AiPurposeSettings;
+  // The server default for this purpose; selecting "Use server default" resets to it.
+  defaultValue?: AiPurposeSettings;
   reasoningLevels: string[];
   ollamaUrlDefault: string;
   // The active no-egress policy: greys out remote options in the picker (does NOT hide them).
@@ -1249,18 +1259,31 @@ function PurposeEditor({
 }) {
   const selected =
     options.find((o) => o.provider === value.provider && o.model === value.model) ?? options[0];
+  const USE_DEFAULT = "__default__";
+  const usingDefault =
+    !!defaultValue &&
+    value.provider === defaultValue.provider &&
+    value.model === defaultValue.model &&
+    value.reasoning === defaultValue.reasoning &&
+    value.num_ctx === defaultValue.num_ctx;
 
   return (
     <div className="settings-purpose">
-      <h4>{title}</h4>
-      <p className="muted">{description}</p>
+      <h4>
+        {title}{" "}
+        <InfoHint label={title}>{description}</InfoHint>
+      </h4>
       <div className="settings-row">
         <label>
           Model{" "}
           <select
             aria-label={`${title} model`}
-            value={`${value.provider}:${value.model}`}
+            value={usingDefault ? USE_DEFAULT : `${value.provider}:${value.model}`}
             onChange={(e) => {
+              if (e.target.value === USE_DEFAULT) {
+                if (defaultValue) onChange({ ...defaultValue });
+                return;
+              }
               const [provider, ...rest] = e.target.value.split(":");
               const model = rest.join(":");
               const opt = options.find((o) => o.provider === provider && o.model === model);
@@ -1271,6 +1294,7 @@ function PurposeEditor({
               onChange({ ...value, provider, model, num_ctx });
             }}
           >
+            {defaultValue && <option value={USE_DEFAULT}>Use server default</option>}
             {options.map((o) => {
               // A remote option under no-egress is disabled in place (greyed), not hidden, and the
               // reason rides in the visible text + title so it never depends on colour/state alone.
@@ -1293,6 +1317,8 @@ function PurposeEditor({
             })}
           </select>
         </label>
+      </div>
+      <div className="settings-row">
         <label title={selected.supports_reasoning ? "" : "This model does not support reasoning"}>
           Reasoning{" "}
           <select
@@ -1348,6 +1374,9 @@ function selectionBlocked(
 export function SettingsPanel() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
+  // Snapshot of the loaded settings = the server defaults (until the backend exposes per-tenant
+  // overrides separately). Drives the read-only card and the "Use server default" picker entry.
+  const [serverDefaults, setServerDefaults] = useState<AiSettings | null>(null);
   const [ocr, setOcr] = useState<OcrSettings | null>(null);
   const [ocrRec, setOcrRec] = useState<OcrRecommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1373,6 +1402,7 @@ export function SettingsPanel() {
       .then(([cat, s, o]) => {
         setCatalog(cat);
         setAi(s);
+        setServerDefaults(s);
         setOcr(o);
       })
       .catch((err: unknown) => {
@@ -1724,7 +1754,7 @@ export function SettingsPanel() {
         (!catalog || !ai || !ocr ? (
           <p role="status">Loading settings…</p>
         ) : (
-          <div className="settings-section">
+          <div className="settings-section settings-section--wide">
             <div className="settings-cards-row">
             <div className="settings-card">
               <h4>Server defaults (read-only)</h4>
@@ -1735,32 +1765,47 @@ export function SettingsPanel() {
               </p>
               <ul className="settings-defaults">
                 <li>
-                  <span>Data pipeline</span>
+                  <span>
+                    Data pipeline{" "}
+                    <InfoHint label="Data pipeline">{STAGE_INFO.pipeline}</InfoHint>
+                  </span>
                   <span className="muted">
-                    {ai.pipeline.provider} · {ai.pipeline.model}
+                    {(serverDefaults ?? ai).pipeline.provider} · {(serverDefaults ?? ai).pipeline.model} · reasoning {(serverDefaults ?? ai).pipeline.reasoning}
                   </span>
                 </li>
                 <li>
-                  <span>Document interrogation / Chat</span>
+                  <span>
+                    Document interrogation / Chat{" "}
+                    <InfoHint label="Document interrogation">{STAGE_INFO.rag}</InfoHint>
+                  </span>
                   <span className="muted">
-                    {ai.rag.provider} · {ai.rag.model}
+                    {(serverDefaults ?? ai).rag.provider} · {(serverDefaults ?? ai).rag.model} · reasoning {(serverDefaults ?? ai).rag.reasoning}
                   </span>
                 </li>
                 <li>
-                  <span>Entity recognition (NER)</span>
+                  <span>
+                    Entity recognition (NER){" "}
+                    <InfoHint label="Entity recognition (NER)">{STAGE_INFO.ner}</InfoHint>
+                  </span>
                   <span className="muted">
-                    {ai.ner.provider} · {ai.ner.model}
+                    {(serverDefaults ?? ai).ner.provider} · {(serverDefaults ?? ai).ner.model} · reasoning {(serverDefaults ?? ai).ner.reasoning}
                   </span>
                 </li>
                 <li>
-                  <span>Knowledge graph (relations)</span>
+                  <span>
+                    Knowledge graph (relations){" "}
+                    <InfoHint label="Knowledge graph (relations)">{STAGE_INFO.keg}</InfoHint>
+                  </span>
                   <span className="muted">
-                    {ai.keg.provider} · {ai.keg.model}
+                    {(serverDefaults ?? ai).keg.provider} · {(serverDefaults ?? ai).keg.model} · reasoning {(serverDefaults ?? ai).keg.reasoning}
                   </span>
                 </li>
                 <li>
-                  <span>Embedding (index)</span>
-                  <span className="muted">{ai.embedding_model ?? "—"}</span>
+                  <span>
+                    Embedding (index){" "}
+                    <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
+                  </span>
+                  <span className="muted">{(serverDefaults ?? ai).embedding_model ?? "—"}</span>
                 </li>
               </ul>
             </div>
@@ -1772,9 +1817,10 @@ export function SettingsPanel() {
               </p>
               <PurposeEditor
                 title="Data pipeline"
-                description="Feature extraction during ingestion (titles, dates, categories, structured records)."
+                description={STAGE_INFO.pipeline}
                 options={catalog.pipeline}
                 value={ai.pipeline}
+                defaultValue={serverDefaults?.pipeline}
                 reasoningLevels={catalog.reasoning_levels}
                 ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                 noEgress={noEgress}
@@ -1784,9 +1830,10 @@ export function SettingsPanel() {
               />
               <PurposeEditor
                 title="Document interrogation"
-                description="RAG chat, agents, tools and structured output over your documents."
+                description={STAGE_INFO.rag}
                 options={catalog.rag}
                 value={ai.rag}
+                defaultValue={serverDefaults?.rag}
                 reasoningLevels={catalog.reasoning_levels}
                 ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                 noEgress={noEgress}
@@ -1796,9 +1843,10 @@ export function SettingsPanel() {
               />
               <PurposeEditor
                 title="Entity recognition (NER)"
-                description="Model that finds people, organizations and places in your documents."
+                description={STAGE_INFO.ner}
                 options={catalog.ner ?? []}
                 value={ai.ner}
+                defaultValue={serverDefaults?.ner}
                 reasoningLevels={catalog.reasoning_levels}
                 ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                 noEgress={noEgress}
@@ -1808,9 +1856,10 @@ export function SettingsPanel() {
               />
               <PurposeEditor
                 title="Knowledge graph (relations)"
-                description="Model that extracts relationships between entities for the knowledge graph."
+                description={STAGE_INFO.keg}
                 options={catalog.keg ?? []}
                 value={ai.keg}
+                defaultValue={serverDefaults?.keg}
                 reasoningLevels={catalog.reasoning_levels}
                 ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                 noEgress={noEgress}
@@ -1819,11 +1868,10 @@ export function SettingsPanel() {
                 onChange={(keg) => setAi({ ...ai, keg })}
               />
               <div className="settings-purpose">
-                <h4>Embedding (index)</h4>
-                <p className="muted">
-                  The model that embeds your documents for semantic search. Read-only: changing it
-                  would require re-indexing the whole corpus.
-                </p>
+                <h4>
+                  Embedding (index){" "}
+                  <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
+                </h4>
                 <div className="settings-row">
                   <label>
                     Model{" "}
@@ -1831,16 +1879,6 @@ export function SettingsPanel() {
                       type="text"
                       aria-label="Embedding model"
                       value={ai.embedding_model ?? ""}
-                      readOnly
-                      disabled
-                    />
-                  </label>
-                  <label>
-                    Context{" "}
-                    <input
-                      type="text"
-                      aria-label="Embedding context"
-                      value={ai.embedding_num_ctx ? ctxLabel(ai.embedding_num_ctx) : ""}
                       readOnly
                       disabled
                     />

@@ -2300,7 +2300,8 @@ tr.row-selected {
   align-items: center;
   gap: 0.4rem;
   text-align: left;
-  padding: 0.3rem 0.45rem;
+  min-height: 1.7rem;
+  padding: 0 0.45rem;
   overflow: hidden;
   cursor: pointer;
 }
@@ -2345,7 +2346,11 @@ tr.row-selected {
 }
 .chat-thread-delete {
   flex: 0 0 auto;
-  padding: 0.15rem 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.7rem;
+  padding: 0 0.4rem;
   font-size: 1.1rem;
   line-height: 1;
   cursor: pointer;
@@ -2997,7 +3002,11 @@ tr.row-selected {
 
 .chat-thread-rename-btn {
   flex: 0 0 auto;
-  padding: 0.15rem 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.7rem;
+  padding: 0 0.4rem;
   line-height: 1;
   cursor: pointer;
 }

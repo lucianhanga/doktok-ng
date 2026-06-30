@@ -87,7 +87,7 @@ def test_telemetry_steps_durations_tokens_and_totals() -> None:
         _feature(
             "doc_metadata",
             metrics=FeatureMetrics(
-                duration_ms=1200, prompt_tokens=400, answer_tokens=100, model="qwen3.6:35b-a3b"
+                duration_ms=1200, prompt_tokens=400, answer_tokens=100, model="qwen3.6:27b"
             ),
             created_at=BASE,
         ),
@@ -112,7 +112,7 @@ def test_telemetry_steps_durations_tokens_and_totals() -> None:
     assert meta.prompt_tokens == 400
     assert meta.answer_tokens == 100
     assert meta.total_tokens == 500  # validator filled from parts
-    assert meta.model == "qwen3.6:35b-a3b"
+    assert meta.model == "qwen3.6:27b"
 
     thumb = by_feature["thumbnail"]
     assert thumb.duration_ms == 300

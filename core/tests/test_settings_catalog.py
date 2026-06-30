@@ -23,11 +23,13 @@ def test_ner_and_keg_offer_local_span_models_and_openai() -> None:
 
 
 def test_ollama_think_keeps_moe_thinking_on_for_structured() -> None:
-    # qwen3.6 MoE + structured output: think must stay on even with reasoning 'off'.
-    assert ollama_think_for("off", "qwen3.6:35b-a3b", structured=True) is True
+    # An MoE arch (an "a3b" model) + structured output: think must stay on even with 'off'.
+    assert ollama_think_for("off", "qwen3:30b-a3b", structured=True) is True
+    # A dense model + structured output honours the density (no forced thinking).
+    assert ollama_think_for("off", "qwen3.6:27b", structured=True) is False
     # Non-structured output honours the chosen density (think follows the reasoning level).
-    assert ollama_think_for("off", "qwen3.6:35b-a3b", structured=False) is False
-    assert ollama_think_for("high", "qwen3.6:35b-a3b", structured=False) is True
+    assert ollama_think_for("off", "qwen3.6:27b", structured=False) is False
+    assert ollama_think_for("high", "qwen3.6:27b", structured=False) is True
 
 
 def test_openai_reasoning_effort_only_for_reasoning_models() -> None:

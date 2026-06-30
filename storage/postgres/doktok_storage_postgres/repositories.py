@@ -2616,6 +2616,18 @@ class PostgresChatThreadRepository:
             message_count=row["message_count"],
         )
 
+    def set_auto_title(self, tenant_id: str, thread_id: str, title: str) -> None:
+        clean = title.strip()
+        if not clean:
+            return
+        with self._db.connection() as conn:
+            # Only while still auto: a manual rename (title_source='manual') is never overwritten.
+            conn.execute(
+                "UPDATE chat_threads SET title=%s "
+                "WHERE id=%s AND tenant_id=%s AND title_source='auto'",
+                (clean, thread_id, tenant_id),
+            )
+
     def get_summary(self, tenant_id: str, thread_id: str) -> tuple[str, int]:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)

@@ -101,7 +101,7 @@ def test_metrics_round_trip_through_mark_done(db: Database) -> None:
         duration_ms=1700,
         prompt_tokens=420,
         answer_tokens=130,
-        model="qwen3.6:35b-a3b",
+        model="qwen3.6:27b",
         estimated=True,
     )
     repo.mark_done(claimed.id, feature_version=1, metrics=metrics)
@@ -112,7 +112,7 @@ def test_metrics_round_trip_through_mark_done(db: Database) -> None:
     assert row.metrics.prompt_tokens == 420
     assert row.metrics.answer_tokens == 130
     assert row.metrics.total_tokens == 550  # validator-derived
-    assert row.metrics.model == "qwen3.6:35b-a3b"
+    assert row.metrics.model == "qwen3.6:27b"
     assert row.metrics.estimated is True
 
 

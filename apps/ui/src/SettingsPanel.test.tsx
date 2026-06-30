@@ -9,10 +9,10 @@ afterEach(() => {
 
 const CATALOG = {
   pipeline: [
-    { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [8192, 16384, 32768], supports_reasoning: true },
+    { provider: "ollama", model: "qwen3.6:27b", label: "Qwen3.6 27B", contexts: [8192, 16384, 32768], supports_reasoning: true },
   ],
   rag: [
-    { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [32768], supports_reasoning: true },
+    { provider: "ollama", model: "qwen3.6:27b", label: "Qwen3.6 27B", contexts: [32768], supports_reasoning: true },
   ],
   ner: [
     { provider: "gliner", model: "gliner-large-v2.1", label: "GLiNER Large v2.1", contexts: [512], supports_reasoning: false, requires_egress: false },
@@ -25,8 +25,8 @@ const CATALOG = {
   reasoning_levels: ["off", "low", "medium", "high"],
 };
 const AI = {
-  pipeline: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 8192, reasoning: "off" },
-  rag: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 32768, reasoning: "off" },
+  pipeline: { provider: "ollama", model: "qwen3.6:27b", num_ctx: 8192, reasoning: "off" },
+  rag: { provider: "ollama", model: "qwen3.6:27b", num_ctx: 32768, reasoning: "off" },
   ner: { provider: "gliner", model: "gliner-large-v2.1", num_ctx: 512, reasoning: "off" },
   keg: { provider: "gliner-relex", model: "relex-base-v1", num_ctx: 512, reasoning: "off" },
   embedding: { ollama_base_url: null },
@@ -241,7 +241,7 @@ function mockApi() {
         );
       if (url.endsWith("/warmup-ollama"))
         return new Response(
-          JSON.stringify({ ok: true, detail: "model loaded", url: "x", model: "qwen3.6:35b-a3b" }),
+          JSON.stringify({ ok: true, detail: "model loaded", url: "x", model: "qwen3.6:27b" }),
           { status: 200 },
         );
       if (url.endsWith("/test-openai"))
@@ -275,45 +275,53 @@ function mockApi() {
   return calls;
 }
 
+/** The AI model controls now live under the "Model stack" sub-menu; navigate there first. */
+async function gotoModelStack() {
+  fireEvent.click(await screen.findByRole("tab", { name: "Model stack" }));
+}
+
 test("renders AI model selectors from the catalog and current settings", async () => {
   mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
   expect(screen.getByLabelText("Document interrogation model")).toBeInTheDocument();
-  // reasoning levels available
-  expect(screen.getByLabelText("Data pipeline reasoning")).toHaveValue("off");
+  // An unmodified override equals the server default, so the pickers show "Use server default".
+  expect(screen.getByLabelText("Data pipeline reasoning")).toHaveValue("__default__");
+  expect(screen.getByLabelText("Data pipeline model")).toHaveValue("__default__");
 });
 
 test("renders NER and KEG model selectors from the catalog and current settings", async () => {
   mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() =>
     expect(screen.getByLabelText("Entity recognition (NER) model")).toBeInTheDocument(),
   );
   expect(screen.getByLabelText("Knowledge graph (relations) model")).toBeInTheDocument();
-  expect(screen.getByLabelText("Entity recognition (NER) context")).toBeInTheDocument();
-  expect(screen.getByLabelText("Knowledge graph (relations) context")).toBeInTheDocument();
 });
 
 test("changing a model and saving PUTs the new selection", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   fireEvent.change(screen.getByLabelText("Data pipeline model"), {
-    target: { value: "ollama:qwen3.6:35b-a3b" },
+    target: { value: "ollama:qwen3.6:27b" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
   await waitFor(() => expect(screen.getByText(/Chat\/RAG model applied now/i)).toBeInTheDocument());
   const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
   expect(put).toBeTruthy();
-  expect(JSON.parse(put!.body!).pipeline.model).toBe("qwen3.6:35b-a3b");
+  expect(JSON.parse(put!.body!).pipeline.model).toBe("qwen3.6:27b");
 });
 
 test("per-purpose Ollama URL override saves, and reset-to-default clears it", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   // The override field is shown for an Ollama purpose; default URL is the placeholder.
@@ -336,6 +344,7 @@ test("per-purpose Ollama URL override saves, and reset-to-default clears it", as
 test("the Test button probes the Ollama URL and shows the result", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   // Pipeline is on Ollama in the mock, so it has a Test button (the first one).
@@ -347,6 +356,7 @@ test("the Test button probes the Ollama URL and shows the result", async () => {
 test("the Warm up button preloads the model via the warmup endpoint", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   // An Ollama purpose with a selected model exposes a Warm up button next to Test.
@@ -358,7 +368,7 @@ test("the Warm up button preloads the model via the warmup endpoint", async () =
 test("the OpenAI Test button validates the entered key and shows the result", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument());
 
   // The OpenAI Test button is enabled once a key is typed.
   fireEvent.change(screen.getByLabelText("OpenAI API key"), { target: { value: "sk-test" } });
@@ -895,6 +905,7 @@ test("under no-egress, an OpenAI option in the pipeline picker is disabled and l
   };
   aiResponse = { ...AI, no_egress: true };
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   // The remote option is greyed out in place (not hidden) and the reason rides in its text.
@@ -904,7 +915,7 @@ test("under no-egress, an OpenAI option in the pipeline picker is disabled and l
   });
   expect(blocked).toBeDisabled();
   // The local Ollama option in the same picker is still selectable.
-  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 35B" })).toBeEnabled();
+  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 27B" })).toBeEnabled();
 });
 
 test("a pipeline blocked_reason of openai_selected shows the red block, not the key-missing message", async () => {
@@ -919,6 +930,7 @@ test("a pipeline blocked_reason of openai_selected shows the red block, not the 
     },
   };
   render(<SettingsPanel />);
+  await gotoModelStack();
   // Use exact string to match only the <strong> element (not the option suffix " (blocked by no-egress)").
   await waitFor(() => expect(screen.getByText("Blocked by no-egress")).toBeInTheDocument());
   // The policy block must NEVER be conflated with the missing-key state.
@@ -937,6 +949,7 @@ test("a blocked_reason of openai_key_missing shows the distinct key-needed messa
     },
   };
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByText(/Needs an OpenAI API key/i)).toBeInTheDocument());
   expect(screen.queryByText(/Blocked by no-egress/i)).not.toBeInTheDocument();
 });
@@ -955,6 +968,7 @@ test("a 422 egress_not_permitted on save shows the violation inline and the form
       { status: 422 },
     );
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -1050,7 +1064,7 @@ test("a 422 no_egress_locked on save surfaces the message without throwing", asy
       { status: 422 },
     );
   render(<SettingsPanel />);
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument());
 
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 

@@ -904,6 +904,12 @@ class ChatThreadRepository(Protocol):
         does not belong to the tenant."""
         ...
 
+    def set_auto_title(self, tenant_id: str, thread_id: str, title: str) -> None:
+        """Set an auto-generated title (keeps title_source='auto'), but only while the thread is
+        still auto-titled - a manual rename is never overwritten. Best-effort; no-op on unknown
+        thread or blank title."""
+        ...
+
     def get_summary(self, tenant_id: str, thread_id: str) -> tuple[str, int]:
         """The thread's rolling summary and its watermark (ADR-0022 Phase 3): ``(summary,
         summary_through)`` where ``summary_through`` is the number of leading messages already

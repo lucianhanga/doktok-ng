@@ -1068,11 +1068,11 @@ class AiEmbeddingSettings(BaseModel):
 
 
 def _default_pipeline() -> AiPurposeSettings:
-    return AiPurposeSettings(provider="ollama", model="qwen3.6:35b-a3b", num_ctx=8192)
+    return AiPurposeSettings(provider="ollama", model="qwen3.6:27b", num_ctx=8192)
 
 
 def _default_rag() -> AiPurposeSettings:
-    return AiPurposeSettings(provider="ollama", model="qwen3.6:35b-a3b", num_ctx=32768)
+    return AiPurposeSettings(provider="ollama", model="qwen3.6:27b", num_ctx=32768)
 
 
 def _default_ner() -> AiPurposeSettings:

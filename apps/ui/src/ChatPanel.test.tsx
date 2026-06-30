@@ -79,7 +79,7 @@ test("streams a grounded answer with sources", async () => {
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
-test("agent mode toggle sends agent_mode=agent on the stream request", async () => {
+test("chat sends agent_mode=agent on the stream request", async () => {
   let streamBody: Record<string, unknown> | null = null;
   vi.stubGlobal(
     "fetch",
@@ -96,7 +96,6 @@ test("agent mode toggle sends agent_mode=agent on the stream request", async () 
   );
 
   render(<ChatPanel />);
-  await userEvent.selectOptions(screen.getByLabelText(/mode/i), "agent");
   await userEvent.type(screen.getByLabelText("Question"), "how many m-net invoices?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
@@ -192,7 +191,7 @@ test("requests reasoning by default and renders it in a collapsible panel", asyn
 
   render(<ChatPanel />);
   // "Show reasoning" is checked by default, so no click is needed to opt in.
-  expect(screen.getByLabelText(/show reasoning/i)).toBeChecked();
+  expect(screen.getByLabelText("Show reasoning")).toBeChecked();
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
@@ -753,40 +752,6 @@ test("edit a question truncates and loads it back into the input", async () => {
   expect(screen.queryByText("second answer.")).not.toBeInTheDocument();
 });
 
-test("Explore shows retrieved evidence in the rail without generating an answer", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.endsWith("/api/v1/chat/retrieve")) {
-        return new Response(
-          JSON.stringify({
-            query: "what is the rent?",
-            citations: [
-              {
-                index: 1,
-                document_id: "d1",
-                chunk_id: "c1",
-                original_filename: "lease.pdf",
-                snippet: "rent is 900",
-                source_kind: "passage",
-              },
-            ],
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response("[]", { status: 200 });
-    }),
-  );
-  render(<ChatPanel />);
-  await userEvent.type(screen.getByLabelText("Question"), "what is the rent?");
-  await userEvent.click(screen.getByRole("button", { name: "Explore" }));
-  await waitFor(() => expect(screen.getByText(/Evidence for/)).toBeInTheDocument());
-  expect(screen.getByText(/Retrieved evidence only/)).toBeInTheDocument();
-  expect(screen.getByText(/lease.pdf/)).toBeInTheDocument();
-});
-
 test("Enter in the composer sends the question (Shift+Enter does not)", async () => {
   vi.stubGlobal(
     "fetch",
@@ -904,8 +869,8 @@ test("right pane shows Activity by default and switches to DocumentDetail on sou
   await userEvent.click(screen.getByRole("button", { name: /ref\.pdf/ }));
   expect(screen.getByRole("complementary", { name: "Document preview" })).toBeInTheDocument();
 
-  // Back arrow returns to Activity mode.
-  await userEvent.click(screen.getByRole("button", { name: "Back to activity" }));
+  // The Activity tab returns the pane to Activity mode.
+  await userEvent.click(screen.getByRole("tab", { name: "Activity" }));
   expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
 });
 
@@ -922,11 +887,11 @@ test("incognito mode disables Remember (no persistence/recall)", async () => {
   );
 
   render(<ChatPanel />);
-  const incognito = screen.getByLabelText(/incognito/i);
+  const incognito = screen.getByLabelText("Incognito");
   expect(incognito).not.toBeChecked();
   // Remember is independent until incognito is on...
-  expect(screen.getByLabelText(/remember/i)).toBeEnabled();
+  expect(screen.getByLabelText("Remember")).toBeEnabled();
   await userEvent.click(incognito);
   // ...then incognito forces memory off and locks the Remember toggle.
-  expect(screen.getByLabelText(/remember/i)).toBeDisabled();
+  expect(screen.getByLabelText("Remember")).toBeDisabled();
 });

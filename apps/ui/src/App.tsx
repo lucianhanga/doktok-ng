@@ -4,8 +4,6 @@ import { ActivityPanel } from "./ActivityPanel";
 import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
-import { EntitiesPanel } from "./EntitiesPanel";
-import { InsightsPanel } from "./InsightsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
@@ -48,21 +46,12 @@ function BackendDot() {
   );
 }
 
-type View =
-  | "overview"
-  | "documents"
-  | "chat"
-  | "entities"
-  | "insights"
-  | "activity"
-  | "settings";
+type View = "overview" | "documents" | "chat" | "activity" | "settings";
 
 const TABS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "documents", label: "Documents" },
   { id: "chat", label: "Chat" },
-  { id: "entities", label: "Entities" },
-  { id: "insights", label: "Insights" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
 ];
@@ -163,8 +152,6 @@ export default function App() {
                 onBackgroundDone={() => setChatUnread(true)}
               />
             </div>
-            {view === "entities" && <EntitiesPanel onOpenDocument={setOpenDoc} />}
-            {view === "insights" && <InsightsPanel onOpenDocument={setOpenDoc} />}
             {view === "activity" && (
               <ActivityPanel onOpenDocument={setOpenDoc} focusId={activityFocusId} />
             )}

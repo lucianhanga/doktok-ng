@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   chatStream,
-  exploreRetrieval,
   createChatThread,
   deleteChatThread,
   deleteMessagesFrom,
@@ -21,6 +20,7 @@ import {
   type TurnMetrics,
 } from "./api";
 import { ChatActivityTimeline } from "./ChatActivityTimeline";
+import { InfoHint } from "./InfoHint";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsUsedBar } from "./DocumentsUsedBar";
 import { Markdown } from "./Markdown";
@@ -233,6 +233,10 @@ function AnswerBlock({
   // Map citation index -> document, so a clicked [n] marker in the answer opens that document.
   const citeMap = new Map(turn.citations.map((c) => [c.index, c.document_id]));
   const citationIndices = new Set(turn.citations.map((c) => c.index));
+  // "Ungrounded" (warn + dim) means the answer is backed by NOTHING: not only does it not cite a
+  // [n] marker (turn.grounded), it also has no sources at all. A count/aggregate answer carries
+  // document/graph/transaction sources without inline [n] markers - those ARE grounded.
+  const ungrounded = !turn.grounded && turn.citations.length === 0;
   const onCitationClick =
     onOpenDocument && citeMap.size > 0
       ? (index: number) => {
@@ -344,14 +348,14 @@ function AnswerBlock({
             onShowAll={onShowSources}
             isLatest={turn.streaming}
           />
-          {!turn.streaming && !turn.grounded && !turn.stopped && (
+          {!turn.streaming && ungrounded && !turn.stopped && (
             <p role="status" className="banner-warning">
               This answer isn't grounded in your documents - no supporting sources were found, so
               treat it with caution.
             </p>
           )}
           <div
-            className={turn.grounded || turn.streaming ? "answer" : "answer empty"}
+            className={!ungrounded || turn.streaming ? "answer" : "answer empty"}
             aria-live={turn.streaming ? "polite" : undefined}
             aria-atomic={turn.streaming ? "false" : undefined}
           >
@@ -449,7 +453,7 @@ function ThreadRow({
     <li className={active ? "active" : undefined}>
       <button
         type="button"
-        className="chat-thread-item link-button"
+        className="chat-thread-item"
         onClick={() => onResume(thread.id)}
         onDoubleClick={startEditing}
         title={label}
@@ -467,7 +471,7 @@ function ThreadRow({
       </button>
       <button
         type="button"
-        className="chat-thread-rename-btn link-button"
+        className="chat-thread-rename-btn"
         aria-label={`Rename conversation ${label}`}
         title="Rename"
         onClick={startEditing}
@@ -476,8 +480,9 @@ function ThreadRow({
       </button>
       <button
         type="button"
-        className="chat-thread-delete link-button"
+        className="chat-thread-delete"
         aria-label={`Delete conversation ${label}`}
+        title="Delete"
         onClick={() => onDelete(thread.id)}
       >
         &times;
@@ -512,45 +517,39 @@ function ThreadList({
   onNew: () => void;
 }) {
   if (collapsed) {
+    // personalAI parity: a small top-aligned text button "Conversations ›" (not an icon strip).
     return (
       <aside className="chat-threads chat-threads-collapsed" aria-label="Conversations">
         <button
           type="button"
-          className="chat-threads-toggle link-button"
+          className="chat-threads-toggle-text"
           onClick={onToggleCollapse}
           aria-label="Expand conversations"
-          title="Expand conversations"
+          title="Show conversations"
         >
-          &#9654;
-        </button>
-        <button
-          type="button"
-          className="chat-thread-new-icon link-button"
-          onClick={onNew}
-          aria-label="New conversation"
-          title="New conversation"
-        >
-          +
+          &#8250;
         </button>
       </aside>
     );
   }
   return (
     <aside className="chat-threads" aria-label="Conversations">
+      {/* Header: title (left) + a thin "‹" collapse toggle (right), like personalAI's ChatsPanel. */}
       <div className="chat-threads-head">
-        <button type="button" className="chat-thread-new" onClick={onNew}>
-          + New conversation
-        </button>
+        <strong className="chat-threads-title">Conversations</strong>
         <button
           type="button"
-          className="chat-threads-toggle link-button"
+          className="chat-threads-toggle-text"
           onClick={onToggleCollapse}
           aria-label="Collapse conversations"
           title="Collapse conversations"
         >
-          &#9664;
+          &#8249;
         </button>
       </div>
+      <button type="button" className="chat-thread-new" onClick={onNew}>
+        + New conversation
+      </button>
       <ol className="chat-thread-list">
         {threads.map((t) => (
           <ThreadRow
@@ -585,12 +584,12 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Chat mode (ADR-0022): "agent" tool loop (default) | "classic" deterministic RAG. Agent computes
-  // counts via tools instead of estimating them from passages. (The multi-agent graph exists in the
-  // backend but is set aside for now - tracked as an improvement; not offered in the UI.)
-  const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">("agent");
-  // Long-term memory (ADR-0022): recall facts from past chats + store one. Off by default (private).
-  const [remember, setRemember] = useState(false);
+  // Chat mode (ADR-0022): fixed to the "agent" tool loop. How the chat works is a deployment
+  // decision (to be surfaced in Settings), not a per-question toggle in the composer.
+  const chatMode: "classic" | "agent" | "multi" = "agent";
+  // Long-term memory (ADR-0022): recall facts from past chats + store one. On by default; turn off
+  // (or use Incognito) for a private conversation that neither recalls nor stores memory.
+  const [remember, setRemember] = useState(true);
   // Incognito (personalAI parity): this conversation is not persisted - no thread is created (the
   // backend is stateless without a thread_id) and nothing is stored or recalled from memory.
   const [incognito, setIncognito] = useState(false);
@@ -653,6 +652,7 @@ export function ChatPanel({
     const el = transcriptRef.current;
     if (!el || typeof el.scrollTo !== "function") return;
     el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+    setAtBottom(true); // we are now at the end; the scroll handler won't fire when not scrollable
   }
   // Auto-scroll to bottom on each streamed chunk — but only if the user is already at the bottom.
   // Dependency: streaming answer text only; scrollTranscriptToBottom uses a ref (stable).
@@ -716,22 +716,6 @@ export function ChatPanel({
       setFlag(setUnreadThreads, key, true); // finished in the background -> unread badge
     }
     if (!activeRef.current) onBackgroundDone?.(); // also flag the Chat tab unread when off-tab
-  }
-
-  // Retrieval Explorer (ADR-0022): show the evidence the agent would ground on, without answering.
-  function explore() {
-    const q = question.trim();
-    if (!q || streaming) return;
-    setErrorMsg(null);
-    void (async () => {
-      try {
-        const citations = await exploreRetrieval(q);
-        expandRightPane();
-        setRail({ mode: "explore", query: q, citations });
-      } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : "retrieval failed");
-      }
-    })();
   }
 
   function ask(e?: { preventDefault: () => void }) {
@@ -990,6 +974,21 @@ export function ChatPanel({
         : { mode: "sources", turnIndex },
     );
   };
+  // The "Sources" tab of the right pane: show the most recent turn that has sources
+  // (falling back to the last turn). Activity vs Sources is the pane's local tab menu.
+  const showSourcesTab = () => {
+    expandRightPane();
+    let idx = -1;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].citations.length > 0) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) idx = turns.length - 1;
+    if (idx < 0) return; // no turns yet
+    setRail({ mode: "sources", turnIndex: idx });
+  };
   const openInRail = (docId: string) => {
     expandRightPane();
     setRail((r) => ({
@@ -1010,7 +1009,11 @@ export function ChatPanel({
   const activeThread = threads.find((t) => t.id === threadId);
   const threadTokens = activeThread?.total_tokens ?? 0;
   const threadMs = activeThread?.total_inference_ms ?? 0;
-  const columnTitle = activeThread?.title?.trim() || "New conversation";
+  // Only show the column header once the conversation has a real title (set after the first
+  // question). A brand-new/empty conversation shows no title, giving the chat window more height.
+  const columnTitle = activeThread?.title?.trim() ?? "";
+  const hasTitle = columnTitle.length > 0;
+  const isEmptyConversation = turns.length === 0;
 
   return (
     <section aria-label="Chat" className="panel chat-page">
@@ -1028,16 +1031,18 @@ export function ChatPanel({
           onNew={reset}
         />
         <div className="chat-main">
-          <div className="result-head">
-            <h3 className="chat-column-title" title={columnTitle}>
-              {columnTitle}
-              {threadTokens > 0 && (
-                <span className="chat-thread-totals">
-                  {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
-                </span>
-              )}
-            </h3>
-          </div>
+          {hasTitle && (
+            <div className="result-head">
+              <h3 className="chat-column-title" title={columnTitle}>
+                {columnTitle}
+                {threadTokens > 0 && (
+                  <span className="chat-thread-totals">
+                    {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
+                  </span>
+                )}
+              </h3>
+            </div>
+          )}
 
           <ol
             ref={transcriptRef}
@@ -1046,6 +1051,11 @@ export function ChatPanel({
             role="log"
             aria-label="Conversation"
           >
+            {isEmptyConversation && !streaming && (
+              <li className="chat-empty-watermark" aria-hidden="true">
+                <span className="chat-empty-watermark-text">Talk to your documents</span>
+              </li>
+            )}
             {turns.map((turn, i) => (
               <li key={i} className="chat-exchange">
                 <AnswerBlock
@@ -1068,6 +1078,67 @@ export function ChatPanel({
             >
               &#8595; Jump to latest
             </button>
+          )}
+
+          <div className="chat-toggle-row">
+            <span className="chat-toggle">
+              <label className="chat-reasoning-toggle">
+                <input
+                  type="checkbox"
+                  checked={showReasoning}
+                  onChange={(e) => setShowReasoning(e.target.checked)}
+                  disabled={streaming !== null}
+                />
+                <span className="muted">Show reasoning</span>
+              </label>
+              <InfoHint label="Show reasoning">
+                Shows the model's <strong>step-by-step reasoning</strong> for each answer in the
+                activity timeline. When <strong>off</strong>, reasoning follows the configured
+                default and stays hidden.
+              </InfoHint>
+            </span>
+
+            <span className="chat-toggle">
+              <label className="chat-reasoning-toggle">
+                <input
+                  type="checkbox"
+                  checked={remember && !incognito}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  disabled={streaming !== null || incognito}
+                />
+                <span className="muted">Remember</span>
+              </label>
+              <InfoHint label="Remember">
+                <strong>Recalls</strong> relevant facts from your past conversations to inform this
+                answer, and <strong>saves</strong> noteworthy facts from this chat for future ones.
+                Turn <strong>off</strong> for a <strong>private</strong> conversation that neither
+                recalls nor stores <strong>long-term memory</strong>.
+              </InfoHint>
+            </span>
+
+            <span className="chat-toggle">
+              <label className="chat-reasoning-toggle">
+                <input
+                  type="checkbox"
+                  checked={incognito}
+                  onChange={(e) => setIncognito(e.target.checked)}
+                  disabled={streaming !== null || threadId !== null}
+                />
+                <span className="muted">Incognito</span>
+              </label>
+              <InfoHint label="Incognito">
+                This conversation is <strong>not saved</strong> at all - no thread is stored, and
+                nothing is <strong>recalled</strong> from or <strong>written</strong> to long-term
+                memory. Available only on a <strong>new conversation</strong>.
+              </InfoHint>
+            </span>
+          </div>
+
+          {incognito && (
+            <p role="status" className="banner-warning chat-incognito-note">
+              Incognito is on - this conversation will not be saved, and nothing is recalled or
+              remembered.
+            </p>
           )}
 
           <form onSubmit={ask} className="search-form chat-ask-form">
@@ -1098,64 +1169,7 @@ export function ChatPanel({
             ) : (
               <button type="submit">Ask</button>
             )}
-            <button
-              type="button"
-              className="chat-explore-btn link-button"
-              onClick={explore}
-              disabled={streaming !== null || !question.trim()}
-              title="Show the evidence that would be retrieved for this question, without generating an answer."
-            >
-              Explore
-            </button>
           </form>
-
-          <label className="chat-reasoning-toggle">
-            <input
-              type="checkbox"
-              checked={showReasoning}
-              onChange={(e) => setShowReasoning(e.target.checked)}
-              disabled={streaming !== null}
-            />
-            <span className="muted">Show reasoning</span>
-          </label>
-
-          <label
-            className="chat-reasoning-toggle"
-            title="Recall facts from your past conversations and remember this one. Off = private (nothing stored or recalled)."
-          >
-            <input
-              type="checkbox"
-              checked={remember && !incognito}
-              onChange={(e) => setRemember(e.target.checked)}
-              disabled={streaming !== null || incognito}
-            />
-            <span className="muted">Remember</span>
-          </label>
-
-          <label
-            className="chat-reasoning-toggle"
-            title="Incognito: this conversation is not saved - no thread is stored and nothing is recalled or remembered. Choose it on a New conversation."
-          >
-            <input
-              type="checkbox"
-              checked={incognito}
-              onChange={(e) => setIncognito(e.target.checked)}
-              disabled={streaming !== null || threadId !== null}
-            />
-            <span className="muted">Incognito</span>
-          </label>
-
-          <label className="chat-mode-select" title="Agent = the assistant calls tools (exact counts, search, totals) - recommended. Classic = the deterministic RAG pipeline (no tools).">
-            <span className="muted">Mode</span>
-            <select
-              value={chatMode}
-              onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
-              disabled={streaming !== null}
-            >
-              <option value="agent">Agent</option>
-              <option value="classic">Classic</option>
-            </select>
-          </label>
 
           {errorMsg && (
             <p role="alert" className="status-error">
@@ -1172,13 +1186,13 @@ export function ChatPanel({
           >
             <button
               type="button"
-              className="chat-right-pane-expand link-button"
+              className="chat-threads-toggle-text"
               onClick={toggleRightPane}
               aria-expanded={false}
               aria-label="Expand activity panel"
-              title="Expand activity panel"
+              title="Show activity"
             >
-              &#9664;
+              &#8249;
             </button>
           </aside>
         ) : (
@@ -1194,37 +1208,44 @@ export function ChatPanel({
             }
           >
             <div className="chat-rail-head chat-right-pane-head">
-              <h3>
-                {rail.mode === "preview"
-                  ? "Document"
-                  : rail.mode === "explore"
-                    ? `Evidence for "${rail.query}" (${rail.citations.length})`
-                    : rail.mode === "sources"
-                      ? `Sources (${turns[rail.turnIndex]?.citations.length ?? 0})`
-                      : "Activity"}
-              </h3>
-              <div className="chat-rail-head-actions">
-                {rail.mode !== "none" && (
-                  <button
-                    type="button"
-                    className="chat-rail-close link-button"
-                    aria-label="Back to activity"
-                    onClick={closeRail}
-                  >
-                    &larr;
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="chat-threads-toggle link-button"
-                  onClick={toggleRightPane}
-                  aria-expanded={true}
-                  aria-label="Collapse activity panel"
-                  title="Collapse activity panel"
-                >
-                  &#9654;
-                </button>
-              </div>
+              {(() => {
+                const sourcesActive =
+                  rail.mode === "sources" ||
+                  rail.mode === "explore" ||
+                  (rail.mode === "preview" && rail.from === "sources");
+                return (
+                  <div className="chat-rail-tabs" role="tablist" aria-label="Right panel">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={sourcesActive}
+                      className={sourcesActive ? "active" : ""}
+                      onClick={showSourcesTab}
+                    >
+                      Sources
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={!sourcesActive}
+                      className={!sourcesActive ? "active" : ""}
+                      onClick={closeRail}
+                    >
+                      Activity
+                    </button>
+                  </div>
+                );
+              })()}
+              <button
+                type="button"
+                className="chat-threads-toggle-text"
+                onClick={toggleRightPane}
+                aria-expanded={true}
+                aria-label="Collapse activity panel"
+                title="Collapse activity panel"
+              >
+                Collapse &#8250;
+              </button>
             </div>
             <div className="chat-right-pane-body">
               {rail.mode === "preview" ? (
@@ -1237,9 +1258,14 @@ export function ChatPanel({
               ) : rail.mode === "sources" || rail.mode === "explore" ? (
                 <div className="chat-rail-sources">
                   {rail.mode === "explore" && (
-                    <p className="muted chat-explore-note">
-                      Retrieved evidence only — no answer was generated.
-                    </p>
+                    <>
+                      <h4 className="chat-explore-title">
+                        Evidence for "{rail.query}" ({rail.citations.length})
+                      </h4>
+                      <p className="muted chat-explore-note">
+                        Retrieved evidence only — no answer was generated.
+                      </p>
+                    </>
                   )}
                   <SourcesList
                     citations={

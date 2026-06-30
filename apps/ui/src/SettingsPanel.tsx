@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { InfoHint } from "./InfoHint";
 import { MemoryPanel } from "./MemoryPanel";
 import {
   applyRestore,
@@ -52,10 +53,6 @@ import {
 import { Ellipsis } from "./Ellipsis";
 
 const MIN_PASSPHRASE = 8;
-
-function ctxLabel(n: number): string {
-  return n % 1024 === 0 ? `${n / 1024}k` : String(n);
-}
 
 function relAge(seconds: number | null): string {
   if (seconds == null) return "never";
@@ -1221,11 +1218,74 @@ function EgressStatusNote({ status }: { status?: PurposeEgressStatus }) {
   return null;
 }
 
+// Model-stack health check (one quick probe per purpose when the tab opens; cached for a minute so
+// flipping between sub-tabs does not re-run it).
+type PurposeHealth = "ok" | "fail" | "checking";
+const HEALTH_TTL_MS = 60_000;
+let modelHealthCache: { at: number; iso: string; results: Record<string, PurposeHealth> } | null =
+  null;
+
+async function probePurpose(p: AiPurposeSettings): Promise<PurposeHealth> {
+  try {
+    if (p.provider === "ollama") {
+      const r = await testOllamaUrl(p.ollama_base_url ?? null, p.model);
+      return r.ok && r.model_present !== false ? "ok" : "fail";
+    }
+    if (p.provider === "openai") {
+      return (await testOpenAiKey(null)).ok ? "ok" : "fail";
+    }
+    return "ok"; // local in-process backends (e.g. GLiNER) have nothing remote to probe
+  } catch {
+    return "fail";
+  }
+}
+
+function HealthDot({ status }: { status?: PurposeHealth }) {
+  if (!status) return null;
+  if (status === "checking")
+    return (
+      <span className="ms-health ms-health-pending" title="Checking this model…" aria-label="checking">
+        …
+      </span>
+    );
+  if (status === "ok")
+    return (
+      <span
+        className="ms-health ms-health-ok"
+        title="Health check: this model is reachable and ready"
+        aria-label="working"
+      >
+        ✓
+      </span>
+    );
+  return (
+    <span
+      className="ms-health ms-health-fail"
+      title="Health check: this model is not reachable - check the server/URL/key"
+      aria-label="failing"
+    >
+      ✗
+    </span>
+  );
+}
+
+// Per-stage explanations, shown as an (i) popover after the label in BOTH Model-stack cards.
+const STAGE_INFO = {
+  pipeline: "Feature extraction during ingestion (titles, dates, categories, structured records).",
+  rag: "RAG chat, agents, tools and structured output over your documents.",
+  ner: "Model that finds people, organizations and places in your documents.",
+  keg: "Model that extracts relationships between entities for the knowledge graph.",
+  embedding:
+    "The model that embeds your documents for semantic search. Read-only: changing it would require re-indexing the whole corpus.",
+} as const;
+
 function PurposeEditor({
   title,
   description,
   options,
   value,
+  defaultValue,
+  health,
   reasoningLevels,
   ollamaUrlDefault,
   noEgress,
@@ -1237,6 +1297,10 @@ function PurposeEditor({
   description: string;
   options: ModelOption[];
   value: AiPurposeSettings;
+  // The server default for this purpose; selecting "Use server default" resets to it.
+  defaultValue?: AiPurposeSettings;
+  // Result of the one-shot health probe for this purpose (tick/cross next to the title).
+  health?: PurposeHealth;
   reasoningLevels: string[];
   ollamaUrlDefault: string;
   // The active no-egress policy: greys out remote options in the picker (does NOT hide them).
@@ -1249,18 +1313,32 @@ function PurposeEditor({
 }) {
   const selected =
     options.find((o) => o.provider === value.provider && o.model === value.model) ?? options[0];
+  const USE_DEFAULT = "__default__";
 
   return (
     <div className="settings-purpose">
-      <h4>{title}</h4>
-      <p className="muted">{description}</p>
+      <h4>
+        {title}{" "}
+        <InfoHint label={title}>{description}</InfoHint>
+        <HealthDot status={health} />
+      </h4>
       <div className="settings-row">
         <label>
           Model{" "}
           <select
             aria-label={`${title} model`}
-            value={`${value.provider}:${value.model}`}
+            value={
+              defaultValue &&
+              value.provider === defaultValue.provider &&
+              value.model === defaultValue.model
+                ? USE_DEFAULT
+                : `${value.provider}:${value.model}`
+            }
             onChange={(e) => {
+              if (e.target.value === USE_DEFAULT) {
+                if (defaultValue) onChange({ ...defaultValue });
+                return;
+              }
               const [provider, ...rest] = e.target.value.split(":");
               const model = rest.join(":");
               const opt = options.find((o) => o.provider === provider && o.model === model);
@@ -1271,6 +1349,7 @@ function PurposeEditor({
               onChange({ ...value, provider, model, num_ctx });
             }}
           >
+            {defaultValue && <option value={USE_DEFAULT}>Use server default</option>}
             {options.map((o) => {
               // A remote option under no-egress is disabled in place (greyed), not hidden, and the
               // reason rides in the visible text + title so it never depends on colour/state alone.
@@ -1293,28 +1372,29 @@ function PurposeEditor({
             })}
           </select>
         </label>
-        <label>
-          Context{" "}
-          <select
-            aria-label={`${title} context`}
-            value={value.num_ctx}
-            onChange={(e) => onChange({ ...value, num_ctx: Number(e.target.value) })}
-          >
-            {selected.contexts.map((c) => (
-              <option key={c} value={c}>
-                {ctxLabel(c)}
-              </option>
-            ))}
-          </select>
-        </label>
+      </div>
+      <div className="settings-row">
         <label title={selected.supports_reasoning ? "" : "This model does not support reasoning"}>
           Reasoning{" "}
           <select
             aria-label={`${title} reasoning`}
-            value={value.reasoning}
+            value={
+              defaultValue && value.reasoning === defaultValue.reasoning
+                ? USE_DEFAULT
+                : value.reasoning
+            }
             disabled={!selected.supports_reasoning}
-            onChange={(e) => onChange({ ...value, reasoning: e.target.value })}
+            onChange={(e) =>
+              onChange({
+                ...value,
+                reasoning:
+                  e.target.value === USE_DEFAULT && defaultValue
+                    ? defaultValue.reasoning
+                    : e.target.value,
+              })
+            }
           >
+            {defaultValue && <option value={USE_DEFAULT}>Use server default</option>}
             {reasoningLevels.map((r) => (
               <option key={r} value={r}>
                 {r}
@@ -1362,6 +1442,9 @@ function selectionBlocked(
 export function SettingsPanel() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
+  // Snapshot of the loaded settings = the server defaults (until the backend exposes per-tenant
+  // overrides separately). Drives the read-only card and the "Use server default" picker entry.
+  const [serverDefaults, setServerDefaults] = useState<AiSettings | null>(null);
   const [ocr, setOcr] = useState<OcrSettings | null>(null);
   const [ocrRec, setOcrRec] = useState<OcrRecommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1370,12 +1453,17 @@ export function SettingsPanel() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiTesting, setOpenaiTesting] = useState(false);
   const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [tab, setTab] = useState<"settings" | "drp" | "memory">("settings");
+  const [tab, setTab] = useState<"settings" | "models" | "drp" | "memory">("settings");
   // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
   const [egressError, setEgressError] = useState<string | null>(null);
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
   // A 422 `no_egress_locked` rejection (host-locked posture): a form-level message, no violations.
   const [lockedError, setLockedError] = useState<string | null>(null);
+  // One-shot per-purpose health probe shown on the Model stack tab (cached for a minute).
+  const [health, setHealth] = useState<Record<string, PurposeHealth> | null>(
+    modelHealthCache?.results ?? null,
+  );
+  const [healthAt, setHealthAt] = useState<string | null>(modelHealthCache?.iso ?? null);
 
   useEffect(() => {
     const c = new AbortController();
@@ -1387,6 +1475,7 @@ export function SettingsPanel() {
       .then(([cat, s, o]) => {
         setCatalog(cat);
         setAi(s);
+        setServerDefaults(s);
         setOcr(o);
       })
       .catch((err: unknown) => {
@@ -1399,6 +1488,47 @@ export function SettingsPanel() {
       .catch(() => undefined);
     return () => c.abort();
   }, []);
+
+  // When the Model stack tab opens, probe each purpose once. Cached for a minute so switching
+  // sub-tabs (or editing) does not re-run it; after the TTL the next open refreshes it.
+  useEffect(() => {
+    if (tab !== "models" || !ai) return;
+    if (modelHealthCache && Date.now() - modelHealthCache.at < HEALTH_TTL_MS) {
+      setHealth(modelHealthCache.results);
+      setHealthAt(modelHealthCache.iso);
+      return;
+    }
+    let cancelled = false;
+    const settings = ai;
+    setHealth({ pipeline: "checking", rag: "checking", ner: "checking", keg: "checking", embedding: "checking" });
+    const probes: Array<readonly [string, Promise<PurposeHealth>]> = [
+      ["pipeline", probePurpose(settings.pipeline)],
+      ["rag", probePurpose(settings.rag)],
+      ["ner", probePurpose(settings.ner)],
+      ["keg", probePurpose(settings.keg)],
+      [
+        "embedding",
+        probePurpose({
+          provider: "ollama",
+          model: settings.embedding_model ?? "",
+          num_ctx: settings.embedding_num_ctx ?? 0,
+          reasoning: "off",
+          ollama_base_url: settings.embedding?.ollama_base_url,
+        }),
+      ],
+    ];
+    void Promise.all(probes.map(async ([k, p]) => [k, await p] as const)).then((entries) => {
+      if (cancelled) return;
+      const results = Object.fromEntries(entries);
+      const iso = new Date().toISOString();
+      modelHealthCache = { at: Date.now(), iso, results };
+      setHealth(results);
+      setHealthAt(iso);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, ai]);
 
   // Turning the no-egress toggle OFF (allowing egress) is a security downgrade — confirm first so it
   // is never a one-click accident. Turning it back ON needs no confirmation. The change is staged in
@@ -1478,49 +1608,98 @@ export function SettingsPanel() {
       selectionBlocked(catalog.ner ?? [], ai.ner, noEgress) ||
       selectionBlocked(catalog.keg ?? [], ai.keg, noEgress));
 
-  return (
-    <section className="panel" aria-label="Settings">
-      <h2>Settings</h2>
-      <div className="tabs" role="tablist" aria-label="Settings tabs">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "settings"}
-          className={tab === "settings" ? "active" : ""}
-          onClick={() => setTab("settings")}
-        >
-          Settings
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "drp"}
-          className={tab === "drp" ? "active" : ""}
-          onClick={() => setTab("drp")}
-        >
-          DRP
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "memory"}
-          className={tab === "memory" ? "active" : ""}
-          onClick={() => setTab("memory")}
-        >
-          Memory
-        </button>
-      </div>
-      {error && (
-        <p role="alert" className="status-error">
-          {error}
+  const paneTitle =
+    tab === "models"
+      ? "Model stack"
+      : tab === "drp"
+        ? "DRP"
+        : tab === "memory"
+          ? "Memory"
+          : "Settings";
+
+  const saveBar = (
+    <>
+      {egressError && (
+        <p role="alert" className="status-error egress-form-error">
+          {egressError}
         </p>
       )}
+      <div className="settings-actions">
+        <button
+          type="button"
+          className="settings-save"
+          onClick={save}
+          disabled={saving || saveBlocked}
+          title={
+            saveBlocked
+              ? "A selected model is blocked by no-egress. Choose a local model, or set DOKTOK_NO_EGRESS=false on the host."
+              : undefined
+          }
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {notice && (
+          <span role="status" className="muted">
+            {notice}
+          </span>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <section className="panel settings-page" aria-label="Settings">
+      <div className="settings-layout">
+        <nav className="settings-submenu" role="tablist" aria-label="Settings sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "settings"}
+            className={tab === "settings" ? "active" : ""}
+            onClick={() => setTab("settings")}
+          >
+            Settings
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "models"}
+            className={tab === "models" ? "active" : ""}
+            onClick={() => setTab("models")}
+          >
+            Model stack
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "drp"}
+            className={tab === "drp" ? "active" : ""}
+            onClick={() => setTab("drp")}
+          >
+            DRP
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "memory"}
+            className={tab === "memory" ? "active" : ""}
+            onClick={() => setTab("memory")}
+          >
+            Memory
+          </button>
+        </nav>
+        <div className="settings-pane">
+          <h3 className="settings-pane-title">{paneTitle}</h3>
+          {error && (
+            <p role="alert" className="status-error">
+              {error}
+            </p>
+          )}
       {tab === "settings" &&
         (!catalog || !ai || !ocr ? (
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section">
-          <h3>AI models</h3>
           {/* Single source of truth for the host's data-egress posture. The wording (not just the
               colour) carries the state, so it stays legible without colour. */}
           {ai.no_egress !== undefined && (
@@ -1570,104 +1749,6 @@ export function SettingsPanel() {
               sent to api.openai.com. Switch both purposes to a local model to keep data on this host.
             </p>
           )}
-          <p className="muted">
-            Choose the local (or remote) model used for each AI purpose. The chat/RAG model applies
-            immediately on Save; the pipeline model applies on the next worker reconcile.
-          </p>
-          <PurposeEditor
-            title="Data pipeline"
-            description="Feature extraction during ingestion (titles, dates, categories, structured records)."
-            options={catalog.pipeline}
-            value={ai.pipeline}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.pipeline}
-            violation={violations.pipeline}
-            onChange={(pipeline) => setAi({ ...ai, pipeline })}
-          />
-          <PurposeEditor
-            title="Document interrogation"
-            description="RAG chat, agents, tools and structured output over your documents."
-            options={catalog.rag}
-            value={ai.rag}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.rag}
-            violation={violations.rag}
-            onChange={(rag) => setAi({ ...ai, rag })}
-          />
-          <PurposeEditor
-            title="Entity recognition (NER)"
-            description="Model that finds people, organizations and places in your documents."
-            options={catalog.ner ?? []}
-            value={ai.ner}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.ner}
-            violation={violations.ner}
-            onChange={(ner) => setAi({ ...ai, ner })}
-          />
-          <PurposeEditor
-            title="Knowledge graph (relations)"
-            description="Model that extracts relationships between entities for the knowledge graph."
-            options={catalog.keg ?? []}
-            value={ai.keg}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.keg}
-            violation={violations.keg}
-            onChange={(keg) => setAi({ ...ai, keg })}
-          />
-          <div className="settings-purpose">
-            <h4>Embedding (index)</h4>
-            <p className="muted">
-              The model that embeds your documents for semantic search. Read-only: changing it would
-              require re-indexing the whole corpus.
-            </p>
-            <div className="settings-row">
-              <label>
-                Model{" "}
-                <input
-                  type="text"
-                  aria-label="Embedding model"
-                  value={ai.embedding_model ?? ""}
-                  readOnly
-                  disabled
-                />
-              </label>
-              <label>
-                Context{" "}
-                <input
-                  type="text"
-                  aria-label="Embedding context"
-                  value={ai.embedding_num_ctx ? ctxLabel(ai.embedding_num_ctx) : ""}
-                  readOnly
-                  disabled
-                />
-              </label>
-            </div>
-            <OllamaUrlField
-              label="Embedding Ollama URL"
-              value={ai.embedding?.ollama_base_url}
-              defaultUrl={ai.ollama_base_url_default ?? ""}
-              model={ai.embedding_model ?? ""}
-              onChange={(ollama_base_url) =>
-                setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
-              }
-            />
-            <EgressStatusNote status={ai.purpose_status?.embedding} />
-            {violations.embedding && (
-              <p role="alert" className="settings-test-fail egress-status">
-                <span aria-hidden="true">✖ </span>
-                That Ollama server is off this host and not permitted while no-egress is on.{" "}
-                <span className="egress-status-detail">({violations.embedding.value})</span>
-              </p>
-            )}
-          </div>
           <div className="settings-purpose">
             <h4>OpenAI</h4>
             <p className="muted">
@@ -1779,36 +1860,233 @@ export function SettingsPanel() {
             )}
           </div>
 
-          {egressError && (
-            <p role="alert" className="status-error egress-form-error">
-              {egressError}
-            </p>
-          )}
-          <div className="settings-actions">
-            <button
-              type="button"
-              className="settings-save"
-              onClick={save}
-              disabled={saving || saveBlocked}
-              title={
-                saveBlocked
-                  ? "A selected model is blocked by no-egress. Choose a local model, or set DOKTOK_NO_EGRESS=false on the host."
-                  : undefined
-              }
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            {notice && (
-              <span role="status" className="muted">
-                {notice}
-              </span>
-            )}
-          </div>
+          {saveBar}
         </div>
         ))}
 
-      {tab === "drp" && <DrpSection />}
-      {tab === "memory" && <MemoryPanel />}
+      {tab === "models" &&
+        (!catalog || !ai || !ocr ? (
+          <p role="status">Loading settings…</p>
+        ) : (
+          <div className="settings-section settings-section--wide">
+            <div className="settings-cards-row model-stack">
+              <div className="settings-card model-stack-card">
+                <h4 className="model-stack-head">
+                  Server defaults (read-only){" "}
+                  <InfoHint label="Server defaults">
+                    What the deployment is configured to use for each stage (from the server
+                    environment). These apply whenever you have not set an override. Change them in
+                    the server configuration, not here.
+                  </InfoHint>
+                </h4>
+                <div className="settings-purpose">
+                  <h4>
+                    Data pipeline{" "}
+                    <InfoHint label="Data pipeline">{STAGE_INFO.pipeline}</InfoHint>
+                    <HealthDot status={health?.pipeline} />
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).pipeline.provider} ·{" "}
+                        {(serverDefaults ?? ai).pipeline.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).pipeline.reasoning}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
+                    Document interrogation{" "}
+                    <InfoHint label="Document interrogation">{STAGE_INFO.rag}</InfoHint>
+                    <HealthDot status={health?.rag} />
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).rag.provider} · {(serverDefaults ?? ai).rag.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).rag.reasoning}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
+                    Entity recognition (NER){" "}
+                    <InfoHint label="Entity recognition (NER)">{STAGE_INFO.ner}</InfoHint>
+                    <HealthDot status={health?.ner} />
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).ner.provider} · {(serverDefaults ?? ai).ner.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).ner.reasoning}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
+                    Knowledge graph (relations){" "}
+                    <InfoHint label="Knowledge graph (relations)">{STAGE_INFO.keg}</InfoHint>
+                    <HealthDot status={health?.keg} />
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).keg.provider} · {(serverDefaults ?? ai).keg.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).keg.reasoning}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
+                    Embedding (index){" "}
+                    <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
+                    <HealthDot status={health?.embedding} />
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).embedding_model ?? "—"}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div className="settings-card model-stack-card">
+                <h4 className="model-stack-head">
+                  Your overrides{" "}
+                  <InfoHint label="Your overrides">
+                    Choose the local (or remote) model used for each AI purpose. The chat/RAG model
+                    applies immediately on Save; the pipeline model applies on the next worker
+                    reconcile.
+                  </InfoHint>
+                </h4>
+                <PurposeEditor
+                  title="Data pipeline"
+                  description={STAGE_INFO.pipeline}
+                  options={catalog.pipeline}
+                  value={ai.pipeline}
+                  defaultValue={serverDefaults?.pipeline}
+                  health={health?.pipeline}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.pipeline}
+                  violation={violations.pipeline}
+                  onChange={(pipeline) => setAi({ ...ai, pipeline })}
+                />
+                <PurposeEditor
+                  title="Document interrogation"
+                  description={STAGE_INFO.rag}
+                  options={catalog.rag}
+                  value={ai.rag}
+                  defaultValue={serverDefaults?.rag}
+                  health={health?.rag}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.rag}
+                  violation={violations.rag}
+                  onChange={(rag) => setAi({ ...ai, rag })}
+                />
+                <PurposeEditor
+                  title="Entity recognition (NER)"
+                  description={STAGE_INFO.ner}
+                  options={catalog.ner ?? []}
+                  value={ai.ner}
+                  defaultValue={serverDefaults?.ner}
+                  health={health?.ner}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.ner}
+                  violation={violations.ner}
+                  onChange={(ner) => setAi({ ...ai, ner })}
+                />
+                <PurposeEditor
+                  title="Knowledge graph (relations)"
+                  description={STAGE_INFO.keg}
+                  options={catalog.keg ?? []}
+                  value={ai.keg}
+                  defaultValue={serverDefaults?.keg}
+                  health={health?.keg}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.keg}
+                  violation={violations.keg}
+                  onChange={(keg) => setAi({ ...ai, keg })}
+                />
+                <div className="settings-purpose">
+                  <h4>
+                    Embedding (index){" "}
+                    <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
+                    <HealthDot status={health?.embedding} />
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <input
+                        type="text"
+                        aria-label="Embedding model"
+                        value={ai.embedding_model ?? ""}
+                        readOnly
+                        disabled
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {saveBar}
+            {healthAt && (
+              <p className="muted model-stack-checked">
+                Checked {new Date(healthAt).toLocaleString()}
+              </p>
+            )}
+          </div>
+        ))}
+
+          {tab === "drp" && <DrpSection />}
+          {tab === "memory" && <MemoryPanel />}
+        </div>
+      </div>
     </section>
   );
 }

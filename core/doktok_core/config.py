@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://doktok:doktok@localhost:5432/doktok"
     files_root: str = "./storage/files"
 
-    default_model: str = "qwen3.6:35b-a3b"
+    default_model: str = "qwen3.6:27b"
     # qwen3-embedding (1024-dim) handles >512-token chunks; mxbai-embed-large truncates at 512.
     embedding_model: str = "qwen3-embedding:0.6b"
     # Embedding input is one ~300-token chunk at a time (chunker caps at 1200 chars), so the model's

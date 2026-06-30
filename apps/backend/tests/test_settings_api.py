@@ -49,15 +49,15 @@ def test_requires_token() -> None:
 
 def test_catalog_lists_models_per_purpose() -> None:
     body = _client().get("/api/v1/settings/ai/catalog", headers=AUTH).json()
-    assert {m["model"] for m in body["pipeline"]} >= {"qwen3.6:35b-a3b"}
+    assert {m["model"] for m in body["pipeline"]} >= {"qwen3.6:27b"}
     assert body["reasoning_levels"] == ["off", "low", "medium", "high"]
 
 
 def test_get_defaults_and_update_roundtrip() -> None:
     client = _client()
     defaults = client.get("/api/v1/settings/ai", headers=AUTH).json()
-    assert defaults["pipeline"]["model"] == "qwen3.6:35b-a3b"
-    assert defaults["rag"]["model"] == "qwen3.6:35b-a3b"
+    assert defaults["pipeline"]["model"] == "qwen3.6:27b"
+    assert defaults["rag"]["model"] == "qwen3.6:27b"
     assert defaults["openai_api_key_set"] is False
 
     assert defaults["ner"]["provider"] == "openai"  # ADR-0023 default
@@ -68,7 +68,7 @@ def test_get_defaults_and_update_roundtrip() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 16384,
                 "reasoning": "high",
             },
@@ -76,7 +76,7 @@ def test_get_defaults_and_update_roundtrip() -> None:
             "keg": dict(_LOCAL_KEG),
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 32768,
                 "reasoning": "low",
             },
@@ -87,10 +87,8 @@ def test_get_defaults_and_update_roundtrip() -> None:
     assert resp.status_code == 200
     saved = resp.json()
     assert saved["ner"]["provider"] == "gliner" and saved["keg"]["provider"] == "gliner-relex"
-    assert (
-        saved["pipeline"]["model"] == "qwen3.6:35b-a3b" and saved["pipeline"]["reasoning"] == "high"
-    )
-    assert saved["rag"]["model"] == "qwen3.6:35b-a3b"
+    assert saved["pipeline"]["model"] == "qwen3.6:27b" and saved["pipeline"]["reasoning"] == "high"
+    assert saved["rag"]["model"] == "qwen3.6:27b"
     # The key is stored but never returned - only that it is set.
     assert saved["openai_api_key_set"] is True
     assert "openai_api_key" not in saved
@@ -113,14 +111,14 @@ def test_per_purpose_ollama_url_default_and_override_roundtrip() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 8192,
                 "reasoning": "off",
                 "ollama_base_url": "http://gpu-box:11434",
             },
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 32768,
                 "reasoning": "off",
             },
@@ -142,14 +140,14 @@ def test_invalid_ollama_url_is_rejected() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 8192,
                 "reasoning": "off",
                 "ollama_base_url": "not-a-url",
             },
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 32768,
                 "reasoning": "off",
             },
@@ -255,7 +253,7 @@ def test_saving_settings_records_a_non_secret_activity_event() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 8192,
                 "reasoning": "off",
             },
@@ -263,7 +261,7 @@ def test_saving_settings_records_a_non_secret_activity_event() -> None:
             "keg": dict(_LOCAL_KEG),
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 32768,
                 "reasoning": "off",
             },
@@ -376,7 +374,7 @@ def test_saving_ai_settings_clears_cached_providers() -> None:
         json={
             "pipeline": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 16384,
                 "reasoning": "off",
             },
@@ -384,7 +382,7 @@ def test_saving_ai_settings_clears_cached_providers() -> None:
             "keg": dict(_LOCAL_KEG),
             "rag": {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 32768,
                 "reasoning": "low",
             },
@@ -418,7 +416,7 @@ def _ai_body(pipeline: dict[str, object], **extra: object) -> dict[str, object]:
         "keg": dict(_LOCAL_KEG),
         "rag": {
             "provider": "ollama",
-            "model": "qwen3.6:35b-a3b",
+            "model": "qwen3.6:27b",
             "num_ctx": 32768,
             "reasoning": "off",
         },
@@ -451,7 +449,7 @@ def test_put_rejects_remote_ollama_url_under_no_egress() -> None:
         json=_ai_body(
             {
                 "provider": "ollama",
-                "model": "qwen3.6:35b-a3b",
+                "model": "qwen3.6:27b",
                 "num_ctx": 8192,
                 "reasoning": "off",
                 "ollama_base_url": "http://10.0.0.28:11434",
@@ -481,7 +479,7 @@ def test_catalog_marks_openai_options_and_no_egress() -> None:
     body = _client(no_egress=True).get("/api/v1/settings/ai/catalog", headers=AUTH).json()
     assert body["no_egress"] is True
     by_model = {o["model"]: o["requires_egress"] for o in body["pipeline"]}
-    assert by_model["qwen3.6:35b-a3b"] is False
+    assert by_model["qwen3.6:27b"] is False
     assert by_model["gpt-4o-mini"] is True
 
 
@@ -526,7 +524,7 @@ def test_host_lock_forces_no_egress_and_rejects_disable() -> None:
     resp = client.put(
         "/api/v1/settings/ai",
         json=_ai_body(
-            {"provider": "ollama", "model": "qwen3.6:35b-a3b", "num_ctx": 8192, "reasoning": "off"},
+            {"provider": "ollama", "model": "qwen3.6:27b", "num_ctx": 8192, "reasoning": "off"},
             no_egress=False,
         ),
         headers=AUTH,

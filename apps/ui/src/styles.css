@@ -1394,6 +1394,7 @@ tr.row-selected {
 .model-stack-checked {
   margin-top: 0.75rem;
   font-size: 0.75rem;
+  text-align: right;
 }
 
 /* Read-only value sitting where the override's control would be (same row look). */

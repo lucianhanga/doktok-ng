@@ -158,3 +158,19 @@ that does not actually support the edge would be a silent grounding failure.
 Both tracks need the graph, which needs a live Ollama for the relation extractor, so they only run
 inside the local `make rag-eval`. A weak extractor surfaces here as low recall (missed edges) or low
 precision (spurious edges) — exactly the signal to hand back to the model/extractor work.
+
+## NER / relation backend benchmarks (`make ner-bench`, `make kg-bench`)
+
+Standalone harnesses that compare the **enrichment extractor backends** head-to-head (see
+[ADR-0023](../adr/ADR-0023-pluggable-ner-and-relation-backends.md)) — separate from RAG quality:
+
+- `make ner-bench` (`scripts/_ner_bench.py`) — NER: current LLM vs local GLiNER vs NuNER, scored on
+  `eval/golden_entities.json`. Exact + relaxed (token-containment) P/R/F1, per-type F1, counts, latency.
+- `make kg-bench` (`scripts/_kg_bench.py`) — relations: current LLM vs local GLiNER-Relex. Both are
+  grounded on the **same gold entities** (`eval/golden_entities.json`) so it isolates relation
+  quality; scored against `eval/golden_edges.json` with `score_edges` (overall + per-predicate).
+
+The `current` backend uses the live DB-backed pipeline config (OpenAI or Ollama). The GLiNER backends
+need `make ner-models` (installs `gliner`, `rapidfuzz`, `datasets`; first run downloads the models).
+Any backend whose runtime/config is unavailable is skipped, not fatal. Shipped result tables and the
+local/remote recommendation live in ADR-0023.

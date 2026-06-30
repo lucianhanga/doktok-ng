@@ -14,6 +14,7 @@ dependencies = [
     "doktok-provider-ollama",
     "doktok-provider-openai",
     "doktok-provider-paddleocr",
+    "doktok-provider-gliner",
     "doktok-storage-postgres",
     "doktok-storage-filesystem",
     "doktok-modalities-files",
@@ -34,6 +35,7 @@ members = [
     "providers/paddleocr",
     "providers/rapidocr",
     "providers/projection",
+    "providers/gliner",
     "storage/postgres",
     "storage/filesystem",
     "modalities/files",
@@ -53,6 +55,7 @@ doktok-provider-openai = { workspace = true }
 doktok-provider-paddleocr = { workspace = true }
 doktok-provider-rapidocr = { workspace = true }
 doktok-provider-projection = { workspace = true }
+doktok-provider-gliner = { workspace = true }
 doktok-storage-postgres = { workspace = true }
 doktok-storage-filesystem = { workspace = true }
 doktok-modalities-files = { workspace = true }
@@ -85,6 +88,16 @@ warn_unused_configs = true
 ignore_missing_imports = true
 exclude = ["node_modules", "\\.venv"]
 
+# Vendored upstream GLiNER/NuNER + KAG refiner code. Kept verbatim and typed loosely; the
+# strictly-typed adapters (doktok_provider_gliner.adapter / .relation_adapter) are the boundary.
+[[tool.mypy.overrides]]
+module = "doktok_provider_gliner.refiners.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "doktok_provider_gliner.kg_refiners.*"
+ignore_errors = true
+
 [tool.pytest.ini_options]
 addopts = "-q --import-mode=importlib"
 testpaths = [
@@ -97,6 +110,7 @@ testpaths = [
     "providers/openai/tests",
     "providers/paddleocr/tests",
     "providers/projection/tests",
+    "providers/gliner/tests",
     "storage/postgres/tests",
 ]
 
@@ -113,6 +127,7 @@ root_packages = [
     "doktok_provider_ollama",
     "doktok_provider_openai",
     "doktok_provider_projection",
+    "doktok_provider_gliner",
     "doktok_storage_postgres",
     "doktok_storage_filesystem",
     "doktok_modalities_files",
@@ -135,6 +150,7 @@ forbidden_modules = [
     "doktok_provider_ollama",
     "doktok_provider_openai",
     "doktok_provider_projection",
+    "doktok_provider_gliner",
     "doktok_storage_postgres",
     "doktok_storage_filesystem",
     "doktok_modalities_files",

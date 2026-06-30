@@ -191,7 +191,7 @@ test("requests reasoning by default and renders it in a collapsible panel", asyn
 
   render(<ChatPanel />);
   // "Show reasoning" is checked by default, so no click is needed to opt in.
-  expect(screen.getByLabelText(/show reasoning/i)).toBeChecked();
+  expect(screen.getByLabelText("Show reasoning")).toBeChecked();
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
@@ -887,11 +887,11 @@ test("incognito mode disables Remember (no persistence/recall)", async () => {
   );
 
   render(<ChatPanel />);
-  const incognito = screen.getByLabelText(/incognito/i);
+  const incognito = screen.getByLabelText("Incognito");
   expect(incognito).not.toBeChecked();
   // Remember is independent until incognito is on...
-  expect(screen.getByLabelText(/remember/i)).toBeEnabled();
+  expect(screen.getByLabelText("Remember")).toBeEnabled();
   await userEvent.click(incognito);
   // ...then incognito forces memory off and locks the Remember toggle.
-  expect(screen.getByLabelText(/remember/i)).toBeDisabled();
+  expect(screen.getByLabelText("Remember")).toBeDisabled();
 });

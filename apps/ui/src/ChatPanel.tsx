@@ -208,6 +208,48 @@ function SourcesList({
   );
 }
 
+/** A small "(i)" button after a control's label; click toggles a description popover. */
+function InfoHint({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDocPointer(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocPointer);
+    return () => document.removeEventListener("mousedown", onDocPointer);
+  }, [open]);
+  return (
+    <span className="info-hint" ref={ref}>
+      <button
+        type="button"
+        className="info-hint-btn"
+        aria-label={`About ${label}`}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+      >
+        i
+      </button>
+      {open && (
+        <span role="tooltip" className="info-hint-pane">
+          {children}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** The per-turn ranked candidate chunks (M8 #4/#7): winners first, with RRF score + rank %. */
 function AnswerBlock({
   turn,
@@ -1069,41 +1111,57 @@ export function ChatPanel({
           )}
 
           <div className="chat-toggle-row">
-            <label className="chat-reasoning-toggle">
-              <input
-                type="checkbox"
-                checked={showReasoning}
-                onChange={(e) => setShowReasoning(e.target.checked)}
-                disabled={streaming !== null}
-              />
-              <span className="muted">Show reasoning</span>
-            </label>
+            <span className="chat-toggle">
+              <label className="chat-reasoning-toggle">
+                <input
+                  type="checkbox"
+                  checked={showReasoning}
+                  onChange={(e) => setShowReasoning(e.target.checked)}
+                  disabled={streaming !== null}
+                />
+                <span className="muted">Show reasoning</span>
+              </label>
+              <InfoHint label="Show reasoning">
+                Shows the model's <strong>step-by-step reasoning</strong> for each answer in the
+                activity timeline. When <strong>off</strong>, reasoning follows the configured
+                default and stays hidden.
+              </InfoHint>
+            </span>
 
-            <label
-              className="chat-reasoning-toggle"
-              title="Recall facts from your past conversations and remember this one. Off = private (nothing stored or recalled)."
-            >
-              <input
-                type="checkbox"
-                checked={remember && !incognito}
-                onChange={(e) => setRemember(e.target.checked)}
-                disabled={streaming !== null || incognito}
-              />
-              <span className="muted">Remember</span>
-            </label>
+            <span className="chat-toggle">
+              <label className="chat-reasoning-toggle">
+                <input
+                  type="checkbox"
+                  checked={remember && !incognito}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  disabled={streaming !== null || incognito}
+                />
+                <span className="muted">Remember</span>
+              </label>
+              <InfoHint label="Remember">
+                <strong>Recalls</strong> relevant facts from your past conversations to inform this
+                answer, and <strong>saves</strong> noteworthy facts from this chat for future ones.
+                Turn <strong>off</strong> for a <strong>private</strong> conversation that neither
+                recalls nor stores <strong>long-term memory</strong>.
+              </InfoHint>
+            </span>
 
-            <label
-              className="chat-reasoning-toggle"
-              title="Incognito: this conversation is not saved - no thread is stored and nothing is recalled or remembered. Choose it on a New conversation."
-            >
-              <input
-                type="checkbox"
-                checked={incognito}
-                onChange={(e) => setIncognito(e.target.checked)}
-                disabled={streaming !== null || threadId !== null}
-              />
-              <span className="muted">Incognito</span>
-            </label>
+            <span className="chat-toggle">
+              <label className="chat-reasoning-toggle">
+                <input
+                  type="checkbox"
+                  checked={incognito}
+                  onChange={(e) => setIncognito(e.target.checked)}
+                  disabled={streaming !== null || threadId !== null}
+                />
+                <span className="muted">Incognito</span>
+              </label>
+              <InfoHint label="Incognito">
+                This conversation is <strong>not saved</strong> at all - no thread is stored, and
+                nothing is <strong>recalled</strong> from or <strong>written</strong> to long-term
+                memory. Available only on a <strong>new conversation</strong>.
+              </InfoHint>
+            </span>
           </div>
 
           {incognito && (

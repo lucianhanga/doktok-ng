@@ -651,6 +651,7 @@ export function ChatPanel({
     const el = transcriptRef.current;
     if (!el || typeof el.scrollTo !== "function") return;
     el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+    setAtBottom(true); // we are now at the end; the scroll handler won't fire when not scrollable
   }
   // Auto-scroll to bottom on each streamed chunk — but only if the user is already at the bottom.
   // Dependency: streaming answer text only; scrollTranscriptToBottom uses a ref (stable).

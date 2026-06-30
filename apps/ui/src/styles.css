@@ -2938,15 +2938,29 @@ tr.row-selected {
   color: var(--muted, #8b97a8);
 }
 
+/* personalAI-style toggles: a thin "‹" chevron + a "Conversations ›" text expand button. */
+.chat-threads-title {
+  flex: 1;
+  font-size: 0.85rem;
+}
+.chat-threads-toggle-text {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.chat-threads-toggle-text:hover {
+  color: var(--accent);
+}
+
 .chat-threads-collapsed {
-  flex: 0 0 auto; /* override .chat-threads 220px so collapsed strip is icon-only */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  width: 2.2rem;
-  min-width: 2.2rem;
-  padding: 0.5rem 0;
+  /* Collapsed = a small top-left text button, not a vertical icon strip (personalAI parity). */
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: auto;
+  min-width: 0;
+  padding: 0;
 }
 
 .chat-thread-new-icon {
@@ -2996,6 +3010,7 @@ tr.row-selected {
 
 .chat-right-pane--collapsed {
   flex: 0 0 auto;
+  align-self: flex-start;
   background: transparent;
   border-radius: 0;
   padding: 0.25rem 0;

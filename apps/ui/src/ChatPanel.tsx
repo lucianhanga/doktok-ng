@@ -516,45 +516,39 @@ function ThreadList({
   onNew: () => void;
 }) {
   if (collapsed) {
+    // personalAI parity: a small top-aligned text button "Conversations ›" (not an icon strip).
     return (
       <aside className="chat-threads chat-threads-collapsed" aria-label="Conversations">
         <button
           type="button"
-          className="chat-threads-toggle link-button"
+          className="chat-threads-toggle-text link-button"
           onClick={onToggleCollapse}
           aria-label="Expand conversations"
-          title="Expand conversations"
+          title="Show conversations"
         >
-          &#9654;
-        </button>
-        <button
-          type="button"
-          className="chat-thread-new-icon link-button"
-          onClick={onNew}
-          aria-label="New conversation"
-          title="New conversation"
-        >
-          +
+          Conversations &#8250;
         </button>
       </aside>
     );
   }
   return (
     <aside className="chat-threads" aria-label="Conversations">
+      {/* Header: title (left) + a thin "‹" collapse toggle (right), like personalAI's ChatsPanel. */}
       <div className="chat-threads-head">
-        <button type="button" className="chat-thread-new" onClick={onNew}>
-          + New conversation
-        </button>
+        <strong className="chat-threads-title">Conversations</strong>
         <button
           type="button"
-          className="chat-threads-toggle link-button"
+          className="chat-threads-toggle-text link-button"
           onClick={onToggleCollapse}
           aria-label="Collapse conversations"
           title="Collapse conversations"
         >
-          &#9664;
+          &#8249;
         </button>
       </div>
+      <button type="button" className="chat-thread-new" onClick={onNew}>
+        + New conversation
+      </button>
       <ol className="chat-thread-list">
         {threads.map((t) => (
           <ThreadRow
@@ -1176,13 +1170,13 @@ export function ChatPanel({
           >
             <button
               type="button"
-              className="chat-right-pane-expand link-button"
+              className="chat-threads-toggle-text link-button"
               onClick={toggleRightPane}
               aria-expanded={false}
               aria-label="Expand activity panel"
-              title="Expand activity panel"
+              title="Show activity"
             >
-              &#9664;
+              &#8249; Activity
             </button>
           </aside>
         ) : (
@@ -1220,13 +1214,13 @@ export function ChatPanel({
                 )}
                 <button
                   type="button"
-                  className="chat-threads-toggle link-button"
+                  className="chat-threads-toggle-text link-button"
                   onClick={toggleRightPane}
                   aria-expanded={true}
                   aria-label="Collapse activity panel"
                   title="Collapse activity panel"
                 >
-                  &#9654;
+                  Collapse &#8250;
                 </button>
               </div>
             </div>

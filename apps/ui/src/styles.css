@@ -84,7 +84,6 @@ body {
 }
 .app-header {
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--border, #2a3342);
 }
 .app-main {
   flex: 1 1 auto;

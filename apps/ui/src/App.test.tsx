@@ -104,7 +104,7 @@ test("keeps the chat conversation when opening a cited document and going back",
   );
 
   render(<App />);
-  await userEvent.click(screen.getByRole("button", { name: "Chat" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
   await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText(/The total is 42/)).toBeInTheDocument());

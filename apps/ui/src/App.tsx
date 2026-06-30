@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ActivityPanel } from "./ActivityPanel";
 import { ChatPanel } from "./ChatPanel";
@@ -10,6 +10,43 @@ import { OverviewPanel } from "./OverviewPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
 import { ThemeToggle } from "./ThemeToggle";
+import { fetchHealth } from "./api";
+import { useInterval } from "./hooks";
+
+/** Small header status dot: green=connected, amber=connecting, red=unreachable. */
+function BackendDot() {
+  const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
+
+  const load = useCallback(() => {
+    fetchHealth()
+      .then(() => setStatus("ok"))
+      .catch(() => setStatus("error"));
+  }, []);
+
+  useEffect(load, [load]);
+  useInterval(load, 10000);
+
+  const label =
+    status === "ok"
+      ? "Backend connected"
+      : status === "error"
+        ? "Backend unreachable"
+        : "Connecting...";
+
+  const dotColor =
+    status === "ok"
+      ? "var(--success, #3fb950)"
+      : status === "error"
+        ? "var(--danger, #d9534f)"
+        : "var(--warning, #d6a700)";
+
+  return (
+    <span className="app-backend-dot" title={label} aria-label={label} role="status">
+      <span className="app-backend-dot-circle" style={{ background: dotColor }} aria-hidden="true" />
+      <span className="app-backend-dot-label">{label}</span>
+    </span>
+  );
+}
 
 type View =
   | "overview"
@@ -63,27 +100,30 @@ export default function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="app-inner">
-          <div className="app-header-top">
+          <div className="app-header-bar">
             <h1>DokTok NG</h1>
-            <ThemeToggle />
+            <nav className="tabs" aria-label="Sections" role="tablist">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === tab.id && !openDoc}
+                  className={view === tab.id && !openDoc ? "active" : ""}
+                  onClick={() => go(tab.id)}
+                >
+                  {tab.label}
+                  {tab.id === "chat" && chatUnread && view !== "chat" && (
+                    <span className="tab-unread" aria-label="new answer" title="New answer ready" />
+                  )}
+                </button>
+              ))}
+            </nav>
+            <div className="app-header-end">
+              <BackendDot />
+              <ThemeToggle />
+            </div>
           </div>
-          <p className="tagline">Local-first document intelligence</p>
-          <nav className="tabs" aria-label="Sections">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={view === tab.id && !openDoc ? "active" : ""}
-                aria-pressed={view === tab.id && !openDoc}
-                onClick={() => go(tab.id)}
-              >
-                {tab.label}
-                {tab.id === "chat" && chatUnread && view !== "chat" && (
-                  <span className="tab-unread" aria-label="new answer" title="New answer ready" />
-                )}
-              </button>
-            ))}
-          </nav>
         </div>
       </header>
 
@@ -99,7 +139,7 @@ export default function App() {
           {/* Keep the active panel MOUNTED (just hidden) while a document is open, so its in-progress
               state - e.g. a chat conversation or document-list filters - survives opening a document
               and coming back. Unmounting it (the old ternary) reset that state to empty. */}
-          <div hidden={openDoc !== null}>
+          <div className="app-content" hidden={openDoc !== null}>
             {view === "overview" && (
               <OverviewPanel
                 onShowPendingFeatures={showPendingFeatures}
@@ -116,7 +156,7 @@ export default function App() {
             {/* Chat stays MOUNTED across tab switches (hidden when inactive) so a streamed answer
                 keeps running in the background and the transcript survives; an answer that finishes
                 off-tab marks the Chat tab unread. */}
-            <div hidden={view !== "chat"}>
+            <div className="app-chat-mount" hidden={view !== "chat"}>
               <ChatPanel
                 onOpenDocument={setOpenDoc}
                 active={view === "chat" && !openDoc}

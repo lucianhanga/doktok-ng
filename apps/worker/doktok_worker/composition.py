@@ -138,7 +138,7 @@ def _resolve_ner_backend(
                 if provider == "gliner"
                 else NuNerEntityNerExtractor(model, device=device)
             )
-            logger.info("NER backend: local %s (%s)", provider, model)
+            logger.debug("NER backend: local %s (%s)", provider, model)
             return ext, f"{provider}:{model}:{device or 'cpu'}"
         except Exception as exc:  # noqa: BLE001 - a load failure must fall back, never crash
             logger.warning(
@@ -195,7 +195,7 @@ def _resolve_relation_backend(
 
             device = _torch_device()
             ext = GlinerRelexRelationExtractor(model, device=device)
-            logger.info("relation backend: local gliner-relex (%s)", model)
+            logger.debug("relation backend: local gliner-relex (%s)", model)
             return ext, f"gliner-relex:{model}:{device or 'cpu'}"
         except Exception as exc:  # noqa: BLE001 - a load failure must fall back, never crash
             logger.warning(

@@ -8,7 +8,7 @@ from typing import Any
 from doktok_contracts.media import ExtractedEntity
 from doktok_contracts.schemas import EntityType
 
-from doktok_provider_openai.client import openai_chat
+from doktok_provider_openai.client import openai_chat, repair_json
 
 _MAX_CHARS = 12000
 _MAX_PER_TYPE = 60
@@ -81,17 +81,12 @@ class OpenAiEntityNerExtractor:
         return _entities(groups)
 
     def _repair(self, broken: str) -> str:
-        prompt = (
-            'The text below should be JSON like {"people": [...], "organizations": [...], '
-            '"places": [...]} but may be malformed or truncated. Return ONLY corrected JSON, '
-            "dropping any incomplete trailing entry.\n\nText:\n" + broken
-        )
-        return openai_chat(
+        return repair_json(
             api_key=self._api_key,
             base_url=self._base_url,
             model=self._model,
-            system="Output only valid JSON.",
-            user=prompt,
+            broken=broken,
+            shape_hint='{"people": [...], "organizations": [...], "places": [...]}',
             timeout=self._timeout,
             reasoning_effort=self._reasoning_effort,
         )

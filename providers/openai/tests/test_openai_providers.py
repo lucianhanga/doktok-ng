@@ -11,11 +11,13 @@ import pytest
 from doktok_contracts.schemas import EntityType
 from doktok_provider_openai import (
     OpenAiAuthError,
+    OpenAiCategoryClassifier,
     OpenAiChatModelProvider,
     OpenAiEntityNerExtractor,
     OpenAiMetadataExtractor,
     OpenAiRateLimitError,
     OpenAiRecordExtractor,
+    OpenAiRelationExtractor,
     OpenAiServerError,
 )
 
@@ -225,4 +227,71 @@ def test_ner_repairs_truncated_json() -> None:
     ) as post:
         out = OpenAiEntityNerExtractor("gpt-4o-mini", "k").extract("text")
     assert [(e.entity_type, e.entity_text) for e in out] == [(EntityType.PERSON, "Angela Merkel")]
+    assert post.call_count == 2  # second call is the repair pass
+
+
+def test_record_repairs_invalid_json() -> None:
+    broken = '{"transactions":[{"date":"2024-02-03","merchant":"Block Hou'  # truncated
+    good = '{"transactions":[{"merchant":"Block House","amount":"42.50","currency":"EUR"}]}'
+    with patch(
+        "doktok_provider_openai.client.httpx.post",
+        side_effect=[_resp(broken), _resp(good)],
+    ) as post:
+        rows = OpenAiRecordExtractor("gpt-4o-mini", "k").extract("statement")
+    assert len(rows) == 1 and rows[0].merchant == "Block House"
+    assert post.call_count == 2  # second call is the repair pass
+
+
+def test_record_raises_after_failed_repair() -> None:
+    with (
+        patch(
+            "doktok_provider_openai.client.httpx.post",
+            side_effect=[_resp("not json"), _resp("still not json")],
+        ),
+        pytest.raises(RuntimeError, match="after repair"),
+    ):
+        OpenAiRecordExtractor("gpt-4o-mini", "k").extract("statement")
+
+
+def test_relation_repairs_invalid_json() -> None:
+    broken = '{"triples":[{"subject":"Acme","predicate":"issued_b'  # truncated
+    good = (
+        '{"triples":[{"subject":"Acme","predicate":"issued_by","object":"Bob",'
+        '"subject_type":"ORG","object_type":"PERSON","evidence":"Acme issued by Bob"}]}'
+    )
+    with patch(
+        "doktok_provider_openai.client.httpx.post",
+        side_effect=[_resp(broken), _resp(good)],
+    ) as post:
+        rels = OpenAiRelationExtractor("gpt-4o-mini", "k").extract(
+            "text", [("Acme", "ORG"), ("Bob", "PERSON")]
+        )
+    assert len(rels) == 1 and rels[0].subject == "Acme" and rels[0].object == "Bob"
+    assert post.call_count == 2  # second call is the repair pass
+
+
+def test_classify_repairs_invalid_json() -> None:
+    broken = '{"categories":["Invoice","Med'  # truncated
+    good = '{"categories":["Invoice","Medical"]}'
+    with patch(
+        "doktok_provider_openai.client.httpx.post",
+        side_effect=[_resp(broken), _resp(good)],
+    ) as post:
+        labels = OpenAiCategoryClassifier("gpt-4o-mini", "k").classify("text", [])
+    assert labels == ["Invoice", "Medical"]
+    assert post.call_count == 2  # second call is the repair pass
+
+
+def test_metadata_repairs_invalid_json() -> None:
+    broken = '{"title":"Invoice","document_date":"2024-02-0'  # truncated
+    good = (
+        '{"title":"Invoice","document_date":"2024-02-03",'
+        '"document_location":"Berlin","summary":"S"}'
+    )
+    with patch(
+        "doktok_provider_openai.client.httpx.post",
+        side_effect=[_resp(broken), _resp(good)],
+    ) as post:
+        md = OpenAiMetadataExtractor("gpt-4o-mini", "k").extract("body text")
+    assert md.title == "Invoice" and md.location == "Berlin"
     assert post.call_count == 2  # second call is the repair pass

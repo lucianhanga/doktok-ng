@@ -7,7 +7,7 @@ from typing import Any
 
 from doktok_contracts.media import ExtractedTransaction
 
-from doktok_provider_openai.client import openai_chat
+from doktok_provider_openai.client import openai_chat, repair_json
 
 _MAX_CHARS = 16000
 
@@ -78,8 +78,21 @@ class OpenAiRecordExtractor:
         )
         rows = _rows(content)
         if rows is None:
-            raise RuntimeError("transaction extraction returned invalid JSON")
+            rows = _rows(self._repair(content))
+        if rows is None:
+            raise RuntimeError("transaction extraction returned invalid JSON after repair")
         return [_to_transaction(row) for row in rows]
+
+    def _repair(self, broken: str) -> str:
+        return repair_json(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            model=self._model,
+            broken=broken,
+            shape_hint='{"transactions": [...]}',
+            timeout=self._timeout,
+            reasoning_effort=self._reasoning_effort,
+        )
 
 
 def _rows(content: str) -> list[dict[str, Any]] | None:

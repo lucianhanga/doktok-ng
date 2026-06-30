@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from doktok_provider_openai.client import openai_chat
+from doktok_provider_openai.client import openai_chat, repair_json
 
 _MAX_CHARS = 12000
 _MAX_LABELS = 5
@@ -61,8 +61,21 @@ class OpenAiCategoryClassifier:
         )
         labels = _labels(content)
         if labels is None:
-            raise RuntimeError("category classification returned invalid JSON")
+            labels = _labels(self._repair(content))
+        if labels is None:
+            raise RuntimeError("category classification returned invalid JSON after repair")
         return labels[:_MAX_LABELS]
+
+    def _repair(self, broken: str) -> str:
+        return repair_json(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            model=self._model,
+            broken=broken,
+            shape_hint='{"categories": [...]}',
+            timeout=self._timeout,
+            reasoning_effort=self._reasoning_effort,
+        )
 
 
 def _labels(content: str) -> list[str] | None:

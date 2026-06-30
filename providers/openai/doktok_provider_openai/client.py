@@ -292,3 +292,36 @@ def loads_object(content: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def repair_json(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    broken: str,
+    shape_hint: str,
+    timeout: float = 120.0,
+    reasoning_effort: str | None = None,
+) -> str:
+    """Re-ask the model to fix malformed/truncated JSON; return the corrected raw content.
+
+    Non-strict ``json_schema`` mode still emits malformed or truncated JSON on dense documents, and
+    a single bad generation otherwise fails a whole enrichment feature. This second pass mirrors the
+    Ollama adapter's repair fallback: free-form (no schema), asking for ONLY corrected JSON of the
+    expected ``shape_hint`` (e.g. ``'{"transactions": [...]}'``) with incomplete trailing entries
+    dropped. Callers re-parse the result and raise only if it is still unparseable.
+    """
+    prompt = (
+        f"The text below should be JSON like {shape_hint} but may be malformed or truncated. "
+        "Return ONLY corrected JSON, dropping any incomplete trailing entry.\n\nText:\n" + broken
+    )
+    return openai_chat(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        system="Output only valid JSON.",
+        user=prompt,
+        timeout=timeout,
+        reasoning_effort=reasoning_effort,
+    )

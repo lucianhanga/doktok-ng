@@ -6,7 +6,7 @@ from typing import Any
 
 from doktok_contracts.media import ExtractedMetadata
 
-from doktok_provider_openai.client import loads_object, openai_chat
+from doktok_provider_openai.client import loads_object, openai_chat, repair_json
 
 _MAX_CHARS = 12000
 
@@ -74,10 +74,26 @@ class OpenAiMetadataExtractor:
         )
         data = loads_object(content)
         if data is None:
-            raise RuntimeError("metadata extraction returned invalid JSON")
+            data = loads_object(self._repair(content))
+        if data is None:
+            raise RuntimeError("metadata extraction returned invalid JSON after repair")
         return ExtractedMetadata(
             title=str(data.get("title", "")).strip(),
             document_date=_str_or_none(data.get("document_date")),
             location=_str_or_none(data.get("document_location")),
             summary=str(data.get("summary", "")).strip(),
+        )
+
+    def _repair(self, broken: str) -> str:
+        return repair_json(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            model=self._model,
+            broken=broken,
+            shape_hint=(
+                '{"title": "...", "document_date": "...", '
+                '"document_location": "...", "summary": "..."}'
+            ),
+            timeout=self._timeout,
+            reasoning_effort=self._reasoning_effort,
         )

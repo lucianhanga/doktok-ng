@@ -10,7 +10,7 @@ from doktok_core.aggregation.windowing import window_text
 from doktok_core.entities.ner import normalize_ner_name
 from doktok_core.knowledge_graph.predicates import PREDICATE_TYPE_PAIRS
 
-from doktok_provider_openai.client import openai_chat
+from doktok_provider_openai.client import openai_chat, repair_json
 
 _MAX_CHARS = 16000
 
@@ -113,7 +113,9 @@ class OpenAiRelationExtractor:
             )
             rows = _rows(content)
             if rows is None:
-                raise RuntimeError("relation extraction returned invalid JSON")
+                rows = _rows(self._repair(content))
+            if rows is None:
+                raise RuntimeError("relation extraction returned invalid JSON after repair")
             for row in rows:
                 rel = _to_relation(row)
                 if rel is None:
@@ -128,6 +130,17 @@ class OpenAiRelationExtractor:
                 seen.add(dedup_key)
                 results.append(rel)
         return results
+
+    def _repair(self, broken: str) -> str:
+        return repair_json(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            model=self._model,
+            broken=broken,
+            shape_hint='{"triples": [...]}',
+            timeout=self._timeout,
+            reasoning_effort=self._reasoning_effort,
+        )
 
 
 def _rows(content: str) -> list[dict[str, Any]] | None:

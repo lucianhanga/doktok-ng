@@ -21,6 +21,13 @@ MODEL_CATALOG = ModelCatalog(
             supports_reasoning=True,
         ),
         ModelOption(
+            provider="ollama",
+            model="qwen3.6:27b",
+            label="Qwen3.6 27B - dense, local",
+            contexts=[8192, 16384, 32768],
+            supports_reasoning=True,
+        ),
+        ModelOption(
             provider="openai",
             model="gpt-4o-mini",
             label="OpenAI gpt-4o-mini - cheap remote (easy job)",
@@ -40,6 +47,13 @@ MODEL_CATALOG = ModelCatalog(
             provider="ollama",
             model="qwen3.6:35b-a3b",
             label="Qwen3.6 35B-A3B - MoE, local (recommended)",
+            contexts=[8192, 16384, 32768],
+            supports_reasoning=True,
+        ),
+        ModelOption(
+            provider="ollama",
+            model="qwen3.6:27b",
+            label="Qwen3.6 27B - dense, local",
             contexts=[8192, 16384, 32768],
             supports_reasoning=True,
         ),

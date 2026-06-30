@@ -20,6 +20,7 @@ import {
   type TurnMetrics,
 } from "./api";
 import { ChatActivityTimeline } from "./ChatActivityTimeline";
+import { InfoHint } from "./InfoHint";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsUsedBar } from "./DocumentsUsedBar";
 import { Markdown } from "./Markdown";
@@ -205,48 +206,6 @@ function SourcesList({
         <SourceCard key={c.chunk_id} citation={c} rank={i + 1} onOpen={onOpenDocument} />
       ))}
     </ol>
-  );
-}
-
-/** A small "(i)" button after a control's label; click toggles a description popover. */
-function InfoHint({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}): React.ReactElement {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function onDocPointer(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocPointer);
-    return () => document.removeEventListener("mousedown", onDocPointer);
-  }, [open]);
-  return (
-    <span className="info-hint" ref={ref}>
-      <button
-        type="button"
-        className="info-hint-btn"
-        aria-label={`About ${label}`}
-        aria-expanded={open}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setOpen((o) => !o);
-        }}
-      >
-        i
-      </button>
-      {open && (
-        <span role="tooltip" className="info-hint-pane">
-          {children}
-        </span>
-      )}
-    </span>
   );
 }
 
@@ -1050,7 +1009,11 @@ export function ChatPanel({
   const activeThread = threads.find((t) => t.id === threadId);
   const threadTokens = activeThread?.total_tokens ?? 0;
   const threadMs = activeThread?.total_inference_ms ?? 0;
-  const columnTitle = activeThread?.title?.trim() || "New conversation";
+  // Only show the column header once the conversation has a real title (set after the first
+  // question). A brand-new/empty conversation shows no title, giving the chat window more height.
+  const columnTitle = activeThread?.title?.trim() ?? "";
+  const hasTitle = columnTitle.length > 0;
+  const isEmptyConversation = turns.length === 0;
 
   return (
     <section aria-label="Chat" className="panel chat-page">
@@ -1068,16 +1031,18 @@ export function ChatPanel({
           onNew={reset}
         />
         <div className="chat-main">
-          <div className="result-head">
-            <h3 className="chat-column-title" title={columnTitle}>
-              {columnTitle}
-              {threadTokens > 0 && (
-                <span className="chat-thread-totals">
-                  {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
-                </span>
-              )}
-            </h3>
-          </div>
+          {hasTitle && (
+            <div className="result-head">
+              <h3 className="chat-column-title" title={columnTitle}>
+                {columnTitle}
+                {threadTokens > 0 && (
+                  <span className="chat-thread-totals">
+                    {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
+                  </span>
+                )}
+              </h3>
+            </div>
+          )}
 
           <ol
             ref={transcriptRef}
@@ -1086,6 +1051,11 @@ export function ChatPanel({
             role="log"
             aria-label="Conversation"
           >
+            {isEmptyConversation && !streaming && (
+              <li className="chat-empty-watermark" aria-hidden="true">
+                <span className="chat-empty-watermark-text">Talk to your documents</span>
+              </li>
+            )}
             {turns.map((turn, i) => (
               <li key={i} className="chat-exchange">
                 <AnswerBlock

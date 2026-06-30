@@ -125,6 +125,9 @@ body {
   flex-wrap: wrap;
 }
 .statusbar-egress-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-weight: 600;
 }
 
@@ -2283,7 +2286,7 @@ tr.row-selected {
 }
 .chat-thread-new {
   width: 100%;
-  margin-top: 0.5rem;
+  margin-top: 0.9rem;
   font-size: 0.85rem;
 }
 .chat-thread-list {
@@ -2382,6 +2385,22 @@ tr.row-selected {
   gap: 1.25rem;
   border: 1px solid rgba(127, 127, 127, 0.3);
   border-radius: 8px;
+}
+/* Empty-conversation watermark: faint centered prompt before the first question. */
+.chat-empty-watermark {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  pointer-events: none;
+}
+.chat-empty-watermark-text {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--muted, #8b97a8);
+  opacity: 0.35;
 }
 .chat-exchange {
   display: flex;
@@ -2609,6 +2628,9 @@ tr.row-selected {
 .info-hint-btn:hover {
   color: var(--accent, #6ea8fe);
   border-color: var(--accent, #6ea8fe);
+}
+.info-hint-pane .info-danger {
+  color: var(--danger, #f08a8a);
 }
 .info-hint-pane {
   position: absolute;

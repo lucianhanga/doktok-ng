@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { fetchAiSettings, fetchHealth, type HealthStatus } from "./api";
 import { useInterval } from "./hooks";
+import { InfoHint } from "./InfoHint";
 
 type State =
   | { kind: "loading" }
@@ -48,8 +49,18 @@ export function StatusBar() {
           <span role="status">Connecting to backend…</span>
         )}
         {noEgress === false && (
-          <span className="status-error statusbar-egress-warning" role="alert">
-            &#9888; No-egress is off — document data may be sent to external services
+          <span className="statusbar-egress-warning">
+            <span className="status-error" role="alert">
+              &#9888; No-egress is off — document data may be sent to external services
+            </span>
+            <InfoHint label="No-egress">
+              <strong>No-egress</strong> keeps all document data <strong>on this host</strong>. When
+              it is <strong className="info-danger">off</strong> (the setting{" "}
+              <em>"Keep data on this host"</em> is unchecked), purposes configured to use{" "}
+              <strong>remote</strong> providers (e.g. OpenAI, or an Ollama server on another machine)
+              may <strong className="info-danger">send your document text off this machine</strong>.
+              Turn it <strong>on</strong> in Settings to force everything to stay local.
+            </InfoHint>
           </span>
         )}
       </div>

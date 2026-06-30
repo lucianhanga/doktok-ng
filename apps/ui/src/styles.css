@@ -1374,6 +1374,15 @@ tr.row-selected {
   color: var(--text, #e6edf3);
   font-size: 0.875rem;
 }
+/* Label on the left, value/control on the right, in both cards. */
+.model-stack .settings-row {
+  width: 100%;
+}
+.model-stack .settings-row label {
+  justify-content: space-between;
+  width: 100%;
+  gap: 1rem;
+}
 /* Simple, undecorated NATIVE controls in the override card (like the Documents filter selects). */
 .model-stack .settings-purpose select,
 .model-stack .settings-purpose input {

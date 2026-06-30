@@ -286,8 +286,9 @@ test("renders AI model selectors from the catalog and current settings", async (
   await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
   expect(screen.getByLabelText("Document interrogation model")).toBeInTheDocument();
-  // reasoning levels available
-  expect(screen.getByLabelText("Data pipeline reasoning")).toHaveValue("off");
+  // An unmodified override equals the server default, so the pickers show "Use server default".
+  expect(screen.getByLabelText("Data pipeline reasoning")).toHaveValue("__default__");
+  expect(screen.getByLabelText("Data pipeline model")).toHaveValue("__default__");
 });
 
 test("renders NER and KEG model selectors from the catalog and current settings", async () => {

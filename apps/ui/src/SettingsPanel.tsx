@@ -1327,7 +1327,13 @@ function PurposeEditor({
           Model{" "}
           <select
             aria-label={`${title} model`}
-            value={`${value.provider}:${value.model}`}
+            value={
+              defaultValue &&
+              value.provider === defaultValue.provider &&
+              value.model === defaultValue.model
+                ? USE_DEFAULT
+                : `${value.provider}:${value.model}`
+            }
             onChange={(e) => {
               if (e.target.value === USE_DEFAULT) {
                 if (defaultValue) onChange({ ...defaultValue });
@@ -1372,7 +1378,11 @@ function PurposeEditor({
           Reasoning{" "}
           <select
             aria-label={`${title} reasoning`}
-            value={value.reasoning}
+            value={
+              defaultValue && value.reasoning === defaultValue.reasoning
+                ? USE_DEFAULT
+                : value.reasoning
+            }
             disabled={!selected.supports_reasoning}
             onChange={(e) =>
               onChange({

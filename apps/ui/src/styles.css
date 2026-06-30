@@ -2550,13 +2550,17 @@ tr.row-selected {
   cursor: pointer;
 }
 
-/* The toggle line above the question composer (Show reasoning / Remember / Incognito). */
+/* The toggle line above the question composer (Show reasoning / Remember / Incognito).
+   A divider separates the chat window above from the controls below. */
 .chat-toggle-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem 1rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
   margin-bottom: 0.4rem;
+  border-top: 1px solid rgba(127, 127, 127, 0.3);
 }
 .chat-toggle-row .chat-reasoning-toggle {
   margin: 0;

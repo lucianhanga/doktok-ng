@@ -1293,20 +1293,6 @@ function PurposeEditor({
             })}
           </select>
         </label>
-        <label>
-          Context{" "}
-          <select
-            aria-label={`${title} context`}
-            value={value.num_ctx}
-            onChange={(e) => onChange({ ...value, num_ctx: Number(e.target.value) })}
-          >
-            {selected.contexts.map((c) => (
-              <option key={c} value={c}>
-                {ctxLabel(c)}
-              </option>
-            ))}
-          </select>
-        </label>
         <label title={selected.supports_reasoning ? "" : "This model does not support reasoning"}>
           Reasoning{" "}
           <select
@@ -1370,7 +1356,7 @@ export function SettingsPanel() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiTesting, setOpenaiTesting] = useState(false);
   const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [tab, setTab] = useState<"settings" | "drp" | "memory">("settings");
+  const [tab, setTab] = useState<"settings" | "models" | "drp" | "memory">("settings");
   // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
   const [egressError, setEgressError] = useState<string | null>(null);
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
@@ -1478,7 +1464,44 @@ export function SettingsPanel() {
       selectionBlocked(catalog.ner ?? [], ai.ner, noEgress) ||
       selectionBlocked(catalog.keg ?? [], ai.keg, noEgress));
 
-  const paneTitle = tab === "drp" ? "DRP" : tab === "memory" ? "Memory" : "Settings";
+  const paneTitle =
+    tab === "models"
+      ? "Model stack"
+      : tab === "drp"
+        ? "DRP"
+        : tab === "memory"
+          ? "Memory"
+          : "Settings";
+
+  const saveBar = (
+    <>
+      {egressError && (
+        <p role="alert" className="status-error egress-form-error">
+          {egressError}
+        </p>
+      )}
+      <div className="settings-actions">
+        <button
+          type="button"
+          className="settings-save"
+          onClick={save}
+          disabled={saving || saveBlocked}
+          title={
+            saveBlocked
+              ? "A selected model is blocked by no-egress. Choose a local model, or set DOKTOK_NO_EGRESS=false on the host."
+              : undefined
+          }
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {notice && (
+          <span role="status" className="muted">
+            {notice}
+          </span>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <section className="panel settings-page" aria-label="Settings">
@@ -1492,6 +1515,15 @@ export function SettingsPanel() {
             onClick={() => setTab("settings")}
           >
             Settings
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "models"}
+            className={tab === "models" ? "active" : ""}
+            onClick={() => setTab("models")}
+          >
+            Model stack
           </button>
           <button
             type="button"
@@ -1524,7 +1556,6 @@ export function SettingsPanel() {
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section">
-          <h3>AI models</h3>
           {/* Single source of truth for the host's data-egress posture. The wording (not just the
               colour) carries the state, so it stays legible without colour. */}
           {ai.no_egress !== undefined && (
@@ -1574,104 +1605,6 @@ export function SettingsPanel() {
               sent to api.openai.com. Switch both purposes to a local model to keep data on this host.
             </p>
           )}
-          <p className="muted">
-            Choose the local (or remote) model used for each AI purpose. The chat/RAG model applies
-            immediately on Save; the pipeline model applies on the next worker reconcile.
-          </p>
-          <PurposeEditor
-            title="Data pipeline"
-            description="Feature extraction during ingestion (titles, dates, categories, structured records)."
-            options={catalog.pipeline}
-            value={ai.pipeline}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.pipeline}
-            violation={violations.pipeline}
-            onChange={(pipeline) => setAi({ ...ai, pipeline })}
-          />
-          <PurposeEditor
-            title="Document interrogation"
-            description="RAG chat, agents, tools and structured output over your documents."
-            options={catalog.rag}
-            value={ai.rag}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.rag}
-            violation={violations.rag}
-            onChange={(rag) => setAi({ ...ai, rag })}
-          />
-          <PurposeEditor
-            title="Entity recognition (NER)"
-            description="Model that finds people, organizations and places in your documents."
-            options={catalog.ner ?? []}
-            value={ai.ner}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.ner}
-            violation={violations.ner}
-            onChange={(ner) => setAi({ ...ai, ner })}
-          />
-          <PurposeEditor
-            title="Knowledge graph (relations)"
-            description="Model that extracts relationships between entities for the knowledge graph."
-            options={catalog.keg ?? []}
-            value={ai.keg}
-            reasoningLevels={catalog.reasoning_levels}
-            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-            noEgress={noEgress}
-            status={ai.purpose_status?.keg}
-            violation={violations.keg}
-            onChange={(keg) => setAi({ ...ai, keg })}
-          />
-          <div className="settings-purpose">
-            <h4>Embedding (index)</h4>
-            <p className="muted">
-              The model that embeds your documents for semantic search. Read-only: changing it would
-              require re-indexing the whole corpus.
-            </p>
-            <div className="settings-row">
-              <label>
-                Model{" "}
-                <input
-                  type="text"
-                  aria-label="Embedding model"
-                  value={ai.embedding_model ?? ""}
-                  readOnly
-                  disabled
-                />
-              </label>
-              <label>
-                Context{" "}
-                <input
-                  type="text"
-                  aria-label="Embedding context"
-                  value={ai.embedding_num_ctx ? ctxLabel(ai.embedding_num_ctx) : ""}
-                  readOnly
-                  disabled
-                />
-              </label>
-            </div>
-            <OllamaUrlField
-              label="Embedding Ollama URL"
-              value={ai.embedding?.ollama_base_url}
-              defaultUrl={ai.ollama_base_url_default ?? ""}
-              model={ai.embedding_model ?? ""}
-              onChange={(ollama_base_url) =>
-                setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
-              }
-            />
-            <EgressStatusNote status={ai.purpose_status?.embedding} />
-            {violations.embedding && (
-              <p role="alert" className="settings-test-fail egress-status">
-                <span aria-hidden="true">✖ </span>
-                That Ollama server is off this host and not permitted while no-egress is on.{" "}
-                <span className="egress-status-detail">({violations.embedding.value})</span>
-              </p>
-            )}
-          </div>
           <div className="settings-purpose">
             <h4>OpenAI</h4>
             <p className="muted">
@@ -1783,32 +1716,158 @@ export function SettingsPanel() {
             )}
           </div>
 
-          {egressError && (
-            <p role="alert" className="status-error egress-form-error">
-              {egressError}
-            </p>
-          )}
-          <div className="settings-actions">
-            <button
-              type="button"
-              className="settings-save"
-              onClick={save}
-              disabled={saving || saveBlocked}
-              title={
-                saveBlocked
-                  ? "A selected model is blocked by no-egress. Choose a local model, or set DOKTOK_NO_EGRESS=false on the host."
-                  : undefined
-              }
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            {notice && (
-              <span role="status" className="muted">
-                {notice}
-              </span>
-            )}
-          </div>
+          {saveBar}
         </div>
+        ))}
+
+      {tab === "models" &&
+        (!catalog || !ai || !ocr ? (
+          <p role="status">Loading settings…</p>
+        ) : (
+          <div className="settings-section">
+            <div className="settings-cards-row">
+            <div className="settings-card">
+              <h4>Server defaults (read-only)</h4>
+              <p className="muted">
+                What the deployment is configured to use for each stage (from the server
+                environment). These apply whenever you have not set an override. Change them in the
+                server configuration, not here.
+              </p>
+              <ul className="settings-defaults">
+                <li>
+                  <span>Data pipeline</span>
+                  <span className="muted">
+                    {ai.pipeline.provider} · {ai.pipeline.model}
+                  </span>
+                </li>
+                <li>
+                  <span>Document interrogation / Chat</span>
+                  <span className="muted">
+                    {ai.rag.provider} · {ai.rag.model}
+                  </span>
+                </li>
+                <li>
+                  <span>Entity recognition (NER)</span>
+                  <span className="muted">
+                    {ai.ner.provider} · {ai.ner.model}
+                  </span>
+                </li>
+                <li>
+                  <span>Knowledge graph (relations)</span>
+                  <span className="muted">
+                    {ai.keg.provider} · {ai.keg.model}
+                  </span>
+                </li>
+                <li>
+                  <span>Embedding (index)</span>
+                  <span className="muted">{ai.embedding_model ?? "—"}</span>
+                </li>
+              </ul>
+            </div>
+            <div className="settings-card">
+              <h4>Your overrides</h4>
+              <p className="muted">
+                Choose the local (or remote) model used for each AI purpose. The chat/RAG model
+                applies immediately on Save; the pipeline model applies on the next worker reconcile.
+              </p>
+              <PurposeEditor
+                title="Data pipeline"
+                description="Feature extraction during ingestion (titles, dates, categories, structured records)."
+                options={catalog.pipeline}
+                value={ai.pipeline}
+                reasoningLevels={catalog.reasoning_levels}
+                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                noEgress={noEgress}
+                status={ai.purpose_status?.pipeline}
+                violation={violations.pipeline}
+                onChange={(pipeline) => setAi({ ...ai, pipeline })}
+              />
+              <PurposeEditor
+                title="Document interrogation"
+                description="RAG chat, agents, tools and structured output over your documents."
+                options={catalog.rag}
+                value={ai.rag}
+                reasoningLevels={catalog.reasoning_levels}
+                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                noEgress={noEgress}
+                status={ai.purpose_status?.rag}
+                violation={violations.rag}
+                onChange={(rag) => setAi({ ...ai, rag })}
+              />
+              <PurposeEditor
+                title="Entity recognition (NER)"
+                description="Model that finds people, organizations and places in your documents."
+                options={catalog.ner ?? []}
+                value={ai.ner}
+                reasoningLevels={catalog.reasoning_levels}
+                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                noEgress={noEgress}
+                status={ai.purpose_status?.ner}
+                violation={violations.ner}
+                onChange={(ner) => setAi({ ...ai, ner })}
+              />
+              <PurposeEditor
+                title="Knowledge graph (relations)"
+                description="Model that extracts relationships between entities for the knowledge graph."
+                options={catalog.keg ?? []}
+                value={ai.keg}
+                reasoningLevels={catalog.reasoning_levels}
+                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                noEgress={noEgress}
+                status={ai.purpose_status?.keg}
+                violation={violations.keg}
+                onChange={(keg) => setAi({ ...ai, keg })}
+              />
+              <div className="settings-purpose">
+                <h4>Embedding (index)</h4>
+                <p className="muted">
+                  The model that embeds your documents for semantic search. Read-only: changing it
+                  would require re-indexing the whole corpus.
+                </p>
+                <div className="settings-row">
+                  <label>
+                    Model{" "}
+                    <input
+                      type="text"
+                      aria-label="Embedding model"
+                      value={ai.embedding_model ?? ""}
+                      readOnly
+                      disabled
+                    />
+                  </label>
+                  <label>
+                    Context{" "}
+                    <input
+                      type="text"
+                      aria-label="Embedding context"
+                      value={ai.embedding_num_ctx ? ctxLabel(ai.embedding_num_ctx) : ""}
+                      readOnly
+                      disabled
+                    />
+                  </label>
+                </div>
+                <OllamaUrlField
+                  label="Embedding Ollama URL"
+                  value={ai.embedding?.ollama_base_url}
+                  defaultUrl={ai.ollama_base_url_default ?? ""}
+                  model={ai.embedding_model ?? ""}
+                  onChange={(ollama_base_url) =>
+                    setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
+                  }
+                />
+                <EgressStatusNote status={ai.purpose_status?.embedding} />
+                {violations.embedding && (
+                  <p role="alert" className="settings-test-fail egress-status">
+                    <span aria-hidden="true">✖ </span>
+                    That Ollama server is off this host and not permitted while no-egress is on.{" "}
+                    <span className="egress-status-detail">({violations.embedding.value})</span>
+                  </p>
+                )}
+              </div>
+              {saveBar}
+            </div>
+            </div>
+          </div>
         ))}
 
           {tab === "drp" && <DrpSection />}

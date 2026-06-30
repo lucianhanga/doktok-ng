@@ -60,6 +60,9 @@ def test_get_defaults_and_update_roundtrip() -> None:
     assert defaults["rag"]["model"] == "qwen3.6:35b-a3b"
     assert defaults["openai_api_key_set"] is False
 
+    assert defaults["ner"]["provider"] == "openai"  # ADR-0023 default
+    assert defaults["keg"]["provider"] == "gliner-relex"  # ADR-0023 default
+
     resp = client.put(
         "/api/v1/settings/ai",
         json={
@@ -69,6 +72,8 @@ def test_get_defaults_and_update_roundtrip() -> None:
                 "num_ctx": 16384,
                 "reasoning": "high",
             },
+            "ner": dict(_LOCAL_NER),
+            "keg": dict(_LOCAL_KEG),
             "rag": {
                 "provider": "ollama",
                 "model": "qwen3.6:35b-a3b",
@@ -81,6 +86,7 @@ def test_get_defaults_and_update_roundtrip() -> None:
     )
     assert resp.status_code == 200
     saved = resp.json()
+    assert saved["ner"]["provider"] == "gliner" and saved["keg"]["provider"] == "gliner-relex"
     assert (
         saved["pipeline"]["model"] == "qwen3.6:35b-a3b" and saved["pipeline"]["reasoning"] == "high"
     )
@@ -253,6 +259,8 @@ def test_saving_settings_records_a_non_secret_activity_event() -> None:
                 "num_ctx": 8192,
                 "reasoning": "off",
             },
+            "ner": dict(_LOCAL_NER),
+            "keg": dict(_LOCAL_KEG),
             "rag": {
                 "provider": "ollama",
                 "model": "qwen3.6:35b-a3b",
@@ -372,6 +380,8 @@ def test_saving_ai_settings_clears_cached_providers() -> None:
                 "num_ctx": 16384,
                 "reasoning": "off",
             },
+            "ner": dict(_LOCAL_NER),
+            "keg": dict(_LOCAL_KEG),
             "rag": {
                 "provider": "ollama",
                 "model": "qwen3.6:35b-a3b",
@@ -385,9 +395,27 @@ def test_saving_ai_settings_clears_cached_providers() -> None:
     assert registry.is_registered(RagAnswerer) is False
 
 
+_LOCAL_NER = {
+    "provider": "gliner",
+    "model": "gliner-community/gliner_large-v2.5",
+    "num_ctx": 8192,
+    "reasoning": "off",
+}
+_LOCAL_KEG = {
+    "provider": "gliner-relex",
+    "model": "knowledgator/gliner-relex-large-v1.0",
+    "num_ctx": 8192,
+    "reasoning": "off",
+}
+
+
 def _ai_body(pipeline: dict[str, object], **extra: object) -> dict[str, object]:
     body: dict[str, object] = {
         "pipeline": pipeline,
+        # NER/KEG default to no-egress-safe local span models so egress tests isolate the
+        # pipeline/rag/url vector under test (callers override via **extra when needed).
+        "ner": dict(_LOCAL_NER),
+        "keg": dict(_LOCAL_KEG),
         "rag": {
             "provider": "ollama",
             "model": "qwen3.6:35b-a3b",

@@ -14,11 +14,21 @@ const CATALOG = {
   rag: [
     { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [32768], supports_reasoning: true },
   ],
+  ner: [
+    { provider: "gliner", model: "gliner-large-v2.1", label: "GLiNER Large v2.1", contexts: [512], supports_reasoning: false, requires_egress: false },
+    { provider: "openai", model: "gpt-4o-mini", label: "GPT-4o Mini", contexts: [128000], supports_reasoning: false, requires_egress: true },
+  ],
+  keg: [
+    { provider: "gliner-relex", model: "relex-base-v1", label: "ReLEx Base v1", contexts: [512], supports_reasoning: false, requires_egress: false },
+    { provider: "openai", model: "gpt-4o-mini", label: "GPT-4o Mini", contexts: [128000], supports_reasoning: false, requires_egress: true },
+  ],
   reasoning_levels: ["off", "low", "medium", "high"],
 };
 const AI = {
   pipeline: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 8192, reasoning: "off" },
   rag: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 32768, reasoning: "off" },
+  ner: { provider: "gliner", model: "gliner-large-v2.1", num_ctx: 512, reasoning: "off" },
+  keg: { provider: "gliner-relex", model: "relex-base-v1", num_ctx: 512, reasoning: "off" },
   embedding: { ollama_base_url: null },
   ollama_base_url_default: "http://localhost:11434",
   openai_api_key_set: false,
@@ -257,7 +267,7 @@ function mockApi() {
       if (aiPutResponder) return aiPutResponder(init?.body as string | undefined);
       const sent = init?.body ? JSON.parse(init.body as string) : {};
       return new Response(
-        JSON.stringify({ pipeline: sent.pipeline, rag: sent.rag, openai_api_key_set: false }),
+        JSON.stringify({ pipeline: sent.pipeline, rag: sent.rag, ner: sent.ner, keg: sent.keg, openai_api_key_set: false }),
         { status: 200 },
       );
     }),
@@ -272,6 +282,17 @@ test("renders AI model selectors from the catalog and current settings", async (
   expect(screen.getByLabelText("Document interrogation model")).toBeInTheDocument();
   // reasoning levels available
   expect(screen.getByLabelText("Data pipeline reasoning")).toHaveValue("off");
+});
+
+test("renders NER and KEG model selectors from the catalog and current settings", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Entity recognition (NER) model")).toBeInTheDocument(),
+  );
+  expect(screen.getByLabelText("Knowledge graph (relations) model")).toBeInTheDocument();
+  expect(screen.getByLabelText("Entity recognition (NER) context")).toBeInTheDocument();
+  expect(screen.getByLabelText("Knowledge graph (relations) context")).toBeInTheDocument();
 });
 
 test("changing a model and saving PUTs the new selection", async () => {
@@ -898,7 +919,8 @@ test("a pipeline blocked_reason of openai_selected shows the red block, not the 
     },
   };
   render(<SettingsPanel />);
-  await waitFor(() => expect(screen.getByText(/Blocked by no-egress/i)).toBeInTheDocument());
+  // Use exact string to match only the <strong> element (not the option suffix " (blocked by no-egress)").
+  await waitFor(() => expect(screen.getByText("Blocked by no-egress")).toBeInTheDocument());
   // The policy block must NEVER be conflated with the missing-key state.
   expect(screen.queryByText(/Needs an OpenAI API key/i)).not.toBeInTheDocument();
 });

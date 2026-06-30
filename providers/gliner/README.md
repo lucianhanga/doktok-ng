@@ -32,17 +32,17 @@ use the relex model's own one-pass `inference(... return_relations=True)` (it lo
 `UniEncoderSpanRelexGLiNER`). No `gliner.multitask` extras (`datasets`/`scikit-learn`/`evaluate`) are
 needed. Importing the provider package is light; a model loads only when an extractor is instantiated.
 
-## Use it in the pipeline (opt-in)
+## Use it in the pipeline
+
+Pick the backend in **Settings → AI**: NER and KAG relations are their own purposes — choose
+"GLiNER - local" for NER or "GLiNER-Relex - local" for relations (the local options carry no egress).
+The worker builds each extractor from those settings and live-reloads on change; if a selected local
+model can't load (runtime not installed), it falls back to the pipeline LLM. The only env knob is the
+torch device:
 
 ```bash
-DOKTOK_NER_BACKEND=gliner    # or: nuner            (default: the configured LLM NER)
-DOKTOK_REL_BACKEND=gliner-relex                     # (default: the configured LLM relations)
-DOKTOK_NER_MODEL=... / DOKTOK_REL_MODEL=...         # optional HF model id overrides
-DOKTOK_NER_DEVICE=cuda                              # optional torch device (default cpu)
+DOKTOK_NER_DEVICE=cuda     # optional torch device for the local models (default cpu)
 ```
-
-The worker (`apps/worker/.../composition.py`) swaps only the chosen extractor when these are set;
-the rest of enrichment is unchanged. The local models need no egress, so they work under no-egress.
 
 ## Which backend to use
 

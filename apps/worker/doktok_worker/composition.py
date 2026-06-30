@@ -18,6 +18,7 @@ from doktok_contracts.ports import (
     RecordExtractor,
     RelationExtractor,
 )
+from doktok_contracts.schemas import AiPurposeSettings
 from doktok_core.config import Settings
 from doktok_core.entities.extractor import RegexEntityExtractor
 from doktok_core.extraction.service import ExtractionResult, extract_document
@@ -106,74 +107,126 @@ from doktok_storage_postgres import (
 logger = logging.getLogger("doktok.worker")
 
 
-def _ner_backend_override(default: EntityNerExtractor) -> tuple[EntityNerExtractor, str | None]:
-    """Optionally swap the NER extractor for a local GLiNER/NuNER model (experimental, opt-in).
+def _torch_device() -> str | None:
+    """Torch device for the local span models (``DOKTOK_NER_DEVICE``, e.g. cpu|cuda). None = cpu."""
+    return os.environ.get("DOKTOK_NER_DEVICE") or None
 
-    Set ``DOKTOK_NER_BACKEND=gliner|nuner`` to extract PERSON/ORG/GPE with a local span model
-    instead of the configured LLM (``DOKTOK_NER_MODEL`` overrides the HF model id;
-    ``DOKTOK_NER_DEVICE`` sets the torch device, e.g. cpu|cuda). Requires the gliner runtime
-    (``make ner-models``). The local model needs no egress, so it applies even under no-egress.
-    Falls back to the LLM extractor (with a warning) when unset, unknown, or the runtime is
-    unavailable. The returned token feeds the rebuild signature so toggling the env var rebuilds.
+
+def _resolve_ner_backend(
+    cfg: AiPurposeSettings,
+    fallback: EntityNerExtractor,
+    *,
+    key: str,
+    no_egress: bool,
+    default_url: str,
+    timeout: float,
+    keep_alive: str,
+) -> tuple[EntityNerExtractor, str]:
+    """Build the NER extractor for the configured ``ner`` purpose (ADR-0023): a local span model
+    (``gliner`` / ``nuner``, no egress) or an LLM (``openai`` / ``ollama``). A local backend that
+    fails to load (runtime/model missing) falls back to ``fallback`` (the pipeline LLM NER) so the
+    worker never crashes. Returns ``(extractor, signature-token)`` for the rebuild signature.
     """
-    backend = os.environ.get("DOKTOK_NER_BACKEND", "").strip().lower()
-    if backend not in {"gliner", "nuner"}:
-        return default, None
-    device = os.environ.get("DOKTOK_NER_DEVICE") or None
-    model_name = os.environ.get("DOKTOK_NER_MODEL") or None
-    try:
-        from doktok_provider_gliner import GlinerEntityNerExtractor, NuNerEntityNerExtractor
+    provider, model = cfg.provider, cfg.model
+    if provider in ("gliner", "nuner"):
+        try:
+            from doktok_provider_gliner import GlinerEntityNerExtractor, NuNerEntityNerExtractor
 
-        extractor: EntityNerExtractor
-        if backend == "gliner":
-            extractor = GlinerEntityNerExtractor(
-                model_name or "gliner-community/gliner_large-v2.5", device=device
+            device = _torch_device()
+            ext: EntityNerExtractor = (
+                GlinerEntityNerExtractor(model, device=device)
+                if provider == "gliner"
+                else NuNerEntityNerExtractor(model, device=device)
             )
-        else:
-            extractor = NuNerEntityNerExtractor(model_name or "numind/NuNER_Zero", device=device)
-    except Exception as exc:  # noqa: BLE001 - any load failure must fall back, never crash the worker
-        logger.warning(
-            "DOKTOK_NER_BACKEND=%s requested but unavailable (%s); using the configured LLM NER",
-            backend,
-            exc,
-        )
-        return default, None
-    token = f"{backend}:{model_name or 'default'}:{device or 'cpu'}"
-    logger.info("NER backend override active: %s", token)
-    return extractor, token
+            logger.info("NER backend: local %s (%s)", provider, model)
+            return ext, f"{provider}:{model}:{device or 'cpu'}"
+        except Exception as exc:  # noqa: BLE001 - a load failure must fall back, never crash
+            logger.warning(
+                "NER set to local %s (%s) but unavailable (%s); falling back to the pipeline LLM",
+                provider,
+                model,
+                exc,
+            )
+            return fallback, f"{provider}-fallback"
+    if provider == "openai":
+        if no_egress or not key:
+            logger.error(
+                "NER is set to OpenAI but %s; NER blocked",
+                "no-egress is on" if no_egress else "the API key is missing",
+            )
+            return EgressBlocked("NER"), "openai:blocked"
+        effort = openai_reasoning_effort(cfg.reasoning, model)
+        return OpenAiEntityNerExtractor(
+            model, key, timeout=timeout, reasoning_effort=effort
+        ), f"openai:{model}"
+    # ollama (not offered in the catalog, but honored if hand-configured)
+    if no_egress and url_requires_egress(cfg.ollama_base_url, default_url=default_url):
+        return EgressBlocked("NER"), "ollama:blocked"
+    base = cfg.ollama_base_url or default_url
+    return OllamaEntityNerExtractor(
+        model,
+        model,
+        base,
+        timeout=timeout,
+        num_ctx=cfg.num_ctx,
+        think=ollama_think_for(cfg.reasoning, model, structured=True),
+        keep_alive=keep_alive,
+    ), f"ollama:{model}:{base}"
 
 
-def _relation_backend_override(default: RelationExtractor) -> tuple[RelationExtractor, str | None]:
-    """Optionally swap the relation extractor for local GLiNER-Relex (experimental, opt-in).
-
-    Set ``DOKTOK_REL_BACKEND=gliner-relex`` to extract KAG triples with the local GLiNER-Relex
-    model instead of the configured LLM (``DOKTOK_REL_MODEL`` overrides the HF model id;
-    ``DOKTOK_NER_DEVICE`` sets the torch device). Requires the gliner runtime (``make ner-models``).
-    Needs no egress, so it applies even under no-egress. Falls back to the LLM extractor (with a
-    warning) when unset, unknown, or the runtime is unavailable; the token feeds the rebuild
-    signature.
+def _resolve_relation_backend(
+    cfg: AiPurposeSettings,
+    fallback: RelationExtractor,
+    *,
+    key: str,
+    no_egress: bool,
+    default_url: str,
+    timeout: float,
+    keep_alive: str,
+) -> tuple[RelationExtractor, str]:
+    """Build the relation (KAG) extractor for the configured ``keg`` purpose (ADR-0023): local
+    GLiNER-Relex (no egress) or an LLM. A local backend that fails to load uses ``fallback``
+    (the pipeline LLM relation extractor). Returns ``(extractor, signature-token)``.
     """
-    backend = os.environ.get("DOKTOK_REL_BACKEND", "").strip().lower()
-    if backend not in {"gliner-relex", "gliner_relex"}:
-        return default, None
-    device = os.environ.get("DOKTOK_NER_DEVICE") or None
-    model_name = os.environ.get("DOKTOK_REL_MODEL") or None
-    try:
-        from doktok_provider_gliner import GlinerRelexRelationExtractor
+    provider, model = cfg.provider, cfg.model
+    if provider in ("gliner-relex", "gliner_relex"):
+        try:
+            from doktok_provider_gliner import GlinerRelexRelationExtractor
 
-        extractor = GlinerRelexRelationExtractor(
-            model_name or "knowledgator/gliner-relex-large-v1.0", device=device
-        )
-    except Exception as exc:  # noqa: BLE001 - any load failure must fall back, never crash the worker
-        logger.warning(
-            "DOKTOK_REL_BACKEND=%s requested but unavailable (%s); using the configured LLM",
-            backend,
-            exc,
-        )
-        return default, None
-    token = f"gliner-relex:{model_name or 'default'}:{device or 'cpu'}"
-    logger.info("relation backend override active: %s", token)
-    return extractor, token
+            device = _torch_device()
+            ext = GlinerRelexRelationExtractor(model, device=device)
+            logger.info("relation backend: local gliner-relex (%s)", model)
+            return ext, f"gliner-relex:{model}:{device or 'cpu'}"
+        except Exception as exc:  # noqa: BLE001 - a load failure must fall back, never crash
+            logger.warning(
+                "Relations local gliner-relex (%s) unavailable (%s); falling back to LLM",
+                model,
+                exc,
+            )
+            return fallback, "gliner-relex-fallback"
+    if provider == "openai":
+        if no_egress or not key:
+            logger.error(
+                "Relations set to OpenAI but %s; relations blocked",
+                "no-egress is on" if no_egress else "the API key is missing",
+            )
+            return EgressBlocked("Relations"), "openai:blocked"
+        effort = openai_reasoning_effort(cfg.reasoning, model)
+        return OpenAiRelationExtractor(
+            model, key, timeout=timeout, reasoning_effort=effort
+        ), f"openai:{model}"
+    if no_egress and url_requires_egress(cfg.ollama_base_url, default_url=default_url):
+        return EgressBlocked("Relations"), "ollama:blocked"
+    base = cfg.ollama_base_url or default_url
+    return OllamaRelationExtractor(
+        model,
+        model,
+        base,
+        timeout=timeout,
+        num_ctx=cfg.num_ctx,
+        think=ollama_think_for(cfg.reasoning, model, structured=True),
+        keep_alive=keep_alive,
+    ), f"ollama:{model}:{base}"
 
 
 def tenant_ids(settings: Settings) -> list[str]:
@@ -507,9 +560,26 @@ def build_services(
                 think=p_think,
                 keep_alive=settings.enrich_keep_alive,
             )
-        # Experimental opt-in: local GLiNER/NuNER NER + GLiNER-Relex relations can replace the LLM.
-        ner_extractor, ner_token = _ner_backend_override(ner_extractor)
-        relation_extractor, rel_token = _relation_backend_override(relation_extractor)
+        # NER + KAG relations are their own AI purposes (ADR-0023): built from ai.ner / ai.keg
+        # (local span model or LLM), with the pipeline-LLM extractors built above as the fallback.
+        ner_extractor, ner_token = _resolve_ner_backend(
+            ai.ner,
+            ner_extractor,
+            key=key,
+            no_egress=no_egress,
+            default_url=default_url,
+            timeout=timeout,
+            keep_alive=settings.enrich_keep_alive,
+        )
+        relation_extractor, rel_token = _resolve_relation_backend(
+            ai.keg,
+            relation_extractor,
+            key=key,
+            no_egress=no_egress,
+            default_url=default_url,
+            timeout=timeout,
+            keep_alive=settings.enrich_keep_alive,
+        )
         signature: tuple[object, ...] = (
             pl.provider,
             pl.model,

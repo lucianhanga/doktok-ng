@@ -165,3 +165,10 @@ class InMemoryChatThreadRepository:
         return updated.model_copy(
             update={"message_count": len(self._messages.get((tenant_id, thread_id), []))}
         )
+
+    def set_auto_title(self, tenant_id: str, thread_id: str, title: str) -> None:
+        clean = title.strip()
+        thread = self._threads.get((tenant_id, thread_id))
+        if thread is None or not clean or thread.title_source != "auto":
+            return
+        self._threads[(tenant_id, thread_id)] = thread.model_copy(update={"title": clean})

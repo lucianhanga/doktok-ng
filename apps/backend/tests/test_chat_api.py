@@ -48,7 +48,9 @@ class _SemanticChat:
     """Classifies nothing as aggregation, so chat deterministically falls through to RAG without
     touching a real model (some questions, e.g. 'what is the total?', trip the keyword gate)."""
 
-    def complete(self, prompt: str) -> str:  # noqa: ARG002
+    def complete(self, prompt: str) -> str:
+        if "titles for chat conversations" in prompt:
+            return "Spending total overview"
         return '{"is_aggregation": false}'
 
 
@@ -148,9 +150,9 @@ def test_thread_persists_turns_and_loads_history() -> None:
     )
     assert answerer.seen_history is not None and len(answerer.seen_history) == 2
 
-    # The thread is listed with its title seeded from the first message.
+    # The thread is listed with its short LLM-generated auto title (from the first question).
     threads = client.get("/api/v1/chat/threads", headers=h).json()
-    assert threads[0]["id"] == thread_id and threads[0]["title"] == "what is the total?"
+    assert threads[0]["id"] == thread_id and threads[0]["title"] == "Spending total overview"
 
 
 def test_chat_with_unknown_thread_is_404() -> None:
@@ -310,7 +312,9 @@ def test_response_carries_request_id_header() -> None:
 
 
 class FakeChatModel:
-    def complete(self, prompt: str) -> str:  # noqa: ARG002
+    def complete(self, prompt: str) -> str:
+        if "titles for chat conversations" in prompt:
+            return "Block House spending"
         return (
             '{"is_aggregation": true, "operation": "sum", "merchant": "Block House", '
             '"direction": "debit", "currency": "EUR", "date_from": null, "date_to": null}'

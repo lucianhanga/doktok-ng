@@ -40,6 +40,7 @@ from doktok_core.aggregation import (
 )
 from doktok_core.chat.memory import recall_context, remember_turn
 from doktok_core.chat.summary import prepare_context
+from doktok_core.chat.title import generate_thread_title
 from doktok_core.tools import ToolGateway
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -162,6 +163,16 @@ def _load_thread(threads: Threads, tenant_id: str, thread_id: str, question: str
     return history
 
 
+def _maybe_title_thread(
+    http_request: Request, threads: Threads, tenant_id: str, thread_id: str, question: str
+) -> None:
+    """On the first turn, summarize the question into a short auto title (ADR-0022). Best-effort:
+    on empty/failed generation the truncated-question seed stays. Never raises."""
+    title = generate_thread_title(get_chat_model(http_request), question)
+    if title:
+        threads.set_auto_title(tenant_id, thread_id, title)
+
+
 # ---- Thread management (M6.4 #248) ----
 
 
@@ -224,6 +235,8 @@ def chat(
     history = request.history
     if request.thread_id:
         history = _load_thread(threads, tenant_id, request.thread_id, question)
+        if not history:  # first turn: give the thread a short LLM title
+            _maybe_title_thread(http_request, threads, tenant_id, request.thread_id, question)
         # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted summary so long
         # threads stay within the context window. No-op for short threads (behaviour unchanged).
         history = prepare_context(
@@ -293,6 +306,8 @@ def chat_stream(
     history = request.history
     if request.thread_id:
         history = _load_thread(threads, tenant_id, request.thread_id, question)
+        if not history:  # first turn: give the thread a short LLM title
+            _maybe_title_thread(http_request, threads, tenant_id, request.thread_id, question)
         # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted summary so long
         # threads stay within the context window. No-op for short threads (behaviour unchanged).
         history = prepare_context(

@@ -1067,6 +1067,44 @@ export function ChatPanel({
             </button>
           )}
 
+          <div className="chat-toggle-row">
+            <label className="chat-reasoning-toggle">
+              <input
+                type="checkbox"
+                checked={showReasoning}
+                onChange={(e) => setShowReasoning(e.target.checked)}
+                disabled={streaming !== null}
+              />
+              <span className="muted">Show reasoning</span>
+            </label>
+
+            <label
+              className="chat-reasoning-toggle"
+              title="Recall facts from your past conversations and remember this one. Off = private (nothing stored or recalled)."
+            >
+              <input
+                type="checkbox"
+                checked={remember && !incognito}
+                onChange={(e) => setRemember(e.target.checked)}
+                disabled={streaming !== null || incognito}
+              />
+              <span className="muted">Remember</span>
+            </label>
+
+            <label
+              className="chat-reasoning-toggle"
+              title="Incognito: this conversation is not saved - no thread is stored and nothing is recalled or remembered. Choose it on a New conversation."
+            >
+              <input
+                type="checkbox"
+                checked={incognito}
+                onChange={(e) => setIncognito(e.target.checked)}
+                disabled={streaming !== null || threadId !== null}
+              />
+              <span className="muted">Incognito</span>
+            </label>
+          </div>
+
           <form onSubmit={ask} className="search-form chat-ask-form">
             <textarea
               className="chat-ask-input"
@@ -1096,42 +1134,6 @@ export function ChatPanel({
               <button type="submit">Ask</button>
             )}
           </form>
-
-          <label className="chat-reasoning-toggle">
-            <input
-              type="checkbox"
-              checked={showReasoning}
-              onChange={(e) => setShowReasoning(e.target.checked)}
-              disabled={streaming !== null}
-            />
-            <span className="muted">Show reasoning</span>
-          </label>
-
-          <label
-            className="chat-reasoning-toggle"
-            title="Recall facts from your past conversations and remember this one. Off = private (nothing stored or recalled)."
-          >
-            <input
-              type="checkbox"
-              checked={remember && !incognito}
-              onChange={(e) => setRemember(e.target.checked)}
-              disabled={streaming !== null || incognito}
-            />
-            <span className="muted">Remember</span>
-          </label>
-
-          <label
-            className="chat-reasoning-toggle"
-            title="Incognito: this conversation is not saved - no thread is stored and nothing is recalled or remembered. Choose it on a New conversation."
-          >
-            <input
-              type="checkbox"
-              checked={incognito}
-              onChange={(e) => setIncognito(e.target.checked)}
-              disabled={streaming !== null || threadId !== null}
-            />
-            <span className="muted">Incognito</span>
-          </label>
 
           <label className="chat-mode-select" title="Agent = the assistant calls tools (exact counts, search, totals) - recommended. Classic = the deterministic RAG pipeline (no tools).">
             <span className="muted">Mode</span>

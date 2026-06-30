@@ -2545,6 +2545,18 @@ tr.row-selected {
   cursor: pointer;
 }
 
+/* The toggle line above the question composer (Show reasoning / Remember / Incognito). */
+.chat-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.4rem;
+}
+.chat-toggle-row .chat-reasoning-toggle {
+  margin: 0;
+}
+
 /* Chat source cards + importance (M6.4) */
 .chat-answer-block {
   display: flex;

@@ -8,6 +8,14 @@ function fmtTokFull(n: number): string {
   return n.toLocaleString();
 }
 
+/** A step's UTC time as HH:MM:SSZ (personalAI style), or null if absent/unparseable. */
+function fmtStepTime(at: string | null | undefined): string | null {
+  if (!at) return null;
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.toISOString().slice(11, 19)}Z`;
+}
+
 const METER_BAR = "#4a90d9";
 
 function ChatContextMeter({
@@ -425,6 +433,11 @@ export function ChatActivityTimeline({
                         aria-hidden="true"
                       />
                       <div className="chat-timeline-node-content">
+                        {fmtStepTime(step.at) && (
+                          <time className="chat-timeline-node-time muted" dateTime={step.at ?? ""}>
+                            {fmtStepTime(step.at)}
+                          </time>
+                        )}
                         <span
                           className={`chat-timeline-step-label chat-timeline-step-${step.kind}`}
                         >

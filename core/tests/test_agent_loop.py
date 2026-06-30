@@ -161,6 +161,8 @@ def test_loop_dedupes_citations_across_tool_calls() -> None:
 
 
 def test_tool_step_summarizes_args_in_detail() -> None:
+    from datetime import datetime
+
     from doktok_core.agent.trace import tool_step
 
     s = tool_step("retrieve_passages", {"query": "m-net invoices", "k": 8})
@@ -168,3 +170,6 @@ def test_tool_step_summarizes_args_in_detail() -> None:
     assert "query: m-net invoices" in s.detail and "k: 8" in s.detail
     # No args -> empty detail (back-compat for callers that don't pass args, e.g. the graph).
     assert tool_step("retrieve_passages").detail == ""
+    # Each step carries an ISO-8601 UTC emit timestamp (per-step time in the activity timeline).
+    assert s.at is not None
+    datetime.fromisoformat(s.at)  # parseable; raises if malformed

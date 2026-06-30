@@ -795,6 +795,9 @@ class TraceStep(BaseModel):
     kind: str = "step"
     label: str
     detail: str = ""
+    # ISO-8601 UTC timestamp of when the step was emitted (personalAI parity). None on legacy rows
+    # that predate the field; the UI shows a per-step time only when present.
+    at: str | None = None
 
 
 class ChatEvent(BaseModel):

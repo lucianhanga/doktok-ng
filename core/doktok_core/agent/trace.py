@@ -9,8 +9,15 @@ the label in ``delta`` too, for any legacy delta-only consumer).
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from doktok_contracts.schemas import ChatEvent, TraceStep
+
+
+def _now() -> str:
+    """ISO-8601 UTC timestamp for a trace step (the moment it is emitted)."""
+    return datetime.now(UTC).isoformat()
+
 
 # Tool name -> (kind, human label). Kind drives the per-step icon/colour in the UI.
 _TOOL_TRACE: dict[str, tuple[str, str]] = {
@@ -43,11 +50,11 @@ def tool_step(name: str, args: Mapping[str, object] | None = None) -> TraceStep:
     what each tool was called with (ToolIO parity with personalAI).
     """
     kind, label = _TOOL_TRACE.get(name, ("tool", f"Using {name}"))
-    return TraceStep(kind=kind, label=label, detail=_format_args(args) if args else "")
+    return TraceStep(kind=kind, label=label, detail=_format_args(args) if args else "", at=_now())
 
 
 def step(kind: str, label: str, detail: str = "") -> TraceStep:
-    return TraceStep(kind=kind, label=label, detail=detail)
+    return TraceStep(kind=kind, label=label, detail=detail, at=_now())
 
 
 def step_event(trace_step: TraceStep) -> ChatEvent:

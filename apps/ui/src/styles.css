@@ -3162,6 +3162,12 @@ tr.row-selected {
 .chat-timeline-node-detail {
   font-size: 0.74rem;
 }
+.chat-timeline-node-time {
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  margin-right: 0.4rem;
+  opacity: 0.7;
+}
 .chat-timeline-reasoning {
   max-height: 8rem;
   overflow-y: auto;

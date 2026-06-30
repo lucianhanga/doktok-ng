@@ -1464,6 +1464,7 @@ export interface TraceStep {
   kind: string;
   label: string;
   detail?: string;
+  at?: string | null; // ISO-8601 UTC when the step was emitted (null on legacy rows)
 }
 
 export interface ChatEvent {

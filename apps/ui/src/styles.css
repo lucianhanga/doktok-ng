@@ -84,6 +84,7 @@ body {
 }
 .app-header {
   flex: 0 0 auto;
+  border-bottom: 1px solid var(--border, #2a3342);
 }
 .app-main {
   flex: 1 1 auto;
@@ -155,8 +156,6 @@ body {
 }
 
 .panel {
-  border: 1px solid rgba(127, 127, 127, 0.3);
-  border-radius: 8px;
   padding: 1rem 1.25rem;
   flex: 1;
 }

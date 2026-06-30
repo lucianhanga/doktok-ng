@@ -1244,18 +1244,26 @@ function HealthDot({ status }: { status?: PurposeHealth }) {
   if (!status) return null;
   if (status === "checking")
     return (
-      <span className="ms-health ms-health-pending" aria-label="checking">
+      <span className="ms-health ms-health-pending" title="Checking this model…" aria-label="checking">
         …
       </span>
     );
   if (status === "ok")
     return (
-      <span className="ms-health ms-health-ok" title="Working" aria-label="working">
+      <span
+        className="ms-health ms-health-ok"
+        title="Health check: this model is reachable and ready"
+        aria-label="working"
+      >
         ✓
       </span>
     );
   return (
-    <span className="ms-health ms-health-fail" title="Not working" aria-label="failing">
+    <span
+      className="ms-health ms-health-fail"
+      title="Health check: this model is not reachable - check the server/URL/key"
+      aria-label="failing"
+    >
       ✗
     </span>
   );
@@ -1865,6 +1873,7 @@ export function SettingsPanel() {
                   <h4>
                     Data pipeline{" "}
                     <InfoHint label="Data pipeline">{STAGE_INFO.pipeline}</InfoHint>
+                    <HealthDot status={health?.pipeline} />
                   </h4>
                   <div className="settings-row">
                     <label>
@@ -1888,6 +1897,7 @@ export function SettingsPanel() {
                   <h4>
                     Document interrogation{" "}
                     <InfoHint label="Document interrogation">{STAGE_INFO.rag}</InfoHint>
+                    <HealthDot status={health?.rag} />
                   </h4>
                   <div className="settings-row">
                     <label>
@@ -1910,6 +1920,7 @@ export function SettingsPanel() {
                   <h4>
                     Entity recognition (NER){" "}
                     <InfoHint label="Entity recognition (NER)">{STAGE_INFO.ner}</InfoHint>
+                    <HealthDot status={health?.ner} />
                   </h4>
                   <div className="settings-row">
                     <label>
@@ -1932,6 +1943,7 @@ export function SettingsPanel() {
                   <h4>
                     Knowledge graph (relations){" "}
                     <InfoHint label="Knowledge graph (relations)">{STAGE_INFO.keg}</InfoHint>
+                    <HealthDot status={health?.keg} />
                   </h4>
                   <div className="settings-row">
                     <label>
@@ -1954,6 +1966,7 @@ export function SettingsPanel() {
                   <h4>
                     Embedding (index){" "}
                     <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
+                    <HealthDot status={health?.embedding} />
                   </h4>
                   <div className="settings-row">
                     <label>

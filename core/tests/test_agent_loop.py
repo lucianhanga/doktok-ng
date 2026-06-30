@@ -158,3 +158,13 @@ def test_loop_dedupes_citations_across_tool_calls() -> None:
     answer = run_agent("t", "q", model=model, gateway=_gateway(), tool_specs=[])
     # both tool calls return the same citation (d1/c1) -> deduped to one
     assert len(answer.citations) == 1
+
+
+def test_tool_step_summarizes_args_in_detail() -> None:
+    from doktok_core.agent.trace import tool_step
+
+    s = tool_step("retrieve_passages", {"query": "m-net invoices", "k": 8})
+    assert s.kind == "retrieve"
+    assert "query: m-net invoices" in s.detail and "k: 8" in s.detail
+    # No args -> empty detail (back-compat for callers that don't pass args, e.g. the graph).
+    assert tool_step("retrieve_passages").detail == ""

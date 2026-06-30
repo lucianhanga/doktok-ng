@@ -1353,7 +1353,13 @@ tr.row-selected {
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: repeat(6, auto);
-  gap: 1rem;
+  gap: 0.4rem 1rem;
+}
+.model-stack .settings-purpose h4 {
+  margin: 0 0 0.2rem;
+}
+.model-stack .settings-row + .settings-row {
+  margin-top: 0.2rem;
 }
 .model-stack-card {
   grid-row: 1 / -1;

@@ -233,6 +233,10 @@ function AnswerBlock({
   // Map citation index -> document, so a clicked [n] marker in the answer opens that document.
   const citeMap = new Map(turn.citations.map((c) => [c.index, c.document_id]));
   const citationIndices = new Set(turn.citations.map((c) => c.index));
+  // "Ungrounded" (warn + dim) means the answer is backed by NOTHING: not only does it not cite a
+  // [n] marker (turn.grounded), it also has no sources at all. A count/aggregate answer carries
+  // document/graph/transaction sources without inline [n] markers - those ARE grounded.
+  const ungrounded = !turn.grounded && turn.citations.length === 0;
   const onCitationClick =
     onOpenDocument && citeMap.size > 0
       ? (index: number) => {
@@ -344,14 +348,14 @@ function AnswerBlock({
             onShowAll={onShowSources}
             isLatest={turn.streaming}
           />
-          {!turn.streaming && !turn.grounded && !turn.stopped && (
+          {!turn.streaming && ungrounded && !turn.stopped && (
             <p role="status" className="banner-warning">
               This answer isn't grounded in your documents - no supporting sources were found, so
               treat it with caution.
             </p>
           )}
           <div
-            className={turn.grounded || turn.streaming ? "answer" : "answer empty"}
+            className={!ungrounded || turn.streaming ? "answer" : "answer empty"}
             aria-live={turn.streaming ? "polite" : undefined}
             aria-atomic={turn.streaming ? "false" : undefined}
           >

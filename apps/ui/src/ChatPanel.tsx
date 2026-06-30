@@ -526,7 +526,7 @@ function ThreadList({
           aria-label="Expand conversations"
           title="Show conversations"
         >
-          Conversations &#8250;
+          &#8250;
         </button>
       </aside>
     );

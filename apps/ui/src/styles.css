@@ -1346,6 +1346,51 @@ tr.row-selected {
   min-width: 0;
   margin-bottom: 0;
 }
+
+/* Model stack: two cards whose per-stage rows line up (CSS subgrid). Both cards have the same
+   children in the same order: a head row + one row per stage. */
+.model-stack {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(6, auto);
+  gap: 1rem;
+}
+.model-stack-card {
+  grid-row: 1 / -1;
+  display: grid;
+  grid-template-rows: subgrid;
+  align-content: start;
+  margin-bottom: 0;
+}
+.model-stack-card > .model-stack-head,
+.model-stack-card > .settings-purpose {
+  margin: 0;
+}
+.model-stack-head {
+  font-size: 1rem;
+}
+.model-stack-default {
+  margin: 0;
+}
+/* Simple, undecorated NATIVE controls in the override card (like the Documents filter selects). */
+.model-stack .settings-purpose select,
+.model-stack .settings-purpose input {
+  appearance: auto;
+  background: revert;
+  color: revert;
+  border: revert;
+  border-radius: revert;
+  padding: revert;
+  box-shadow: none;
+  font: revert;
+}
+.model-stack .settings-purpose select:hover,
+.model-stack .settings-purpose input:hover,
+.model-stack .settings-purpose select:focus-visible,
+.model-stack .settings-purpose input:focus-visible {
+  border: revert;
+  box-shadow: none;
+}
 .settings-card {
   border: 1px solid rgba(127, 127, 127, 0.3);
   border-radius: 8px;

@@ -1260,12 +1260,6 @@ function PurposeEditor({
   const selected =
     options.find((o) => o.provider === value.provider && o.model === value.model) ?? options[0];
   const USE_DEFAULT = "__default__";
-  const usingDefault =
-    !!defaultValue &&
-    value.provider === defaultValue.provider &&
-    value.model === defaultValue.model &&
-    value.reasoning === defaultValue.reasoning &&
-    value.num_ctx === defaultValue.num_ctx;
 
   return (
     <div className="settings-purpose">
@@ -1278,7 +1272,7 @@ function PurposeEditor({
           Model{" "}
           <select
             aria-label={`${title} model`}
-            value={usingDefault ? USE_DEFAULT : `${value.provider}:${value.model}`}
+            value={`${value.provider}:${value.model}`}
             onChange={(e) => {
               if (e.target.value === USE_DEFAULT) {
                 if (defaultValue) onChange({ ...defaultValue });
@@ -1325,8 +1319,17 @@ function PurposeEditor({
             aria-label={`${title} reasoning`}
             value={value.reasoning}
             disabled={!selected.supports_reasoning}
-            onChange={(e) => onChange({ ...value, reasoning: e.target.value })}
+            onChange={(e) =>
+              onChange({
+                ...value,
+                reasoning:
+                  e.target.value === USE_DEFAULT && defaultValue
+                    ? defaultValue.reasoning
+                    : e.target.value,
+              })
+            }
           >
+            {defaultValue && <option value={USE_DEFAULT}>Use server default</option>}
             {reasoningLevels.map((r) => (
               <option key={r} value={r}>
                 {r}
@@ -1755,156 +1758,165 @@ export function SettingsPanel() {
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section settings-section--wide">
-            <div className="settings-cards-row">
-            <div className="settings-card">
-              <h4>Server defaults (read-only)</h4>
-              <p className="muted">
-                What the deployment is configured to use for each stage (from the server
-                environment). These apply whenever you have not set an override. Change them in the
-                server configuration, not here.
-              </p>
-              <ul className="settings-defaults">
-                <li>
-                  <span>
+            <div className="settings-cards-row model-stack">
+              <div className="settings-card model-stack-card">
+                <h4 className="model-stack-head">
+                  Server defaults (read-only){" "}
+                  <InfoHint label="Server defaults">
+                    What the deployment is configured to use for each stage (from the server
+                    environment). These apply whenever you have not set an override. Change them in
+                    the server configuration, not here.
+                  </InfoHint>
+                </h4>
+                <div className="settings-purpose">
+                  <h4>
                     Data pipeline{" "}
                     <InfoHint label="Data pipeline">{STAGE_INFO.pipeline}</InfoHint>
-                  </span>
-                  <span className="muted">
-                    {(serverDefaults ?? ai).pipeline.provider} · {(serverDefaults ?? ai).pipeline.model} · reasoning {(serverDefaults ?? ai).pipeline.reasoning}
-                  </span>
-                </li>
-                <li>
-                  <span>
-                    Document interrogation / Chat{" "}
+                  </h4>
+                  <p className="muted model-stack-default">
+                    {(serverDefaults ?? ai).pipeline.provider} · {(serverDefaults ?? ai).pipeline.model}{" "}
+                    · reasoning {(serverDefaults ?? ai).pipeline.reasoning}
+                  </p>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
+                    Document interrogation{" "}
                     <InfoHint label="Document interrogation">{STAGE_INFO.rag}</InfoHint>
-                  </span>
-                  <span className="muted">
-                    {(serverDefaults ?? ai).rag.provider} · {(serverDefaults ?? ai).rag.model} · reasoning {(serverDefaults ?? ai).rag.reasoning}
-                  </span>
-                </li>
-                <li>
-                  <span>
+                  </h4>
+                  <p className="muted model-stack-default">
+                    {(serverDefaults ?? ai).rag.provider} · {(serverDefaults ?? ai).rag.model} ·
+                    reasoning {(serverDefaults ?? ai).rag.reasoning}
+                  </p>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
                     Entity recognition (NER){" "}
                     <InfoHint label="Entity recognition (NER)">{STAGE_INFO.ner}</InfoHint>
-                  </span>
-                  <span className="muted">
-                    {(serverDefaults ?? ai).ner.provider} · {(serverDefaults ?? ai).ner.model} · reasoning {(serverDefaults ?? ai).ner.reasoning}
-                  </span>
-                </li>
-                <li>
-                  <span>
+                  </h4>
+                  <p className="muted model-stack-default">
+                    {(serverDefaults ?? ai).ner.provider} · {(serverDefaults ?? ai).ner.model} ·
+                    reasoning {(serverDefaults ?? ai).ner.reasoning}
+                  </p>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
                     Knowledge graph (relations){" "}
                     <InfoHint label="Knowledge graph (relations)">{STAGE_INFO.keg}</InfoHint>
-                  </span>
-                  <span className="muted">
-                    {(serverDefaults ?? ai).keg.provider} · {(serverDefaults ?? ai).keg.model} · reasoning {(serverDefaults ?? ai).keg.reasoning}
-                  </span>
-                </li>
-                <li>
-                  <span>
+                  </h4>
+                  <p className="muted model-stack-default">
+                    {(serverDefaults ?? ai).keg.provider} · {(serverDefaults ?? ai).keg.model} ·
+                    reasoning {(serverDefaults ?? ai).keg.reasoning}
+                  </p>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
                     Embedding (index){" "}
                     <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
-                  </span>
-                  <span className="muted">{(serverDefaults ?? ai).embedding_model ?? "—"}</span>
-                </li>
-              </ul>
-            </div>
-            <div className="settings-card">
-              <h4>Your overrides</h4>
-              <p className="muted">
-                Choose the local (or remote) model used for each AI purpose. The chat/RAG model
-                applies immediately on Save; the pipeline model applies on the next worker reconcile.
-              </p>
-              <PurposeEditor
-                title="Data pipeline"
-                description={STAGE_INFO.pipeline}
-                options={catalog.pipeline}
-                value={ai.pipeline}
-                defaultValue={serverDefaults?.pipeline}
-                reasoningLevels={catalog.reasoning_levels}
-                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-                noEgress={noEgress}
-                status={ai.purpose_status?.pipeline}
-                violation={violations.pipeline}
-                onChange={(pipeline) => setAi({ ...ai, pipeline })}
-              />
-              <PurposeEditor
-                title="Document interrogation"
-                description={STAGE_INFO.rag}
-                options={catalog.rag}
-                value={ai.rag}
-                defaultValue={serverDefaults?.rag}
-                reasoningLevels={catalog.reasoning_levels}
-                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-                noEgress={noEgress}
-                status={ai.purpose_status?.rag}
-                violation={violations.rag}
-                onChange={(rag) => setAi({ ...ai, rag })}
-              />
-              <PurposeEditor
-                title="Entity recognition (NER)"
-                description={STAGE_INFO.ner}
-                options={catalog.ner ?? []}
-                value={ai.ner}
-                defaultValue={serverDefaults?.ner}
-                reasoningLevels={catalog.reasoning_levels}
-                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-                noEgress={noEgress}
-                status={ai.purpose_status?.ner}
-                violation={violations.ner}
-                onChange={(ner) => setAi({ ...ai, ner })}
-              />
-              <PurposeEditor
-                title="Knowledge graph (relations)"
-                description={STAGE_INFO.keg}
-                options={catalog.keg ?? []}
-                value={ai.keg}
-                defaultValue={serverDefaults?.keg}
-                reasoningLevels={catalog.reasoning_levels}
-                ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
-                noEgress={noEgress}
-                status={ai.purpose_status?.keg}
-                violation={violations.keg}
-                onChange={(keg) => setAi({ ...ai, keg })}
-              />
-              <div className="settings-purpose">
-                <h4>
-                  Embedding (index){" "}
-                  <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
-                </h4>
-                <div className="settings-row">
-                  <label>
-                    Model{" "}
-                    <input
-                      type="text"
-                      aria-label="Embedding model"
-                      value={ai.embedding_model ?? ""}
-                      readOnly
-                      disabled
-                    />
-                  </label>
-                </div>
-                <OllamaUrlField
-                  label="Embedding Ollama URL"
-                  value={ai.embedding?.ollama_base_url}
-                  defaultUrl={ai.ollama_base_url_default ?? ""}
-                  model={ai.embedding_model ?? ""}
-                  onChange={(ollama_base_url) =>
-                    setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
-                  }
-                />
-                <EgressStatusNote status={ai.purpose_status?.embedding} />
-                {violations.embedding && (
-                  <p role="alert" className="settings-test-fail egress-status">
-                    <span aria-hidden="true">✖ </span>
-                    That Ollama server is off this host and not permitted while no-egress is on.{" "}
-                    <span className="egress-status-detail">({violations.embedding.value})</span>
+                  </h4>
+                  <p className="muted model-stack-default">
+                    {(serverDefaults ?? ai).embedding_model ?? "—"}
                   </p>
-                )}
+                </div>
               </div>
-              {saveBar}
+              <div className="settings-card model-stack-card">
+                <h4 className="model-stack-head">
+                  Your overrides{" "}
+                  <InfoHint label="Your overrides">
+                    Choose the local (or remote) model used for each AI purpose. The chat/RAG model
+                    applies immediately on Save; the pipeline model applies on the next worker
+                    reconcile.
+                  </InfoHint>
+                </h4>
+                <PurposeEditor
+                  title="Data pipeline"
+                  description={STAGE_INFO.pipeline}
+                  options={catalog.pipeline}
+                  value={ai.pipeline}
+                  defaultValue={serverDefaults?.pipeline}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.pipeline}
+                  violation={violations.pipeline}
+                  onChange={(pipeline) => setAi({ ...ai, pipeline })}
+                />
+                <PurposeEditor
+                  title="Document interrogation"
+                  description={STAGE_INFO.rag}
+                  options={catalog.rag}
+                  value={ai.rag}
+                  defaultValue={serverDefaults?.rag}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.rag}
+                  violation={violations.rag}
+                  onChange={(rag) => setAi({ ...ai, rag })}
+                />
+                <PurposeEditor
+                  title="Entity recognition (NER)"
+                  description={STAGE_INFO.ner}
+                  options={catalog.ner ?? []}
+                  value={ai.ner}
+                  defaultValue={serverDefaults?.ner}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.ner}
+                  violation={violations.ner}
+                  onChange={(ner) => setAi({ ...ai, ner })}
+                />
+                <PurposeEditor
+                  title="Knowledge graph (relations)"
+                  description={STAGE_INFO.keg}
+                  options={catalog.keg ?? []}
+                  value={ai.keg}
+                  defaultValue={serverDefaults?.keg}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.keg}
+                  violation={violations.keg}
+                  onChange={(keg) => setAi({ ...ai, keg })}
+                />
+                <div className="settings-purpose">
+                  <h4>
+                    Embedding (index){" "}
+                    <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <input
+                        type="text"
+                        aria-label="Embedding model"
+                        value={ai.embedding_model ?? ""}
+                        readOnly
+                        disabled
+                      />
+                    </label>
+                  </div>
+                  <OllamaUrlField
+                    label="Embedding Ollama URL"
+                    value={ai.embedding?.ollama_base_url}
+                    defaultUrl={ai.ollama_base_url_default ?? ""}
+                    model={ai.embedding_model ?? ""}
+                    onChange={(ollama_base_url) =>
+                      setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
+                    }
+                  />
+                  <EgressStatusNote status={ai.purpose_status?.embedding} />
+                  {violations.embedding && (
+                    <p role="alert" className="settings-test-fail egress-status">
+                      <span aria-hidden="true">✖ </span>
+                      That Ollama server is off this host and not permitted while no-egress is on.{" "}
+                      <span className="egress-status-detail">({violations.embedding.value})</span>
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
-            </div>
+            {saveBar}
           </div>
         ))}
 

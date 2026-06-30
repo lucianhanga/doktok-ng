@@ -908,3 +908,25 @@ test("right pane shows Activity by default and switches to DocumentDetail on sou
   await userEvent.click(screen.getByRole("button", { name: "Back to activity" }));
   expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
 });
+
+test("incognito mode disables Remember (no persistence/recall)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "hi [1]" }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  const incognito = screen.getByLabelText(/incognito/i);
+  expect(incognito).not.toBeChecked();
+  // Remember is independent until incognito is on...
+  expect(screen.getByLabelText(/remember/i)).toBeEnabled();
+  await userEvent.click(incognito);
+  // ...then incognito forces memory off and locks the Remember toggle.
+  expect(screen.getByLabelText(/remember/i)).toBeDisabled();
+});

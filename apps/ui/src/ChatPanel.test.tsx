@@ -904,8 +904,8 @@ test("right pane shows Activity by default and switches to DocumentDetail on sou
   await userEvent.click(screen.getByRole("button", { name: /ref\.pdf/ }));
   expect(screen.getByRole("complementary", { name: "Document preview" })).toBeInTheDocument();
 
-  // Back arrow returns to Activity mode.
-  await userEvent.click(screen.getByRole("button", { name: "Back to activity" }));
+  // The Activity tab returns the pane to Activity mode.
+  await userEvent.click(screen.getByRole("tab", { name: "Activity" }));
   expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
 });
 

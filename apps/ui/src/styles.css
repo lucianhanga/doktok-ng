@@ -3038,12 +3038,6 @@ tr.row-selected {
   color: var(--muted, #8b97a8);
 }
 
-.chat-rail-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.2rem;
-}
-
 /* Activity timeline in the right pane: per-turn sections separated by a hairline. */
 .chat-activity-timeline {
   display: flex;
@@ -3309,11 +3303,41 @@ tr.row-selected {
   font-size: 0.95rem;
 }
 
-.chat-rail-close {
-  font-size: 1.2rem;
-  line-height: 1;
-  color: var(--muted, #8b97a8);
+/* The right pane's local Sources/Activity tab menu (flat, matching the global tab bar). */
+.chat-rail-tabs {
+  display: flex;
+  gap: 0.25rem;
 }
+.chat-rail-tabs button {
+  padding: 0.25rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text, #e6edf3);
+  opacity: 0.7;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.chat-rail-tabs button.active {
+  opacity: 1;
+  font-weight: 600;
+  color: var(--accent, #6ea8fe);
+}
+.chat-rail-tabs button:hover:not(.active) {
+  opacity: 1;
+  background: var(--hover-fill, rgba(255, 255, 255, 0.05));
+}
+
+.chat-explore-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+
 
 /* The "Sources (n)" chip + edit/delete actions on the question row (M8). */
 .chat-sources-chip {

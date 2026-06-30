@@ -988,6 +988,21 @@ export function ChatPanel({
         : { mode: "sources", turnIndex },
     );
   };
+  // The "Sources" tab of the right pane: show the most recent turn that has sources
+  // (falling back to the last turn). Activity vs Sources is the pane's local tab menu.
+  const showSourcesTab = () => {
+    expandRightPane();
+    let idx = -1;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].citations.length > 0) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) idx = turns.length - 1;
+    if (idx < 0) return; // no turns yet
+    setRail({ mode: "sources", turnIndex: idx });
+  };
   const openInRail = (docId: string) => {
     expandRightPane();
     setRail((r) => ({
@@ -1192,37 +1207,44 @@ export function ChatPanel({
             }
           >
             <div className="chat-rail-head chat-right-pane-head">
-              <h3>
-                {rail.mode === "preview"
-                  ? "Document"
-                  : rail.mode === "explore"
-                    ? `Evidence for "${rail.query}" (${rail.citations.length})`
-                    : rail.mode === "sources"
-                      ? `Sources (${turns[rail.turnIndex]?.citations.length ?? 0})`
-                      : "Activity"}
-              </h3>
-              <div className="chat-rail-head-actions">
-                {rail.mode !== "none" && (
-                  <button
-                    type="button"
-                    className="chat-rail-close link-button"
-                    aria-label="Back to activity"
-                    onClick={closeRail}
-                  >
-                    &larr;
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="chat-threads-toggle-text"
-                  onClick={toggleRightPane}
-                  aria-expanded={true}
-                  aria-label="Collapse activity panel"
-                  title="Collapse activity panel"
-                >
-                  Collapse &#8250;
-                </button>
-              </div>
+              {(() => {
+                const sourcesActive =
+                  rail.mode === "sources" ||
+                  rail.mode === "explore" ||
+                  (rail.mode === "preview" && rail.from === "sources");
+                return (
+                  <div className="chat-rail-tabs" role="tablist" aria-label="Right panel">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={sourcesActive}
+                      className={sourcesActive ? "active" : ""}
+                      onClick={showSourcesTab}
+                    >
+                      Sources
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={!sourcesActive}
+                      className={!sourcesActive ? "active" : ""}
+                      onClick={closeRail}
+                    >
+                      Activity
+                    </button>
+                  </div>
+                );
+              })()}
+              <button
+                type="button"
+                className="chat-threads-toggle-text"
+                onClick={toggleRightPane}
+                aria-expanded={true}
+                aria-label="Collapse activity panel"
+                title="Collapse activity panel"
+              >
+                Collapse &#8250;
+              </button>
             </div>
             <div className="chat-right-pane-body">
               {rail.mode === "preview" ? (
@@ -1235,9 +1257,14 @@ export function ChatPanel({
               ) : rail.mode === "sources" || rail.mode === "explore" ? (
                 <div className="chat-rail-sources">
                   {rail.mode === "explore" && (
-                    <p className="muted chat-explore-note">
-                      Retrieved evidence only — no answer was generated.
-                    </p>
+                    <>
+                      <h4 className="chat-explore-title">
+                        Evidence for "{rail.query}" ({rail.citations.length})
+                      </h4>
+                      <p className="muted chat-explore-note">
+                        Retrieved evidence only — no answer was generated.
+                      </p>
+                    </>
                   )}
                   <SourcesList
                     citations={

@@ -79,7 +79,7 @@ test("streams a grounded answer with sources", async () => {
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
-test("agent mode toggle sends agent_mode=agent on the stream request", async () => {
+test("chat sends agent_mode=agent on the stream request", async () => {
   let streamBody: Record<string, unknown> | null = null;
   vi.stubGlobal(
     "fetch",
@@ -96,7 +96,6 @@ test("agent mode toggle sends agent_mode=agent on the stream request", async () 
   );
 
   render(<ChatPanel />);
-  await userEvent.selectOptions(screen.getByLabelText(/mode/i), "agent");
   await userEvent.type(screen.getByLabelText("Question"), "how many m-net invoices?");
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 

@@ -583,10 +583,9 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Chat mode (ADR-0022): "agent" tool loop (default) | "classic" deterministic RAG. Agent computes
-  // counts via tools instead of estimating them from passages. (The multi-agent graph exists in the
-  // backend but is set aside for now - tracked as an improvement; not offered in the UI.)
-  const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">("agent");
+  // Chat mode (ADR-0022): fixed to the "agent" tool loop. How the chat works is a deployment
+  // decision (to be surfaced in Settings), not a per-question toggle in the composer.
+  const chatMode: "classic" | "agent" | "multi" = "agent";
   // Long-term memory (ADR-0022): recall facts from past chats + store one. Off by default (private).
   const [remember, setRemember] = useState(false);
   // Incognito (personalAI parity): this conversation is not persisted - no thread is created (the
@@ -1135,18 +1134,6 @@ export function ChatPanel({
               <button type="submit">Ask</button>
             )}
           </form>
-
-          <label className="chat-mode-select" title="Agent = the assistant calls tools (exact counts, search, totals) - recommended. Classic = the deterministic RAG pipeline (no tools).">
-            <span className="muted">Mode</span>
-            <select
-              value={chatMode}
-              onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
-              disabled={streaming !== null}
-            >
-              <option value="agent">Agent</option>
-              <option value="classic">Classic</option>
-            </select>
-          </label>
 
           {errorMsg && (
             <p role="alert" className="status-error">

@@ -586,8 +586,9 @@ export function ChatPanel({
   // Chat mode (ADR-0022): fixed to the "agent" tool loop. How the chat works is a deployment
   // decision (to be surfaced in Settings), not a per-question toggle in the composer.
   const chatMode: "classic" | "agent" | "multi" = "agent";
-  // Long-term memory (ADR-0022): recall facts from past chats + store one. Off by default (private).
-  const [remember, setRemember] = useState(false);
+  // Long-term memory (ADR-0022): recall facts from past chats + store one. On by default; turn off
+  // (or use Incognito) for a private conversation that neither recalls nor stores memory.
+  const [remember, setRemember] = useState(true);
   // Incognito (personalAI parity): this conversation is not persisted - no thread is created (the
   // backend is stateless without a thread_id) and nothing is stored or recalled from memory.
   const [incognito, setIncognito] = useState(false);
@@ -1104,6 +1105,13 @@ export function ChatPanel({
               <span className="muted">Incognito</span>
             </label>
           </div>
+
+          {incognito && (
+            <p role="status" className="banner-warning chat-incognito-note">
+              Incognito is on - this conversation will not be saved, and nothing is recalled or
+              remembered.
+            </p>
+          )}
 
           <form onSubmit={ask} className="search-form chat-ask-form">
             <textarea

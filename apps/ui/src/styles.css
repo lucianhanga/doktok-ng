@@ -2565,6 +2565,10 @@ tr.row-selected {
 .chat-toggle-row .chat-reasoning-toggle {
   margin: 0;
 }
+.chat-incognito-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+}
 
 /* Chat source cards + importance (M6.4) */
 .chat-answer-block {

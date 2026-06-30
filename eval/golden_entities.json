@@ -1,0 +1,55 @@
+[
+  {
+    "file": "bank-welcome.txt",
+    "entities": [
+      { "type": "PERSON", "value": "Stefan Vogel" },
+      { "type": "ORG", "value": "Deutsche Bank" }
+    ]
+  },
+  {
+    "file": "employment-letter.txt",
+    "entities": [
+      { "type": "PERSON", "value": "Stefan Vogel" },
+      { "type": "ORG", "value": "Siemens AG" },
+      { "type": "GPE", "value": "Munich" }
+    ]
+  },
+  {
+    "file": "insurance-policy.txt",
+    "entities": [
+      { "type": "PERSON", "value": "Johanna Mertens" },
+      { "type": "ORG", "value": "Allianz Versicherung AG" },
+      { "type": "GPE", "value": "Munich" }
+    ]
+  },
+  {
+    "file": "invoice.txt",
+    "entities": [
+      { "type": "ORG", "value": "Acme Corp" }
+    ]
+  },
+  {
+    "file": "amex-2026-01.txt",
+    "entities": [
+      { "type": "ORG", "value": "American Express" },
+      { "type": "ORG", "value": "Block House Restaurant" },
+      { "type": "ORG", "value": "Amazon" },
+      { "type": "ORG", "value": "Shell" },
+      { "type": "GPE", "value": "Hamburg" }
+    ]
+  },
+  {
+    "file": "amex-2026-02.txt",
+    "entities": [
+      { "type": "ORG", "value": "American Express" },
+      { "type": "ORG", "value": "Blockhouse" },
+      { "type": "ORG", "value": "Netflix" },
+      { "type": "ORG", "value": "REWE" },
+      { "type": "GPE", "value": "Hamburg" }
+    ]
+  },
+  {
+    "file": "handbook.md",
+    "entities": []
+  }
+]

@@ -51,6 +51,15 @@ rag-eval: ## Run the RAG evaluation harness against real Ollama (needs `make db`
 enrich-eval: ## Run the document-enrichment eval against real Ollama (needs `make db` + Ollama)
 	@scripts/enrich-eval.sh
 
+ner-bench: ## Benchmark NER: current LLM vs local GLiNER vs NuNER (needs a provider; `make ner-models` for gliner/nuner)
+	@scripts/ner-bench.sh
+
+kg-bench: ## Benchmark KG relations: current LLM vs local GLiNER-Relex (needs a provider; `make ner-models`)
+	@scripts/kg-bench.sh
+
+ner-models: ## Install the local GLiNER/NuNER/GLiNER-Relex runtime (doktok-provider-gliner[engine])
+	uv pip install gliner rapidfuzz
+
 ocr-paddle: ## Install the PaddleOCR runtime (the DOKTOK_OCR_ENGINE=paddleocr extra)
 	uv pip install paddleocr paddlepaddle pillow numpy
 

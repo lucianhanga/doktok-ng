@@ -221,11 +221,24 @@ Entities come from three independent extractors composed behind their ports:
   in document metadata. Those enum values remain in the `EntityType` vocabulary for back-compat so
   historical rows still resolve, but nothing emits them; migration `0030` deletes existing rows of the
   five dropped types.
-- **NER** (`EntityNerExtractor`, spaCy or LLM-assisted, M7.4) — **PERSON / ORG / GPE**.
+- **NER** (`EntityNerExtractor`, M7.4) — **PERSON / ORG / GPE**.
 - **Lexical** (`LexicalTermExtractor`, M5.7) — **CUSTOM_TOKEN** keyword terms in the document's
   detected language.
 
-Later: domain dictionaries, richer normalization, entity graph.
+**Pluggable enrichment backends (ADR-0023).** NER and KAG relation extraction run behind their ports,
+so each can use either the configured pipeline LLM or a local span model:
+
+- **NER** — remote OpenAI `gpt-4o-mini` (most accurate, default) or local **GLiNER** (`gliner_large-v2.5`,
+  ~9× faster, no egress).
+- **Relations** (`RelationExtractor`, KAG) — local **GLiNER-Relex** (`gliner-relex-large-v1.0`) is the
+  recommended default (best F1 + faster + local on the benchmark corpus); remote OpenAI is the alternative.
+
+Both local backends live in `doktok-provider-gliner` (heavy deps opt-in via `make ner-models`) and are
+selected per-purpose via `DOKTOK_NER_BACKEND` / `DOKTOK_REL_BACKEND`; they need no egress. Benchmarks
+and the local/remote decision: [ADR-0023](../adr/ADR-0023-pluggable-ner-and-relation-backends.md),
+reproducible with `make ner-bench` / `make kg-bench`.
+
+Later: domain dictionaries, richer normalization, a Settings-UI backend selector.
 
 ## 12. Security model
 

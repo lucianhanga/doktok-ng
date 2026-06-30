@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
@@ -103,6 +104,76 @@ from doktok_storage_postgres import (
 )
 
 logger = logging.getLogger("doktok.worker")
+
+
+def _ner_backend_override(default: EntityNerExtractor) -> tuple[EntityNerExtractor, str | None]:
+    """Optionally swap the NER extractor for a local GLiNER/NuNER model (experimental, opt-in).
+
+    Set ``DOKTOK_NER_BACKEND=gliner|nuner`` to extract PERSON/ORG/GPE with a local span model
+    instead of the configured LLM (``DOKTOK_NER_MODEL`` overrides the HF model id;
+    ``DOKTOK_NER_DEVICE`` sets the torch device, e.g. cpu|cuda). Requires the gliner runtime
+    (``make ner-models``). The local model needs no egress, so it applies even under no-egress.
+    Falls back to the LLM extractor (with a warning) when unset, unknown, or the runtime is
+    unavailable. The returned token feeds the rebuild signature so toggling the env var rebuilds.
+    """
+    backend = os.environ.get("DOKTOK_NER_BACKEND", "").strip().lower()
+    if backend not in {"gliner", "nuner"}:
+        return default, None
+    device = os.environ.get("DOKTOK_NER_DEVICE") or None
+    model_name = os.environ.get("DOKTOK_NER_MODEL") or None
+    try:
+        from doktok_provider_gliner import GlinerEntityNerExtractor, NuNerEntityNerExtractor
+
+        extractor: EntityNerExtractor
+        if backend == "gliner":
+            extractor = GlinerEntityNerExtractor(
+                model_name or "gliner-community/gliner_large-v2.5", device=device
+            )
+        else:
+            extractor = NuNerEntityNerExtractor(model_name or "numind/NuNER_Zero", device=device)
+    except Exception as exc:  # noqa: BLE001 - any load failure must fall back, never crash the worker
+        logger.warning(
+            "DOKTOK_NER_BACKEND=%s requested but unavailable (%s); using the configured LLM NER",
+            backend,
+            exc,
+        )
+        return default, None
+    token = f"{backend}:{model_name or 'default'}:{device or 'cpu'}"
+    logger.info("NER backend override active: %s", token)
+    return extractor, token
+
+
+def _relation_backend_override(default: RelationExtractor) -> tuple[RelationExtractor, str | None]:
+    """Optionally swap the relation extractor for local GLiNER-Relex (experimental, opt-in).
+
+    Set ``DOKTOK_REL_BACKEND=gliner-relex`` to extract KAG triples with the local GLiNER-Relex
+    model instead of the configured LLM (``DOKTOK_REL_MODEL`` overrides the HF model id;
+    ``DOKTOK_NER_DEVICE`` sets the torch device). Requires the gliner runtime (``make ner-models``).
+    Needs no egress, so it applies even under no-egress. Falls back to the LLM extractor (with a
+    warning) when unset, unknown, or the runtime is unavailable; the token feeds the rebuild
+    signature.
+    """
+    backend = os.environ.get("DOKTOK_REL_BACKEND", "").strip().lower()
+    if backend not in {"gliner-relex", "gliner_relex"}:
+        return default, None
+    device = os.environ.get("DOKTOK_NER_DEVICE") or None
+    model_name = os.environ.get("DOKTOK_REL_MODEL") or None
+    try:
+        from doktok_provider_gliner import GlinerRelexRelationExtractor
+
+        extractor = GlinerRelexRelationExtractor(
+            model_name or "knowledgator/gliner-relex-large-v1.0", device=device
+        )
+    except Exception as exc:  # noqa: BLE001 - any load failure must fall back, never crash the worker
+        logger.warning(
+            "DOKTOK_REL_BACKEND=%s requested but unavailable (%s); using the configured LLM",
+            backend,
+            exc,
+        )
+        return default, None
+    token = f"gliner-relex:{model_name or 'default'}:{device or 'cpu'}"
+    logger.info("relation backend override active: %s", token)
+    return extractor, token
 
 
 def tenant_ids(settings: Settings) -> list[str]:
@@ -436,6 +507,9 @@ def build_services(
                 think=p_think,
                 keep_alive=settings.enrich_keep_alive,
             )
+        # Experimental opt-in: local GLiNER/NuNER NER + GLiNER-Relex relations can replace the LLM.
+        ner_extractor, ner_token = _ner_backend_override(ner_extractor)
+        relation_extractor, rel_token = _relation_backend_override(relation_extractor)
         signature: tuple[object, ...] = (
             pl.provider,
             pl.model,
@@ -446,6 +520,8 @@ def build_services(
             bool(key),
             use_openai,
             no_egress,
+            ner_token,
+            rel_token,
         )
         return _AiClients(
             embedding=embedding,

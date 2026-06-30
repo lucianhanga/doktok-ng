@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   chatStream,
-  exploreRetrieval,
   createChatThread,
   deleteChatThread,
   deleteMessagesFrom,
@@ -716,22 +715,6 @@ export function ChatPanel({
     if (!activeRef.current) onBackgroundDone?.(); // also flag the Chat tab unread when off-tab
   }
 
-  // Retrieval Explorer (ADR-0022): show the evidence the agent would ground on, without answering.
-  function explore() {
-    const q = question.trim();
-    if (!q || streaming) return;
-    setErrorMsg(null);
-    void (async () => {
-      try {
-        const citations = await exploreRetrieval(q);
-        expandRightPane();
-        setRail({ mode: "explore", query: q, citations });
-      } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : "retrieval failed");
-      }
-    })();
-  }
-
   function ask(e?: { preventDefault: () => void }) {
     e?.preventDefault();
     const q = question.trim();
@@ -1111,15 +1094,6 @@ export function ChatPanel({
             ) : (
               <button type="submit">Ask</button>
             )}
-            <button
-              type="button"
-              className="chat-explore-btn link-button"
-              onClick={explore}
-              disabled={streaming !== null || !question.trim()}
-              title="Show the evidence that would be retrieved for this question, without generating an answer."
-            >
-              Explore
-            </button>
           </form>
 
           <label className="chat-reasoning-toggle">

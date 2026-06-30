@@ -753,40 +753,6 @@ test("edit a question truncates and loads it back into the input", async () => {
   expect(screen.queryByText("second answer.")).not.toBeInTheDocument();
 });
 
-test("Explore shows retrieved evidence in the rail without generating an answer", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.endsWith("/api/v1/chat/retrieve")) {
-        return new Response(
-          JSON.stringify({
-            query: "what is the rent?",
-            citations: [
-              {
-                index: 1,
-                document_id: "d1",
-                chunk_id: "c1",
-                original_filename: "lease.pdf",
-                snippet: "rent is 900",
-                source_kind: "passage",
-              },
-            ],
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response("[]", { status: 200 });
-    }),
-  );
-  render(<ChatPanel />);
-  await userEvent.type(screen.getByLabelText("Question"), "what is the rent?");
-  await userEvent.click(screen.getByRole("button", { name: "Explore" }));
-  await waitFor(() => expect(screen.getByText(/Evidence for/)).toBeInTheDocument());
-  expect(screen.getByText(/Retrieved evidence only/)).toBeInTheDocument();
-  expect(screen.getByText(/lease.pdf/)).toBeInTheDocument();
-});
-
 test("Enter in the composer sends the question (Shift+Enter does not)", async () => {
   vi.stubGlobal(
     "fetch",

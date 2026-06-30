@@ -2265,9 +2265,6 @@ tr.row-selected {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid rgba(127, 127, 127, 0.3);
-  border-radius: 8px;
-  padding: 0.5rem 0.75rem;
 }
 .chat-threads {
   flex: 0 0 220px;
@@ -2359,13 +2356,15 @@ tr.row-selected {
 .chat-transcript {
   list-style: none;
   margin: 0;
-  padding: 0 0.25rem 0.75rem;
+  padding: 0.5rem 0.75rem;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 8px;
 }
 .chat-exchange {
   display: flex;

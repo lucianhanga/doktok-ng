@@ -3405,6 +3405,9 @@ tr.row-selected {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin: 0.35rem 0 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 8px;
 }
 .chat-composition-chip {
   padding: 0.12rem 0.55rem;

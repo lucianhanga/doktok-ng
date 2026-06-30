@@ -118,6 +118,15 @@ body {
   font-size: 0.72rem;
   color: var(--muted, #8b97a8);
 }
+.app-statusbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.statusbar-egress-warning {
+  font-weight: 600;
+}
 
 /* Height-fill chain: makes every panel fill the available vertical space.
    min-height (not height) on app-inner lets long-content panels grow beyond the

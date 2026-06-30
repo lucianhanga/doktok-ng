@@ -452,7 +452,7 @@ function ThreadRow({
     <li className={active ? "active" : undefined}>
       <button
         type="button"
-        className="chat-thread-item link-button"
+        className="chat-thread-item"
         onClick={() => onResume(thread.id)}
         onDoubleClick={startEditing}
         title={label}
@@ -470,7 +470,7 @@ function ThreadRow({
       </button>
       <button
         type="button"
-        className="chat-thread-rename-btn link-button"
+        className="chat-thread-rename-btn"
         aria-label={`Rename conversation ${label}`}
         title="Rename"
         onClick={startEditing}
@@ -479,8 +479,9 @@ function ThreadRow({
       </button>
       <button
         type="button"
-        className="chat-thread-delete link-button"
+        className="chat-thread-delete"
         aria-label={`Delete conversation ${label}`}
+        title="Delete"
         onClick={() => onDelete(thread.id)}
       >
         &times;

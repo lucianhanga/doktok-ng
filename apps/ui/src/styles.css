@@ -2276,6 +2276,7 @@ tr.row-selected {
 }
 .chat-thread-new {
   width: 100%;
+  margin-top: 0.5rem;
   font-size: 0.85rem;
 }
 .chat-thread-list {

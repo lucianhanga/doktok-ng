@@ -1273,6 +1273,56 @@ tr.row-selected {
 
 /* Settings tab: AI model + OCR config. Constrained width + themed controls (the app otherwise
    relies on native form controls, which look unfinished on the dark surface). */
+/* Two-column Settings: a left sub-menu + a bordered pane with its own title. */
+.settings-layout {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.settings-submenu {
+  flex: 0 0 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.settings-submenu button {
+  text-align: left;
+  padding: 0.4rem 0.65rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text, #e6edf3);
+  opacity: 0.75;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.settings-submenu button:hover:not(.active) {
+  opacity: 1;
+  background: var(--hover-fill, rgba(255, 255, 255, 0.05));
+}
+.settings-submenu button.active {
+  opacity: 1;
+  font-weight: 600;
+  color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, 0.12);
+}
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 8px;
+  padding: 0.75rem 1rem 1rem;
+}
+.settings-pane-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
 .settings-section {
   max-width: 880px;
 }

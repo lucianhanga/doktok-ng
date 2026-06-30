@@ -1478,43 +1478,47 @@ export function SettingsPanel() {
       selectionBlocked(catalog.ner ?? [], ai.ner, noEgress) ||
       selectionBlocked(catalog.keg ?? [], ai.keg, noEgress));
 
+  const paneTitle = tab === "drp" ? "DRP" : tab === "memory" ? "Memory" : "Settings";
+
   return (
-    <section className="panel" aria-label="Settings">
-      <h2>Settings</h2>
-      <div className="tabs" role="tablist" aria-label="Settings tabs">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "settings"}
-          className={tab === "settings" ? "active" : ""}
-          onClick={() => setTab("settings")}
-        >
-          Settings
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "drp"}
-          className={tab === "drp" ? "active" : ""}
-          onClick={() => setTab("drp")}
-        >
-          DRP
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "memory"}
-          className={tab === "memory" ? "active" : ""}
-          onClick={() => setTab("memory")}
-        >
-          Memory
-        </button>
-      </div>
-      {error && (
-        <p role="alert" className="status-error">
-          {error}
-        </p>
-      )}
+    <section className="panel settings-page" aria-label="Settings">
+      <div className="settings-layout">
+        <nav className="settings-submenu" role="tablist" aria-label="Settings sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "settings"}
+            className={tab === "settings" ? "active" : ""}
+            onClick={() => setTab("settings")}
+          >
+            Settings
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "drp"}
+            className={tab === "drp" ? "active" : ""}
+            onClick={() => setTab("drp")}
+          >
+            DRP
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "memory"}
+            className={tab === "memory" ? "active" : ""}
+            onClick={() => setTab("memory")}
+          >
+            Memory
+          </button>
+        </nav>
+        <div className="settings-pane">
+          <h3 className="settings-pane-title">{paneTitle}</h3>
+          {error && (
+            <p role="alert" className="status-error">
+              {error}
+            </p>
+          )}
       {tab === "settings" &&
         (!catalog || !ai || !ocr ? (
           <p role="status">Loading settings…</p>
@@ -1807,8 +1811,10 @@ export function SettingsPanel() {
         </div>
         ))}
 
-      {tab === "drp" && <DrpSection />}
-      {tab === "memory" && <MemoryPanel />}
+          {tab === "drp" && <DrpSection />}
+          {tab === "memory" && <MemoryPanel />}
+        </div>
+      </div>
     </section>
   );
 }

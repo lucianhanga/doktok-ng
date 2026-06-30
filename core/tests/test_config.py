@@ -13,7 +13,7 @@ def test_settings_defaults_are_local_first() -> None:
 
     assert settings.env == "local"
     assert settings.no_egress is True
-    assert settings.default_model == "qwen3.6:35b-a3b"
+    assert settings.default_model == "qwen3.6:27b"
     assert settings.embedding_model == "qwen3-embedding:0.6b"
     assert settings.ollama_base_url == "http://localhost:11434"
     assert settings.max_file_mb == 200

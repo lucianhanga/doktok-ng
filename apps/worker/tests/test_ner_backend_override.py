@@ -94,9 +94,9 @@ def test_ner_openai_blocked_without_key() -> None:
 
 
 def test_ner_ollama_builds_local_llm() -> None:
-    ext, token = _ner(_cfg("ollama", "qwen3.6:35b-a3b"), _NerFallback())
+    ext, token = _ner(_cfg("ollama", "qwen3.6:27b"), _NerFallback())
     assert isinstance(ext, OllamaEntityNerExtractor)
-    assert token.startswith("ollama:qwen3.6:35b-a3b")
+    assert token.startswith("ollama:qwen3.6:27b")
 
 
 def test_ner_gliner_missing_runtime_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,5 +147,5 @@ def test_keg_openai_blocked_under_no_egress() -> None:
 
 
 def test_keg_ollama_builds_local_llm() -> None:
-    ext, token = _keg(_cfg("ollama", "qwen3.6:35b-a3b"), _RelFallback())
+    ext, token = _keg(_cfg("ollama", "qwen3.6:27b"), _RelFallback())
     assert isinstance(ext, OllamaRelationExtractor) and token.startswith("ollama:")

@@ -2,8 +2,11 @@
 - [DocumentDetail card](document-detail-card.md) — structure of the DocumentDetail component and the file-actions feature added to it
 - [Documents list paging](documents-list-paging.md) — load-more + filter-first, live-poll coexistence rule, needs-attention filter, count line, Overview deep-link
 - [Documents views + thumbnails](documents-views-thumbnails.md) — List/Thumbnails subtabs, shared toolbar, S/M/L size control, multi-select, token filter, sort, card anatomy
+- [Documents select-all-matching](documents-select-all-matching.md) — cross-page two-state select-all banner; reveal rule, /ids cap 10k truncated, suppress prune effect, mode-exit rules, bulk throttle
 - [Insights / Embedding Space viz](insights-embedding-viz.md) — design for new Insights tab: 2D/3D embedding scatter, backend UMAP/PCA, deck.gl, primary-category coloring
 - [Chat streaming + reasoning + sources](chat-streaming-reasoning-sources.md) — Phase 2 ChatPanel UX: streamed answer, native details reasoning, two-col source mini-cards with importance bars
 - [Chat screen redesign](chat-screen-redesign.md) — 3-col layout, collapsible reasoning w/ tokens+time+ranked candidates, rename, collapsible rail, [n]->side preview, collapsible sources; backend gaps listed
 - [Chat look-and-feel redesign](chat-look-feel-redesign.md) — remove all vertical rules, single reading column, right-justified Sources chip -> ONE shared right rail (Sources|Preview tabs); drops per-turn sources grid + separate doc drawer
 - [Light/dark theme tokens + toggle](theming-tokens-light-dark.md) — full dark|light token table, where to replace raw rgba/Canvas/hex literals, sun/moon header switch + persistence/a11y spec
+- [Processing telemetry](processing-telemetry.md) — per-doc timestamps/durations/tokens/step outcomes in card Processing section + list chip tooltip; additive, degrade gracefully, OCR not-needed=grey
+- [No-egress UX (AI models)](no-egress-ux.md) — gate forbidden remote models when no_egress ON (grey-out + 422), quiet awareness when OFF, posture badge, egress=any non-loopback; backend must expose no_egress + requires_egress

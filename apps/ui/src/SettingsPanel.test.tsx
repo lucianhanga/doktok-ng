@@ -9,10 +9,10 @@ afterEach(() => {
 
 const CATALOG = {
   pipeline: [
-    { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [8192, 16384, 32768], supports_reasoning: true },
+    { provider: "ollama", model: "qwen3.6:27b", label: "Qwen3.6 27B", contexts: [8192, 16384, 32768], supports_reasoning: true },
   ],
   rag: [
-    { provider: "ollama", model: "qwen3.6:35b-a3b", label: "Qwen3.6 35B", contexts: [32768], supports_reasoning: true },
+    { provider: "ollama", model: "qwen3.6:27b", label: "Qwen3.6 27B", contexts: [32768], supports_reasoning: true },
   ],
   ner: [
     { provider: "gliner", model: "gliner-large-v2.1", label: "GLiNER Large v2.1", contexts: [512], supports_reasoning: false, requires_egress: false },
@@ -25,8 +25,8 @@ const CATALOG = {
   reasoning_levels: ["off", "low", "medium", "high"],
 };
 const AI = {
-  pipeline: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 8192, reasoning: "off" },
-  rag: { provider: "ollama", model: "qwen3.6:35b-a3b", num_ctx: 32768, reasoning: "off" },
+  pipeline: { provider: "ollama", model: "qwen3.6:27b", num_ctx: 8192, reasoning: "off" },
+  rag: { provider: "ollama", model: "qwen3.6:27b", num_ctx: 32768, reasoning: "off" },
   ner: { provider: "gliner", model: "gliner-large-v2.1", num_ctx: 512, reasoning: "off" },
   keg: { provider: "gliner-relex", model: "relex-base-v1", num_ctx: 512, reasoning: "off" },
   embedding: { ollama_base_url: null },
@@ -241,7 +241,7 @@ function mockApi() {
         );
       if (url.endsWith("/warmup-ollama"))
         return new Response(
-          JSON.stringify({ ok: true, detail: "model loaded", url: "x", model: "qwen3.6:35b-a3b" }),
+          JSON.stringify({ ok: true, detail: "model loaded", url: "x", model: "qwen3.6:27b" }),
           { status: 200 },
         );
       if (url.endsWith("/test-openai"))
@@ -307,14 +307,14 @@ test("changing a model and saving PUTs the new selection", async () => {
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   fireEvent.change(screen.getByLabelText("Data pipeline model"), {
-    target: { value: "ollama:qwen3.6:35b-a3b" },
+    target: { value: "ollama:qwen3.6:27b" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
   await waitFor(() => expect(screen.getByText(/Chat\/RAG model applied now/i)).toBeInTheDocument());
   const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
   expect(put).toBeTruthy();
-  expect(JSON.parse(put!.body!).pipeline.model).toBe("qwen3.6:35b-a3b");
+  expect(JSON.parse(put!.body!).pipeline.model).toBe("qwen3.6:27b");
 });
 
 test("per-purpose Ollama URL override saves, and reset-to-default clears it", async () => {
@@ -914,7 +914,7 @@ test("under no-egress, an OpenAI option in the pipeline picker is disabled and l
   });
   expect(blocked).toBeDisabled();
   // The local Ollama option in the same picker is still selectable.
-  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 35B" })).toBeEnabled();
+  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 27B" })).toBeEnabled();
 });
 
 test("a pipeline blocked_reason of openai_selected shows the red block, not the key-missing message", async () => {

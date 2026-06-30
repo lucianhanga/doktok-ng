@@ -1375,6 +1375,27 @@ tr.row-selected {
 .model-stack-head {
   font-size: 1rem;
 }
+/* One-shot per-purpose health tick/cross next to each stage title. */
+.ms-health {
+  margin-left: 0.4rem;
+  font-weight: 800;
+  font-size: 0.95rem;
+}
+.ms-health-ok {
+  color: #2ecc71;
+}
+.ms-health-fail {
+  color: #e5484d;
+}
+.ms-health-pending {
+  color: var(--muted, #8b97a8);
+  font-weight: 400;
+}
+.model-stack-checked {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+}
+
 /* Read-only value sitting where the override's control would be (same row look). */
 .model-stack-readonly {
   color: var(--text, #e6edf3);

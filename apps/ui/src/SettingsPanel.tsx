@@ -1218,6 +1218,49 @@ function EgressStatusNote({ status }: { status?: PurposeEgressStatus }) {
   return null;
 }
 
+// Model-stack health check (one quick probe per purpose when the tab opens; cached for a minute so
+// flipping between sub-tabs does not re-run it).
+type PurposeHealth = "ok" | "fail" | "checking";
+const HEALTH_TTL_MS = 60_000;
+let modelHealthCache: { at: number; iso: string; results: Record<string, PurposeHealth> } | null =
+  null;
+
+async function probePurpose(p: AiPurposeSettings): Promise<PurposeHealth> {
+  try {
+    if (p.provider === "ollama") {
+      const r = await testOllamaUrl(p.ollama_base_url ?? null, p.model);
+      return r.ok && r.model_present !== false ? "ok" : "fail";
+    }
+    if (p.provider === "openai") {
+      return (await testOpenAiKey(null)).ok ? "ok" : "fail";
+    }
+    return "ok"; // local in-process backends (e.g. GLiNER) have nothing remote to probe
+  } catch {
+    return "fail";
+  }
+}
+
+function HealthDot({ status }: { status?: PurposeHealth }) {
+  if (!status) return null;
+  if (status === "checking")
+    return (
+      <span className="ms-health ms-health-pending" aria-label="checking">
+        …
+      </span>
+    );
+  if (status === "ok")
+    return (
+      <span className="ms-health ms-health-ok" title="Working" aria-label="working">
+        ✓
+      </span>
+    );
+  return (
+    <span className="ms-health ms-health-fail" title="Not working" aria-label="failing">
+      ✗
+    </span>
+  );
+}
+
 // Per-stage explanations, shown as an (i) popover after the label in BOTH Model-stack cards.
 const STAGE_INFO = {
   pipeline: "Feature extraction during ingestion (titles, dates, categories, structured records).",
@@ -1234,6 +1277,7 @@ function PurposeEditor({
   options,
   value,
   defaultValue,
+  health,
   reasoningLevels,
   ollamaUrlDefault,
   noEgress,
@@ -1247,6 +1291,8 @@ function PurposeEditor({
   value: AiPurposeSettings;
   // The server default for this purpose; selecting "Use server default" resets to it.
   defaultValue?: AiPurposeSettings;
+  // Result of the one-shot health probe for this purpose (tick/cross next to the title).
+  health?: PurposeHealth;
   reasoningLevels: string[];
   ollamaUrlDefault: string;
   // The active no-egress policy: greys out remote options in the picker (does NOT hide them).
@@ -1266,6 +1312,7 @@ function PurposeEditor({
       <h4>
         {title}{" "}
         <InfoHint label={title}>{description}</InfoHint>
+        <HealthDot status={health} />
       </h4>
       <div className="settings-row">
         <label>
@@ -1394,6 +1441,11 @@ export function SettingsPanel() {
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
   // A 422 `no_egress_locked` rejection (host-locked posture): a form-level message, no violations.
   const [lockedError, setLockedError] = useState<string | null>(null);
+  // One-shot per-purpose health probe shown on the Model stack tab (cached for a minute).
+  const [health, setHealth] = useState<Record<string, PurposeHealth> | null>(
+    modelHealthCache?.results ?? null,
+  );
+  const [healthAt, setHealthAt] = useState<string | null>(modelHealthCache?.iso ?? null);
 
   useEffect(() => {
     const c = new AbortController();
@@ -1418,6 +1470,47 @@ export function SettingsPanel() {
       .catch(() => undefined);
     return () => c.abort();
   }, []);
+
+  // When the Model stack tab opens, probe each purpose once. Cached for a minute so switching
+  // sub-tabs (or editing) does not re-run it; after the TTL the next open refreshes it.
+  useEffect(() => {
+    if (tab !== "models" || !ai) return;
+    if (modelHealthCache && Date.now() - modelHealthCache.at < HEALTH_TTL_MS) {
+      setHealth(modelHealthCache.results);
+      setHealthAt(modelHealthCache.iso);
+      return;
+    }
+    let cancelled = false;
+    const settings = ai;
+    setHealth({ pipeline: "checking", rag: "checking", ner: "checking", keg: "checking", embedding: "checking" });
+    const probes: Array<readonly [string, Promise<PurposeHealth>]> = [
+      ["pipeline", probePurpose(settings.pipeline)],
+      ["rag", probePurpose(settings.rag)],
+      ["ner", probePurpose(settings.ner)],
+      ["keg", probePurpose(settings.keg)],
+      [
+        "embedding",
+        probePurpose({
+          provider: "ollama",
+          model: settings.embedding_model ?? "",
+          num_ctx: settings.embedding_num_ctx ?? 0,
+          reasoning: "off",
+          ollama_base_url: settings.embedding?.ollama_base_url,
+        }),
+      ],
+    ];
+    void Promise.all(probes.map(async ([k, p]) => [k, await p] as const)).then((entries) => {
+      if (cancelled) return;
+      const results = Object.fromEntries(entries);
+      const iso = new Date().toISOString();
+      modelHealthCache = { at: Date.now(), iso, results };
+      setHealth(results);
+      setHealthAt(iso);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, ai]);
 
   // Turning the no-egress toggle OFF (allowing egress) is a security downgrade — confirm first so it
   // is never a one-click accident. Turning it back ON needs no confirmation. The change is staged in
@@ -1887,6 +1980,7 @@ export function SettingsPanel() {
                   options={catalog.pipeline}
                   value={ai.pipeline}
                   defaultValue={serverDefaults?.pipeline}
+                  health={health?.pipeline}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
@@ -1900,6 +1994,7 @@ export function SettingsPanel() {
                   options={catalog.rag}
                   value={ai.rag}
                   defaultValue={serverDefaults?.rag}
+                  health={health?.rag}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
@@ -1913,6 +2008,7 @@ export function SettingsPanel() {
                   options={catalog.ner ?? []}
                   value={ai.ner}
                   defaultValue={serverDefaults?.ner}
+                  health={health?.ner}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
@@ -1926,6 +2022,7 @@ export function SettingsPanel() {
                   options={catalog.keg ?? []}
                   value={ai.keg}
                   defaultValue={serverDefaults?.keg}
+                  health={health?.keg}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
@@ -1937,6 +2034,7 @@ export function SettingsPanel() {
                   <h4>
                     Embedding (index){" "}
                     <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
+                    <HealthDot status={health?.embedding} />
                   </h4>
                   <div className="settings-row">
                     <label>
@@ -1950,27 +2048,15 @@ export function SettingsPanel() {
                       />
                     </label>
                   </div>
-                  <OllamaUrlField
-                    label="Embedding Ollama URL"
-                    value={ai.embedding?.ollama_base_url}
-                    defaultUrl={ai.ollama_base_url_default ?? ""}
-                    model={ai.embedding_model ?? ""}
-                    onChange={(ollama_base_url) =>
-                      setAi({ ...ai, embedding: { ...ai.embedding, ollama_base_url } })
-                    }
-                  />
-                  <EgressStatusNote status={ai.purpose_status?.embedding} />
-                  {violations.embedding && (
-                    <p role="alert" className="settings-test-fail egress-status">
-                      <span aria-hidden="true">✖ </span>
-                      That Ollama server is off this host and not permitted while no-egress is on.{" "}
-                      <span className="egress-status-detail">({violations.embedding.value})</span>
-                    </p>
-                  )}
                 </div>
               </div>
             </div>
             {saveBar}
+            {healthAt && (
+              <p className="muted model-stack-checked">
+                Checked {new Date(healthAt).toLocaleString()}
+              </p>
+            )}
           </div>
         ))}
 

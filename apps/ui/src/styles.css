@@ -1369,8 +1369,10 @@ tr.row-selected {
 .model-stack-head {
   font-size: 1rem;
 }
-.model-stack-default {
-  margin: 0;
+/* Read-only value sitting where the override's control would be (same row look). */
+.model-stack-readonly {
+  color: var(--text, #e6edf3);
+  font-size: 0.875rem;
 }
 /* Simple, undecorated NATIVE controls in the override card (like the Documents filter selects). */
 .model-stack .settings-purpose select,

@@ -1773,49 +1773,103 @@ export function SettingsPanel() {
                     Data pipeline{" "}
                     <InfoHint label="Data pipeline">{STAGE_INFO.pipeline}</InfoHint>
                   </h4>
-                  <p className="muted model-stack-default">
-                    {(serverDefaults ?? ai).pipeline.provider} · {(serverDefaults ?? ai).pipeline.model}{" "}
-                    · reasoning {(serverDefaults ?? ai).pipeline.reasoning}
-                  </p>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).pipeline.provider} ·{" "}
+                        {(serverDefaults ?? ai).pipeline.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).pipeline.reasoning}
+                      </span>
+                    </label>
+                  </div>
                 </div>
                 <div className="settings-purpose">
                   <h4>
                     Document interrogation{" "}
                     <InfoHint label="Document interrogation">{STAGE_INFO.rag}</InfoHint>
                   </h4>
-                  <p className="muted model-stack-default">
-                    {(serverDefaults ?? ai).rag.provider} · {(serverDefaults ?? ai).rag.model} ·
-                    reasoning {(serverDefaults ?? ai).rag.reasoning}
-                  </p>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).rag.provider} · {(serverDefaults ?? ai).rag.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).rag.reasoning}
+                      </span>
+                    </label>
+                  </div>
                 </div>
                 <div className="settings-purpose">
                   <h4>
                     Entity recognition (NER){" "}
                     <InfoHint label="Entity recognition (NER)">{STAGE_INFO.ner}</InfoHint>
                   </h4>
-                  <p className="muted model-stack-default">
-                    {(serverDefaults ?? ai).ner.provider} · {(serverDefaults ?? ai).ner.model} ·
-                    reasoning {(serverDefaults ?? ai).ner.reasoning}
-                  </p>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).ner.provider} · {(serverDefaults ?? ai).ner.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).ner.reasoning}
+                      </span>
+                    </label>
+                  </div>
                 </div>
                 <div className="settings-purpose">
                   <h4>
                     Knowledge graph (relations){" "}
                     <InfoHint label="Knowledge graph (relations)">{STAGE_INFO.keg}</InfoHint>
                   </h4>
-                  <p className="muted model-stack-default">
-                    {(serverDefaults ?? ai).keg.provider} · {(serverDefaults ?? ai).keg.model} ·
-                    reasoning {(serverDefaults ?? ai).keg.reasoning}
-                  </p>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).keg.provider} · {(serverDefaults ?? ai).keg.model}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Reasoning{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).keg.reasoning}
+                      </span>
+                    </label>
+                  </div>
                 </div>
                 <div className="settings-purpose">
                   <h4>
                     Embedding (index){" "}
                     <InfoHint label="Embedding (index)">{STAGE_INFO.embedding}</InfoHint>
                   </h4>
-                  <p className="muted model-stack-default">
-                    {(serverDefaults ?? ai).embedding_model ?? "—"}
-                  </p>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).embedding_model ?? "—"}
+                      </span>
+                    </label>
+                  </div>
                 </div>
               </div>
               <div className="settings-card model-stack-card">

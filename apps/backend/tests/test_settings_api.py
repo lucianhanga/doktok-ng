@@ -87,9 +87,7 @@ def test_get_defaults_and_update_roundtrip() -> None:
     assert resp.status_code == 200
     saved = resp.json()
     assert saved["ner"]["provider"] == "gliner" and saved["keg"]["provider"] == "gliner-relex"
-    assert (
-        saved["pipeline"]["model"] == "qwen3.6:27b" and saved["pipeline"]["reasoning"] == "high"
-    )
+    assert saved["pipeline"]["model"] == "qwen3.6:27b" and saved["pipeline"]["reasoning"] == "high"
     assert saved["rag"]["model"] == "qwen3.6:27b"
     # The key is stored but never returned - only that it is set.
     assert saved["openai_api_key_set"] is True

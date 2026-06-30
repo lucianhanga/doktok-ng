@@ -8,6 +8,8 @@ the label in ``delta`` too, for any legacy delta-only consumer).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from doktok_contracts.schemas import ChatEvent, TraceStep
 
 # Tool name -> (kind, human label). Kind drives the per-step icon/colour in the UI.
@@ -21,10 +23,27 @@ _TOOL_TRACE: dict[str, tuple[str, str]] = {
 }
 
 
-def tool_step(name: str) -> TraceStep:
-    """The trace step for a tool call, with a human label per tool (fallback: ``Using <name>``)."""
+def _format_args(args: Mapping[str, object]) -> str:
+    """Compact one-line summary of tool arguments for the activity trace (values truncated)."""
+    parts: list[str] = []
+    for key, value in args.items():
+        text = str(value).strip()
+        if not text:
+            continue
+        if len(text) > 40:
+            text = text[:39] + "…"
+        parts.append(f"{key}: {text}")
+    return " · ".join(parts)
+
+
+def tool_step(name: str, args: Mapping[str, object] | None = None) -> TraceStep:
+    """The trace step for a tool call, with a human label per tool (fallback: ``Using <name>``).
+
+    When ``args`` are given, a compact summary is put in ``detail`` so the activity timeline shows
+    what each tool was called with (ToolIO parity with personalAI).
+    """
     kind, label = _TOOL_TRACE.get(name, ("tool", f"Using {name}"))
-    return TraceStep(kind=kind, label=label)
+    return TraceStep(kind=kind, label=label, detail=_format_args(args) if args else "")
 
 
 def step(kind: str, label: str, detail: str = "") -> TraceStep:

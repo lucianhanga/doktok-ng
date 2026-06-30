@@ -591,6 +591,9 @@ export function ChatPanel({
   const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">("agent");
   // Long-term memory (ADR-0022): recall facts from past chats + store one. Off by default (private).
   const [remember, setRemember] = useState(false);
+  // Incognito (personalAI parity): this conversation is not persisted - no thread is created (the
+  // backend is stateless without a thread_id) and nothing is stored or recalled from memory.
+  const [incognito, setIncognito] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -755,7 +758,9 @@ export function ChatPanel({
       // Persist conversations server-side: create a thread on the first turn, then reuse it. The
       // server loads history from the thread, so the client-sent history is empty when threaded.
       let tid = threadRef.current;
-      if (!tid) {
+      // Incognito: never create a thread - the backend is stateless without a thread_id, so the
+      // conversation lives only in client-held history and nothing is persisted.
+      if (!tid && !incognito) {
         try {
           tid = (await createChatThread()).id;
         } catch {
@@ -796,7 +801,7 @@ export function ChatPanel({
           controller.signal,
           tid,
           chatMode,
-          remember,
+          remember && !incognito,
         );
         completeStream(key, grounded);
       } catch (err) {
@@ -1120,11 +1125,24 @@ export function ChatPanel({
           >
             <input
               type="checkbox"
-              checked={remember}
+              checked={remember && !incognito}
               onChange={(e) => setRemember(e.target.checked)}
-              disabled={streaming !== null}
+              disabled={streaming !== null || incognito}
             />
             <span className="muted">Remember</span>
+          </label>
+
+          <label
+            className="chat-reasoning-toggle"
+            title="Incognito: this conversation is not saved - no thread is stored and nothing is recalled or remembered. Choose it on a New conversation."
+          >
+            <input
+              type="checkbox"
+              checked={incognito}
+              onChange={(e) => setIncognito(e.target.checked)}
+              disabled={streaming !== null || threadId !== null}
+            />
+            <span className="muted">Incognito</span>
           </label>
 
           <label className="chat-mode-select" title="Agent = the assistant calls tools (exact counts, search, totals) - recommended. Classic = the deterministic RAG pipeline (no tools).">

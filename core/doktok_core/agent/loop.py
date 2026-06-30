@@ -121,7 +121,7 @@ def run_agent_stream(
             AgentMessage(role="assistant", content=turn.text, tool_calls=turn.tool_calls)
         )
         for call in turn.tool_calls:
-            yield step_event(tool_step(call.name))
+            yield step_event(tool_step(call.name, call.arguments))
             result = gateway.invoke(tenant_id, call.name, call.arguments)
             messages.append(
                 AgentMessage(

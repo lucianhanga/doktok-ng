@@ -119,6 +119,8 @@ def _purpose_statuses(
 
     return {
         "pipeline": status(ai.pipeline.provider, ai.pipeline.ollama_base_url),
+        "ner": status(ai.ner.provider, ai.ner.ollama_base_url),
+        "keg": status(ai.keg.provider, ai.keg.ollama_base_url),
         "rag": status(ai.rag.provider, ai.rag.ollama_base_url),
         # Embedding has no provider switch - only the URL vector can egress.
         "embedding": status("ollama", ai.embedding.ollama_base_url),
@@ -133,6 +135,8 @@ def _egress_violations(
         return []
     purposes = (
         ("pipeline", ai.pipeline.provider, ai.pipeline.ollama_base_url),
+        ("ner", ai.ner.provider, ai.ner.ollama_base_url),
+        ("keg", ai.keg.provider, ai.keg.ollama_base_url),
         ("rag", ai.rag.provider, ai.rag.ollama_base_url),
         ("embedding", "ollama", ai.embedding.ollama_base_url),
     )
@@ -241,6 +245,8 @@ def put_ai_settings(
     pipeline extraction still picks up the new model on its next reconcile/restart.)
     """
     _validate_ollama_url(update.pipeline.ollama_base_url, "pipeline.ollama_base_url")
+    _validate_ollama_url(update.ner.ollama_base_url, "ner.ollama_base_url")
+    _validate_ollama_url(update.keg.ollama_base_url, "keg.ollama_base_url")
     _validate_ollama_url(update.rag.ollama_base_url, "rag.ollama_base_url")
     _validate_ollama_url(update.embedding.ollama_base_url, "embedding.ollama_base_url")
     settings = request.app.state.settings
@@ -258,7 +264,13 @@ def put_ai_settings(
             },
         )
     new_no_egress = prior_no_egress if (update.no_egress is None or locked) else update.no_egress
-    ai = AiSettings(pipeline=update.pipeline, rag=update.rag, embedding=update.embedding)
+    ai = AiSettings(
+        pipeline=update.pipeline,
+        ner=update.ner,
+        keg=update.keg,
+        rag=update.rag,
+        embedding=update.embedding,
+    )
     # Boundary gate: refuse a selection that would send content off-host while no-egress is on,
     # evaluated against the posture THIS save applies. The sinks re-check (defense-in-depth).
     violations = _egress_violations(
@@ -300,6 +312,7 @@ def put_ai_settings(
     # Activity log (M15 #373): a non-secret summary of the change - never the key itself.
     summary = (
         f"AI settings: pipeline {ai.pipeline.provider}/{ai.pipeline.model}, "
+        f"NER {ai.ner.provider}/{ai.ner.model}, KEG {ai.keg.provider}/{ai.keg.model}, "
         f"RAG {ai.rag.provider}/{ai.rag.model}"
     )
     if key_changed:

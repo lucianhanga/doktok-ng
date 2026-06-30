@@ -1,4 +1,4 @@
-"""The opt-in DOKTOK_NER_BACKEND override: selection, token, and safe fallback to the LLM NER."""
+"""Per-purpose NER/KEG backend resolution (ADR-0023): local span model, LLM, or safe fallback."""
 
 from __future__ import annotations
 
@@ -7,26 +7,66 @@ import types
 
 import pytest
 from doktok_contracts.media import ExtractedEntity, ExtractedRelation
-from doktok_worker.composition import _ner_backend_override, _relation_backend_override
+from doktok_contracts.schemas import AiPurposeSettings
+from doktok_core.security.egress import EgressBlocked
+from doktok_provider_ollama import OllamaEntityNerExtractor, OllamaRelationExtractor
+from doktok_provider_openai import OpenAiEntityNerExtractor, OpenAiRelationExtractor
+from doktok_worker.composition import _resolve_ner_backend, _resolve_relation_backend
 
 
-class _Sentinel:
-    """Stands in for an EntityNerExtractor."""
-
+class _NerFallback:
     def extract(self, text: str) -> list[ExtractedEntity]:  # noqa: ARG002
         return []
 
 
-class _RelSentinel:
-    """Stands in for a RelationExtractor."""
-
+class _RelFallback:
     def extract(  # noqa: ARG002
         self, text: str, entity_list: list[tuple[str, str]]
     ) -> list[ExtractedRelation]:
         return []
 
 
-def _fake_provider(factory: object) -> types.ModuleType:
+def _cfg(provider: str, model: str, *, num_ctx: int = 8192) -> AiPurposeSettings:
+    return AiPurposeSettings(provider=provider, model=model, num_ctx=num_ctx)
+
+
+def _ner(
+    cfg: AiPurposeSettings,
+    fallback: _NerFallback,
+    *,
+    key: str = "sk-test",
+    no_egress: bool = False,
+) -> tuple[object, str]:
+    return _resolve_ner_backend(
+        cfg,
+        fallback,
+        key=key,
+        no_egress=no_egress,
+        default_url="http://localhost:11434",
+        timeout=120.0,
+        keep_alive="30m",
+    )
+
+
+def _keg(
+    cfg: AiPurposeSettings,
+    fallback: _RelFallback,
+    *,
+    key: str = "sk-test",
+    no_egress: bool = False,
+) -> tuple[object, str]:
+    return _resolve_relation_backend(
+        cfg,
+        fallback,
+        key=key,
+        no_egress=no_egress,
+        default_url="http://localhost:11434",
+        timeout=120.0,
+        keep_alive="30m",
+    )
+
+
+def _fake_gliner(factory: object) -> types.ModuleType:
     mod = types.ModuleType("doktok_provider_gliner")
     mod.GlinerEntityNerExtractor = factory  # type: ignore[attr-defined]
     mod.NuNerEntityNerExtractor = factory  # type: ignore[attr-defined]
@@ -34,71 +74,78 @@ def _fake_provider(factory: object) -> types.ModuleType:
     return mod
 
 
-def test_unset_returns_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DOKTOK_NER_BACKEND", raising=False)
-    default = _Sentinel()
-    extractor, token = _ner_backend_override(default)
-    assert extractor is default and token is None
+# --------------------------------------------------------------------------- NER
 
 
-def test_unknown_backend_returns_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DOKTOK_NER_BACKEND", "spacy")
-    default = _Sentinel()
-    extractor, token = _ner_backend_override(default)
-    assert extractor is default and token is None
+def test_ner_openai_builds_llm_extractor() -> None:
+    ext, token = _ner(_cfg("openai", "gpt-4o-mini"), _NerFallback())
+    assert isinstance(ext, OpenAiEntityNerExtractor)
+    assert token == "openai:gpt-4o-mini"
 
 
-def test_runtime_failure_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DOKTOK_NER_BACKEND", "gliner")
+def test_ner_openai_blocked_under_no_egress() -> None:
+    ext, token = _ner(_cfg("openai", "gpt-4o-mini"), _NerFallback(), no_egress=True)
+    assert isinstance(ext, EgressBlocked) and token == "openai:blocked"
 
-    def boom(*_args: object, **_kwargs: object) -> _Sentinel:
+
+def test_ner_openai_blocked_without_key() -> None:
+    ext, _ = _ner(_cfg("openai", "gpt-4o-mini"), _NerFallback(), key="")
+    assert isinstance(ext, EgressBlocked)
+
+
+def test_ner_ollama_builds_local_llm() -> None:
+    ext, token = _ner(_cfg("ollama", "qwen3.6:35b-a3b"), _NerFallback())
+    assert isinstance(ext, OllamaEntityNerExtractor)
+    assert token.startswith("ollama:qwen3.6:35b-a3b")
+
+
+def test_ner_gliner_missing_runtime_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_a: object, **_k: object) -> _NerFallback:
         raise RuntimeError("gliner runtime not installed")
 
-    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_provider(boom))
-    default = _Sentinel()
-    extractor, token = _ner_backend_override(default)
-    assert extractor is default and token is None
+    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(boom))
+    fallback = _NerFallback()
+    ext, token = _ner(_cfg("gliner", "gliner-community/gliner_large-v2.5"), fallback)
+    assert ext is fallback and token == "gliner-fallback"
 
 
-def test_loaded_backend_is_used_and_tokenised(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DOKTOK_NER_BACKEND", "nuner")
-    monkeypatch.setenv("DOKTOK_NER_DEVICE", "cuda")
-    chosen = _Sentinel()
-    monkeypatch.setitem(
-        sys.modules, "doktok_provider_gliner", _fake_provider(lambda *a, **k: chosen)
-    )
-    default = _Sentinel()
-    extractor, token = _ner_backend_override(default)
-    assert extractor is chosen
-    assert token is not None and token.startswith("nuner:") and token.endswith(":cuda")
+def test_ner_gliner_loads_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    chosen = _NerFallback()
+    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(lambda *a, **k: chosen))
+    ext, token = _ner(_cfg("gliner", "gliner-community/gliner_large-v2.5"), _NerFallback())
+    assert ext is chosen and token.startswith("gliner:gliner-community/gliner_large-v2.5")
 
 
-def test_relation_unset_returns_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DOKTOK_REL_BACKEND", raising=False)
-    default = _RelSentinel()
-    extractor, token = _relation_backend_override(default)
-    assert extractor is default and token is None
+# --------------------------------------------------------------------------- relations (KEG)
 
 
-def test_relation_runtime_failure_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DOKTOK_REL_BACKEND", "gliner-relex")
+def test_keg_gliner_relex_loads_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    chosen = _RelFallback()
+    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(lambda *a, **k: chosen))
+    ext, token = _keg(_cfg("gliner-relex", "knowledgator/gliner-relex-large-v1.0"), _RelFallback())
+    assert ext is chosen and token.startswith("gliner-relex:")
 
-    def boom(*_args: object, **_kwargs: object) -> _Sentinel:
+
+def test_keg_gliner_relex_missing_runtime_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_a: object, **_k: object) -> _RelFallback:
         raise RuntimeError("gliner runtime not installed")
 
-    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_provider(boom))
-    default = _RelSentinel()
-    extractor, token = _relation_backend_override(default)
-    assert extractor is default and token is None
+    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(boom))
+    fallback = _RelFallback()
+    ext, token = _keg(_cfg("gliner-relex", "knowledgator/gliner-relex-large-v1.0"), fallback)
+    assert ext is fallback and token == "gliner-relex-fallback"
 
 
-def test_relation_loaded_backend_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DOKTOK_REL_BACKEND", "gliner-relex")
-    chosen = _RelSentinel()
-    monkeypatch.setitem(
-        sys.modules, "doktok_provider_gliner", _fake_provider(lambda *a, **k: chosen)
-    )
-    default = _RelSentinel()
-    extractor, token = _relation_backend_override(default)
-    assert extractor is chosen
-    assert token is not None and token.startswith("gliner-relex:")
+def test_keg_openai_builds_llm_extractor() -> None:
+    ext, token = _keg(_cfg("openai", "gpt-4o-mini"), _RelFallback())
+    assert isinstance(ext, OpenAiRelationExtractor) and token == "openai:gpt-4o-mini"
+
+
+def test_keg_openai_blocked_under_no_egress() -> None:
+    ext, _ = _keg(_cfg("openai", "gpt-4o-mini"), _RelFallback(), no_egress=True)
+    assert isinstance(ext, EgressBlocked)
+
+
+def test_keg_ollama_builds_local_llm() -> None:
+    ext, token = _keg(_cfg("ollama", "qwen3.6:35b-a3b"), _RelFallback())
+    assert isinstance(ext, OllamaRelationExtractor) and token.startswith("ollama:")

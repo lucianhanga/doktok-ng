@@ -1072,10 +1072,29 @@ def _default_rag() -> AiPurposeSettings:
     return AiPurposeSettings(provider="ollama", model="qwen3.6:35b-a3b", num_ctx=32768)
 
 
+def _default_ner() -> AiPurposeSettings:
+    # Entity NER (M7.4). Default to the benchmark accuracy leader (ADR-0023); local GLiNER
+    # ("gliner") is the recommended on-host alternative, selectable in Settings.
+    return AiPurposeSettings(provider="openai", model="gpt-4o-mini", num_ctx=128000)
+
+
+def _default_keg() -> AiPurposeSettings:
+    # KAG relation extraction (ADR-0023): local GLiNER-Relex is the benchmark winner (best F1,
+    # faster, no egress). The worker falls back to the LLM if the local model isn't installed.
+    return AiPurposeSettings(
+        provider="gliner-relex", model="knowledgator/gliner-relex-large-v1.0", num_ctx=8192
+    )
+
+
 class AiSettings(BaseModel):
     """The configurable AI model selection (Settings tab > AI section). Applied on restart."""
 
     pipeline: AiPurposeSettings = Field(default_factory=_default_pipeline)
+    # Entity NER and KAG relation extraction are split from the general pipeline so each can use a
+    # local span model (GLiNER / GLiNER-Relex) or an LLM independently (ADR-0023). Absent keys on an
+    # existing stored row fill from these defaults - no migration needed (generic JSONB + pydantic).
+    ner: AiPurposeSettings = Field(default_factory=_default_ner)
+    keg: AiPurposeSettings = Field(default_factory=_default_keg)
     rag: AiPurposeSettings = Field(default_factory=_default_rag)
     embedding: AiEmbeddingSettings = Field(default_factory=AiEmbeddingSettings)
 
@@ -1446,6 +1465,8 @@ class ModelCatalog(BaseModel):
     """The models the Settings UI offers per purpose + the reasoning-density levels."""
 
     pipeline: list[ModelOption] = Field(default_factory=list)
+    ner: list[ModelOption] = Field(default_factory=list)
+    keg: list[ModelOption] = Field(default_factory=list)
     rag: list[ModelOption] = Field(default_factory=list)
     reasoning_levels: list[str] = Field(default_factory=list)
     # The active no-egress policy, so the catalog alone tells the UI which options to disable/badge.

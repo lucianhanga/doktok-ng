@@ -234,9 +234,10 @@ so each can use either the configured pipeline LLM or a local span model:
   recommended default (best F1 + faster + local on the benchmark corpus); remote OpenAI is the alternative.
 
 Both local backends live in `doktok-provider-gliner` (heavy deps opt-in via `make ner-models`) and are
-selected per-purpose via `DOKTOK_NER_BACKEND` / `DOKTOK_REL_BACKEND`; they need no egress. Benchmarks
-and the local/remote decision: [ADR-0023](../adr/ADR-0023-pluggable-ner-and-relation-backends.md),
-reproducible with `make ner-bench` / `make kg-bench`.
+selected per-purpose in **Settings → AI** (NER and KEG are their own AI purposes, alongside the
+general `pipeline`, `rag`, and `embedding`); they need no egress. Benchmarks and the local/remote
+decision: [ADR-0023](../adr/ADR-0023-pluggable-ner-and-relation-backends.md), reproducible with
+`make ner-bench` / `make kg-bench`.
 
 Later: domain dictionaries, richer normalization, a Settings-UI backend selector.
 

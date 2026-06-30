@@ -1176,7 +1176,7 @@ export function ChatPanel({
               aria-label="Expand activity panel"
               title="Show activity"
             >
-              &#8249; Activity
+              &#8249;
             </button>
           </aside>
         ) : (

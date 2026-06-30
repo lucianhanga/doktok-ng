@@ -608,7 +608,7 @@ export interface AiEmbeddingSettings {
   ollama_base_url?: string | null;
 }
 
-export type AiPurpose = "pipeline" | "rag" | "embedding";
+export type AiPurpose = "pipeline" | "rag" | "embedding" | "ner" | "keg";
 
 // Why a purpose is unusable under the active egress policy (no-egress gate, ADR-0006/0008).
 // "openai_selected"/"remote_ollama_url" are POLICY blocks (red, fix = flip the host env switch);
@@ -630,6 +630,8 @@ export interface PurposeEgressStatus {
 export interface AiSettings {
   pipeline: AiPurposeSettings;
   rag: AiPurposeSettings;
+  ner: AiPurposeSettings;
+  keg: AiPurposeSettings;
   embedding: AiEmbeddingSettings;
   openai_api_key_set?: boolean;
   // Read-only: the embedding model + context that indexes the corpus (not user-selectable).
@@ -672,6 +674,8 @@ export interface ModelOption {
 export interface ModelCatalog {
   pipeline: ModelOption[];
   rag: ModelOption[];
+  ner: ModelOption[];
+  keg: ModelOption[];
   reasoning_levels: string[];
   // The active no-egress policy, mirrored on the catalog so the picker can grey out forbidden
   // options without a second round-trip. Optional for pre-upgrade backends.
@@ -807,6 +811,7 @@ export class NoEgressLockedError extends Error {
  * NoEgressLockedError on a 422 `no_egress_locked` (host-locked posture) so the caller can surface
  * each distinctly. Both details are structured objects, NOT strings. */
 export async function putAiSettings(body: AiSettingsUpdate): Promise<AiSettings> {
+  // body already carries pipeline/rag/ner/keg/embedding as AiSettingsUpdate fields.
   const response = await fetch("/api/v1/settings/ai", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

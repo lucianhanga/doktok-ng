@@ -72,12 +72,49 @@ MODEL_CATALOG = ModelCatalog(
             supports_reasoning=True,
         ),
     ],
+    # Entity NER (M7.4 / ADR-0023): a local span model or a remote LLM. The local GLiNER option runs
+    # on-host (no egress); contexts/reasoning are ignored by the span model (placeholder ctx).
+    ner=[
+        ModelOption(
+            provider="openai",
+            model="gpt-4o-mini",
+            label="OpenAI gpt-4o-mini - remote (most accurate)",
+            contexts=[128000],
+            supports_reasoning=False,
+        ),
+        ModelOption(
+            provider="gliner",
+            model="gliner-community/gliner_large-v2.5",
+            label="GLiNER - local span model (fast, no egress)",
+            contexts=[8192],
+            supports_reasoning=False,
+        ),
+    ],
+    # KAG relation extraction (ADR-0023): local GLiNER-Relex (benchmark winner) or a remote LLM.
+    keg=[
+        ModelOption(
+            provider="gliner-relex",
+            model="knowledgator/gliner-relex-large-v1.0",
+            label="GLiNER-Relex - local (best F1, no egress)",
+            contexts=[8192],
+            supports_reasoning=False,
+        ),
+        ModelOption(
+            provider="openai",
+            model="gpt-4o-mini",
+            label="OpenAI gpt-4o-mini - remote",
+            contexts=[128000],
+            supports_reasoning=False,
+        ),
+    ],
     reasoning_levels=REASONING_LEVELS,
 )
 
 # Every remote (OpenAI) option moves content off-host; mark it once here so there is a single rule
 # (no per-literal drift). A remote Ollama *URL* is gated separately, per-purpose, at request time.
-for _option in (*MODEL_CATALOG.pipeline, *MODEL_CATALOG.rag):
+# Local span models (gliner / gliner-relex) are on-host and stay requires_egress=False.
+_ALL_OPTIONS = (*MODEL_CATALOG.pipeline, *MODEL_CATALOG.ner, *MODEL_CATALOG.keg, *MODEL_CATALOG.rag)
+for _option in _ALL_OPTIONS:
     _option.requires_egress = _option.provider == "openai"
 
 # OpenAI models whose name starts with one of these reason; they take reasoning_effort, not temp.

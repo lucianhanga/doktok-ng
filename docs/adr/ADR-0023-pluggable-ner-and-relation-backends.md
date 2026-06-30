@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (GLiNER / GLiNER-Relex adapters + benchmarks shipped, opt-in; Settings-UI selection planned).
+Accepted (GLiNER / GLiNER-Relex adapters + benchmarks + Settings-UI per-purpose NER/KEG selectors shipped).
 
 ## Context
 
@@ -107,16 +107,18 @@ the **best F1**, is faster, and needs no egress; **remote → OpenAI** is the al
 recall, but low precision from spurious edges). This is the one capability where the local model is
 the better default on the current corpus.
 
-Selection is opt-in via environment for now (folded into the worker's rebuild signature):
+Selection is first-class in **Settings → AI**: NER and KAG relations are their own AI purposes
+(`ner`, `keg`) alongside `pipeline` (the rest of enrichment), `rag`, and `embedding`. Each purpose
+has its own model selector; the local span models appear as `provider: "gliner"` / `"gliner-relex"`
+options (no egress). The worker builds each extractor from `ai.ner` / `ai.keg`, folds them into the
+rebuild signature (live reload on change), and falls back to the pipeline LLM if a selected local
+model can't load (`make ner-models` not run). Stored settings need no migration — a new purpose
+fills from its pydantic default on existing rows (generic JSONB `app_settings`).
 
-```
-DOKTOK_NER_BACKEND=gliner          # local NER       (default: the configured LLM NER)
-DOKTOK_REL_BACKEND=gliner-relex    # local relations (recommended; default falls back to the LLM)
-DOKTOK_NER_DEVICE=cuda             # optional torch device (default cpu)
-```
-
-The runtime default stays the configured LLM until the local model is installed (`make ner-models`);
-once installed, GLiNER-Relex is the recommended setting for relations per the benchmark above.
+Defaults (ADR-0023): `ner` → OpenAI `gpt-4o-mini` (accuracy leader; switch to local GLiNER in
+Settings); `keg` → local GLiNER-Relex (benchmark winner, no egress). Under no-egress, the OpenAI
+options are gated/blocked as usual, so a no-egress host selects the local span models. The only
+remaining env var is `DOKTOK_NER_DEVICE` (torch device for the local models, default cpu).
 
 A Settings-UI selector (local / remote, mirroring the OCR-engine selector of ADR-0021) is the
 planned follow-up. The local runtime is installed out-of-band: `make ner-models`.

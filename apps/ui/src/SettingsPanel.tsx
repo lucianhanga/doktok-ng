@@ -1431,6 +1431,8 @@ export function SettingsPanel() {
       putAiSettings({
         pipeline: ai.pipeline,
         rag: ai.rag,
+        ner: ai.ner,
+        keg: ai.keg,
         embedding: ai.embedding,
         openai_api_key: openaiKey || null,
         no_egress: ai.no_egress,
@@ -1472,7 +1474,9 @@ export function SettingsPanel() {
     !!catalog &&
     !!ai &&
     (selectionBlocked(catalog.pipeline, ai.pipeline, noEgress) ||
-      selectionBlocked(catalog.rag, ai.rag, noEgress));
+      selectionBlocked(catalog.rag, ai.rag, noEgress) ||
+      selectionBlocked(catalog.ner ?? [], ai.ner, noEgress) ||
+      selectionBlocked(catalog.keg ?? [], ai.keg, noEgress));
 
   return (
     <section className="panel" aria-label="Settings">
@@ -1593,6 +1597,30 @@ export function SettingsPanel() {
             status={ai.purpose_status?.rag}
             violation={violations.rag}
             onChange={(rag) => setAi({ ...ai, rag })}
+          />
+          <PurposeEditor
+            title="Entity recognition (NER)"
+            description="Model that finds people, organizations and places in your documents."
+            options={catalog.ner ?? []}
+            value={ai.ner}
+            reasoningLevels={catalog.reasoning_levels}
+            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+            noEgress={noEgress}
+            status={ai.purpose_status?.ner}
+            violation={violations.ner}
+            onChange={(ner) => setAi({ ...ai, ner })}
+          />
+          <PurposeEditor
+            title="Knowledge graph (relations)"
+            description="Model that extracts relationships between entities for the knowledge graph."
+            options={catalog.keg ?? []}
+            value={ai.keg}
+            reasoningLevels={catalog.reasoning_levels}
+            ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+            noEgress={noEgress}
+            status={ai.purpose_status?.keg}
+            violation={violations.keg}
+            onChange={(keg) => setAi({ ...ai, keg })}
           />
           <div className="settings-purpose">
             <h4>Embedding (index)</h4>

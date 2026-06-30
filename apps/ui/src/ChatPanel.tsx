@@ -521,7 +521,7 @@ function ThreadList({
       <aside className="chat-threads chat-threads-collapsed" aria-label="Conversations">
         <button
           type="button"
-          className="chat-threads-toggle-text link-button"
+          className="chat-threads-toggle-text"
           onClick={onToggleCollapse}
           aria-label="Expand conversations"
           title="Show conversations"
@@ -538,7 +538,7 @@ function ThreadList({
         <strong className="chat-threads-title">Conversations</strong>
         <button
           type="button"
-          className="chat-threads-toggle-text link-button"
+          className="chat-threads-toggle-text"
           onClick={onToggleCollapse}
           aria-label="Collapse conversations"
           title="Collapse conversations"
@@ -1170,7 +1170,7 @@ export function ChatPanel({
           >
             <button
               type="button"
-              className="chat-threads-toggle-text link-button"
+              className="chat-threads-toggle-text"
               onClick={toggleRightPane}
               aria-expanded={false}
               aria-label="Expand activity panel"
@@ -1214,7 +1214,7 @@ export function ChatPanel({
                 )}
                 <button
                   type="button"
-                  className="chat-threads-toggle-text link-button"
+                  className="chat-threads-toggle-text"
                   onClick={toggleRightPane}
                   aria-expanded={true}
                   aria-label="Collapse activity panel"

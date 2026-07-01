@@ -383,6 +383,7 @@ test("the OpenAI Test button validates the entered key and shows the result", as
 test("shows the device-aware OCR recommendation hint", async () => {
   mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() =>
     expect(screen.getByText(/Recommended for this device/i)).toBeInTheDocument(),
   );
@@ -392,6 +393,7 @@ test("shows the device-aware OCR recommendation hint", async () => {
 test("changing parallel OCR processes saves the OCR setting", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() =>
     expect(screen.getByLabelText("Parallel OCR processes")).toBeInTheDocument(),
   );
@@ -990,11 +992,13 @@ test("the posture badge reflects no_egress on and off", async () => {
   mockApi();
   aiResponse = { ...AI, no_egress: true };
   const { unmount } = render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() => expect(screen.getByText("Data stays on this host")).toBeInTheDocument());
   unmount();
 
   aiResponse = { ...AI, no_egress: false };
   render(<SettingsPanel />);
+  await gotoModelStack();
   await waitFor(() =>
     expect(screen.getByText("Remote models permitted")).toBeInTheDocument(),
   );
@@ -1006,6 +1010,7 @@ test("the no-egress toggle reflects the posture and is disabled when host-locked
   mockApi();
   aiResponse = { ...AI, no_egress: true, no_egress_locked: true };
   render(<SettingsPanel />);
+  await gotoModelStack();
   const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
   expect(toggle).toBeChecked();
   expect(toggle).toBeDisabled();
@@ -1021,6 +1026,7 @@ test("turning the no-egress toggle off confirms, then sends no_egress:false in t
   const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<SettingsPanel />);
+  await gotoModelStack();
   const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
   expect(toggle).toBeChecked();
 
@@ -1043,6 +1049,7 @@ test("declining the confirm leaves the no-egress posture unchanged", async () =>
   const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
 
   render(<SettingsPanel />);
+  await gotoModelStack();
   const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
   fireEvent.click(toggle);
   expect(confirmSpy).toHaveBeenCalledTimes(1);
@@ -1064,7 +1071,8 @@ test("a 422 no_egress_locked on save surfaces the message without throwing", asy
       { status: 422 },
     );
   render(<SettingsPanel />);
-  await waitFor(() => expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument());
+  await gotoModelStack();
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
 
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 

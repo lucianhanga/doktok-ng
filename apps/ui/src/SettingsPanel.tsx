@@ -1277,6 +1277,7 @@ const STAGE_INFO = {
   keg: "Model that extracts relationships between entities for the knowledge graph.",
   embedding:
     "The model that embeds your documents for semantic search. Read-only: changing it would require re-indexing the whole corpus.",
+  ocr: "The OCR engine and how many pages are OCR'd in parallel. Parallelism applies live (~15 s); an engine change applies on the next worker restart.",
 } as const;
 
 function PurposeEditor({
@@ -1446,6 +1447,8 @@ export function SettingsPanel() {
   // overrides separately). Drives the read-only card and the "Use server default" picker entry.
   const [serverDefaults, setServerDefaults] = useState<AiSettings | null>(null);
   const [ocr, setOcr] = useState<OcrSettings | null>(null);
+  // Snapshot of the loaded OCR settings = the server default shown in the read-only card.
+  const [serverDefaultsOcr, setServerDefaultsOcr] = useState<OcrSettings | null>(null);
   const [ocrRec, setOcrRec] = useState<OcrRecommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
@@ -1477,6 +1480,7 @@ export function SettingsPanel() {
         setAi(s);
         setServerDefaults(s);
         setOcr(o);
+        setServerDefaultsOcr(o);
       })
       .catch((err: unknown) => {
         if (c.signal.aborted) return;
@@ -1654,15 +1658,6 @@ export function SettingsPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "settings"}
-            className={tab === "settings" ? "active" : ""}
-            onClick={() => setTab("settings")}
-          >
-            Settings
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={tab === "models"}
             className={tab === "models" ? "active" : ""}
             onClick={() => setTab("models")}
@@ -1672,11 +1667,11 @@ export function SettingsPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "drp"}
-            className={tab === "drp" ? "active" : ""}
-            onClick={() => setTab("drp")}
+            aria-selected={tab === "settings"}
+            className={tab === "settings" ? "active" : ""}
+            onClick={() => setTab("settings")}
           >
-            DRP
+            Settings
           </button>
           <button
             type="button"
@@ -1686,6 +1681,15 @@ export function SettingsPanel() {
             onClick={() => setTab("memory")}
           >
             Memory
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "drp"}
+            className={tab === "drp" ? "active" : ""}
+            onClick={() => setTab("drp")}
+          >
+            DRP
           </button>
         </nav>
         <div className="settings-pane">
@@ -1700,55 +1704,6 @@ export function SettingsPanel() {
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section">
-          {/* Single source of truth for the host's data-egress posture. The wording (not just the
-              colour) carries the state, so it stays legible without colour. */}
-          {ai.no_egress !== undefined && (
-            <div className="egress-control">
-              <p
-                role="status"
-                className={`egress-posture ${
-                  ai.no_egress ? "egress-posture-secure" : "egress-posture-open"
-                }`}
-              >
-                {ai.no_egress ? "Data stays on this host" : "Remote models permitted"}
-              </p>
-              {/* User-configurable posture (formerly a host-only env switch). Disabled when an
-                  operator hard-locked it on the host — the reason rides in visible text + title +
-                  aria, never colour alone. */}
-              <label className="egress-toggle">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  checked={ai.no_egress}
-                  disabled={!!ai.no_egress_locked}
-                  aria-describedby={ai.no_egress_locked ? "egress-lock-note" : undefined}
-                  title={
-                    ai.no_egress_locked
-                      ? "Enforced by the host (DOKTOK_NO_EGRESS_LOCK) — cannot be changed here"
-                      : undefined
-                  }
-                  onChange={(e) => toggleNoEgress(e.target.checked)}
-                />{" "}
-                <span>Keep data on this host (no-egress)</span>
-              </label>
-              {ai.no_egress_locked && (
-                <span id="egress-lock-note" className="muted egress-lock-note">
-                  Enforced by the host — cannot be changed here.
-                </span>
-              )}
-              {lockedError && (
-                <p role="alert" className="status-error egress-form-error">
-                  {lockedError}
-                </p>
-              )}
-            </div>
-          )}
-          {ai.egress_active && (
-            <p className="status-error" role="status">
-              Privacy: a remote (OpenAI) model is active, so document content and chat context are
-              sent to api.openai.com. Switch both purposes to a local model to keep data on this host.
-            </p>
-          )}
           <div className="settings-purpose">
             <h4>OpenAI</h4>
             <p className="muted">
@@ -1804,62 +1759,6 @@ export function SettingsPanel() {
             </div>
           </div>
 
-          <h3>OCR</h3>
-          <p className="muted">
-            The OCR engine and how many pages are OCR'd in parallel. Parallelism applies live
-            (~15 s); an <strong>engine change applies on the next worker restart</strong>.
-          </p>
-          <div className="settings-purpose">
-            <div className="settings-row">
-              <label>
-                Engine{" "}
-                <select
-                  aria-label="OCR engine"
-                  value={ocr.engine ?? ""}
-                  onChange={(e) => setOcr({ ...ocr, engine: e.target.value })}
-                >
-                  <option value="">(server default)</option>
-                  {OCR_ENGINES.map((en) => (
-                    <option key={en} value={en}>
-                      {en}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Parallel OCR processes{" "}
-                <input
-                  type="number"
-                  aria-label="Parallel OCR processes"
-                  min={1}
-                  max={32}
-                  value={ocr.ocr_concurrency}
-                  onChange={(e) =>
-                    setOcr({
-                      ...ocr,
-                      ocr_concurrency: Math.max(1, Math.min(32, Number(e.target.value) || 1)),
-                    })
-                  }
-                />
-              </label>
-            </div>
-            {ocrRec && (
-              <p className="ocr-recommendation" role="note">
-                <strong>Recommended for this device:</strong> {ocrRec.engine} @ {ocrRec.concurrency}{" "}
-                parallel — {ocrRec.reason}
-                {ocr.ocr_concurrency !== ocrRec.concurrency && (
-                  <button
-                    type="button"
-                    className="settings-reset"
-                    onClick={() => setOcr({ ocr_concurrency: ocrRec.concurrency })}
-                  >
-                    Use {ocrRec.concurrency}
-                  </button>
-                )}
-              </p>
-            )}
-          </div>
-
           {saveBar}
         </div>
         ))}
@@ -1869,6 +1768,59 @@ export function SettingsPanel() {
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section settings-section--wide">
+            {/* Host data-egress posture spans both cards; it gates every model picker below. */}
+            {ai.no_egress !== undefined && (
+              <div className="egress-control model-stack-egress">
+                <p
+                  role="status"
+                  className={`egress-posture ${
+                    ai.no_egress ? "egress-posture-secure" : "egress-posture-open"
+                  }`}
+                >
+                  {ai.no_egress ? "Data stays on this host" : "Remote models permitted"}
+                  <InfoHint label="Data-egress posture">
+                    Controls whether this host may use <strong>remote</strong> AI providers. When{" "}
+                    <strong>on</strong> (no-egress), every stage must use a <strong>local</strong>{" "}
+                    model and no document text leaves this machine. When <strong>off</strong>,
+                    stages set to remote providers (e.g. OpenAI) may{" "}
+                    <strong>send document text off this host</strong>.
+                  </InfoHint>
+                </p>
+                <label className="egress-toggle">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={ai.no_egress}
+                    disabled={!!ai.no_egress_locked}
+                    aria-describedby={ai.no_egress_locked ? "egress-lock-note" : undefined}
+                    title={
+                      ai.no_egress_locked
+                        ? "Enforced by the host (DOKTOK_NO_EGRESS_LOCK) — cannot be changed here"
+                        : undefined
+                    }
+                    onChange={(e) => toggleNoEgress(e.target.checked)}
+                  />{" "}
+                  <span>Keep data on this host (no-egress)</span>
+                </label>
+                {ai.no_egress_locked && (
+                  <span id="egress-lock-note" className="muted egress-lock-note">
+                    Enforced by the host — cannot be changed here.
+                  </span>
+                )}
+                {lockedError && (
+                  <p role="alert" className="status-error egress-form-error">
+                    {lockedError}
+                  </p>
+                )}
+              </div>
+            )}
+            {ai.egress_active && (
+              <p className="status-error model-stack-egress" role="status">
+                Privacy: a remote (OpenAI) model is active, so document content and chat context are
+                sent to api.openai.com. Switch both purposes to a local model to keep data on this
+                host.
+              </p>
+            )}
             <div className="settings-cards-row model-stack">
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
@@ -1987,6 +1939,27 @@ export function SettingsPanel() {
                     </label>
                   </div>
                 </div>
+                <div className="settings-purpose">
+                  <h4>
+                    OCR <InfoHint label="OCR">{STAGE_INFO.ocr}</InfoHint>
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Engine{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaultsOcr ?? ocr).engine || "server default"}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Parallelism{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaultsOcr ?? ocr).ocr_concurrency}
+                      </span>
+                    </label>
+                  </div>
+                </div>
               </div>
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
@@ -2071,6 +2044,61 @@ export function SettingsPanel() {
                       />
                     </label>
                   </div>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
+                    OCR <InfoHint label="OCR">{STAGE_INFO.ocr}</InfoHint>
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Engine{" "}
+                      <select
+                        aria-label="OCR engine"
+                        value={ocr.engine ?? ""}
+                        onChange={(e) => setOcr({ ...ocr, engine: e.target.value })}
+                      >
+                        <option value="">(server default)</option>
+                        {OCR_ENGINES.map((en) => (
+                          <option key={en} value={en}>
+                            {en}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <label>
+                      Parallel OCR processes{" "}
+                      <input
+                        type="number"
+                        aria-label="Parallel OCR processes"
+                        min={1}
+                        max={32}
+                        value={ocr.ocr_concurrency}
+                        onChange={(e) =>
+                          setOcr({
+                            ...ocr,
+                            ocr_concurrency: Math.max(1, Math.min(32, Number(e.target.value) || 1)),
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                  {ocrRec && (
+                    <p className="ocr-recommendation" role="note">
+                      <strong>Recommended for this device:</strong> {ocrRec.engine} @{" "}
+                      {ocrRec.concurrency} parallel — {ocrRec.reason}
+                      {ocr.ocr_concurrency !== ocrRec.concurrency && (
+                        <button
+                          type="button"
+                          className="settings-reset"
+                          onClick={() => setOcr({ ocr_concurrency: ocrRec.concurrency })}
+                        >
+                          Use {ocrRec.concurrency}
+                        </button>
+                      )}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

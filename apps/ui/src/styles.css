@@ -93,11 +93,11 @@ body {
   padding: 1rem 0 1.5rem;
 }
 /* When the chat page is active, clip page-level scroll and hand it to the transcript. */
-.app-main:has(.chat-page) {
+.app-main:has(.app-chat-mount:not([hidden])) {
   overflow: hidden;
   padding: 0;
 }
-.app-main:has(.chat-page) .app-inner {
+.app-main:has(.app-chat-mount:not([hidden])) .app-inner {
   height: 100%;
   padding-top: 1rem;
   box-sizing: border-box;
@@ -107,7 +107,7 @@ body {
 /* For chat, the content wrapper must be constrained to viewport height so the transcript
    scrolls internally. Without min-height:0, browsers may compute min-height:auto as the
    full content height and overflow the overflow:hidden clip, cutting off the input form. */
-.app-main:has(.chat-page) .app-content {
+.app-main:has(.app-chat-mount:not([hidden])) .app-content {
   min-height: 0;
 }
 .app-statusbar {
@@ -1352,7 +1352,7 @@ tr.row-selected {
 .model-stack {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: repeat(6, auto);
+  grid-template-rows: repeat(7, auto);
   gap: 0.4rem 1rem;
 }
 .model-stack .settings-purpose h4 {
@@ -1371,6 +1371,13 @@ tr.row-selected {
 .model-stack-card > .model-stack-head,
 .model-stack-card > .settings-purpose {
   margin: 0;
+}
+/* Egress posture spanning both cards, in its own frame. */
+.model-stack-egress {
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
 }
 .model-stack-head {
   font-size: 1rem;

@@ -1658,15 +1658,6 @@ export function SettingsPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "settings"}
-            className={tab === "settings" ? "active" : ""}
-            onClick={() => setTab("settings")}
-          >
-            Settings
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={tab === "models"}
             className={tab === "models" ? "active" : ""}
             onClick={() => setTab("models")}
@@ -1676,11 +1667,11 @@ export function SettingsPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "drp"}
-            className={tab === "drp" ? "active" : ""}
-            onClick={() => setTab("drp")}
+            aria-selected={tab === "settings"}
+            className={tab === "settings" ? "active" : ""}
+            onClick={() => setTab("settings")}
           >
-            DRP
+            Settings
           </button>
           <button
             type="button"
@@ -1690,6 +1681,15 @@ export function SettingsPanel() {
             onClick={() => setTab("memory")}
           >
             Memory
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "drp"}
+            className={tab === "drp" ? "active" : ""}
+            onClick={() => setTab("drp")}
+          >
+            DRP
           </button>
         </nav>
         <div className="settings-pane">

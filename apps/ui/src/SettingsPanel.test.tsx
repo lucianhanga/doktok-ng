@@ -22,6 +22,10 @@ const CATALOG = {
     { provider: "gliner-relex", model: "relex-base-v1", label: "ReLEx Base v1", contexts: [512], supports_reasoning: false, requires_egress: false },
     { provider: "openai", model: "gpt-4o-mini", label: "GPT-4o Mini", contexts: [128000], supports_reasoning: false, requires_egress: true },
   ],
+  rerank: [
+    { provider: "qwen-reranker", model: "Qwen/Qwen3-Reranker-0.6B", label: "Qwen3-Reranker 0.6B", contexts: [32768], supports_reasoning: false, requires_egress: false },
+    { provider: "qwen-reranker", model: "Qwen/Qwen3-Reranker-4B", label: "Qwen3-Reranker 4B", contexts: [32768], supports_reasoning: false, requires_egress: false },
+  ],
   reasoning_levels: ["off", "low", "medium", "high"],
 };
 const AI = {
@@ -29,6 +33,7 @@ const AI = {
   rag: { provider: "ollama", model: "qwen3.6:27b", num_ctx: 32768, reasoning: "off" },
   ner: { provider: "gliner", model: "gliner-large-v2.1", num_ctx: 512, reasoning: "off" },
   keg: { provider: "gliner-relex", model: "relex-base-v1", num_ctx: 512, reasoning: "off" },
+  rerank: { provider: "qwen-reranker", model: "Qwen/Qwen3-Reranker-0.6B", num_ctx: 32768, reasoning: "off" },
   embedding: { ollama_base_url: null },
   ollama_base_url_default: "http://localhost:11434",
   openai_api_key_set: false,
@@ -267,7 +272,7 @@ function mockApi() {
       if (aiPutResponder) return aiPutResponder(init?.body as string | undefined);
       const sent = init?.body ? JSON.parse(init.body as string) : {};
       return new Response(
-        JSON.stringify({ pipeline: sent.pipeline, rag: sent.rag, ner: sent.ner, keg: sent.keg, openai_api_key_set: false }),
+        JSON.stringify({ pipeline: sent.pipeline, rag: sent.rag, ner: sent.ner, keg: sent.keg, rerank: sent.rerank, embedding: sent.embedding, openai_api_key_set: false }),
         { status: 200 },
       );
     }),

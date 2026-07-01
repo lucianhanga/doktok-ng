@@ -1277,6 +1277,8 @@ const STAGE_INFO = {
   keg: "Model that extracts relationships between entities for the knowledge graph.",
   embedding:
     "The model that embeds your documents for semantic search. Read-only: changing it would require re-indexing the whole corpus.",
+  rerank:
+    "Reorders the retrieved passages by relevance before the answer is written. A dedicated on-host Qwen3-Reranker (falls back to the chat model's listwise reranking if the local model isn't installed).",
   ocr: "The OCR engine and how many pages are OCR'd in parallel. Parallelism applies live (~15 s); an engine change applies on the next worker restart.",
 } as const;
 
@@ -1504,12 +1506,20 @@ export function SettingsPanel() {
     }
     let cancelled = false;
     const settings = ai;
-    setHealth({ pipeline: "checking", rag: "checking", ner: "checking", keg: "checking", embedding: "checking" });
+    setHealth({
+      pipeline: "checking",
+      rag: "checking",
+      ner: "checking",
+      keg: "checking",
+      rerank: "checking",
+      embedding: "checking",
+    });
     const probes: Array<readonly [string, Promise<PurposeHealth>]> = [
       ["pipeline", probePurpose(settings.pipeline)],
       ["rag", probePurpose(settings.rag)],
       ["ner", probePurpose(settings.ner)],
       ["keg", probePurpose(settings.keg)],
+      ["rerank", probePurpose(settings.rerank)],
       [
         "embedding",
         probePurpose({
@@ -1567,6 +1577,7 @@ export function SettingsPanel() {
         rag: ai.rag,
         ner: ai.ner,
         keg: ai.keg,
+        rerank: ai.rerank,
         embedding: ai.embedding,
         openai_api_key: openaiKey || null,
         no_egress: ai.no_egress,
@@ -1941,13 +1952,28 @@ export function SettingsPanel() {
                 </div>
                 <div className="settings-purpose">
                   <h4>
+                    Reranker <InfoHint label="Reranker">{STAGE_INFO.rerank}</InfoHint>
+                    <HealthDot status={health?.rerank} />
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Model{" "}
+                      <span className="model-stack-readonly">
+                        {(serverDefaults ?? ai).rerank.provider} ·{" "}
+                        {(serverDefaults ?? ai).rerank.model}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="settings-purpose">
+                  <h4>
                     OCR <InfoHint label="OCR">{STAGE_INFO.ocr}</InfoHint>
                   </h4>
                   <div className="settings-row">
                     <label>
                       Engine{" "}
                       <span className="model-stack-readonly">
-                        {(serverDefaultsOcr ?? ocr).engine || "server default"}
+                        {(serverDefaultsOcr ?? ocr).engine || ocrRec?.engine || "—"}
                       </span>
                     </label>
                   </div>
@@ -2045,6 +2071,20 @@ export function SettingsPanel() {
                     </label>
                   </div>
                 </div>
+                <PurposeEditor
+                  title="Reranker"
+                  description={STAGE_INFO.rerank}
+                  options={catalog.rerank}
+                  value={ai.rerank}
+                  defaultValue={serverDefaults?.rerank}
+                  health={health?.rerank}
+                  reasoningLevels={catalog.reasoning_levels}
+                  ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
+                  noEgress={noEgress}
+                  status={ai.purpose_status?.rerank}
+                  violation={violations.rerank}
+                  onChange={(rerank) => setAi({ ...ai, rerank })}
+                />
                 <div className="settings-purpose">
                   <h4>
                     OCR <InfoHint label="OCR">{STAGE_INFO.ocr}</InfoHint>

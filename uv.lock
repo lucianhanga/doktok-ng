@@ -33,6 +33,7 @@ members = [
     "doktok-provider-paddleocr",
     "doktok-provider-projection",
     "doktok-provider-rapidocr",
+    "doktok-provider-reranker",
     "doktok-retrieval-hybrid",
     "doktok-storage-filesystem",
     "doktok-storage-postgres",
@@ -729,6 +730,7 @@ dependencies = [
     { name = "doktok-provider-ollama" },
     { name = "doktok-provider-openai" },
     { name = "doktok-provider-paddleocr" },
+    { name = "doktok-provider-reranker" },
     { name = "doktok-retrieval-hybrid" },
     { name = "doktok-storage-filesystem" },
     { name = "doktok-storage-postgres" },
@@ -758,6 +760,7 @@ requires-dist = [
     { name = "doktok-provider-ollama", editable = "providers/ollama" },
     { name = "doktok-provider-openai", editable = "providers/openai" },
     { name = "doktok-provider-paddleocr", editable = "providers/paddleocr" },
+    { name = "doktok-provider-reranker", editable = "providers/reranker" },
     { name = "doktok-retrieval-hybrid", editable = "retrieval/hybrid" },
     { name = "doktok-storage-filesystem", editable = "storage/filesystem" },
     { name = "doktok-storage-postgres", editable = "storage/postgres" },
@@ -911,6 +914,28 @@ requires-dist = [
     { name = "rapidocr-openvino", marker = "extra == 'openvino'", specifier = ">=1.3" },
 ]
 provides-extras = ["engine", "openvino"]
+
+[[package]]
+name = "doktok-provider-reranker"
+version = "0.1.0"
+source = { editable = "providers/reranker" }
+dependencies = [
+    { name = "doktok-contracts" },
+]
+
+[package.optional-dependencies]
+engine = [
+    { name = "torch" },
+    { name = "transformers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "doktok-contracts", editable = "contracts" },
+    { name = "torch", marker = "extra == 'engine'", specifier = ">=2.2" },
+    { name = "transformers", marker = "extra == 'engine'", specifier = ">=4.51" },
+]
+provides-extras = ["engine"]
 
 [[package]]
 name = "doktok-retrieval-hybrid"

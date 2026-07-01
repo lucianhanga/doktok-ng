@@ -608,7 +608,7 @@ export interface AiEmbeddingSettings {
   ollama_base_url?: string | null;
 }
 
-export type AiPurpose = "pipeline" | "rag" | "embedding" | "ner" | "keg";
+export type AiPurpose = "pipeline" | "rag" | "embedding" | "ner" | "keg" | "rerank";
 
 // Why a purpose is unusable under the active egress policy (no-egress gate, ADR-0006/0008).
 // "openai_selected"/"remote_ollama_url" are POLICY blocks (red, fix = flip the host env switch);
@@ -632,6 +632,7 @@ export interface AiSettings {
   rag: AiPurposeSettings;
   ner: AiPurposeSettings;
   keg: AiPurposeSettings;
+  rerank: AiPurposeSettings;
   embedding: AiEmbeddingSettings;
   openai_api_key_set?: boolean;
   // Read-only: the embedding model + context that indexes the corpus (not user-selectable).
@@ -676,6 +677,7 @@ export interface ModelCatalog {
   rag: ModelOption[];
   ner: ModelOption[];
   keg: ModelOption[];
+  rerank: ModelOption[];
   reasoning_levels: string[];
   // The active no-egress policy, mirrored on the catalog so the picker can grey out forbidden
   // options without a second round-trip. Optional for pre-upgrade backends.

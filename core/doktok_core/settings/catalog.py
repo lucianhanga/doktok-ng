@@ -93,13 +93,37 @@ MODEL_CATALOG = ModelCatalog(
             supports_reasoning=False,
         ),
     ],
+    # RAG reranker (#466): dedicated on-host scoring rerankers (Qwen3-Reranker). The 0.6B model is
+    # the recommended default (small footprint); the 4B trades memory for accuracy. Both local.
+    rerank=[
+        ModelOption(
+            provider="qwen-reranker",
+            model="Qwen/Qwen3-Reranker-0.6B",
+            label="Qwen3-Reranker 0.6B - local (~1.2-2 GB, default)",
+            contexts=[32768],
+            supports_reasoning=False,
+        ),
+        ModelOption(
+            provider="qwen-reranker",
+            model="Qwen/Qwen3-Reranker-4B",
+            label="Qwen3-Reranker 4B - local (~8-10 GB, higher accuracy)",
+            contexts=[32768],
+            supports_reasoning=False,
+        ),
+    ],
     reasoning_levels=REASONING_LEVELS,
 )
 
 # Every remote (OpenAI) option moves content off-host; mark it once here so there is a single rule
 # (no per-literal drift). A remote Ollama *URL* is gated separately, per-purpose, at request time.
 # Local span models (gliner / gliner-relex) are on-host and stay requires_egress=False.
-_ALL_OPTIONS = (*MODEL_CATALOG.pipeline, *MODEL_CATALOG.ner, *MODEL_CATALOG.keg, *MODEL_CATALOG.rag)
+_ALL_OPTIONS = (
+    *MODEL_CATALOG.pipeline,
+    *MODEL_CATALOG.ner,
+    *MODEL_CATALOG.keg,
+    *MODEL_CATALOG.rerank,
+    *MODEL_CATALOG.rag,
+)
 for _option in _ALL_OPTIONS:
     _option.requires_egress = _option.provider == "openai"
 

@@ -30,6 +30,7 @@ from doktok_contracts.ports import (
     ProjectionRequestRepository,
     RagAnswerer,
     RecordRepository,
+    Reranker,
     Retriever,
     StatsRepository,
 )
@@ -278,7 +279,8 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     settings = request.app.state.settings
     # Effective RAG model selection (Settings tab > AI section), persisted; applied at startup.
     app_settings = get_app_settings_repository(request)
-    rag = app_settings.get_ai_settings().rag
+    ai_settings = app_settings.get_ai_settings()
+    rag = ai_settings.rag
     openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     no_egress = effective_no_egress(
         app_settings.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
@@ -310,10 +312,28 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
         get_knowledge_graph_repository(request),
         documents=get_document_repository(request),
     )
+    # Reranker (#466): a dedicated on-host Qwen3-Reranker when selected + available, else the LLM
+    # listwise reranker. The native path degrades to the LLM one when torch/the model isn't
+    # installed, so reranking never hard-fails.
+    reranker: Reranker
+    if ai_settings.rerank.provider in ("qwen-reranker", "qwen_reranker"):
+        try:
+            from doktok_provider_reranker import QwenReranker
+
+            reranker = QwenReranker(ai_settings.rerank.model)
+        except Exception:  # noqa: BLE001 - missing torch/model must fall back, never crash startup
+            logging.getLogger("doktok.rag.rerank").warning(
+                "local reranker %s unavailable; using the LLM listwise reranker",
+                ai_settings.rerank.model,
+                exc_info=True,
+            )
+            reranker = LlmReranker(rerank_model)
+    else:
+        reranker = LlmReranker(rerank_model)
     answerer = DefaultRagAnswerer(
         get_retriever(request),
         chat_model,
-        reranker=LlmReranker(rerank_model),
+        reranker=reranker,
         retrieve_k=settings.rag_retrieve_k,
         min_score=settings.rag_min_score,
         graph_retriever=graph_retriever,

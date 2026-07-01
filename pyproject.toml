@@ -15,6 +15,7 @@ dependencies = [
     "doktok-provider-openai",
     "doktok-provider-paddleocr",
     "doktok-provider-gliner",
+    "doktok-provider-reranker",
     "doktok-storage-postgres",
     "doktok-storage-filesystem",
     "doktok-modalities-files",
@@ -36,6 +37,7 @@ members = [
     "providers/rapidocr",
     "providers/projection",
     "providers/gliner",
+    "providers/reranker",
     "storage/postgres",
     "storage/filesystem",
     "modalities/files",
@@ -56,6 +58,7 @@ doktok-provider-paddleocr = { workspace = true }
 doktok-provider-rapidocr = { workspace = true }
 doktok-provider-projection = { workspace = true }
 doktok-provider-gliner = { workspace = true }
+doktok-provider-reranker = { workspace = true }
 doktok-storage-postgres = { workspace = true }
 doktok-storage-filesystem = { workspace = true }
 doktok-modalities-files = { workspace = true }
@@ -110,6 +113,7 @@ testpaths = [
     "providers/openai/tests",
     "providers/paddleocr/tests",
     "providers/projection/tests",
+    "providers/reranker/tests",
     "providers/gliner/tests",
     "storage/postgres/tests",
 ]

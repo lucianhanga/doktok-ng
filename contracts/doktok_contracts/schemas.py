@@ -1089,6 +1089,15 @@ def _default_keg() -> AiPurposeSettings:
     )
 
 
+def _default_rerank() -> AiPurposeSettings:
+    # RAG reranker (#466): a dedicated on-host scoring reranker (Qwen3-Reranker). The small 0.6B
+    # model is the system default. Runs locally (no egress); the RAG path falls back to the LLM
+    # listwise reranker when the local model isn't installed.
+    return AiPurposeSettings(
+        provider="qwen-reranker", model="Qwen/Qwen3-Reranker-0.6B", num_ctx=32768
+    )
+
+
 class AiSettings(BaseModel):
     """The configurable AI model selection (Settings tab > AI section). Applied on restart."""
 
@@ -1098,6 +1107,9 @@ class AiSettings(BaseModel):
     # existing stored row fill from these defaults - no migration needed (generic JSONB + pydantic).
     ner: AiPurposeSettings = Field(default_factory=_default_ner)
     keg: AiPurposeSettings = Field(default_factory=_default_keg)
+    # RAG reranker (#466): a dedicated scoring reranker, split so it can use a local Qwen3-Reranker
+    # independently of the chat model.
+    rerank: AiPurposeSettings = Field(default_factory=_default_rerank)
     rag: AiPurposeSettings = Field(default_factory=_default_rag)
     embedding: AiEmbeddingSettings = Field(default_factory=AiEmbeddingSettings)
 
@@ -1470,6 +1482,7 @@ class ModelCatalog(BaseModel):
     pipeline: list[ModelOption] = Field(default_factory=list)
     ner: list[ModelOption] = Field(default_factory=list)
     keg: list[ModelOption] = Field(default_factory=list)
+    rerank: list[ModelOption] = Field(default_factory=list)
     rag: list[ModelOption] = Field(default_factory=list)
     reasoning_levels: list[str] = Field(default_factory=list)
     # The active no-egress policy, so the catalog alone tells the UI which options to disable/badge.

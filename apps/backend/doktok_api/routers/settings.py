@@ -121,6 +121,7 @@ def _purpose_statuses(
         "pipeline": status(ai.pipeline.provider, ai.pipeline.ollama_base_url),
         "ner": status(ai.ner.provider, ai.ner.ollama_base_url),
         "keg": status(ai.keg.provider, ai.keg.ollama_base_url),
+        "rerank": status(ai.rerank.provider, ai.rerank.ollama_base_url),
         "rag": status(ai.rag.provider, ai.rag.ollama_base_url),
         # Embedding has no provider switch - only the URL vector can egress.
         "embedding": status("ollama", ai.embedding.ollama_base_url),
@@ -137,6 +138,7 @@ def _egress_violations(
         ("pipeline", ai.pipeline.provider, ai.pipeline.ollama_base_url),
         ("ner", ai.ner.provider, ai.ner.ollama_base_url),
         ("keg", ai.keg.provider, ai.keg.ollama_base_url),
+        ("rerank", ai.rerank.provider, ai.rerank.ollama_base_url),
         ("rag", ai.rag.provider, ai.rag.ollama_base_url),
         ("embedding", "ollama", ai.embedding.ollama_base_url),
     )
@@ -247,6 +249,7 @@ def put_ai_settings(
     _validate_ollama_url(update.pipeline.ollama_base_url, "pipeline.ollama_base_url")
     _validate_ollama_url(update.ner.ollama_base_url, "ner.ollama_base_url")
     _validate_ollama_url(update.keg.ollama_base_url, "keg.ollama_base_url")
+    _validate_ollama_url(update.rerank.ollama_base_url, "rerank.ollama_base_url")
     _validate_ollama_url(update.rag.ollama_base_url, "rag.ollama_base_url")
     _validate_ollama_url(update.embedding.ollama_base_url, "embedding.ollama_base_url")
     settings = request.app.state.settings
@@ -268,6 +271,7 @@ def put_ai_settings(
         pipeline=update.pipeline,
         ner=update.ner,
         keg=update.keg,
+        rerank=update.rerank,
         rag=update.rag,
         embedding=update.embedding,
     )
@@ -313,7 +317,7 @@ def put_ai_settings(
     summary = (
         f"AI settings: pipeline {ai.pipeline.provider}/{ai.pipeline.model}, "
         f"NER {ai.ner.provider}/{ai.ner.model}, KEG {ai.keg.provider}/{ai.keg.model}, "
-        f"RAG {ai.rag.provider}/{ai.rag.model}"
+        f"reranker {ai.rerank.provider}/{ai.rerank.model}, RAG {ai.rag.provider}/{ai.rag.model}"
     )
     if key_changed:
         summary += ", OpenAI key updated"

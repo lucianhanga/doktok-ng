@@ -60,6 +60,9 @@ kg-bench: ## Benchmark KG relations: current LLM vs local GLiNER-Relex (needs a 
 ner-models: ## Install the local GLiNER/NuNER/GLiNER-Relex runtime (doktok-provider-gliner[engine])
 	uv pip install gliner rapidfuzz
 
+reranker-models: ## Install the local Qwen3-Reranker runtime (doktok-provider-reranker[engine])
+	uv pip install "torch>=2.2" "transformers>=4.51"
+
 ocr-paddle: ## Install the PaddleOCR runtime (the DOKTOK_OCR_ENGINE=paddleocr extra)
 	uv pip install paddleocr paddlepaddle pillow numpy
 

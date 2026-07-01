@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doktok-provider-reranker"
+version = "0.1.0"
+description = "Local Qwen3-Reranker cross-encoder reranking adapter for doktokNG (experimental)."
+requires-python = ">=3.12"
+dependencies = ["doktok-contracts"]
+
+# Heavy runtime (torch + transformers) is opt-in, mirroring the GLiNER / OCR provider extras.
+# Install with `make reranker-models`. Importing the package is light; the model loads only when a
+# reranker is instantiated.
+[project.optional-dependencies]
+engine = ["torch>=2.2", "transformers>=4.51"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["doktok_provider_reranker"]

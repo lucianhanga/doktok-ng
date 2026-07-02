@@ -479,6 +479,10 @@ table.jobs td.cell-truncate {
   padding: 0;
   margin: 0;
   display: grid;
+  /* minmax(0, 1fr): a grid item defaults to min-width:auto and would size the single column to the
+     widest row's content, pushing long activity text off-screen (horizontal scroll). Capping the
+     track at the container width lets rows shrink so the .timeline-detail ellipsis truncation works. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.35rem;
 }
 

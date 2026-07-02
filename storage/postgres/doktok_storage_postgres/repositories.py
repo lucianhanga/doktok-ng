@@ -34,6 +34,7 @@ from doktok_contracts.schemas import (
     EmbeddingProjection,
     EntitySummary,
     EntityType,
+    EntityTypeCount,
     ExtractedRecord,
     FeatureMetrics,
     FeatureStatus,
@@ -1253,6 +1254,60 @@ class PostgresKnowledgeGraphRepository:
                 (tenant_id,),
             ).fetchall()
         return [_row_to_kg_entity(row) for row in rows]
+
+    def list_entities_page(
+        self,
+        tenant_id: str,
+        *,
+        entity_type: EntityType | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[KgEntity]:
+        """Paginated, filterable canonical node list, ordered by normalized_value ASC."""
+        params: list[Any] = [tenant_id]
+        where = ["tenant_id=%s"]
+        if entity_type is not None:
+            where.append("entity_type=%s")
+            params.append(entity_type.value)
+        if query is not None:
+            where.append("normalized_value ILIKE %s")
+            params.append(f"%{query}%")
+        params.extend([limit, offset])
+        sql = (
+            "SELECT id, tenant_id, entity_type, normalized_value, metadata "
+            f"FROM kg_entities WHERE {' AND '.join(where)} "
+            "ORDER BY normalized_value ASC LIMIT %s OFFSET %s"
+        )
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(sql, params).fetchall()
+        return [_row_to_kg_entity(row) for row in rows]
+
+    def get_entities(self, tenant_id: str, entity_ids: Sequence[str]) -> list[KgEntity]:
+        """Batch-fetch canonical nodes by id; returns an empty list for empty input."""
+        ids = list(entity_ids)
+        if not ids:
+            return []
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, tenant_id, entity_type, normalized_value, metadata "
+                "FROM kg_entities WHERE tenant_id=%s AND id = ANY(%s)",
+                (tenant_id, ids),
+            ).fetchall()
+        return [_row_to_kg_entity(row) for row in rows]
+
+    def entity_type_counts(self, tenant_id: str) -> list[EntityTypeCount]:
+        """Count of canonical nodes per entity type for a tenant."""
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT entity_type, count(*) AS count "
+                "FROM kg_entities WHERE tenant_id=%s GROUP BY entity_type",
+                (tenant_id,),
+            ).fetchall()
+        return [EntityTypeCount(entity_type=row["entity_type"], count=row["count"]) for row in rows]
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
         with self._db.connection() as conn:

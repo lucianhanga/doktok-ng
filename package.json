@@ -9,5 +9,5 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build"
   },
-  "packageManager": "pnpm@11.5.1"
+  "packageManager": "pnpm@11.9.0"
 }

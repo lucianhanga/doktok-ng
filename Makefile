@@ -10,6 +10,14 @@ export
 
 PY_SRC := contracts core apps/backend apps/worker apps/mcp storage modalities providers tools
 
+# python-magic loads the native libmagic C library at runtime. On macOS with a
+# non-default Homebrew prefix (e.g. ~/.local), the dynamic loader can't find it,
+# so we add Homebrew's lib dir to the fallback search path. Harmless when unset.
+BREW_PREFIX := $(shell brew --prefix 2>/dev/null)
+ifneq ($(BREW_PREFIX),)
+export DYLD_FALLBACK_LIBRARY_PATH := $(BREW_PREFIX)/lib:$(DYLD_FALLBACK_LIBRARY_PATH)
+endif
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_.-]+:.*## ' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-16s %s\n", $$1, $$2}'

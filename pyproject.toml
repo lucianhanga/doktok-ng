@@ -14,7 +14,9 @@ dependencies = [
     "doktok-provider-ollama",
     "doktok-provider-openai",
     "doktok-provider-paddleocr",
-    "doktok-provider-gliner",
+    # [engine] pulls the local GLiNER/NuNER/GLiNER-Relex runtime (gliner + rapidfuzz, torch) so the
+    # default local NER + KAG relation backends install automatically instead of via `make ner-models`.
+    "doktok-provider-gliner[engine]",
     "doktok-provider-reranker",
     "doktok-storage-postgres",
     "doktok-storage-filesystem",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
 from collections.abc import Callable
@@ -112,6 +113,15 @@ def _torch_device() -> str | None:
     return os.environ.get("DOKTOK_NER_DEVICE") or None
 
 
+def _gliner_runtime_available() -> bool:
+    """The ``gliner`` engine extra (torch) is optional. The local span/relation adapters import it
+    lazily (only when they first extract), so a missing runtime would otherwise slip past the
+    resolvers' load-failure fallback and explode mid-pipeline as ``feature.failed`` (No module named
+    'gliner'). Probe importability here so a missing engine degrades to the LLM fallback at resolve
+    time, honouring the documented contract. See providers/gliner (engine extra) and ADR-0023."""
+    return importlib.util.find_spec("gliner") is not None
+
+
 def _resolve_ner_backend(
     cfg: AiPurposeSettings,
     fallback: EntityNerExtractor,
@@ -130,6 +140,8 @@ def _resolve_ner_backend(
     provider, model = cfg.provider, cfg.model
     if provider in ("gliner", "nuner"):
         try:
+            if not _gliner_runtime_available():
+                raise ModuleNotFoundError("No module named 'gliner'")
             from doktok_provider_gliner import GlinerEntityNerExtractor, NuNerEntityNerExtractor
 
             device = _torch_device()
@@ -191,6 +203,8 @@ def _resolve_relation_backend(
     provider, model = cfg.provider, cfg.model
     if provider in ("gliner-relex", "gliner_relex"):
         try:
+            if not _gliner_runtime_available():
+                raise ModuleNotFoundError("No module named 'gliner'")
             from doktok_provider_gliner import GlinerRelexRelationExtractor
 
             device = _torch_device()

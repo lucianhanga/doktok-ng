@@ -100,10 +100,10 @@ def test_ner_ollama_builds_local_llm() -> None:
 
 
 def test_ner_gliner_missing_runtime_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*_a: object, **_k: object) -> _NerFallback:
-        raise RuntimeError("gliner runtime not installed")
-
-    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(boom))
+    # The gliner engine extra (torch) is optional and the adapter imports it lazily at extract time,
+    # so a missing runtime must be caught at resolve time via the importability probe -- not at
+    # construction, which never touches gliner. Simulate the probe reporting the runtime absent.
+    monkeypatch.setattr("doktok_worker.composition._gliner_runtime_available", lambda: False)
     fallback = _NerFallback()
     ext, token = _ner(_cfg("gliner", "gliner-community/gliner_large-v2.5"), fallback)
     assert ext is fallback and token == "gliner-fallback"
@@ -111,6 +111,7 @@ def test_ner_gliner_missing_runtime_falls_back(monkeypatch: pytest.MonkeyPatch) 
 
 def test_ner_gliner_loads_local(monkeypatch: pytest.MonkeyPatch) -> None:
     chosen = _NerFallback()
+    monkeypatch.setattr("doktok_worker.composition._gliner_runtime_available", lambda: True)
     monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(lambda *a, **k: chosen))
     ext, token = _ner(_cfg("gliner", "gliner-community/gliner_large-v2.5"), _NerFallback())
     assert ext is chosen and token.startswith("gliner:gliner-community/gliner_large-v2.5")
@@ -121,16 +122,16 @@ def test_ner_gliner_loads_local(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_keg_gliner_relex_loads_local(monkeypatch: pytest.MonkeyPatch) -> None:
     chosen = _RelFallback()
+    monkeypatch.setattr("doktok_worker.composition._gliner_runtime_available", lambda: True)
     monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(lambda *a, **k: chosen))
     ext, token = _keg(_cfg("gliner-relex", "knowledgator/gliner-relex-large-v1.0"), _RelFallback())
     assert ext is chosen and token.startswith("gliner-relex:")
 
 
 def test_keg_gliner_relex_missing_runtime_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*_a: object, **_k: object) -> _RelFallback:
-        raise RuntimeError("gliner runtime not installed")
-
-    monkeypatch.setitem(sys.modules, "doktok_provider_gliner", _fake_gliner(boom))
+    # See test_ner_gliner_missing_runtime_falls_back: the import is deferred to extract time, so the
+    # resolver must fall back on a missing runtime reported by the probe, not a construction raise.
+    monkeypatch.setattr("doktok_worker.composition._gliner_runtime_available", lambda: False)
     fallback = _RelFallback()
     ext, token = _keg(_cfg("gliner-relex", "knowledgator/gliner-relex-large-v1.0"), fallback)
     assert ext is fallback and token == "gliner-relex-fallback"

@@ -1798,3 +1798,72 @@ export async function requestProjectionRecompute(): Promise<void> {
     throw friendlyHttpError(response.status);
   }
 }
+
+// ---- Knowledge graph: entities, edges, neighborhoods (issue #465 Phase 1 API) ----
+
+export interface KgEntity {
+  id: string;
+  tenant_id: string;
+  entity_type: string;
+  normalized_value: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface KgEdge {
+  id: string;
+  tenant_id: string;
+  src_entity_id: string;
+  predicate: string;
+  dst_entity_id: string;
+  evidence_count: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface KgStats {
+  entity_count: number;
+  edge_count: number;
+  by_type: { entity_type: string; count: number }[];
+}
+
+export interface KgNeighborhood {
+  focus: KgEntity;
+  nodes: KgEntity[];
+  edges: KgEdge[];
+}
+
+/** Browse entities; all params are optional. `limit` defaults to 50 server-side. */
+export function fetchKgNodes(
+  params: { type?: string; q?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+): Promise<KgEntity[]> {
+  const p = new URLSearchParams();
+  if (params.type) p.set("type", params.type);
+  if (params.q?.trim()) p.set("q", params.q.trim());
+  if (params.limit != null) p.set("limit", String(params.limit));
+  if (params.offset != null) p.set("offset", String(params.offset));
+  const qs = p.toString();
+  return getJson<KgEntity[]>(`/api/v1/entities/nodes${qs ? `?${qs}` : ""}`, signal);
+}
+
+export function fetchKgStats(signal?: AbortSignal): Promise<KgStats> {
+  return getJson<KgStats>("/api/v1/entities/stats", signal);
+}
+
+export function fetchKgEntity(id: string, signal?: AbortSignal): Promise<KgEntity> {
+  return getJson<KgEntity>(`/api/v1/entities/${encodeURIComponent(id)}`, signal);
+}
+
+export function fetchKgNeighborhood(
+  id: string,
+  opts: { hops?: number; edge_limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<KgNeighborhood> {
+  const p = new URLSearchParams();
+  if (opts.hops != null) p.set("hops", String(opts.hops));
+  if (opts.edge_limit != null) p.set("edge_limit", String(opts.edge_limit));
+  const qs = p.toString();
+  return getJson<KgNeighborhood>(
+    `/api/v1/entities/${encodeURIComponent(id)}/neighborhood${qs ? `?${qs}` : ""}`,
+    signal,
+  );
+}

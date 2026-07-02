@@ -17,6 +17,10 @@ dependencies = [
     "doktok-provider-paddleocr",
     "doktok-provider-rapidocr",
     "doktok-provider-projection",
+    # The worker imports doktok_provider_gliner directly (local NER + KAG relations). Declare it with
+    # the [engine] extra (gliner + rapidfuzz) so the local backends install with the worker rather
+    # than relying on the workspace root or a manual `make ner-models`.
+    "doktok-provider-gliner[engine]",
 ]
 
 [project.scripts]

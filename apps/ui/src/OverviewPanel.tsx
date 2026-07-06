@@ -11,6 +11,10 @@ import {
 } from "./api";
 import { useInterval } from "./hooks";
 
+// Max files per upload; mirrors the backend DOKTOK_MAX_UPLOAD_FILES so a too-large drop is refused
+// up front instead of after a long upload. Per-file size is enforced + reported by the backend.
+const MAX_UPLOAD_FILES = 101;
+
 // Drag-and-drop (or click-to-browse) document upload (M14 #370). Dropped files are sent to the
 // backend, which writes them into the tenant ingest folder; the normal worker pipeline takes over.
 function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
@@ -21,6 +25,14 @@ function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
 
   async function send(files: File[]) {
     if (files.length === 0) return;
+    // Refuse the whole batch above the count cap (you can't pick which to keep); clear message.
+    if (files.length > MAX_UPLOAD_FILES) {
+      setMessage({
+        ok: false,
+        text: `At most ${MAX_UPLOAD_FILES} files per upload — you dropped ${files.length}. Please split into smaller batches.`,
+      });
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {

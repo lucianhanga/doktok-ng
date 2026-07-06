@@ -45,6 +45,16 @@ async def upload_documents(
     #370). Each file is written to a hidden temp name then renamed - the worker ignores dotfiles, so
     it never claims a partial upload. Accepts any type; the pipeline sorts out the rest."""
     settings = request.app.state.settings
+    # Too many files is a batch-level error: refuse the WHOLE drop (you can't pick which to keep),
+    # unlike an individual oversized file below, which is rejected on its own so the rest still go.
+    if len(files) > settings.max_upload_files:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"at most {settings.max_upload_files} files per upload; you sent {len(files)}. "
+                "Please split into smaller batches."
+            ),
+        )
     layout = FilesystemLayout(settings.files_root, tenant.tenant_id)
     layout.ensure()
     limit = settings.max_request_mb * 1024 * 1024

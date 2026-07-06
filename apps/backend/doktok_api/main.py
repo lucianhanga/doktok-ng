@@ -150,11 +150,15 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     )
     app.state.metrics = Metrics()  # APP-13
     _max_body_bytes = settings.max_request_mb * 1024 * 1024
+    _max_upload_bytes = settings.max_upload_mb * 1024 * 1024
     _exempt_paths = frozenset({"/health", "/ready", "/metrics"})
     # The portable-restore preview streams a multi-GB encrypted archive to disk, so it is EXEMPT
     # from the global JSON body-size cap and is instead bounded by DOKTOK_MAX_RESTORE_GB inside the
-    # route (a 413 there). This is the ONLY upload endpoint and is Tenant-bearer gated + audited.
+    # route (a 413 there).
     _restore_preview_path = "/api/v1/settings/backup/restore/preview"
+    # Document upload is a multi-file batch bounded by max_upload_mb (larger than the JSON cap) so a
+    # big drop of small files goes through; per-file is still capped in the route.
+    _upload_path = "/api/v1/ingestion/upload"
 
     @app.middleware("http")
     async def _limits(
@@ -173,12 +177,15 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         # Reject oversized bodies up front (APP-10) - except the restore preview upload, which is
         # capped by DOKTOK_MAX_RESTORE_GB inside the route instead.
         cl = request.headers.get("Content-Length")
-        if (
-            request.url.path != _restore_preview_path
-            and cl is not None
-            and cl.isdigit()
-            and int(cl) > _max_body_bytes
-        ):
+        # Per-path body ceiling: restore preview is exempt (capped in-route); document upload uses
+        # the larger batch cap; everything else the JSON cap.
+        if request.url.path == _restore_preview_path:
+            body_limit: int | None = None
+        elif request.url.path == _upload_path:
+            body_limit = _max_upload_bytes
+        else:
+            body_limit = _max_body_bytes
+        if body_limit is not None and cl is not None and cl.isdigit() and int(cl) > body_limit:
             return JSONResponse(status_code=413, content={"detail": "request body too large"})
         # Per-token rate limit (APP-9); health/ready/metrics are exempt so probes aren't throttled.
         limiter = request.app.state.rate_limiter

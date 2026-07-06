@@ -13,6 +13,7 @@ import os
 import random
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -279,6 +280,85 @@ def openai_chat_with_usage(
         estimated=not usage_obj,
     )
     return content, usage
+
+
+def openai_stream_responses(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    system: str,
+    user: str,
+    timeout: float = 120.0,
+    reasoning_effort: str | None = None,
+    _usage_out: list[dict[str, Any]] | None = None,
+) -> Iterator[tuple[str, str]]:
+    """Stream answer and reasoning-summary deltas via the OpenAI Responses API (POST /responses).
+
+    Yields ``(kind, text)`` tuples where ``kind`` is ``"reasoning"`` or ``"answer"``.  Reasoning
+    summary deltas are only present for reasoning models when ``reasoning_effort`` is provided;
+    the API emits ``response.reasoning_summary_text.delta`` events with ``summary: "auto"``.
+
+    On ``response.completed`` the raw ``usage`` dict is appended to ``_usage_out`` (when provided)
+    so the caller can update token accounting without coupling the generator's return value.
+
+    The process-wide concurrency semaphore is held for the full duration of the stream so the
+    total in-flight request count (streaming + non-streaming) stays within
+    ``DOKTOK_OPENAI_MAX_CONCURRENCY``.
+    """
+    url = f"{base_url.rstrip('/')}/responses"
+    payload: dict[str, Any] = {
+        "model": model,
+        "instructions": system,
+        "input": user,
+        "stream": True,
+    }
+    if reasoning_effort is not None:
+        payload["reasoning"] = {"effort": reasoning_effort, "summary": "auto"}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    with (
+        _REQUEST_SEMAPHORE,
+        httpx.stream("POST", url, headers=headers, json=payload, timeout=timeout) as resp,
+    ):
+        status = resp.status_code
+        if status in (401, 403):
+            raise OpenAiAuthError(
+                f"OpenAI authentication failed (HTTP {status}); check the API key"
+            )
+        if status == 429:
+            raise OpenAiRateLimitError("OpenAI rate limit exceeded (HTTP 429)")
+        if status >= 500:
+            raise OpenAiServerError(f"OpenAI server error (HTTP {status})")
+        if status >= 400:
+            raise OpenAiError(f"OpenAI Responses API failed (HTTP {status})")
+        for line in resp.iter_lines():
+            if not line or not line.startswith("data: "):
+                continue
+            data = line[6:]  # strip leading "data: "
+            if data == "[DONE]":
+                break
+            try:
+                event: dict[str, Any] = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            event_type: str = event.get("type") or ""
+            if event_type == "response.reasoning_summary_text.delta":
+                delta: str = event.get("delta") or ""
+                if delta:
+                    yield ("reasoning", delta)
+            elif event_type == "response.output_text.delta":
+                delta = event.get("delta") or ""
+                if delta:
+                    yield ("answer", delta)
+            elif event_type == "response.completed":
+                if _usage_out is not None:
+                    usage_data: dict[str, Any] = (event.get("response") or {}).get("usage") or {}
+                    _usage_out.append(dict(usage_data))
+                break
+            elif event_type in ("response.error", "error"):
+                err_obj: dict[str, Any] = event.get("error") or {}
+                err_msg: str = err_obj.get("message") or event.get("message") or event_type
+                raise OpenAiError(f"OpenAI stream error: {err_msg}")
 
 
 def loads_object(content: str) -> dict[str, Any] | None:

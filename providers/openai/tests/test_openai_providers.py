@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import httpx
 import pytest
+from doktok_contracts.media import ChatChunk
 from doktok_contracts.schemas import EntityType
 from doktok_provider_openai import (
     OpenAiAuthError,
@@ -20,6 +22,27 @@ from doktok_provider_openai import (
     OpenAiRelationExtractor,
     OpenAiServerError,
 )
+
+# ---------------------------------------------------------------------------
+# Helpers for streaming (Responses API) tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeStreamResp:
+    """Minimal httpx streaming-response stand-in for Responses API SSE tests."""
+
+    def __init__(self, lines: list[str], status_code: int = 200) -> None:
+        self.status_code = status_code
+        self._lines = lines
+
+    def __enter__(self) -> _FakeStreamResp:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        pass
+
+    def iter_lines(self) -> Iterator[str]:
+        yield from self._lines
 
 
 def _resp(content: str) -> httpx.Response:
@@ -295,3 +318,121 @@ def test_metadata_repairs_invalid_json() -> None:
         md = OpenAiMetadataExtractor("gpt-4o-mini", "k").extract("body text")
     assert md.title == "Invoice" and md.location == "Berlin"
     assert post.call_count == 2  # second call is the repair pass
+
+
+# ---------------------------------------------------------------------------
+# Streaming (Responses API) tests
+# ---------------------------------------------------------------------------
+
+
+def test_stream_complete_yields_reasoning_then_answer_chunks() -> None:
+    """Responses API SSE: reasoning-summary deltas come before answer deltas as separate chunks."""
+    sse_lines = [
+        'data: {"type": "response.reasoning_summary_text.delta", "delta": "thinking..."}',
+        'data: {"type": "response.reasoning_summary_text.delta", "delta": " more"}',
+        'data: {"type": "response.output_text.delta", "delta": "Hello"}',
+        'data: {"type": "response.output_text.delta", "delta": " world"}',
+        (
+            'data: {"type": "response.completed", "response": {"usage": {'
+            '"input_tokens": 5, "output_tokens": 10, '
+            '"output_tokens_details": {"reasoning_tokens": 3}}}}'
+        ),
+    ]
+    fake = _FakeStreamResp(sse_lines)
+    with patch("doktok_provider_openai.client.httpx.stream", return_value=fake):
+        chunks = list(
+            OpenAiChatModelProvider("gpt-5", "k", reasoning_effort="medium").stream_complete("hi")
+        )
+    assert chunks == [
+        ChatChunk(kind="reasoning", text="thinking..."),
+        ChatChunk(kind="reasoning", text=" more"),
+        ChatChunk(kind="answer", text="Hello"),
+        ChatChunk(kind="answer", text=" world"),
+    ]
+
+
+def test_stream_complete_captures_usage_from_completed_event() -> None:
+    """stream_complete updates _last_usage from the response.completed usage block."""
+    sse_lines = [
+        'data: {"type": "response.output_text.delta", "delta": "Hi"}',
+        (
+            'data: {"type": "response.completed", "response": {"usage": {'
+            '"input_tokens": 8, "output_tokens": 12, '
+            '"output_tokens_details": {"reasoning_tokens": 4}}}}'
+        ),
+    ]
+    fake = _FakeStreamResp(sse_lines)
+    provider = OpenAiChatModelProvider("gpt-5", "k", reasoning_effort="low")
+    with patch("doktok_provider_openai.client.httpx.stream", return_value=fake):
+        list(provider.stream_complete("hi"))
+    usage = provider.get_last_usage()
+    assert usage is not None
+    assert usage.prompt_tokens == 8
+    assert usage.reasoning_tokens == 4
+    assert usage.answer_tokens == 8  # output_tokens(12) - reasoning_tokens(4)
+    assert not usage.estimated
+
+
+def test_stream_complete_fallback_when_responses_api_unavailable() -> None:
+    """When the Responses API returns 4xx, stream_complete falls back to the non-streaming path."""
+    fake_404 = _FakeStreamResp([], status_code=404)
+    with (
+        patch("doktok_provider_openai.client.httpx.stream", return_value=fake_404),
+        patch("doktok_provider_openai.client.httpx.post", return_value=_resp("fallback answer")),
+    ):
+        chunks = list(OpenAiChatModelProvider("gpt-4o-mini", "k").stream_complete("hi"))
+    assert chunks == [ChatChunk(kind="answer", text="fallback answer")]
+
+
+def test_stream_complete_fallback_on_network_error() -> None:
+    """When the Responses API raises a network error, stream_complete falls back gracefully."""
+    with (
+        patch(
+            "doktok_provider_openai.client.httpx.stream",
+            side_effect=httpx.ConnectError("connection refused"),
+        ),
+        patch("doktok_provider_openai.client.httpx.post", return_value=_resp("fallback answer")),
+    ):
+        chunks = list(OpenAiChatModelProvider("gpt-4o-mini", "k").stream_complete("hi"))
+    assert chunks == [ChatChunk(kind="answer", text="fallback answer")]
+
+
+def test_stream_complete_ignores_unknown_event_types() -> None:
+    """Unknown SSE event types are silently skipped; known deltas still yield chunks."""
+    sse_lines = [
+        'data: {"type": "response.created", "response": {}}',
+        'data: {"type": "response.in_progress", "response": {}}',
+        'data: {"type": "response.output_text.delta", "delta": "answer"}',
+        'data: {"type": "response.completed", "response": {}}',
+    ]
+    fake = _FakeStreamResp(sse_lines)
+    with patch("doktok_provider_openai.client.httpx.stream", return_value=fake):
+        chunks = list(OpenAiChatModelProvider("gpt-4o-mini", "k").stream_complete("hi"))
+    assert chunks == [ChatChunk(kind="answer", text="answer")]
+
+
+def test_stream_complete_no_reasoning_payload_when_effort_absent() -> None:
+    """Without reasoning_effort the Responses API payload must not include a reasoning key."""
+    sse_lines = [
+        'data: {"type": "response.output_text.delta", "delta": "ok"}',
+        'data: {"type": "response.completed", "response": {}}',
+    ]
+    fake = _FakeStreamResp(sse_lines)
+    with patch("doktok_provider_openai.client.httpx.stream", return_value=fake) as mock_stream:
+        list(OpenAiChatModelProvider("gpt-4o-mini", "k").stream_complete("hi"))
+    payload = mock_stream.call_args.kwargs["json"]
+    assert "reasoning" not in payload
+    assert payload["stream"] is True
+
+
+def test_stream_complete_reasoning_payload_when_effort_set() -> None:
+    """With reasoning_effort the payload must include reasoning.effort and summary=auto."""
+    sse_lines = [
+        'data: {"type": "response.output_text.delta", "delta": "ok"}',
+        'data: {"type": "response.completed", "response": {}}',
+    ]
+    fake = _FakeStreamResp(sse_lines)
+    with patch("doktok_provider_openai.client.httpx.stream", return_value=fake) as mock_stream:
+        list(OpenAiChatModelProvider("gpt-5", "k", reasoning_effort="high").stream_complete("hi"))
+    payload = mock_stream.call_args.kwargs["json"]
+    assert payload["reasoning"] == {"effort": "high", "summary": "auto"}

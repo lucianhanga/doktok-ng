@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections.abc import Iterator
 from typing import Any
 
 from doktok_contracts.media import AgentMessage, ChatChunk, LlmToolCall, LlmUsage, ToolCallTurn
 
-from doktok_provider_openai.client import openai_chat_with_tools, openai_chat_with_usage
+from doktok_provider_openai.client import (
+    openai_chat_with_tools,
+    openai_chat_with_usage,
+    openai_stream_responses,
+)
+
+logger = logging.getLogger("doktok.provider.openai")
 
 
 def _to_openai_message(msg: AgentMessage) -> dict[str, Any]:
@@ -64,10 +72,51 @@ class OpenAiChatModelProvider:
         return content.strip()
 
     def stream_complete(self, prompt: str, *, think: bool | None = None) -> Iterator[ChatChunk]:
-        # No token streaming for OpenAI here (and chat-completions exposes no reasoning); emit the
-        # full answer as a single chunk so the streaming UI still works (degrades gracefully).
+        """Stream answer and reasoning-summary chunks via the OpenAI Responses API.
+
+        Reasoning summary deltas (``kind="reasoning"``) are emitted when ``reasoning_effort`` is
+        set and the model supports it; otherwise only ``kind="answer"`` chunks arrive.  ``think``
+        is accepted for interface parity with the Ollama adapter but does not alter
+        ``reasoning_effort`` (that is fixed at construction time).
+
+        Falls back to a single non-streaming answer chunk if the Responses API is unavailable or
+        returns an error so the chat path never breaks.
+        """
         _ = think
-        yield ChatChunk(kind="answer", text=self.complete(prompt))
+        usage_out: list[dict[str, Any]] = []
+        t0 = time.monotonic()
+        try:
+            for kind, text in openai_stream_responses(
+                api_key=self._api_key,
+                base_url=self._base_url,
+                model=self._model,
+                system="You are a careful assistant. Follow the user's instructions exactly.",
+                user=prompt,
+                timeout=self._timeout,
+                reasoning_effort=self._reasoning_effort,
+                _usage_out=usage_out,
+            ):
+                yield ChatChunk(kind=kind, text=text)
+        except Exception:
+            logger.warning(
+                "OpenAI Responses API stream failed; falling back to non-streaming complete()",
+                exc_info=True,
+            )
+            yield ChatChunk(kind="answer", text=self.complete(prompt))
+            return
+        if usage_out:
+            wall_ms = round((time.monotonic() - t0) * 1000)
+            u = usage_out[0]
+            details: dict[str, Any] = u.get("output_tokens_details") or {}
+            reasoning_tokens = int(details.get("reasoning_tokens") or 0)
+            output_tokens = int(u.get("output_tokens") or 0)
+            self._last_usage = LlmUsage(
+                prompt_tokens=int(u.get("input_tokens") or 0),
+                answer_tokens=max(0, output_tokens - reasoning_tokens),
+                reasoning_tokens=reasoning_tokens,
+                wall_ms=wall_ms,
+                estimated=not u,
+            )
 
     def chat_with_tools(
         self, messages: list[AgentMessage], tools: list[dict[str, Any]]

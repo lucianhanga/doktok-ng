@@ -38,6 +38,16 @@ export interface DataTableProps<T> {
   resetNonce?: number;
   /** Row id to highlight + scroll into view (e.g. when arriving from a deep link). */
   highlightId?: string;
+  /**
+   * Controlled sorting. When provided (with onSortingChange), the table does NOT sort client-side —
+   * the parent owns the sort and maps it to its query (server-driven sort over the whole dataset).
+   */
+  sorting?: SortingState;
+  onSortingChange?: (next: SortingState) => void;
+  /** With controlled sorting, skip the client sorted-row model (rows arrive pre-sorted). */
+  manualSorting?: boolean;
+  /** Extra class(es) per row, e.g. selected/unidentifiable decorations. Kept out of the core. */
+  rowClassName?: (row: T) => string | undefined;
 }
 
 /**
@@ -77,12 +87,23 @@ export function DataTable<T>({
   persistKey,
   resetNonce,
   highlightId,
+  sorting: sortingProp,
+  onSortingChange,
+  manualSorting,
+  rowClassName,
 }: DataTableProps<T>) {
   const persisted = useMemo<PersistedTableState>(
     () => (persistKey ? loadJSON<PersistedTableState>(persistKey, {}) : {}),
     [persistKey],
   );
-  const [sorting, setSorting] = useState<SortingState>(persisted.sorting ?? []);
+  const controlledSorting = sortingProp !== undefined;
+  const [internalSorting, setInternalSorting] = useState<SortingState>(persisted.sorting ?? []);
+  const sorting = controlledSorting ? sortingProp : internalSorting;
+  const handleSortingChange = (updater: SortingState | ((old: SortingState) => SortingState)) => {
+    const next = typeof updater === "function" ? updater(sorting) : updater;
+    if (controlledSorting) onSortingChange?.(next);
+    else setInternalSorting(next);
+  };
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     persisted.columnVisibility ?? initialVisibility ?? {},
   );
@@ -90,10 +111,17 @@ export function DataTable<T>({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showColumns, setShowColumns] = useState(false);
 
-  // Persist table layout whenever it changes (best-effort).
+  // Persist table layout whenever it changes (best-effort). Sorting is only persisted when the
+  // table owns it; under controlled sorting the parent (its query) is the source of truth.
   useEffect(() => {
-    if (persistKey) saveJSON(persistKey, { sorting, columnVisibility, columnSizing });
-  }, [persistKey, sorting, columnVisibility, columnSizing]);
+    if (persistKey) {
+      saveJSON(persistKey, {
+        sorting: controlledSorting ? persisted.sorting : internalSorting,
+        columnVisibility,
+        columnSizing,
+      });
+    }
+  }, [persistKey, controlledSorting, persisted.sorting, internalSorting, columnVisibility, columnSizing]);
 
   // Reset to factory defaults when the parent bumps resetNonce (skip the initial render).
   const firstReset = useRef(true);
@@ -102,7 +130,7 @@ export function DataTable<T>({
       firstReset.current = false;
       return;
     }
-    setSorting([]);
+    setInternalSorting([]);
     setColumnVisibility(initialVisibility ?? {});
     setColumnSizing({});
     if (persistKey) removeKey(persistKey);
@@ -112,12 +140,13 @@ export function DataTable<T>({
     data,
     columns,
     state: { sorting, columnVisibility, columnSizing, globalFilter: globalFilter ?? "" },
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     onColumnVisibilityChange: setColumnVisibility,
     onColumnSizingChange: setColumnSizing,
     getRowId,
     columnResizeMode: "onChange",
     enableColumnResizing: true,
+    manualSorting: manualSorting ?? false,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -218,6 +247,7 @@ export function DataTable<T>({
                   row={row}
                   isOpen={isOpen}
                   highlight={highlightId === row.id}
+                  extraClassName={rowClassName?.(row.original)}
                   onToggle={renderDetail ? () => toggle(row.id) : undefined}
                   detailColSpan={leafCount}
                   renderDetail={renderDetail}
@@ -235,6 +265,7 @@ function FragmentRow<T>({
   row,
   isOpen,
   highlight,
+  extraClassName,
   onToggle,
   detailColSpan,
   renderDetail,
@@ -242,6 +273,7 @@ function FragmentRow<T>({
   row: Row<T>;
   isOpen: boolean;
   highlight?: boolean;
+  extraClassName?: string;
   onToggle?: () => void;
   detailColSpan: number;
   renderDetail?: (row: T) => ReactNode;
@@ -250,9 +282,12 @@ function FragmentRow<T>({
   useEffect(() => {
     if (highlight) rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [highlight]);
+  const cls = [highlight ? "datatable-row-highlight" : "", extraClassName ?? ""]
+    .filter(Boolean)
+    .join(" ");
   return (
     <>
-      <tr ref={rowRef} className={highlight ? "datatable-row-highlight" : undefined}>
+      <tr ref={rowRef} className={cls || undefined}>
         {onToggle && (
           <td className="datatable-expander-col">
             <button

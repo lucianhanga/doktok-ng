@@ -165,6 +165,7 @@ export interface TimelineTurn {
   metrics: TurnMetrics | null;
   streaming: boolean;
   stopped: boolean;
+  startedAt?: number; // epoch-ms when the question was submitted (for relative timestamps)
 }
 
 export interface TimelineStreaming {
@@ -185,11 +186,24 @@ interface TurnEntry {
   metrics: TurnMetrics | null;
   isLive: boolean;
   stopped: boolean;
+  startedAt?: number; // epoch-ms when the question was submitted
 }
 
 function fmtMs(ms: number): string {
   if (ms <= 0) return "0s";
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** Coarse relative label from an epoch-ms timestamp, mirroring personalAI's ActivityTimeline. */
+function relTime(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 10) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
 }
 
 function fmtTok(n: number): string {
@@ -298,6 +312,7 @@ export function ChatActivityTimeline({
     metrics: t.metrics,
     isLive: false,
     stopped: t.stopped,
+    startedAt: t.startedAt,
   }));
 
   if (streaming) {
@@ -380,6 +395,7 @@ export function ChatActivityTimeline({
         const meta = [
           totalTok != null && totalTok > 0 ? `~${fmtTok(totalTok)} tok` : null,
           elapsed != null && elapsed > 0 ? fmtMs(elapsed) : null,
+          entry.startedAt ? relTime(entry.startedAt) : null,
         ]
           .filter(Boolean)
           .join(" · ");

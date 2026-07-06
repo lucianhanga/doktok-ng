@@ -50,6 +50,18 @@ function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
+/** Coarse relative label from an epoch-ms timestamp: "just now" / "Ns ago" / "Nm ago" / "Nh ago". */
+function fmtRelTime(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 10) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
 interface Exchange {
   question: string;
   answer: RagAnswer;
@@ -58,6 +70,7 @@ interface Exchange {
   ranking?: RankedChunk[];
   metrics?: TurnMetrics | null;
   stopped?: boolean; // the user pressed Stop (or Esc) mid-stream
+  startedAt?: number; // epoch-ms when the question was submitted (for relative timestamps)
 }
 
 /** The in-progress turn while tokens stream in. */
@@ -72,6 +85,7 @@ interface Streaming {
   ranking: RankedChunk[];
   metrics: TurnMetrics | null;
   stopped: boolean;
+  startedAt: number; // epoch-ms when the question was submitted
 }
 
 /** A unified view of either a completed exchange or the streaming turn, for rendering. */
@@ -88,6 +102,7 @@ interface TurnView {
   ranking: RankedChunk[];
   metrics: TurnMetrics | null;
   stopped: boolean;
+  startedAt?: number; // epoch-ms when the question was submitted
 }
 
 /** Render the inferred retrieval filters (category / date range) as a short readable phrase. */
@@ -221,6 +236,7 @@ function AnswerBlock({
   onShowSources,
   onEdit,
   onDelete,
+  onCopyQuestion,
   canModify = false,
 }: {
   turn: TurnView;
@@ -229,6 +245,8 @@ function AnswerBlock({
   onShowSources?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  /** Re-load this turn's question into the composer for a quick re-ask (no truncation). */
+  onCopyQuestion?: () => void;
   canModify?: boolean;
 }) {
   const [questionExpanded, setQuestionExpanded] = useState(false);
@@ -272,6 +290,15 @@ function AnswerBlock({
             {turn.question}
           </p>
           <div className="chat-question-actions">
+            {!turn.streaming && turn.startedAt && (
+              <time
+                className="chat-turn-time muted"
+                dateTime={new Date(turn.startedAt).toISOString()}
+                title={new Date(turn.startedAt).toLocaleString()}
+              >
+                {fmtRelTime(turn.startedAt)}
+              </time>
+            )}
             {turn.citations.length > 0 && onShowSources && (
               <button
                 type="button"
@@ -281,6 +308,17 @@ function AnswerBlock({
                 onClick={onShowSources}
               >
                 Sources ({turn.citations.length})
+              </button>
+            )}
+            {canModify && !turn.streaming && onCopyQuestion && (
+              <button
+                type="button"
+                className="chat-q-action link-button"
+                aria-label="Copy to composer"
+                title="Copy question to composer for re-ask"
+                onClick={onCopyQuestion}
+              >
+                &#8617;
               </button>
             )}
             {canModify && !turn.streaming && onEdit && (
@@ -723,6 +761,7 @@ export function ChatPanel({
         ranking: s.ranking,
         metrics: s.metrics,
         stopped: s.stopped,
+        startedAt: s.startedAt,
         answer: {
           answer: s.answer,
           citations: s.citations,
@@ -766,6 +805,7 @@ export function ChatPanel({
       ranking: [],
       metrics: null,
       stopped: false,
+      startedAt: Date.now(),
     };
     setStreaming(init); // instant feedback in the current view
 
@@ -901,6 +941,7 @@ export function ChatPanel({
             steps: reply?.steps ?? [],
             ranking: reply?.ranking ?? [],
             metrics: reply?.metrics ?? null,
+            startedAt: Date.parse(messages[i].created_at) || undefined,
             answer: {
               answer: reply?.content ?? "",
               citations: reply?.citations ?? [],
@@ -974,6 +1015,7 @@ export function ChatPanel({
     ranking: ex.ranking ?? [],
     metrics: ex.metrics ?? null,
     stopped: ex.stopped ?? false,
+    startedAt: ex.startedAt,
   }));
   if (streaming) {
     turns.push({
@@ -989,6 +1031,7 @@ export function ChatPanel({
       ranking: streaming.ranking,
       metrics: streaming.metrics,
       stopped: false,
+      startedAt: streaming.startedAt,
     });
   }
 
@@ -1097,6 +1140,7 @@ export function ChatPanel({
                   canModify={streaming === null}
                   onEdit={() => editQuestion(i)}
                   onDelete={() => deleteQuestion(i)}
+                  onCopyQuestion={() => setQuestion(turn.question)}
                 />
               </li>
             ))}
@@ -1227,6 +1271,10 @@ export function ChatPanel({
               Chat failed: {errorMsg}
             </p>
           )}
+
+          <p className="chat-local-footer muted">
+            Local-first. Network egress is disabled by default.
+          </p>
         </div>
         {/* Right pane: persistent and collapsible. Activity by default; sources/preview on demand. */}
         {rightPaneCollapsed ? (

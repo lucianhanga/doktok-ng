@@ -963,3 +963,68 @@ test("incognito mode disables Remember (no persistence/recall)", async () => {
   // ...then incognito forces memory off and locks the Remember toggle.
   expect(screen.getByLabelText("Remember")).toBeDisabled();
 });
+
+// --- Bucket A parity items (#485) ---
+
+test("stopped turn shows 'Generation stopped.' marker", async () => {
+  const enc = new TextEncoder();
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal(
+    "fetch",
+    // Wire the fetch AbortSignal to the ReadableStream so reader.read() throws when Stop is clicked.
+    stubChat((init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          ctrl = c;
+          init?.signal?.addEventListener("abort", () => {
+            c.error(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        },
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "a question to stop");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  // Wait for the Stop button to appear (streaming has begun).
+  await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument());
+
+  // Emit a partial token so there is something to persist, then click Stop.
+  ctrl.enqueue(enc.encode(frame("token", { delta: "Partial answer." })));
+  await waitFor(() => expect(screen.getByText(/Partial answer\./)).toBeInTheDocument());
+
+  await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+  // The amber "Generation stopped." marker must appear under the partial answer.
+  await waitFor(() => expect(screen.getByText("Generation stopped.")).toBeInTheDocument());
+});
+
+test("copy to composer populates the input with the turn's question", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer text." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "What is the answer?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/Answer text\./)).toBeInTheDocument());
+
+  // The textarea should be empty after sending; clicking "Copy to composer" loads the question back.
+  expect(screen.getByLabelText("Question")).toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: "Copy to composer" }));
+  expect(screen.getByLabelText("Question")).toHaveValue("What is the answer?");
+});
+
+test("the local-first footer is shown at the bottom of the chat column", () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  render(<ChatPanel />);
+  expect(screen.getByText(/Local-first\. Network egress is disabled by default\./)).toBeInTheDocument();
+});

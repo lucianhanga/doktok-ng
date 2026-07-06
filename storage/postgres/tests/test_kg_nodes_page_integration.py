@@ -31,12 +31,14 @@ def _node(entity_type: EntityType, value: str, tenant: str = TENANT) -> KgEntity
 def _seed(db: Database) -> PostgresKnowledgeGraphRepository:
     """Insert 4 canonical nodes for TENANT: alice, bob (PERSON), acme corp (ORG), hamburg (GPE)."""
     kg = PostgresKnowledgeGraphRepository(db)
-    kg.upsert_entities([
-        _node(EntityType.PERSON, "alice"),
-        _node(EntityType.PERSON, "bob"),
-        _node(EntityType.ORG, "acme corp"),
-        _node(EntityType.GPE, "hamburg"),
-    ])
+    kg.upsert_entities(
+        [
+            _node(EntityType.PERSON, "alice"),
+            _node(EntityType.PERSON, "bob"),
+            _node(EntityType.ORG, "acme corp"),
+            _node(EntityType.GPE, "hamburg"),
+        ]
+    )
     return kg
 
 

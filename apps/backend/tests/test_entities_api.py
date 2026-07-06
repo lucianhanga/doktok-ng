@@ -190,9 +190,7 @@ class FakeKnowledgeGraphRepository:
         edge_limit: int = 64,
     ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
         seeds = set(entity_ids)
-        edges = [
-            e for e in self._edges if e.src_entity_id in seeds or e.dst_entity_id in seeds
-        ]
+        edges = [e for e in self._edges if e.src_entity_id in seeds or e.dst_entity_id in seeds]
         return edges[:edge_limit], []
 
 

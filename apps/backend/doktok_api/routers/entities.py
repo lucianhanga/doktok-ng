@@ -94,9 +94,7 @@ def get_kg_neighborhood(
     focus = kg.get_entity(tenant.tenant_id, entity_id)
     if focus is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
-    edges, _ = kg.neighborhood(
-        tenant.tenant_id, [entity_id], hops=hops, edge_limit=edge_limit
-    )
+    edges, _ = kg.neighborhood(tenant.tenant_id, [entity_id], hops=hops, edge_limit=edge_limit)
     if not edges:
         return KgNeighborhood(focus=focus, nodes=[focus], edges=[])
     node_ids: set[str] = {entity_id}

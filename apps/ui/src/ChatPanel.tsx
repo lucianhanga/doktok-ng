@@ -30,6 +30,8 @@ const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
 const RIGHT_PANE_KEY = "doktok.chat.rightPaneCollapsed";
 // Remember the active thread so returning to Chat re-opens it instead of an empty panel.
 const LAST_THREAD_KEY = "doktok.chat.lastThread";
+// Chat mode (classic RAG vs agent tool loop); both stream. Persisted across sessions.
+const CHAT_MODE_KEY = "doktok.chat.mode";
 
 /** The shared right rail: closed, a turn's sources, retrieve-only "explore" evidence, or a
  * document preview. */
@@ -586,10 +588,14 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Chat mode (ADR-0022): "classic" streams the RAG answer + reasoning token-by-token. The "agent"
-  // tool loop currently blocks on chat_with_tools (no streaming), so it stays off until the agent
-  // loop streams; then this becomes a deployment/Settings choice, not a per-question toggle.
-  const chatMode: "classic" | "agent" | "multi" = "classic";
+  // Chat mode (ADR-0022): "classic" answers from documents (RAG); "agent" also calls tools. Both
+  // stream the answer + reasoning. Selectable + persisted so each path is testable.
+  const [chatMode, setChatMode] = useState<"classic" | "agent">(() =>
+    loadJSON<"classic" | "agent">(CHAT_MODE_KEY, "classic"),
+  );
+  useEffect(() => {
+    saveJSON(CHAT_MODE_KEY, chatMode);
+  }, [chatMode]);
   // Long-term memory (ADR-0022): recall facts from past chats + store one. On by default; turn off
   // (or use Incognito) for a private conversation that neither recalls nor stores memory.
   const [remember, setRemember] = useState(true);
@@ -1106,6 +1112,26 @@ export function ChatPanel({
           )}
 
           <div className="chat-toggle-row">
+            <span className="chat-toggle">
+              <label className="chat-reasoning-toggle">
+                <span className="muted">Mode</span>
+                <select
+                  className="chat-mode-select"
+                  value={chatMode}
+                  onChange={(e) => setChatMode(e.target.value as "classic" | "agent")}
+                  disabled={streaming !== null}
+                  aria-label="Chat mode"
+                >
+                  <option value="classic">Classic (RAG)</option>
+                  <option value="agent">Agent (tools)</option>
+                </select>
+              </label>
+              <InfoHint label="Chat mode">
+                <strong>Classic</strong> answers from your documents (RAG).{" "}
+                <strong>Agent</strong> can also call tools. Both stream the answer + reasoning.
+              </InfoHint>
+            </span>
+
             <span className="chat-toggle">
               <label className="chat-reasoning-toggle">
                 <input

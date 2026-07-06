@@ -2814,6 +2814,16 @@ tr.row-selected {
   align-items: center;
   gap: 0.3rem;
 }
+/* Chat mode selector (Classic / Agent) - plain, matches the toggle row's spartan controls. */
+.chat-mode-select {
+  font-size: 0.82rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 4px;
+  background: var(--surface, #0f141b);
+  color: var(--text, inherit);
+  cursor: pointer;
+}
 .chat-incognito-note {
   margin: 0 0 0.5rem;
   font-size: 0.8rem;

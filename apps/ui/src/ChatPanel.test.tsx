@@ -111,6 +111,30 @@ test("chat sends agent_mode=classic on the stream request", async () => {
   expect(screen.getAllByText("Searching and ranking your documents").length).toBeGreaterThan(0);
 });
 
+test("selecting Agent mode sends agent_mode=agent on the stream request", async () => {
+  let streamBody: Record<string, unknown> | null = null;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      streamBody = JSON.parse((init?.body as string) ?? "{}");
+      return sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "Tomorrow is Tuesday [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.selectOptions(screen.getByLabelText("Chat mode"), "agent");
+  await userEvent.type(screen.getByLabelText("Question"), "what is tomorrow?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText(/Tomorrow is Tuesday/)).toBeInTheDocument());
+  expect(streamBody!.agent_mode).toBe("agent");
+});
+
 test("shows inferred retrieval filters from the meta event", async () => {
   vi.stubGlobal(
     "fetch",

@@ -5,6 +5,7 @@ import {
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
+  type ColumnOrderState,
   type ColumnSizingState,
   type Row,
   type SortingState,
@@ -18,6 +19,7 @@ interface PersistedTableState {
   sorting?: SortingState;
   columnVisibility?: VisibilityState;
   columnSizing?: ColumnSizingState;
+  columnOrder?: ColumnOrderState;
 }
 
 export interface DataTableProps<T> {
@@ -108,8 +110,11 @@ export function DataTable<T>({
     persisted.columnVisibility ?? initialVisibility ?? {},
   );
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(persisted.columnSizing ?? {});
+  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(persisted.columnOrder ?? []);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showColumns, setShowColumns] = useState(false);
+  // Header drag-to-reorder: id of the column currently being dragged.
+  const [draggingCol, setDraggingCol] = useState<string | null>(null);
 
   // Persist table layout whenever it changes (best-effort). Sorting is only persisted when the
   // table owns it; under controlled sorting the parent (its query) is the source of truth.
@@ -119,9 +124,18 @@ export function DataTable<T>({
         sorting: controlledSorting ? persisted.sorting : internalSorting,
         columnVisibility,
         columnSizing,
+        columnOrder,
       });
     }
-  }, [persistKey, controlledSorting, persisted.sorting, internalSorting, columnVisibility, columnSizing]);
+  }, [
+    persistKey,
+    controlledSorting,
+    persisted.sorting,
+    internalSorting,
+    columnVisibility,
+    columnSizing,
+    columnOrder,
+  ]);
 
   // Reset to factory defaults when the parent bumps resetNonce (skip the initial render).
   const firstReset = useRef(true);
@@ -133,16 +147,18 @@ export function DataTable<T>({
     setInternalSorting([]);
     setColumnVisibility(initialVisibility ?? {});
     setColumnSizing({});
+    setColumnOrder([]);
     if (persistKey) removeKey(persistKey);
   }, [resetNonce]);
 
   const table = useReactTable<T>({
     data,
     columns,
-    state: { sorting, columnVisibility, columnSizing, globalFilter: globalFilter ?? "" },
+    state: { sorting, columnVisibility, columnSizing, columnOrder, globalFilter: globalFilter ?? "" },
     onSortingChange: handleSortingChange,
     onColumnVisibilityChange: setColumnVisibility,
     onColumnSizingChange: setColumnSizing,
+    onColumnOrderChange: setColumnOrder,
     getRowId,
     columnResizeMode: "onChange",
     enableColumnResizing: true,
@@ -151,6 +167,20 @@ export function DataTable<T>({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
   });
+
+  // Drag a header onto another to reorder columns (persisted). Order defaults to the leaf columns.
+  const reorderColumn = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setColumnOrder((prev) => {
+      const current = prev.length ? [...prev] : table.getAllLeafColumns().map((c) => c.id);
+      const from = current.indexOf(fromId);
+      const to = current.indexOf(toId);
+      if (from < 0 || to < 0) return current;
+      current.splice(from, 1);
+      current.splice(to, 0, fromId);
+      return current;
+    });
+  };
 
   const toggle = (id: string) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
   const leafCount = table.getVisibleLeafColumns().length + (renderDetail ? 1 : 0);
@@ -197,13 +227,37 @@ export function DataTable<T>({
                     <th
                       key={header.id}
                       style={{ width: header.getSize() }}
-                      className={canSort ? "datatable-sortable" : undefined}
+                      className={
+                        [
+                          canSort ? "datatable-sortable" : "",
+                          draggingCol && draggingCol !== header.column.id
+                            ? "datatable-drop-target"
+                            : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                      }
                       aria-sort={
                         sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none"
                       }
+                      onDragOver={(e) => {
+                        if (draggingCol && draggingCol !== header.column.id) e.preventDefault();
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (draggingCol) reorderColumn(draggingCol, header.column.id);
+                        setDraggingCol(null);
+                      }}
                     >
                       <span
                         className="datatable-th-label"
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggingCol(header.column.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => setDraggingCol(null)}
+                        title="Drag to reorder column"
                         onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}

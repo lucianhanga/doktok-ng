@@ -107,17 +107,6 @@ function formatDate(iso: string | null | undefined): string {
 
 /** Small warning marker with a tooltip explaining that the authored date was extracted from document
  * content and may be inaccurate, plus the trustworthy ingested timestamp for cross-reference. */
-function DocumentDateWarning({ ingestedAt }: { ingestedAt: string }) {
-  return (
-    <span
-      className="doc-date-warning"
-      title={`Extracted from document content - may be inaccurate. Ingested: ${formatDate(ingestedAt)}`}
-    >
-      {" "}⚠
-    </span>
-  );
-}
-
 function groupByDocument(features: DocumentFeature[]): Map<string, DocumentFeature[]> {
   const map = new Map<string, DocumentFeature[]>();
   for (const f of features) {
@@ -944,7 +933,18 @@ export function DocumentsPanel({
       // 6. Authored date — hideable, sortable -> created
       {
         id: "authored",
-        header: "Authored date",
+        header: () => (
+          <>
+            Authored date{" "}
+            <span
+              className="doc-date-warning"
+              title="Authored date is extracted from the document's content and may be inaccurate — it is not the system ingest time."
+              onClick={(e) => e.stopPropagation()}
+            >
+              ⚠
+            </span>
+          </>
+        ),
         enableHiding: true,
         enableSorting: true,
         size: 140,
@@ -953,11 +953,11 @@ export function DocumentsPanel({
         cell: ({ row }) => {
           const d = row.original;
           if (!d.document_date) return <span className="muted">-</span>;
+          // Each row's date reveals that row's trustworthy system ingest time on hover.
           return (
-            <>
+            <span title={`Ingested (system): ${formatDate(d.created_at)}`}>
               {formatDate(d.document_date)}
-              <DocumentDateWarning ingestedAt={d.created_at} />
-            </>
+            </span>
           );
         },
       },

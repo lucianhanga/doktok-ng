@@ -277,6 +277,13 @@ table.jobs td {
   border-bottom: 1px solid rgba(127, 127, 127, 0.2);
 }
 
+/* DataTable (Documents + Activity) runs a denser, slightly smaller type than the plain jobs tables. */
+.datatable-table th,
+.datatable-table td {
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+}
+
 /* Truncating cell for the auto-layout `table.jobs` (Entities/Jobs/Aggregate). A <td> only
    ellipsises when it has a bounded width, so cap it; the full value stays available via `title`. */
 table.jobs td.cell-truncate {
@@ -287,9 +294,9 @@ table.jobs td.cell-truncate {
 }
 
 .badge {
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
+  padding: 0.02rem 0.22rem;
+  border-radius: 2px;
+  font-size: 0.58rem;
   background: rgba(127, 127, 127, 0.18);
 }
 
@@ -332,6 +339,11 @@ table.jobs td.cell-truncate {
   display: flex;
   gap: 0.75rem;
   align-items: baseline;
+}
+
+/* Give the Documents tab title clear separation from its toolbar/table below, so it reads as a title. */
+section[aria-label="Documents"] > .result-head {
+  margin-bottom: 1rem;
 }
 
 .result-head .page,
@@ -827,14 +839,14 @@ table.jobs td.cell-truncate {
 
 .feature-chips {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.3rem;
 }
 
 .feature-chips .chip {
-  font-size: 0.72rem;
-  padding: 0.05rem 0.4rem;
-  border-radius: 999px;
+  font-size: 0.52rem;
+  padding: 0.01rem 0.22rem;
+  border-radius: 2px;
   border: 1px solid rgba(127, 127, 127, 0.35);
   /* A long category name truncates within the chip rather than stretching the row. */
   max-width: 16rem;
@@ -2262,6 +2274,11 @@ tr.row-selected {
   top: 0.3rem;
   right: 0.3rem;
 }
+/* Authored-date column: yellow warning icon in the header (the date is content-extracted). */
+.doc-date-warning {
+  color: var(--warning, #d6a700);
+  cursor: help;
+}
 /* Unidentifiable marker (M7.3): neutral amber, distinct from red failure badges. */
 .badge-unidentifiable {
   background: rgba(180, 140, 60, 0.28);
@@ -3054,6 +3071,17 @@ tr.row-selected {
 .datatable-sort-ind {
   opacity: 0.7;
   flex: 0 0 auto;
+}
+
+/* Drag a header label to reorder columns; the hovered target header shows a drop edge. */
+.datatable-th-label {
+  cursor: grab;
+}
+.datatable-th-label:active {
+  cursor: grabbing;
+}
+.datatable-drop-target {
+  box-shadow: inset 2px 0 0 0 var(--accent, #3b82f6);
 }
 
 /* One line per entry: long text ellipsises; a tooltip (set in JS only when clipped) shows the rest. */

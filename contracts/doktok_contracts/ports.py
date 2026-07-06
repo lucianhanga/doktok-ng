@@ -510,6 +510,16 @@ class ToolCallingChatModel(Protocol):
         self, messages: list[AgentMessage], tools: list[dict[str, Any]]
     ) -> ToolCallTurn: ...
 
+    def stream_reply(
+        self, messages: list[AgentMessage], *, think: bool | None = None
+    ) -> Iterator[ChatChunk]:
+        """Stream the final answer from an accumulated message list, yielding reasoning and answer
+        chunks (``ChatChunk`` kinds ``"reasoning"`` / ``"answer"``). Called by the agent loop after
+        all tool calls are resolved, replacing the blocking ``chat_with_tools(messages, [])`` +
+        single token event with a streamed sequence. ``think=None`` uses the provider's configured
+        reasoning; True/False overrides it for this call."""
+        ...
+
 
 @runtime_checkable
 class MetadataExtractor(Protocol):

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 
 from doktok_contracts.media import AgentMessage
 from doktok_contracts.ports import ToolCallingChatModel
@@ -74,6 +74,21 @@ def _context_segments(messages: Sequence[AgentMessage]) -> list[ContextSegment]:
     return sorted(segments, key=lambda s: s.chars, reverse=True)
 
 
+def _force_blocking_answer(
+    model: ToolCallingChatModel,
+    messages: list[AgentMessage],
+    accumulate: Callable[[object], None],
+) -> str:
+    """Force one blocking tool-free turn and return the stripped answer text.
+
+    Used as the fallback when ``stream_reply`` is unavailable or raises, and when the tool loop
+    exhausted its budget without a natural-exit answer (``_blocking_final`` is empty).
+    """
+    closing = model.chat_with_tools(messages, [])
+    accumulate(closing.usage)
+    return closing.text.strip()
+
+
 def run_agent_stream(
     tenant_id: str,
     question: str,
@@ -86,7 +101,18 @@ def run_agent_stream(
     context_limit: int = 0,
 ) -> Iterator[ChatEvent]:
     """Drive the tool loop: yield a ``step`` per tool call, then ``token``/``sources``/``done``.
-    Mirrors the answerer's streamed event shape so the chat endpoint and UI need no special case."""
+
+    Tool-decision rounds are blocking (fast; they mostly just emit a tool call).  The final answer
+    is streamed via ``model.stream_reply`` when the model supports it, yielding
+    ``ChatEvent(type="reasoning", ...)`` and incremental ``ChatEvent(type="token", ...)`` events
+    instead of one blocking call + a single large token event.
+
+    Fallback: when ``stream_reply`` is unavailable or raises, the loop falls back to the blocking
+    ``chat_with_tools(messages, [])`` path and yields a single token event with the full answer, so
+    agent mode never breaks.
+
+    Mirrors the answerer's streamed event shape so the chat endpoint and UI need no special case.
+    """
     tools = _specs_as_dicts(tool_specs)
     messages: list[AgentMessage] = [AgentMessage(role="system", content=_SYSTEM)]
     messages += [AgentMessage(role=t.role, content=t.content) for t in history]
@@ -95,11 +121,13 @@ def run_agent_stream(
     # Per-tool citation lists, RRF-fused at the end (relevance + ranking) like the retrieve endpoint
     # + multi-agent graph - so the default single-agent path ships ranked, deduped sources.
     tool_sources: list[list[Citation]] = []
-    answer = ""
     # Aggregate token usage across every model call in the loop; total_ms is the loop wall time.
     prompt_tokens = answer_tokens = reasoning_tokens = 0
     estimated = False
     t0 = time.monotonic()
+    # Text from a natural-exit blocking turn (no tool calls); used as fallback if stream_reply is
+    # unavailable so we never discard an already-generated answer.
+    _blocking_final: str = ""
 
     def _accumulate(turn_usage: object) -> None:
         nonlocal prompt_tokens, answer_tokens, reasoning_tokens, estimated
@@ -115,7 +143,8 @@ def run_agent_stream(
         turn = model.chat_with_tools(messages, tools)
         _accumulate(turn.usage)
         if not turn.tool_calls:
-            answer = turn.text.strip()
+            # Model is ready to answer; save its text as a fallback and exit the tool loop.
+            _blocking_final = turn.text.strip()
             break
         messages.append(
             AgentMessage(role="assistant", content=turn.text, tool_calls=turn.tool_calls)
@@ -130,16 +159,45 @@ def run_agent_stream(
             )
             if result.citations:
                 tool_sources.append(list(result.citations))
-    if not answer:
-        # Budget exhausted with tools still pending: force one tool-free closing turn.
+    else:
+        # Budget exhausted with tools still pending: signal the model to answer now.
         messages.append(AgentMessage(role="user", content=_CLOSE_PROMPT))
-        closing = model.chat_with_tools(messages, [])
-        _accumulate(closing.usage)
-        answer = closing.text.strip()
 
     yield step_event(step("compose", "Composing the answer"))
     ranked = merge_evidence(tool_sources)
-    yield ChatEvent(type="token", delta=answer)
+
+    # --- Stream the final answer when possible; blocking fallback otherwise ---
+    stream_fn = getattr(model, "stream_reply", None)
+    answer = ""
+    if stream_fn is not None:
+        try:
+            answer_parts: list[str] = []
+            for chunk in stream_fn(messages, think=None):
+                if chunk.kind == "reasoning":
+                    yield ChatEvent(type="reasoning", delta=chunk.text)
+                else:
+                    answer_parts.append(chunk.text)
+                    yield ChatEvent(type="token", delta=chunk.text)
+            answer = "".join(answer_parts).strip()
+            # Collect usage from the streaming call (best-effort).
+            get_usage = getattr(model, "get_last_usage", None)
+            if get_usage is not None:
+                _accumulate(get_usage())
+            if not answer:
+                # stream_reply yielded no text; treat as a failure and fall through.
+                raise RuntimeError("stream_reply produced no answer text")
+        except Exception:
+            logger.warning(
+                "stream_reply failed; falling back to blocking chat_with_tools",
+                exc_info=True,
+            )
+            answer = _blocking_final or _force_blocking_answer(model, messages, _accumulate)
+            yield ChatEvent(type="token", delta=answer)
+    else:
+        # Model does not implement stream_reply; use blocking path.
+        answer = _blocking_final or _force_blocking_answer(model, messages, _accumulate)
+        yield ChatEvent(type="token", delta=answer)
+
     yield ChatEvent(type="sources", citations=ranked)
     yield ChatEvent(
         type="metrics",
@@ -169,7 +227,7 @@ def run_agent(
     context_limit: int = 0,
 ) -> RagAnswer:
     """Non-streaming wrapper: drain ``run_agent_stream`` into a RagAnswer (the JSON endpoint)."""
-    answer = ""
+    answer_parts: list[str] = []
     citations: list[Citation] = []
     grounded = False
     metrics: TurnMetrics | None = None
@@ -184,13 +242,14 @@ def run_agent(
         context_limit=context_limit,
     ):
         if event.type == "token":
-            answer = event.delta
+            answer_parts.append(event.delta)
         elif event.type == "sources":
             citations = event.citations
         elif event.type == "metrics":
             metrics = event.metrics
         elif event.type == "done":
             grounded = event.grounded
+    answer = "".join(answer_parts)
     return RagAnswer(
         answer=answer or "I could not find enough evidence to answer that.",
         citations=citations,

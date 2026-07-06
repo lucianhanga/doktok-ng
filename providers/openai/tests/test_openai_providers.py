@@ -436,3 +436,127 @@ def test_stream_complete_reasoning_payload_when_effort_set() -> None:
         list(OpenAiChatModelProvider("gpt-5", "k", reasoning_effort="high").stream_complete("hi"))
     payload = mock_stream.call_args.kwargs["json"]
     assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
+
+
+# ---------------------------------------------------------------------------
+# stream_reply tests (issue #485)
+# ---------------------------------------------------------------------------
+
+
+def test_stream_reply_builds_responses_input_from_messages() -> None:
+    """stream_reply must POST the full message list as Responses API input items."""
+    from doktok_contracts.media import AgentMessage, LlmToolCall
+
+    sse_lines = [
+        'data: {"type": "response.output_text.delta", "delta": "57 docs [1]."}',
+        'data: {"type": "response.completed", "response": {}}',
+    ]
+    fake = _FakeStreamResp(sse_lines)
+    messages = [
+        AgentMessage(role="system", content="You are DokTok."),
+        AgentMessage(role="user", content="how many?"),
+        AgentMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LlmToolCall(id="call_1", name="count_documents", arguments={"entity": "x"})
+            ],
+        ),
+        AgentMessage(
+            role="tool", content="57 documents.", tool_call_id="call_1", name="count_documents"
+        ),
+    ]
+    with patch("doktok_provider_openai.client.httpx.stream", return_value=fake) as mock_stream:
+        chunks = list(OpenAiChatModelProvider("gpt-4o-mini", "k").stream_reply(messages))
+
+    payload = mock_stream.call_args.kwargs["json"]
+    # System message becomes instructions, not an input item.
+    assert payload["instructions"] == "You are DokTok."
+    input_items = payload["input"]
+    # user message, function_call item, function_call_output item (system excluded)
+    assert len(input_items) == 3
+    assert input_items[0] == {"role": "user", "content": "how many?"}
+    assert input_items[1]["type"] == "function_call"
+    assert input_items[1]["call_id"] == "call_1"
+    assert input_items[1]["name"] == "count_documents"
+    assert input_items[2]["type"] == "function_call_output"
+    assert input_items[2]["call_id"] == "call_1"
+    assert input_items[2]["output"] == "57 documents."
+    # Verify the answer chunk was emitted
+    assert chunks == [ChatChunk(kind="answer", text="57 docs [1].")]
+
+
+def test_stream_reply_yields_reasoning_and_answer_chunks() -> None:
+    """stream_reply yields reasoning and answer chunks identically to stream_complete."""
+    from doktok_contracts.media import AgentMessage
+
+    sse_lines = [
+        'data: {"type": "response.reasoning_summary_text.delta", "delta": "thinking..."}',
+        'data: {"type": "response.output_text.delta", "delta": "the answer [1]."}',
+        (
+            'data: {"type": "response.completed", "response": {"usage": {'
+            '"input_tokens": 20, "output_tokens": 8, '
+            '"output_tokens_details": {"reasoning_tokens": 3}}}}'
+        ),
+    ]
+    fake = _FakeStreamResp(sse_lines)
+    provider = OpenAiChatModelProvider("gpt-5", "k", reasoning_effort="medium")
+    with patch("doktok_provider_openai.client.httpx.stream", return_value=fake):
+        chunks = list(provider.stream_reply([AgentMessage(role="user", content="q")]))
+    assert chunks == [
+        ChatChunk(kind="reasoning", text="thinking..."),
+        ChatChunk(kind="answer", text="the answer [1]."),
+    ]
+    usage = provider.get_last_usage()
+    assert usage is not None
+    assert usage.prompt_tokens == 20
+    assert usage.reasoning_tokens == 3
+    assert usage.answer_tokens == 5  # 8 output - 3 reasoning
+
+
+def test_stream_reply_fallback_when_responses_api_unavailable() -> None:
+    """When the Responses API returns 4xx, stream_reply falls back to complete()."""
+    from doktok_contracts.media import AgentMessage
+
+    fake_404 = _FakeStreamResp([], status_code=404)
+    messages = [
+        AgentMessage(role="user", content="what is this?"),
+    ]
+    with (
+        patch("doktok_provider_openai.client.httpx.stream", return_value=fake_404),
+        patch("doktok_provider_openai.client.httpx.post", return_value=_resp("fallback answer")),
+    ):
+        chunks = list(OpenAiChatModelProvider("gpt-4o-mini", "k").stream_reply(messages))
+    assert chunks == [ChatChunk(kind="answer", text="fallback answer")]
+
+
+def test_to_responses_input_items_mapping() -> None:
+    """_to_responses_input_items correctly maps all AgentMessage roles."""
+    import json as json_mod
+
+    from doktok_contracts.media import AgentMessage, LlmToolCall
+    from doktok_provider_openai.client import _to_responses_input_items
+
+    messages = [
+        AgentMessage(role="system", content="sys prompt"),
+        AgentMessage(role="user", content="question"),
+        AgentMessage(
+            role="assistant",
+            content="thinking",
+            tool_calls=[LlmToolCall(id="c1", name="fn", arguments={"k": "v"})],
+        ),
+        AgentMessage(role="tool", content="result", tool_call_id="c1", name="fn"),
+        AgentMessage(role="assistant", content="final"),
+    ]
+    instructions, items = _to_responses_input_items(messages)
+
+    assert instructions == "sys prompt"
+    # assistant with tool_calls emits function_call item + its text content
+    # user, function_call (from assistant), function_call_output (tool), assistant text
+    assert len(items) == 5
+    assert items[0] == {"role": "user", "content": "question"}
+    assert items[1]["type"] == "function_call" and items[1]["call_id"] == "c1"
+    assert json_mod.loads(items[1]["arguments"]) == {"k": "v"}
+    assert items[2] == {"role": "assistant", "content": "thinking"}
+    assert items[3]["type"] == "function_call_output" and items[3]["output"] == "result"
+    assert items[4] == {"role": "assistant", "content": "final"}

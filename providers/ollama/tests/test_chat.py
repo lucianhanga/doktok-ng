@@ -200,3 +200,102 @@ def test_chat_with_tools_final_text(monkeypatch: Any) -> None:
     provider = OllamaChatModelProvider("qwen", "http://localhost:11434")
     turn = provider.chat_with_tools([AgentMessage(role="user", content="hi")], [])
     assert turn.text == "the answer" and not turn.tool_calls
+
+
+# ---------------------------------------------------------------------------
+# stream_reply tests (issue #485)
+# ---------------------------------------------------------------------------
+
+
+class _MultiMessageStream:
+    """Fake httpx stream that records the sent payload and returns NDJSON lines."""
+
+    def __init__(self, captured: dict[str, Any], lines: list[str]) -> None:
+        self._captured = captured
+        self._lines = lines
+
+    def __enter__(self) -> _MultiMessageStream:
+        return self
+
+    def __exit__(self, *args: Any) -> None: ...
+
+    def raise_for_status(self) -> None: ...
+
+    def iter_lines(self) -> list[str]:
+        return self._lines
+
+
+def _capture_stream_reply(monkeypatch: Any, lines: list[str]) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def fake_stream(
+        method: str, url: str, *, json: dict[str, Any], timeout: float
+    ) -> _MultiMessageStream:
+        captured["url"] = url
+        captured["json"] = json
+        return _MultiMessageStream(captured, lines)
+
+    monkeypatch.setattr("doktok_provider_ollama.chat.httpx.stream", fake_stream)
+    return captured
+
+
+def test_stream_reply_sends_full_messages_list(monkeypatch: Any) -> None:
+    # stream_reply must POST the full messages list to /api/chat, not a single user prompt.
+    captured = _capture_stream_reply(monkeypatch, ['{"message": {"content": "ok"}}'])
+    messages = [
+        AgentMessage(role="system", content="You are DokTok."),
+        AgentMessage(role="user", content="how many?"),
+        AgentMessage(role="assistant", content="", tool_calls=[]),
+        AgentMessage(
+            role="tool", content="57 documents.", tool_call_id="1", name="count_documents"
+        ),
+    ]
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434")
+    list(provider.stream_reply(messages))
+
+    sent = captured["json"]["messages"]
+    # All four messages must be present in the payload.
+    assert len(sent) == 4
+    assert sent[0]["role"] == "system"
+    assert sent[1]["role"] == "user"
+    assert sent[3]["role"] == "tool"
+    # The Ollama endpoint must be /api/chat (same as stream_complete).
+    assert captured["url"].endswith("/api/chat")
+    assert captured["json"]["stream"] is True
+
+
+def test_stream_reply_yields_reasoning_and_answer_chunks(monkeypatch: Any) -> None:
+    lines = [
+        '{"message": {"thinking": "let me think"}}',
+        '{"message": {"content": "the answer"}}',
+        '{"done": true, "prompt_eval_count": 10, "eval_count": 20, "eval_duration": 500000000}',
+    ]
+    captured = _capture_stream_reply(monkeypatch, lines)
+    _ = captured
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434", think=True)
+    chunks = list(provider.stream_reply([AgentMessage(role="user", content="hi")]))
+
+    assert [c.kind for c in chunks] == ["reasoning", "answer"]
+    assert chunks[0].text == "let me think"
+    assert chunks[1].text == "the answer"
+
+    # Usage is recorded after the stream.
+    usage = provider.get_last_usage()
+    assert usage is not None
+    assert usage.prompt_tokens == 10
+    assert usage.reasoning_tokens + usage.answer_tokens == 20
+    assert usage.eval_ms == 500
+
+
+def test_stream_reply_uses_configured_think_when_no_override(monkeypatch: Any) -> None:
+    captured = _capture_stream_reply(monkeypatch, ['{"message": {"content": "ok"}}'])
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434", think=True)
+    list(provider.stream_reply([AgentMessage(role="user", content="hi")]))
+    assert captured["json"]["think"] is True
+
+
+def test_stream_reply_think_override_wins(monkeypatch: Any) -> None:
+    captured = _capture_stream_reply(monkeypatch, ['{"message": {"content": "ok"}}'])
+    provider = OllamaChatModelProvider("qwen", "http://localhost:11434", think=False)
+    list(provider.stream_reply([AgentMessage(role="user", content="hi")], think=True))
+    assert captured["json"]["think"] is True

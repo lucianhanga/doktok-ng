@@ -181,6 +181,76 @@ class OllamaChatModelProvider:
             estimated=eval_count is None,
         )
 
+    def stream_reply(
+        self, messages: list[AgentMessage], *, think: bool | None = None
+    ) -> Iterator[ChatChunk]:
+        """Stream the final answer from a full message list via /api/chat (NDJSON).
+
+        Sends the accumulated conversation (system + history + tool results) rather than a single
+        prompt string, so the model generates its grounded answer with full context.  Reasoning and
+        answer chunks are yielded exactly as in ``stream_complete``; ``_last_usage`` is updated
+        after the stream completes (accessible via ``get_last_usage()``).
+
+        ``think=None`` uses the configured reasoning (``self._think``); True/False overrides it.
+        """
+        effective_think = self._think if think is None else think
+        options: dict[str, object] = {"temperature": 0}
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
+        if self._num_predict is not None:
+            options["num_predict"] = self._num_predict
+        payload: dict[str, object] = {
+            "model": self._model,
+            "messages": [_to_ollama_message(m) for m in messages],
+            "stream": True,
+            "think": effective_think,
+            "options": options,
+        }
+        if self._keep_alive is not None:
+            payload["keep_alive"] = self._keep_alive
+        self._last_usage = None
+        reasoning_chars = 0
+        answer_chars = 0
+        done: dict[str, object] = {}
+        t0 = time.monotonic()
+        with httpx.stream(
+            "POST", f"{self._base_url}/api/chat", json=payload, timeout=self._timeout
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                obj = json.loads(line)
+                message = obj.get("message") or {}
+                reasoning = message.get("thinking")
+                if reasoning:
+                    reasoning_chars += len(reasoning)
+                    yield ChatChunk(kind="reasoning", text=reasoning)
+                content = message.get("content")
+                if content:
+                    answer_chars += len(content)
+                    yield ChatChunk(kind="answer", text=content)
+                if obj.get("done"):
+                    done = obj
+        wall_ms = round((time.monotonic() - t0) * 1000)
+        eval_count = done.get("eval_count")
+        eval_ns = done.get("eval_duration")
+        if eval_count is not None:
+            reasoning_tokens, answer_tokens = _split_tokens(
+                _as_int(eval_count), reasoning_chars, answer_chars
+            )
+        else:
+            reasoning_tokens = _est_tokens(reasoning_chars)
+            answer_tokens = _est_tokens(answer_chars)
+        self._last_usage = LlmUsage(
+            prompt_tokens=_as_int(done.get("prompt_eval_count")),
+            answer_tokens=answer_tokens,
+            reasoning_tokens=reasoning_tokens,
+            wall_ms=wall_ms,
+            eval_ms=round(_as_int(eval_ns) / 1_000_000) if eval_ns else None,
+            estimated=eval_count is None,
+        )
+
     def chat_with_tools(
         self, messages: list[AgentMessage], tools: list[dict[str, Any]]
     ) -> ToolCallTurn:

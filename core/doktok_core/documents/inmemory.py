@@ -17,8 +17,8 @@ from doktok_contracts.schemas import (
     TokenMatch,
 )
 
-# A sort value can be a datetime (acquired), date (created), string (title/category) or None.
-type _SortVal = datetime | date | str | None
+# A sort value can be a datetime (acquired), date (created), int (entities/chunks), string, or None.
+type _SortVal = datetime | date | int | str | None
 
 
 def _cmp_scalar(x: Any, y: Any) -> int:
@@ -35,6 +35,9 @@ class InMemoryDocumentRepository:
         self.attention_ids: set[str] = set()
         self.categories_by_doc: dict[str, set[str]] = {}
         self.tokens_by_doc: dict[str, set[tuple[str, str]]] = {}
+        # Seams for the new count sort keys (entity/chunk counts per document id).
+        self.entity_counts_by_doc: dict[str, int] = {}
+        self.chunk_counts_by_doc: dict[str, int] = {}
 
     def add(self, document: Document) -> None:
         if document.id in self._docs:
@@ -117,6 +120,12 @@ class InMemoryDocumentRepository:
             return d.document_date
         if sort is DocumentSort.TITLE:
             return d.title.lower() if d.title else None
+        if sort is DocumentSort.STATUS:
+            return d.status.value
+        if sort is DocumentSort.ENTITIES:
+            return self.entity_counts_by_doc.get(d.id, 0)
+        if sort is DocumentSort.CHUNKS:
+            return self.chunk_counts_by_doc.get(d.id, 0)
         cats = self.categories_by_doc.get(d.id, set())
         return min(cats) if cats else None  # CATEGORY: alphabetically-first active category
 

@@ -5,6 +5,7 @@ import {
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
+  type ColumnOrderState,
   type ColumnSizingState,
   type Row,
   type SortingState,
@@ -18,6 +19,7 @@ interface PersistedTableState {
   sorting?: SortingState;
   columnVisibility?: VisibilityState;
   columnSizing?: ColumnSizingState;
+  columnOrder?: ColumnOrderState;
 }
 
 export interface DataTableProps<T> {
@@ -38,6 +40,16 @@ export interface DataTableProps<T> {
   resetNonce?: number;
   /** Row id to highlight + scroll into view (e.g. when arriving from a deep link). */
   highlightId?: string;
+  /**
+   * Controlled sorting. When provided (with onSortingChange), the table does NOT sort client-side —
+   * the parent owns the sort and maps it to its query (server-driven sort over the whole dataset).
+   */
+  sorting?: SortingState;
+  onSortingChange?: (next: SortingState) => void;
+  /** With controlled sorting, skip the client sorted-row model (rows arrive pre-sorted). */
+  manualSorting?: boolean;
+  /** Extra class(es) per row, e.g. selected/unidentifiable decorations. Kept out of the core. */
+  rowClassName?: (row: T) => string | undefined;
 }
 
 /**
@@ -77,23 +89,53 @@ export function DataTable<T>({
   persistKey,
   resetNonce,
   highlightId,
+  sorting: sortingProp,
+  onSortingChange,
+  manualSorting,
+  rowClassName,
 }: DataTableProps<T>) {
   const persisted = useMemo<PersistedTableState>(
     () => (persistKey ? loadJSON<PersistedTableState>(persistKey, {}) : {}),
     [persistKey],
   );
-  const [sorting, setSorting] = useState<SortingState>(persisted.sorting ?? []);
+  const controlledSorting = sortingProp !== undefined;
+  const [internalSorting, setInternalSorting] = useState<SortingState>(persisted.sorting ?? []);
+  const sorting = controlledSorting ? sortingProp : internalSorting;
+  const handleSortingChange = (updater: SortingState | ((old: SortingState) => SortingState)) => {
+    const next = typeof updater === "function" ? updater(sorting) : updater;
+    if (controlledSorting) onSortingChange?.(next);
+    else setInternalSorting(next);
+  };
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     persisted.columnVisibility ?? initialVisibility ?? {},
   );
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(persisted.columnSizing ?? {});
+  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(persisted.columnOrder ?? []);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showColumns, setShowColumns] = useState(false);
+  // Header drag-to-reorder: id of the column currently being dragged.
+  const [draggingCol, setDraggingCol] = useState<string | null>(null);
 
-  // Persist table layout whenever it changes (best-effort).
+  // Persist table layout whenever it changes (best-effort). Sorting is only persisted when the
+  // table owns it; under controlled sorting the parent (its query) is the source of truth.
   useEffect(() => {
-    if (persistKey) saveJSON(persistKey, { sorting, columnVisibility, columnSizing });
-  }, [persistKey, sorting, columnVisibility, columnSizing]);
+    if (persistKey) {
+      saveJSON(persistKey, {
+        sorting: controlledSorting ? persisted.sorting : internalSorting,
+        columnVisibility,
+        columnSizing,
+        columnOrder,
+      });
+    }
+  }, [
+    persistKey,
+    controlledSorting,
+    persisted.sorting,
+    internalSorting,
+    columnVisibility,
+    columnSizing,
+    columnOrder,
+  ]);
 
   // Reset to factory defaults when the parent bumps resetNonce (skip the initial render).
   const firstReset = useRef(true);
@@ -102,26 +144,43 @@ export function DataTable<T>({
       firstReset.current = false;
       return;
     }
-    setSorting([]);
+    setInternalSorting([]);
     setColumnVisibility(initialVisibility ?? {});
     setColumnSizing({});
+    setColumnOrder([]);
     if (persistKey) removeKey(persistKey);
   }, [resetNonce]);
 
   const table = useReactTable<T>({
     data,
     columns,
-    state: { sorting, columnVisibility, columnSizing, globalFilter: globalFilter ?? "" },
-    onSortingChange: setSorting,
+    state: { sorting, columnVisibility, columnSizing, columnOrder, globalFilter: globalFilter ?? "" },
+    onSortingChange: handleSortingChange,
     onColumnVisibilityChange: setColumnVisibility,
     onColumnSizingChange: setColumnSizing,
+    onColumnOrderChange: setColumnOrder,
     getRowId,
     columnResizeMode: "onChange",
     enableColumnResizing: true,
+    manualSorting: manualSorting ?? false,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
   });
+
+  // Drag a header onto another to reorder columns (persisted). Order defaults to the leaf columns.
+  const reorderColumn = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setColumnOrder((prev) => {
+      const current = prev.length ? [...prev] : table.getAllLeafColumns().map((c) => c.id);
+      const from = current.indexOf(fromId);
+      const to = current.indexOf(toId);
+      if (from < 0 || to < 0) return current;
+      current.splice(from, 1);
+      current.splice(to, 0, fromId);
+      return current;
+    });
+  };
 
   const toggle = (id: string) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
   const leafCount = table.getVisibleLeafColumns().length + (renderDetail ? 1 : 0);
@@ -168,13 +227,37 @@ export function DataTable<T>({
                     <th
                       key={header.id}
                       style={{ width: header.getSize() }}
-                      className={canSort ? "datatable-sortable" : undefined}
+                      className={
+                        [
+                          canSort ? "datatable-sortable" : "",
+                          draggingCol && draggingCol !== header.column.id
+                            ? "datatable-drop-target"
+                            : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                      }
                       aria-sort={
                         sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none"
                       }
+                      onDragOver={(e) => {
+                        if (draggingCol && draggingCol !== header.column.id) e.preventDefault();
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (draggingCol) reorderColumn(draggingCol, header.column.id);
+                        setDraggingCol(null);
+                      }}
                     >
                       <span
                         className="datatable-th-label"
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggingCol(header.column.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => setDraggingCol(null)}
+                        title="Drag to reorder column"
                         onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
@@ -218,6 +301,7 @@ export function DataTable<T>({
                   row={row}
                   isOpen={isOpen}
                   highlight={highlightId === row.id}
+                  extraClassName={rowClassName?.(row.original)}
                   onToggle={renderDetail ? () => toggle(row.id) : undefined}
                   detailColSpan={leafCount}
                   renderDetail={renderDetail}
@@ -235,6 +319,7 @@ function FragmentRow<T>({
   row,
   isOpen,
   highlight,
+  extraClassName,
   onToggle,
   detailColSpan,
   renderDetail,
@@ -242,6 +327,7 @@ function FragmentRow<T>({
   row: Row<T>;
   isOpen: boolean;
   highlight?: boolean;
+  extraClassName?: string;
   onToggle?: () => void;
   detailColSpan: number;
   renderDetail?: (row: T) => ReactNode;
@@ -250,9 +336,12 @@ function FragmentRow<T>({
   useEffect(() => {
     if (highlight) rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [highlight]);
+  const cls = [highlight ? "datatable-row-highlight" : "", extraClassName ?? ""]
+    .filter(Boolean)
+    .join(" ");
   return (
     <>
-      <tr ref={rowRef} className={highlight ? "datatable-row-highlight" : undefined}>
+      <tr ref={rowRef} className={cls || undefined}>
         {onToggle && (
           <td className="datatable-expander-col">
             <button

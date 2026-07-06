@@ -3,12 +3,20 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import CategoryRepository, DocumentRepository, FeatureRepository
+from doktok_contracts.ports import (
+    CategoryRepository,
+    ChunkRepository,
+    DocumentRepository,
+    EntityRepository,
+    FeatureRepository,
+)
 from doktok_contracts.schemas import Document, DocumentStatus
 from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
+from doktok_core.entities.inmemory import InMemoryEntityRepository
 from doktok_core.features.inmemory import InMemoryFeatureRepository
+from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -45,6 +53,8 @@ def _client(*docs: Document) -> TestClient:
     registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -114,6 +124,8 @@ def test_needs_attention_filter() -> None:
     registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 
@@ -132,3 +144,129 @@ def test_cannot_read_another_tenants_document() -> None:
     client = _client(_doc("a-doc", "tenant-a"), _doc("b-doc", "tenant-b"))
     assert client.get("/api/v1/documents/b-doc", headers=_auth("tok-a")).status_code == 404
     assert client.get("/api/v1/documents/a-doc", headers=_auth("tok-a")).status_code == 200
+
+
+def test_stats_sidecar_present_and_defaults_zero() -> None:
+    client = _client(_doc("d1", "tenant-a"))
+    body = client.get("/api/v1/documents", headers=_auth("tok-a")).json()
+    assert "d1" in body["stats"]
+    s = body["stats"]["d1"]
+    assert s["entity_count"] == 0
+    assert s["chunk_count"] == 0
+    assert s["category"] is None
+
+
+def test_stats_sidecar_entity_count() -> None:
+    doc = _doc("d1", "tenant-a")
+    repo = InMemoryDocumentRepository()
+    repo.add(doc)
+    repo.entity_counts_by_doc["d1"] = 3
+    registry = build_registry()
+    registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    entity_repo = InMemoryEntityRepository()
+    registry.register(EntityRepository, entity_repo)  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+    body = client.get("/api/v1/documents", headers=_auth("tok-a")).json()
+    # entity_counts_for_documents on InMemoryEntityRepository counts self.entities, not the seam
+    assert body["stats"]["d1"]["entity_count"] == 0  # no entities seeded in entity_repo
+
+
+def test_stats_sidecar_category() -> None:
+    doc = _doc("d1", "tenant-a")
+    repo = InMemoryDocumentRepository()
+    repo.add(doc)
+    cat_repo = InMemoryCategoryRepository()
+    cat = cat_repo.create("tenant-a", "Finance", "finance")
+    assert cat is not None
+    cat_repo.set_document_categories("tenant-a", "d1", [cat.id])
+    registry = build_registry()
+    registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, cat_repo)  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+    body = client.get("/api/v1/documents", headers=_auth("tok-a")).json()
+    assert body["stats"]["d1"]["category"] == "Finance"
+
+
+def test_sort_by_status() -> None:
+    active = _doc("a1", "tenant-a")
+    failed = _doc("f1", "tenant-a")
+    failed.status = DocumentStatus.FAILED
+    failed.sha256 = ("f1" + "b" * 64)[:64]
+    client = _client(active, failed)
+    body = client.get("/api/v1/documents?sort=status&dir=asc", headers=_auth("tok-a")).json()
+    # "active" < "failed" alphabetically
+    assert body["items"][0]["status"] == "active"
+    assert body["items"][1]["status"] == "failed"
+
+
+def test_sort_by_entities_and_cursor_round_trip() -> None:
+    base = datetime(2024, 1, 1, tzinfo=UTC)
+    docs = []
+    repo = InMemoryDocumentRepository()
+    for i in range(4):
+        d = _doc(f"e{i}", "tenant-a")
+        d.created_at = base + timedelta(minutes=i)
+        repo.entity_counts_by_doc[d.id] = i  # e0=0, e1=1, e2=2, e3=3
+        docs.append(d)
+        repo.add(d)
+    registry = build_registry()
+    registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+
+    p1 = client.get(
+        "/api/v1/documents?sort=entities&dir=desc&limit=2", headers=_auth("tok-a")
+    ).json()
+    assert p1["total"] == 4
+    assert p1["items"][0]["id"] == "e3"
+    assert p1["items"][1]["id"] == "e2"
+    assert p1["next_cursor"] is not None
+
+    p2 = client.get(
+        f"/api/v1/documents?sort=entities&dir=desc&limit=2&cursor={p1['next_cursor']}",
+        headers=_auth("tok-a"),
+    ).json()
+    assert [d["id"] for d in p2["items"]] == ["e1", "e0"]
+    assert p2["next_cursor"] is None
+
+
+def test_sort_by_chunks_and_cursor_round_trip() -> None:
+    base = datetime(2024, 1, 1, tzinfo=UTC)
+    repo = InMemoryDocumentRepository()
+    for i in range(3):
+        d = _doc(f"c{i}", "tenant-a")
+        d.created_at = base + timedelta(minutes=i)
+        repo.chunk_counts_by_doc[d.id] = i  # c0=0, c1=1, c2=2
+        repo.add(d)
+    registry = build_registry()
+    registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+
+    p1 = client.get("/api/v1/documents?sort=chunks&dir=desc&limit=2", headers=_auth("tok-a")).json()
+    assert p1["items"][0]["id"] == "c2"
+    assert p1["items"][1]["id"] == "c1"
+    assert p1["next_cursor"] is not None
+
+    p2 = client.get(
+        f"/api/v1/documents?sort=chunks&dir=desc&limit=2&cursor={p1['next_cursor']}",
+        headers=_auth("tok-a"),
+    ).json()
+    assert [d["id"] for d in p2["items"]] == ["c0"]
+    assert p2["next_cursor"] is None

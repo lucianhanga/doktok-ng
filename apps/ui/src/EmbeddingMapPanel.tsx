@@ -232,7 +232,10 @@ function Scatter2D({
     scatterplot.subscribe("select", ({ points: idxs }) => onPoint(idxs[0]));
     scatterplot.subscribe("pointOver", (i) => onPoint(i));
     scatterplot.subscribe("deselect", () => onSelect(null));
-    void scatterplot.draw(data);
+    // The color channel (valueA = z) is a category INDEX, not a continuous value — declare it
+    // categorical so regl-scatterplot maps each index to a distinct palette color instead of
+    // interpolating a gradient (which made every point look the same-ish shade).
+    void scatterplot.draw(data, { zDataType: "categorical" });
 
     return () => scatterplot.destroy();
   }, [points, legendColors, onSelect]);

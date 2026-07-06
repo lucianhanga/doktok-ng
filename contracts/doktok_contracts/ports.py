@@ -411,6 +411,10 @@ class ChunkRepository(Protocol):
         """Map each requested chunk id to its text, for embedding-map tooltips (M7.1)."""
         ...
 
+    def chunk_counts_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, int]:
+        """Chunk count per document for the list sidecar, batched GROUP BY over the page's ids."""
+        ...
+
 
 @runtime_checkable
 class EmbeddingProjector(Protocol):
@@ -698,6 +702,12 @@ class EntityRepository(Protocol):
         limit: int = 50,
         offset: int = 0,
     ) -> list[Document]: ...
+
+    def entity_counts_for_documents(
+        self, tenant_id: str, document_ids: list[str]
+    ) -> dict[str, int]:
+        """Entity count per document for the list sidecar, batched GROUP BY over the page's ids."""
+        ...
 
 
 @runtime_checkable

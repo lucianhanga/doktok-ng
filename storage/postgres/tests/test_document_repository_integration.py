@@ -9,10 +9,20 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from doktok_contracts.errors import DuplicateActiveDocumentError
-from doktok_contracts.schemas import Document, DocumentStatus
+from doktok_contracts.schemas import (
+    Document,
+    DocumentChunk,
+    DocumentEntity,
+    DocumentSort,
+    DocumentStatus,
+    EntityType,
+    SortDir,
+)
 from doktok_storage_postgres import (
     Database,
+    PostgresChunkRepository,
     PostgresDocumentRepository,
+    PostgresEntityRepository,
     PostgresFeatureRepository,
 )
 
@@ -141,3 +151,100 @@ def test_needs_attention_filter_flags_failed_not_in_progress(db: Database) -> No
     ids = {d.id for d in items}
     # Only the FAILED document; the done one and the still-pending (in-processing) one are excluded.
     assert ids == {"a1"} and total == 1
+
+
+def test_sort_by_status(db: Database) -> None:
+    repo = PostgresDocumentRepository(db)
+    base = datetime(2024, 3, 1, tzinfo=UTC)
+    active = _page_doc("s-active", when=base)
+    failed = Document(
+        id="s-failed",
+        tenant_id=TEST_TENANT_PAGE,
+        sha256=("s-failed" + "a" * 64)[:64],
+        original_filename="s-failed.txt",
+        status=DocumentStatus.FAILED,
+        created_at=base + timedelta(minutes=1),
+    )
+    repo.add(active)
+    repo.add(failed)
+
+    asc_items, _, _ = repo.list_documents(
+        TEST_TENANT_PAGE, sort=DocumentSort.STATUS, direction=SortDir.ASC
+    )
+    statuses = [d.status.value for d in asc_items]
+    assert statuses == sorted(statuses)
+
+
+def test_sort_by_entities_and_cursor_round_trip(db: Database) -> None:
+    repo = PostgresDocumentRepository(db)
+    entity_repo = PostgresEntityRepository(db)
+    base = datetime(2024, 4, 1, tzinfo=UTC)
+
+    for i in range(4):
+        doc = _page_doc(f"ent{i}", when=base + timedelta(minutes=i))
+        repo.add(doc)
+        for j in range(i):
+            entity_repo.add_entities(
+                [
+                    DocumentEntity(
+                        id=f"ent{i}-e{j}",
+                        tenant_id=TEST_TENANT_PAGE,
+                        document_id=f"ent{i}",
+                        version_id="v1",
+                        entity_text="foo",
+                        entity_type=EntityType.CUSTOM_TOKEN,
+                        normalized_value=f"foo{j}",
+                    )
+                ]
+            )
+
+    # ent3 has 3 entities, ent2 has 2, ent1 has 1, ent0 has 0 — DESC order expected
+    page1, total, anchor = repo.list_documents(
+        TEST_TENANT_PAGE, sort=DocumentSort.ENTITIES, direction=SortDir.DESC, limit=2
+    )
+    assert total == 4
+    assert [d.id for d in page1] == ["ent3", "ent2"]
+    assert anchor is not None
+
+    page2, _, anchor2 = repo.list_documents(
+        TEST_TENANT_PAGE, sort=DocumentSort.ENTITIES, direction=SortDir.DESC, limit=2, cursor=anchor
+    )
+    assert [d.id for d in page2] == ["ent1", "ent0"]
+    assert anchor2 is None
+
+
+def test_sort_by_chunks_and_cursor_round_trip(db: Database) -> None:
+    repo = PostgresDocumentRepository(db)
+    chunk_repo = PostgresChunkRepository(db)
+    base = datetime(2024, 5, 1, tzinfo=UTC)
+
+    for i in range(3):
+        doc = _page_doc(f"chk{i}", when=base + timedelta(minutes=i))
+        repo.add(doc)
+        for j in range(i):
+            chunk_repo.add_chunks(
+                [
+                    DocumentChunk(
+                        id=f"chk{i}-c{j}",
+                        tenant_id=TEST_TENANT_PAGE,
+                        document_id=f"chk{i}",
+                        version_id="v1",
+                        text=f"text {j}",
+                    )
+                ],
+                [[0.1] * 1024],  # document_chunks.embedding is vector(1024)
+            )
+
+    # chk2 has 2 chunks, chk1 has 1, chk0 has 0 — DESC order
+    page1, total, anchor = repo.list_documents(
+        TEST_TENANT_PAGE, sort=DocumentSort.CHUNKS, direction=SortDir.DESC, limit=2
+    )
+    assert total == 3
+    assert [d.id for d in page1] == ["chk2", "chk1"]
+    assert anchor is not None
+
+    page2, _, anchor2 = repo.list_documents(
+        TEST_TENANT_PAGE, sort=DocumentSort.CHUNKS, direction=SortDir.DESC, limit=2, cursor=anchor
+    )
+    assert [d.id for d in page2] == ["chk0"]
+    assert anchor2 is None

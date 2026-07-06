@@ -140,6 +140,18 @@ class Document(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class DocumentListStats(BaseModel):
+    """Per-document entity/chunk counts and primary category for the Documents table.
+
+    Sidecar map so the shared ``Document`` shape stays unchanged. Populated only on the list
+    response; counts come from batched GROUP BY queries over the page's ids (no N+1).
+    """
+
+    entity_count: int = 0
+    chunk_count: int = 0
+    category: str | None = None
+
+
 class DocumentListPage(BaseModel):
     """A keyset-paginated page of documents, ordered (created_at DESC, id DESC).
 
@@ -156,6 +168,8 @@ class DocumentListPage(BaseModel):
     # the shared ``Document`` shape stays unchanged for search). Populated only on the list
     # response; done/failed counts come from one batched GROUP BY over this page's ids (no per-row).
     processing: dict[str, ProcessingSummary] = Field(default_factory=dict)
+    # Per-document entity/chunk counts and primary category for the Documents table columns.
+    stats: dict[str, DocumentListStats] = Field(default_factory=dict)
 
 
 class DocumentSort(StrEnum):
@@ -166,6 +180,9 @@ class DocumentSort(StrEnum):
     CREATED = "created"
     TITLE = "title"
     CATEGORY = "category"
+    STATUS = "status"
+    ENTITIES = "entities"
+    CHUNKS = "chunks"
 
 
 class SortDir(StrEnum):
@@ -192,7 +209,7 @@ class ListAnchor:
 
     sort: DocumentSort
     direction: SortDir
-    value: datetime | date | str | None
+    value: datetime | date | int | str | None
     doc_id: str
 
 

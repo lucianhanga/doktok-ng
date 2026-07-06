@@ -40,3 +40,12 @@ class InMemoryChunkRepository:
     def read_texts(self, tenant_id: str, chunk_ids: list[str]) -> dict[str, str]:
         wanted = set(chunk_ids)
         return {c.id: c.text for c in self.chunks if c.tenant_id == tenant_id and c.id in wanted}
+
+    def chunk_counts_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, int]:
+        wanted = set(document_ids)
+        counts: dict[str, int] = {}
+        for c in self.chunks:
+            if c.tenant_id != tenant_id or c.document_id not in wanted:
+                continue
+            counts[c.document_id] = counts.get(c.document_id, 0) + 1
+        return counts

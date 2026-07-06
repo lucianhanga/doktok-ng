@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { EmbeddingMapPanel } from "./EmbeddingMapPanel";
 import { InfoHint } from "./InfoHint";
+import { KnowledgeGraphPanel } from "./KnowledgeGraphPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { WordCloudPanel } from "./WordCloudPanel";
 import {
@@ -1460,9 +1461,9 @@ export function SettingsPanel() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiTesting, setOpenaiTesting] = useState(false);
   const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [tab, setTab] = useState<"settings" | "models" | "drp" | "memory" | "map" | "cloud">(
-    "settings",
-  );
+  const [tab, setTab] = useState<
+    "settings" | "models" | "drp" | "memory" | "graph" | "map" | "cloud"
+  >("settings");
   // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
   const [egressError, setEgressError] = useState<string | null>(null);
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
@@ -1634,11 +1635,13 @@ export function SettingsPanel() {
         ? "DRP"
         : tab === "memory"
           ? "Memory"
-          : tab === "map"
-            ? "Embedding map"
-            : tab === "cloud"
-              ? "Word cloud"
-              : "Settings";
+          : tab === "graph"
+            ? "Knowledge graph"
+            : tab === "map"
+              ? "Embedding map"
+              : tab === "cloud"
+                ? "Word cloud"
+                : "Settings";
 
   const saveBar = (
     <>
@@ -1709,6 +1712,15 @@ export function SettingsPanel() {
             onClick={() => setTab("drp")}
           >
             DRP
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "graph"}
+            className={tab === "graph" ? "active" : ""}
+            onClick={() => setTab("graph")}
+          >
+            Knowledge graph
           </button>
           <button
             type="button"
@@ -2179,6 +2191,7 @@ export function SettingsPanel() {
 
           {tab === "drp" && <DrpSection />}
           {tab === "memory" && <MemoryPanel />}
+          {tab === "graph" && <KnowledgeGraphPanel />}
           {tab === "map" && <EmbeddingMapPanel />}
           {tab === "cloud" && <WordCloudPanel />}
         </div>

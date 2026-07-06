@@ -3525,13 +3525,33 @@ tr.row-selected {
   margin-right: 0.4rem;
   opacity: 0.7;
 }
+/* Reasoning panel (personalAI parity): a fixed ~12-row window with a floating "latest" jump button. */
+.chat-reasoning-panel {
+  position: relative;
+}
 .chat-timeline-reasoning {
-  max-height: 8rem;
+  /* ~10-12 rows: the reasoning streams into a fixed panel that auto-tails to the latest line. */
+  max-height: 13rem;
   overflow-y: auto;
   font-size: 0.78rem;
+  line-height: 1.45;
   color: var(--muted, #8b97a8);
   white-space: pre-wrap;
   margin-top: 0.15rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid rgba(127, 127, 127, 0.3); /* the "trace" spine */
+}
+.chat-reasoning-jump {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.4rem;
+  font-size: 0.72rem;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 999px;
+  background: var(--surface, #0f141b);
+  color: var(--accent, #6ea8fe);
+  cursor: pointer;
 }
 .chat-timeline-context-summary {
   display: flex;

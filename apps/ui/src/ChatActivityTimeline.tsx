@@ -1,6 +1,49 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { RankedChunk, TraceStep, TurnMetrics } from "./api";
+
+/** Reasoning in a fixed-height (~12-row) window that auto-tails to the newest lines as it streams
+ * (personalAI MessageDetails parity): it follows the stream while the user is at the bottom, stops
+ * following if they scroll up to read, and offers a "latest" button to jump back. */
+function ReasoningPanel({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+
+  // Follow new reasoning only while pinned to the bottom (personalAI's `stick`).
+  useEffect(() => {
+    const el = ref.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [text]);
+
+  function onScroll() {
+    const el = ref.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    stick.current = near;
+    setAtBottom(near);
+  }
+  function jumpToLatest() {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stick.current = true;
+    setAtBottom(true);
+  }
+
+  return (
+    <div className="chat-reasoning-panel">
+      {!atBottom && (
+        <button type="button" className="chat-reasoning-jump" onClick={jumpToLatest}>
+          ▾ latest
+        </button>
+      )}
+      <div ref={ref} className="chat-timeline-reasoning" onScroll={onScroll}>
+        {text}
+      </div>
+    </div>
+  );
+}
 
 // --- Context meter (adapted from personalAI ContextMeter) ------------------------------------
 
@@ -407,7 +450,7 @@ export function ChatActivityTimeline({
                     />
                     <div className="chat-timeline-node-content">
                       <span className="chat-timeline-node-label">Reasoning</span>
-                      <div className="chat-timeline-reasoning">{entry.reasoning}</div>
+                      <ReasoningPanel text={entry.reasoning} />
                     </div>
                   </div>
                 )}

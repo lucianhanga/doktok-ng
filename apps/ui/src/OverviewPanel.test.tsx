@@ -160,3 +160,25 @@ test("dropping/selecting documents uploads them for ingestion and shows feedback
   await waitFor(() => expect(screen.getByText(/queued for ingestion/i)).toBeInTheDocument());
   expect(calls.some((u) => u.includes("/api/v1/ingestion/upload"))).toBe(true);
 });
+
+test("refuses a batch over the file-count limit without uploading", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+  const { container } = render(<OverviewPanel />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  const files = Array.from(
+    { length: 102 },
+    (_, i) => new File(["x"], `f${i}.txt`, { type: "text/plain" }),
+  );
+  fireEvent.change(input, { target: { files } });
+  await waitFor(() => expect(screen.getByText(/At most 101 files per upload/i)).toBeInTheDocument());
+  // The oversized drop never hit the upload endpoint.
+  expect(calls.some((u) => u.includes("/api/v1/ingestion/upload"))).toBe(false);
+});

@@ -181,9 +181,16 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
-    # Reject request bodies larger than this many MB with 413 (APP-10). The API takes JSON only
-    # (documents are ingested via the filesystem watcher, not HTTP upload), so this is generous.
+    # Reject request bodies over this many MB with 413 (APP-10). Also the PER-FILE upload cap: a
+    # single uploaded file over this is rejected on its own.
     max_request_mb: int = 25
+    # Document upload (M14 #370) is decoupled from the JSON cap so a big batch of small files goes
+    # through in one drop: it is bounded by a file COUNT and a larger total-body cap instead, while
+    # each individual file is still capped at max_request_mb.
+    max_upload_files: int = 101  # reject the WHOLE batch when more files than this are uploaded
+    # Total upload-request body cap (MB); the upload route uses this instead of the JSON cap. Kept
+    # >= max_upload_files * max_request_mb so a full batch of max-size files always fits.
+    max_upload_mb: int = 2560
     # Per-token request rate limit (requests/minute; APP-9). 0 = disabled (default). When set, each
     # token gets a token-bucket of this size, refilled at this rate; /health and /ready are exempt.
     rate_limit_per_minute: int = 0

@@ -82,7 +82,9 @@ test("streams a grounded answer with sources", async () => {
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
-test("chat sends agent_mode=agent on the stream request", async () => {
+test("chat sends agent_mode=classic on the stream request", async () => {
+  // Classic mode streams the RAG answer + reasoning; the blocking agent tool loop stays off until it
+  // streams (see chatMode). The pipeline steps still stream live as SSE `step` events.
   let streamBody: Record<string, unknown> | null = null;
   vi.stubGlobal(
     "fetch",
@@ -90,7 +92,7 @@ test("chat sends agent_mode=agent on the stream request", async () => {
       streamBody = JSON.parse((init?.body as string) ?? "{}");
       return sseResponse([
         frame("meta", {}),
-        frame("step", { delta: "Using count_documents" }),
+        frame("step", { delta: "Searching and ranking your documents" }),
         frame("token", { delta: "There are 57 documents [1]." }),
         frame("sources", { citations: [] }),
         frame("done", { grounded: true }),
@@ -104,9 +106,9 @@ test("chat sends agent_mode=agent on the stream request", async () => {
 
   await waitFor(() => expect(screen.getByText(/There are 57 documents/)).toBeInTheDocument());
   expect(streamBody).not.toBeNull();
-  expect(streamBody!.agent_mode).toBe("agent");
-  // the agent's tool steps render in the composition bar (and in the timeline)
-  expect(screen.getAllByText("Using count_documents").length).toBeGreaterThan(0);
+  expect(streamBody!.agent_mode).toBe("classic");
+  // the pipeline steps stream live and render (composition bar + timeline)
+  expect(screen.getAllByText("Searching and ranking your documents").length).toBeGreaterThan(0);
 });
 
 test("shows inferred retrieval filters from the meta event", async () => {

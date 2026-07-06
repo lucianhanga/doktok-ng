@@ -586,9 +586,10 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Chat mode (ADR-0022): fixed to the "agent" tool loop. How the chat works is a deployment
-  // decision (to be surfaced in Settings), not a per-question toggle in the composer.
-  const chatMode: "classic" | "agent" | "multi" = "agent";
+  // Chat mode (ADR-0022): "classic" streams the RAG answer + reasoning token-by-token. The "agent"
+  // tool loop currently blocks on chat_with_tools (no streaming), so it stays off until the agent
+  // loop streams; then this becomes a deployment/Settings choice, not a per-question toggle.
+  const chatMode: "classic" | "agent" | "multi" = "classic";
   // Long-term memory (ADR-0022): recall facts from past chats + store one. On by default; turn off
   // (or use Incognito) for a private conversation that neither recalls nor stores memory.
   const [remember, setRemember] = useState(true);

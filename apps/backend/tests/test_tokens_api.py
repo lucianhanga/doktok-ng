@@ -68,7 +68,7 @@ class FakeEntityRepository:
 
 def _client(repo: FakeEntityRepository) -> TestClient:
     registry = build_registry()
-    registry.register(EntityRepository, repo)  # type: ignore[type-abstract]
+    registry.register(EntityRepository, repo)
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 

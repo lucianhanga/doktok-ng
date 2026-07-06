@@ -256,6 +256,21 @@ _SORT_EXPR: dict[DocumentSort, tuple[str, bool, str]] = {
         True,
         "text",
     ),
+    DocumentSort.STATUS: ("d.status", False, "text"),
+    # Counts use nullable=True (three-branch keyset) to avoid row-comparison with correlated
+    # subqueries, following the same pattern as CATEGORY.
+    DocumentSort.ENTITIES: (
+        "(SELECT count(*) FROM document_entities e "
+        "WHERE e.document_id = d.id AND e.tenant_id = d.tenant_id)",
+        True,
+        "bigint",
+    ),
+    DocumentSort.CHUNKS: (
+        "(SELECT count(*) FROM document_chunks ch "
+        "WHERE ch.document_id = d.id AND ch.tenant_id = d.tenant_id)",
+        True,
+        "bigint",
+    ),
 }
 
 
@@ -722,6 +737,20 @@ class PostgresChunkRepository:
             ).fetchall()
         return {r[0]: r[1] for r in rows}
 
+    def chunk_counts_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, int]:
+        """Chunk count per document for the list sidecar, in ONE batched GROUP BY (no N+1)."""
+        if not document_ids:
+            return {}
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT document_id, COUNT(*) AS n "
+                "FROM document_chunks WHERE tenant_id=%s AND document_id = ANY(%s) "
+                "GROUP BY document_id",
+                (tenant_id, list(document_ids)),
+            ).fetchall()
+        return {r["document_id"]: int(r["n"]) for r in rows}
+
 
 class PostgresEntityRepository:
     """``EntityRepository`` backed by PostgreSQL. Tenant-scoped."""
@@ -950,6 +979,22 @@ class PostgresEntityRepository:
                 (tenant_id, tenant_id, tokens_lower, len(tokens_lower), limit, offset),
             ).fetchall()
         return [_row_to_document(row) for row in rows]
+
+    def entity_counts_for_documents(
+        self, tenant_id: str, document_ids: list[str]
+    ) -> dict[str, int]:
+        """Entity count per document for the list sidecar, in ONE batched GROUP BY (no N+1)."""
+        if not document_ids:
+            return {}
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT document_id, COUNT(*) AS n "
+                "FROM document_entities WHERE tenant_id=%s AND document_id = ANY(%s) "
+                "GROUP BY document_id",
+                (tenant_id, list(document_ids)),
+            ).fetchall()
+        return {r["document_id"]: int(r["n"]) for r in rows}
 
 
 def _like_prefix(prefix: str) -> str:

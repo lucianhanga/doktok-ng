@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { type ColumnDef, type SortingState } from "@tanstack/react-table";
+
 import {
   deleteDocument,
   documentThumbnailUrl,
@@ -21,6 +23,7 @@ import {
   type SortDir,
   type TokenMatch,
 } from "./api";
+import { DataTable } from "./DataTable";
 import { useInterval } from "./hooks";
 
 type DocsState =
@@ -77,6 +80,43 @@ const SORT_OPTIONS: { value: DocumentSort; label: string }[] = [
   { value: "title", label: "Title" },
   { value: "category", label: "Category" },
 ];
+
+// Maps parent DocumentSort keys <-> TanStack column ids for controlled sort.
+// "category" has no column in Phase 1; the SortControl dropdown covers it.
+const SORT_TO_COLUMN: Partial<Record<DocumentSort, string>> = {
+  title: "name",
+  created: "authored",
+  acquired: "ingested",
+};
+const COLUMN_TO_SORT: Partial<Record<string, DocumentSort>> = {
+  name: "title",
+  authored: "created",
+  ingested: "acquired",
+};
+
+const DOCS_INITIAL_VISIBILITY: Record<string, boolean> = {
+  file: false,
+  ingested: false,
+};
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
+}
+
+/** Small warning marker with a tooltip explaining that the authored date was extracted from document
+ * content and may be inaccurate, plus the trustworthy ingested timestamp for cross-reference. */
+function DocumentDateWarning({ ingestedAt }: { ingestedAt: string }) {
+  return (
+    <span
+      className="doc-date-warning"
+      title={`Extracted from document content - may be inaccurate. Ingested: ${formatDate(ingestedAt)}`}
+    >
+      {" "}⚠
+    </span>
+  );
+}
 
 function groupByDocument(features: DocumentFeature[]): Map<string, DocumentFeature[]> {
   const map = new Map<string, DocumentFeature[]>();
@@ -776,6 +816,188 @@ export function DocumentsPanel({
     // Reacts to the selection's failing features, not to our own setReprocessFeature.
   }, [featuresNeedingAttention]);
 
+  // --- DataTable controlled sort wiring ---------------------------------------------------------
+  // Derive a TanStack SortingState from the parent's sort/dir (which also drives the fetch).
+  // category sort has no column; when it is active the table shows no indicator (dropdown covers it).
+  const tableSorting = useMemo((): SortingState => {
+    const colId = SORT_TO_COLUMN[sort];
+    if (!colId) return [];
+    return [{ id: colId, desc: dir === "desc" }];
+  }, [sort, dir]);
+
+  // Clicking a sortable column header -> translate back to the parent's sort/dir state (triggering
+  // the existing load()). setSort/setDir are stable React state setters, no deps needed.
+  const handleTableSortingChange = useCallback((next: SortingState) => {
+    if (next.length === 0) return;
+    const [first] = next;
+    const docSort = COLUMN_TO_SORT[first.id];
+    if (docSort) {
+      setSort(docSort);
+      setDir(first.desc ? "desc" : "asc");
+    }
+  }, []);
+
+  // --- Column definitions -----------------------------------------------------------------------
+  const columns = useMemo<ColumnDef<DokDocument, unknown>[]>(
+    () => [
+      // 1. Checkbox (select) column — not hideable, not sortable
+      {
+        id: "select",
+        enableSorting: false,
+        enableHiding: false,
+        size: 40,
+        minSize: 40,
+        maxSize: 40,
+        header: () => (
+          <input
+            ref={selectAllRef}
+            type="checkbox"
+            aria-label="Select all"
+            checked={allLoadedSelected}
+            onChange={toggleAll}
+          />
+        ),
+        cell: ({ row }) => {
+          const d = row.original;
+          return (
+            <span onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                aria-label={`Select ${d.original_filename}`}
+                checked={selected.has(d.id)}
+                onChange={() => undefined}
+                onClick={(e) => toggle(d.id, (e as React.MouseEvent).shiftKey)}
+              />
+            </span>
+          );
+        },
+      },
+      // 2. Name — not hideable, sortable -> title
+      {
+        id: "name",
+        header: "Name",
+        enableHiding: false,
+        enableSorting: true,
+        size: 240,
+        minSize: 120,
+        accessorFn: (d) => d.title ?? d.original_filename,
+        cell: ({ row }) => {
+          const d = row.original;
+          return (
+            <>
+              {d.unidentifiable && (
+                <span
+                  className="badge badge-unidentifiable"
+                  title="Unidentifiable: extraction succeeded but the content is not meaningful"
+                >
+                  unidentifiable
+                </span>
+              )}{" "}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => onOpenDocument?.(d.id)}
+              >
+                {d.title ?? d.original_filename}
+              </button>
+            </>
+          );
+        },
+      },
+      // 3. Status — not sortable
+      {
+        id: "status",
+        header: "Status",
+        enableSorting: false,
+        size: 100,
+        minSize: 70,
+        accessorFn: (d) => d.status,
+        cell: ({ row }) => {
+          const d = row.original;
+          return <span className={`badge status-${d.status}`}>{d.status}</span>;
+        },
+      },
+      // 4. File — hideable (hidden by default via initialVisibility)
+      {
+        id: "file",
+        header: "File",
+        enableHiding: true,
+        enableSorting: false,
+        size: 180,
+        minSize: 80,
+        accessorFn: (d) => d.original_filename,
+        cell: ({ getValue }) => getValue<string>(),
+      },
+      // 5. Type — hideable; friendly label + raw mime as tooltip
+      {
+        id: "type",
+        header: "Type",
+        enableHiding: true,
+        enableSorting: false,
+        size: 80,
+        minSize: 50,
+        accessorFn: (d) => mimeGlyph(d.detected_mime),
+        cell: ({ row, getValue }) => (
+          <span title={row.original.detected_mime ?? undefined}>{getValue<string>()}</span>
+        ),
+      },
+      // 6. Authored date — hideable, sortable -> created
+      {
+        id: "authored",
+        header: "Authored date",
+        enableHiding: true,
+        enableSorting: true,
+        size: 140,
+        minSize: 80,
+        accessorFn: (d) => d.document_date ?? "",
+        cell: ({ row }) => {
+          const d = row.original;
+          if (!d.document_date) return <span className="muted">-</span>;
+          return (
+            <>
+              {formatDate(d.document_date)}
+              <DocumentDateWarning ingestedAt={d.created_at} />
+            </>
+          );
+        },
+      },
+      // 7. Ingested — hideable, hidden by default, sortable -> acquired
+      {
+        id: "ingested",
+        header: "Ingested",
+        enableHiding: true,
+        enableSorting: true,
+        size: 130,
+        minSize: 80,
+        accessorFn: (d) => d.created_at,
+        cell: ({ getValue }) => formatDate(getValue<string>()),
+      },
+      // 8. Processing chips — not hideable, not sortable
+      {
+        id: "processing",
+        header: "Processing",
+        enableHiding: false,
+        enableSorting: false,
+        size: 280,
+        minSize: 120,
+        accessorFn: (d) => d.id,
+        cell: ({ row }) => {
+          const d = row.original;
+          const features = state.kind === "ok" ? (state.features.get(d.id) ?? []) : [];
+          const rollup = state.kind === "ok" ? processingRollup(state.processing[d.id]) : null;
+          return (
+            <FeatureChips
+              features={features}
+              rollup={rollup}
+              onReprocess={(feat) => reprocessOne(d.id, feat, d.original_filename)}
+            />
+          );
+        },
+      },
+    ],
+    [allLoadedSelected, toggleAll, selected, toggle, onOpenDocument, state, reprocessOne],
+  );
+
   return (
     <section aria-label="Documents" className="panel">
       <div className="result-head">
@@ -1008,89 +1230,17 @@ export function DocumentsPanel({
       )}
 
       {state.kind === "ok" && docs.length > 0 && view === "list" && (
-        <table className="jobs docs-table">
-          <colgroup>
-            <col style={{ width: "2.5rem" }} />
-            <col style={{ width: "16rem" }} />
-            <col style={{ width: "8rem" }} />
-            <col style={{ width: "8.5rem" }} />
-            <col style={{ width: "6rem" }} />
-            <col />
-          </colgroup>
-          <thead>
-            <tr>
-              <th className="cell-check">
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  aria-label="Select all"
-                  checked={allLoadedSelected}
-                  onChange={toggleAll}
-                />
-              </th>
-              <th>Title</th>
-              <th>File</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Processing</th>
-            </tr>
-          </thead>
-          <tbody>
-            {docs.map((doc) => (
-              <tr key={doc.id} className={selected.has(doc.id) ? "row-selected" : undefined}>
-                <td className="cell-check" onClick={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    aria-label={`Select ${doc.original_filename}`}
-                    checked={selected.has(doc.id)}
-                    onChange={() => undefined}
-                    onClick={(e) => toggle(doc.id, e.shiftKey)}
-                  />
-                </td>
-                <td className="cell-title" title={doc.title ?? undefined}>
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => onOpenDocument?.(doc.id)}
-                  >
-                    {doc.title ?? "-"}
-                  </button>
-                </td>
-                <td
-                  className="cell-file"
-                  title={doc.original_filename}
-                  onClick={() => onOpenDocument?.(doc.id)}
-                  style={{ cursor: "pointer" }}
-                >
-                  {doc.original_filename}
-                </td>
-                <td className="cell-type" title={doc.detected_mime ?? undefined}>
-                  {doc.detected_mime ?? "-"}
-                </td>
-                <td>
-                  <span className={`badge status-${doc.status}`}>{doc.status}</span>
-                  {doc.unidentifiable && (
-                    <span
-                      className="badge badge-unidentifiable"
-                      title="Unidentifiable: extraction succeeded but the content is not meaningful"
-                    >
-                      unidentifiable
-                    </span>
-                  )}
-                </td>
-                <td className="cell-processing">
-                  <FeatureChips
-                    features={state.features.get(doc.id) ?? []}
-                    rollup={processingRollup(state.processing[doc.id])}
-                    onReprocess={(feat) =>
-                      reprocessOne(doc.id, feat, doc.original_filename)
-                    }
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<DokDocument>
+          data={docs}
+          columns={columns}
+          getRowId={(doc) => doc.id}
+          persistKey="documents-table"
+          initialVisibility={DOCS_INITIAL_VISIBILITY}
+          sorting={tableSorting}
+          onSortingChange={handleTableSortingChange}
+          manualSorting
+          rowClassName={(doc) => (selected.has(doc.id) ? "row-selected" : undefined)}
+        />
       )}
 
       {state.kind === "ok" && docs.length > 0 && view === "thumbnails" && (

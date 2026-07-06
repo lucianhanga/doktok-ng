@@ -75,7 +75,7 @@ function doc(overrides: Partial<DokDocument>): DokDocument {
     id: "d1",
     original_filename: "note.txt",
     detected_mime: "text/plain",
-    title: "note",
+    title: null,
     status: "active",
     created_at: "2026-06-10T00:00:00Z",
     metadata: { page_count: 1 },
@@ -92,8 +92,10 @@ test("shows empty state when there are no documents", async () => {
 test("renders documents", async () => {
   mockDocs([doc({ id: "a", original_filename: "report.pdf", detected_mime: "application/pdf" })]);
   render(<DocumentsPanel />);
+  // title is null so original_filename appears in the Name column
   await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
-  expect(screen.getByText("application/pdf")).toBeInTheDocument();
+  // Type column shows a friendly label; raw mime is in the cell title attribute
+  expect(screen.getByText("PDF")).toBeInTheDocument();
 });
 
 test("shows the unidentifiable badge and filters by it", async () => {
@@ -286,7 +288,8 @@ test("Load more pages through the keyset cursor", async () => {
 test("Thumbnails subtab shows a thumbnail grid for the same documents", async () => {
   mockDocs([doc({ id: "a", original_filename: "report.pdf", title: "Report" })]);
   render(<DocumentsPanel />);
-  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument()); // list default
+  // With an explicit title, the Name column shows "Report" (not the raw filename)
+  await waitFor(() => expect(screen.getByText("Report")).toBeInTheDocument()); // list default
 
   fireEvent.click(screen.getByText("Thumbnails"));
   // No refetch needed: the card renders from the same data with a first-page preview image.
@@ -309,10 +312,50 @@ test("sort control changes the documents query", async () => {
   });
 });
 
+test("clicking the Name column header sorts by title", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  const { container } = render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  // Find the Name header sort label in the DataTable and click it
+  const allLabels = container.querySelectorAll(".datatable-th-label");
+  const nameLabel = Array.from(allLabels).find((el) => el.textContent?.trim().startsWith("Name"));
+  expect(nameLabel).toBeTruthy();
+  fireEvent.click(nameLabel!);
+
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("sort=title")),
+    ).toBe(true),
+  );
+});
+
+test("clicking the Authored date column header sorts by created", async () => {
+  const fetchMock = mockDocs([
+    doc({ id: "a", original_filename: "report.pdf", document_date: "2025-01-15" }),
+  ]);
+  const { container } = render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  const allLabels = container.querySelectorAll(".datatable-th-label");
+  const authoredLabel = Array.from(allLabels).find((el) =>
+    el.textContent?.trim().startsWith("Authored"),
+  );
+  expect(authoredLabel).toBeTruthy();
+  fireEvent.click(authoredLabel!);
+
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("sort=created")),
+    ).toBe(true),
+  );
+});
+
 test("typing in the title filter narrows the query", async () => {
   const fetchMock = mockDocs([doc({ id: "a", original_filename: "swm.pdf", title: "SWM Rechnung" })]);
   render(<DocumentsPanel />);
-  await waitFor(() => expect(screen.getByText("swm.pdf")).toBeInTheDocument());
+  // With an explicit title, Name column shows "SWM Rechnung"
+  await waitFor(() => expect(screen.getByText("SWM Rechnung")).toBeInTheDocument());
 
   fireEvent.change(screen.getByLabelText("Filter by title"), { target: { value: "rechnung" } });
 

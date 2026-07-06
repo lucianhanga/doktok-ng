@@ -196,7 +196,7 @@ class FakeKnowledgeGraphRepository:
 
 def _client() -> TestClient:
     registry = build_registry()
-    registry.register(EntityRepository, FakeEntityRepository())  # type: ignore[type-abstract]
+    registry.register(EntityRepository, FakeEntityRepository())
     registry.register(KnowledgeGraphRepository, FakeKnowledgeGraphRepository())
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))

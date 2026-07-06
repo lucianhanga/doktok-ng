@@ -101,6 +101,17 @@ class InMemoryEntityRepository:
         ids = sorted(matched)
         return ids[:cap], len(ids), len(ids) > cap
 
+    def entity_counts_for_documents(
+        self, tenant_id: str, document_ids: list[str]
+    ) -> dict[str, int]:
+        wanted = set(document_ids)
+        counts: dict[str, int] = {}
+        for e in self.entities:
+            if e.tenant_id != tenant_id or e.document_id not in wanted:
+                continue
+            counts[e.document_id] = counts.get(e.document_id, 0) + 1
+        return counts
+
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]:
         return [
             e.model_copy(deep=True)

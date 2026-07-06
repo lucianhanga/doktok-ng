@@ -9,12 +9,20 @@ from datetime import UTC, date, datetime
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import CategoryRepository, DocumentRepository, FeatureRepository
-from doktok_contracts.schemas import Document, DocumentStatus
+from doktok_contracts.ports import (
+    CategoryRepository,
+    ChunkRepository,
+    DocumentRepository,
+    EntityRepository,
+    FeatureRepository,
+)
+from doktok_contracts.schemas import Document, DocumentChunk, DocumentStatus
 from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
+from doktok_core.entities.inmemory import InMemoryEntityRepository
 from doktok_core.features.inmemory import InMemoryFeatureRepository
+from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -36,6 +44,7 @@ def _doc(
     document_date: date | None = None,
     created_at: datetime | None = None,
     unidentifiable: bool | None = None,
+    status: DocumentStatus = DocumentStatus.ACTIVE,
 ) -> Document:
     return Document(
         id=doc_id,
@@ -44,7 +53,7 @@ def _doc(
         original_filename=f"{doc_id}.txt",
         title=title,
         document_date=document_date,
-        status=DocumentStatus.ACTIVE,
+        status=status,
         storage_path=f"/docs.active/{doc_id}",
         created_at=created_at or datetime.now(UTC),
         unidentifiable=unidentifiable,
@@ -52,15 +61,21 @@ def _doc(
 
 
 def _client(
-    repo: InMemoryDocumentRepository, features: InMemoryFeatureRepository | None = None
+    repo: InMemoryDocumentRepository,
+    features: InMemoryFeatureRepository | None = None,
+    entities: InMemoryEntityRepository | None = None,
+    chunks: InMemoryChunkRepository | None = None,
+    categories: InMemoryCategoryRepository | None = None,
 ) -> TestClient:
     registry = build_registry()
     registry.register(DocumentRepository, repo)  # type: ignore[type-abstract]
-    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, categories or InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(
         FeatureRepository,  # type: ignore[type-abstract]
         features or InMemoryFeatureRepository(),
     )
+    registry.register(EntityRepository, entities or InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, chunks or InMemoryChunkRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -225,3 +240,132 @@ def test_list_includes_processing_summary_sidecar() -> None:
     assert summary["status"] == "active"
     assert summary["features_done"] == 2
     assert summary["features_failed"] == 1
+
+
+def test_list_includes_stats_sidecar_with_entity_chunk_and_category() -> None:
+    """DocumentListPage.stats carries entity_count, chunk_count, and category per document."""
+    from doktok_contracts.schemas import DocumentEntity, EntityType
+
+    doc_a = _doc("a1", title="Invoice")
+    doc_b = _doc("b1", title="Contract")
+
+    # Two entities on a1, none on b1.
+    entity_repo = InMemoryEntityRepository()
+    for i in range(2):
+        entity_repo.add_entities(
+            [
+                DocumentEntity(
+                    id=f"e{i}",
+                    tenant_id="tenant-a",
+                    document_id="a1",
+                    version_id="v1",
+                    entity_text=f"Acme {i}",
+                    entity_type=EntityType.ORG,
+                    normalized_value=f"acme {i}",
+                    frequency=1,
+                )
+            ]
+        )
+
+    # Three chunks on a1, one on b1.
+    chunk_repo = InMemoryChunkRepository()
+    for i in range(3):
+        chunk_repo.add_chunks(
+            [
+                DocumentChunk(
+                    id=f"c{i}",
+                    tenant_id="tenant-a",
+                    document_id="a1",
+                    version_id="v1",
+                    text=f"chunk {i}",
+                )
+            ],
+            [[0.1]],
+        )
+    chunk_repo.add_chunks(
+        [
+            DocumentChunk(
+                id="cb0",
+                tenant_id="tenant-a",
+                document_id="b1",
+                version_id="v1",
+                text="b chunk",
+            )
+        ],
+        [[0.2]],
+    )
+
+    # One category linked to a1 only.
+    cat_repo = InMemoryCategoryRepository()
+    cat = cat_repo.create("tenant-a", "Invoices", "invoices")
+    assert cat is not None
+    cat_repo.set_document_categories("tenant-a", "a1", [cat.id])
+
+    client = _client(
+        _repo(doc_a, doc_b),
+        entities=entity_repo,
+        chunks=chunk_repo,
+        categories=cat_repo,
+    )
+    body = client.get("/api/v1/documents", headers=AUTH).json()
+
+    # The stats sidecar must be keyed by document id, not on the document item itself.
+    assert "stats" not in body["items"][0]
+    assert "stats" in body
+
+    stats_a = body["stats"]["a1"]
+    assert stats_a["entity_count"] == 2
+    assert stats_a["chunk_count"] == 3
+    assert stats_a["category"] == "Invoices"
+
+    stats_b = body["stats"]["b1"]
+    assert stats_b["entity_count"] == 0
+    assert stats_b["chunk_count"] == 1
+    assert stats_b["category"] is None
+
+
+def test_sort_by_status_orders_lexicographically() -> None:
+    """sort=status orders documents by status string (asc = alphabetical, desc = reverse)."""
+    # "active" < "failed" < "processing" lexicographically.
+    a = _doc("da", status=DocumentStatus.ACTIVE)
+    f = _doc("df", status=DocumentStatus.FAILED)
+    p = _doc("dp", status=DocumentStatus.PROCESSING)
+    client = _client(_repo(a, f, p))
+
+    asc = client.get("/api/v1/documents?sort=status&dir=asc", headers=AUTH).json()
+    assert [d["id"] for d in asc["items"]] == ["da", "df", "dp"]
+
+    desc = client.get("/api/v1/documents?sort=status&dir=desc", headers=AUTH).json()
+    assert [d["id"] for d in desc["items"]] == ["dp", "df", "da"]
+
+
+def test_sort_by_entities_uses_count_from_seam() -> None:
+    """sort=entities orders by the entity_counts_by_doc test seam on the in-memory repo."""
+    repo = _repo(_doc("d1"), _doc("d2"), _doc("d3"))
+    repo.entity_counts_by_doc = {"d1": 5, "d2": 10, "d3": 1}
+    client = _client(repo)
+
+    desc = client.get("/api/v1/documents?sort=entities&dir=desc", headers=AUTH).json()
+    assert [d["id"] for d in desc["items"]] == ["d2", "d1", "d3"]
+
+    asc = client.get("/api/v1/documents?sort=entities&dir=asc", headers=AUTH).json()
+    assert [d["id"] for d in asc["items"]] == ["d3", "d1", "d2"]
+
+
+def test_sort_by_chunks_paginates_with_cursor() -> None:
+    """sort=chunks supports keyset pagination: the cursor round-trips without overlap."""
+    repo = _repo(_doc("d1"), _doc("d2"), _doc("d3"), _doc("d4"))
+    repo.chunk_counts_by_doc = {"d1": 3, "d2": 7, "d3": 1, "d4": 5}
+    client = _client(repo)
+
+    # DESC order: d2(7), d4(5), d1(3), d3(1).
+    p1 = client.get("/api/v1/documents?sort=chunks&dir=desc&limit=2", headers=AUTH).json()
+    assert [d["id"] for d in p1["items"]] == ["d2", "d4"]
+    assert p1["next_cursor"] is not None
+
+    p2 = client.get(
+        f"/api/v1/documents?sort=chunks&dir=desc&limit=2&cursor={p1['next_cursor']}",
+        headers=AUTH,
+    ).json()
+    assert [d["id"] for d in p2["items"]] == ["d1", "d3"]
+    assert p2["next_cursor"] is None

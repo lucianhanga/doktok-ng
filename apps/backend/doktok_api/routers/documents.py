@@ -14,6 +14,7 @@ from urllib.parse import quote, unquote
 from doktok_contracts.ports import (
     AuditLogRepository,
     CategoryRepository,
+    ChunkRepository,
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
@@ -34,6 +35,7 @@ from doktok_contracts.schemas import (
     DocumentIdSelection,
     DocumentLayout,
     DocumentListPage,
+    DocumentListStats,
     DocumentRecordPage,
     DocumentSort,
     DocumentStatus,
@@ -55,6 +57,7 @@ from doktok_api.dependencies import (
     Tenant,
     get_audit_repository,
     get_category_repository,
+    get_chunk_repository,
     get_document_repository,
     get_entity_repository,
     get_feature_repository,
@@ -67,6 +70,7 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 Repo = Annotated[DocumentRepository, Depends(get_document_repository)]
 Entities = Annotated[EntityRepository, Depends(get_entity_repository)]
+Chunks = Annotated[ChunkRepository, Depends(get_chunk_repository)]
 Features = Annotated[FeatureRepository, Depends(get_feature_repository)]
 Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
 Jobs = Annotated[IngestionJobRepository, Depends(get_job_repository)]
@@ -95,6 +99,8 @@ def _encode_cursor(anchor: ListAnchor | None) -> str | None:
         payload = "t:" + value.isoformat()
     elif isinstance(value, date):
         payload = "d:" + value.isoformat()
+    elif isinstance(value, int):
+        payload = "i:" + str(value)
     else:
         payload = "s:" + quote(str(value), safe="")  # percent-encode so '|' can't break the split
     raw = f"v2|{anchor.sort.value}|{anchor.direction.value}|{payload}|{anchor.doc_id}".encode()
@@ -113,13 +119,15 @@ def _decode_cursor(token: str | None, sort: DocumentSort, direction: SortDir) ->
         if csort != sort.value or cdir != direction.value:
             raise ValueError("cursor does not match the requested ordering")
         tag, _, body = payload.partition(":")
-        value: datetime | date | str | None
+        value: datetime | date | int | str | None
         if tag == "n":
             value = None
         elif tag == "t":
             value = datetime.fromisoformat(body)
         elif tag == "d":
             value = date.fromisoformat(body)
+        elif tag == "i":
+            value = int(body)
         elif tag == "s":
             value = unquote(body)
         else:
@@ -134,6 +142,9 @@ def list_documents(
     tenant: Tenant,
     repo: Repo,
     features: Features,
+    entities: Entities,
+    chunks: Chunks,
+    categories: Categories,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: Annotated[str | None, Query()] = None,
     category: Annotated[str | None, Query()] = None,
@@ -163,15 +174,28 @@ def list_documents(
         token_type=token_type,
         token_match=token_match,
     )
+    doc_ids = [d.id for d in items]
     # Per-document processing summary for the list tooltip. The metadata-derived fields are free
     # from each row; the done/failed feature counts come from ONE batched GROUP BY over this page's
     # ids (no N+1), kept off the shared Document shape via the response envelope's sidecar map.
-    counts = features.feature_counts_for_documents(tenant.tenant_id, [d.id for d in items])
+    feat_counts = features.feature_counts_for_documents(tenant.tenant_id, doc_ids)
     summaries = {
         d.id: build_processing_summary(
             d,
-            features_done=counts.get(d.id, (0, 0))[0],
-            features_failed=counts.get(d.id, (0, 0))[1],
+            features_done=feat_counts.get(d.id, (0, 0))[0],
+            features_failed=feat_counts.get(d.id, (0, 0))[1],
+        )
+        for d in items
+    }
+    # Per-document entity/chunk counts + primary category for the Documents table columns.
+    entity_counts = entities.entity_counts_for_documents(tenant.tenant_id, doc_ids)
+    chunk_counts = chunks.chunk_counts_for_documents(tenant.tenant_id, doc_ids)
+    primary_cats = categories.primary_categories(tenant.tenant_id, doc_ids)
+    doc_stats = {
+        d.id: DocumentListStats(
+            entity_count=entity_counts.get(d.id, 0),
+            chunk_count=chunk_counts.get(d.id, 0),
+            category=primary_cats.get(d.id),
         )
         for d in items
     }
@@ -180,6 +204,7 @@ def list_documents(
         total=total,
         next_cursor=_encode_cursor(next_anchor),
         processing=summaries,
+        stats=doc_stats,
     )
 
 

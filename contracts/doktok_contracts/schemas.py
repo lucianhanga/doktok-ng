@@ -460,6 +460,10 @@ class SearchHit(BaseModel):
     score: float
     vector_score: float | None = None
     text_score: float | None = None
+    # Reranker's calibrated yes-probability [0,1] for this chunk (set by the cross-encoder reranker
+    # after scoring; None when no reranker ran or scoring failed). Do NOT overwrite ``score``, which
+    # is the retrieval (RRF) score kept by _build_ranking as retrieval_score.
+    rerank_score: float | None = None
 
 
 class Citation(BaseModel):

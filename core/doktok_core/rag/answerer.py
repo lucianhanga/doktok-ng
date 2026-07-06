@@ -205,6 +205,7 @@ class DefaultRagAnswerer:
         reranker: Reranker | None = None,
         retrieve_k: int = 40,
         min_score: float = 0.0,
+        rerank_min_relevance: float = 0.0,
         graph_retriever: GraphRetriever | None = None,
     ) -> None:
         self._retriever = retriever
@@ -214,6 +215,12 @@ class DefaultRagAnswerer:
         # Deterministic evidence floor: refuse before calling the generator when the best retrieval
         # score is below this (0 = disabled), removing a confident-answer-over-thin-evidence class.
         self._min_score = min_score
+        # Per-hit relevance threshold: drop chunks whose rerank_score is below this after the
+        # cross-encoder reranker runs. 0 = disabled. Only active when hits carry rerank_score
+        # (i.e. a scoring reranker ran); positional-only (LLM listwise) paths are unaffected.
+        # Safety: always keeps at least the top-1 hit, so we never refuse a query solely because
+        # all candidates narrowly miss the floor.
+        self._rerank_min_relevance = rerank_min_relevance
         # KAG Phase 3 (additive): on a relational question, fuse a bounded entity-neighborhood /
         # path subgraph into retrieval. None = behaviour is byte-identical to plain hybrid RAG.
         self._graph_retriever = graph_retriever
@@ -323,6 +330,7 @@ class DefaultRagAnswerer:
         candidates, triples = result
         if self._reranker is not None:
             hits = self._reranker.rerank(question, candidates, top_k=limit)
+            hits = self._apply_rerank_threshold(hits)
         else:
             hits = candidates[:limit]
         return self._finalize(hits, candidates, question, triples)
@@ -369,6 +377,25 @@ class DefaultRagAnswerer:
             logger.warning("graph retrieval failed; continuing with hybrid only", exc_info=True)
             return None
 
+    def _apply_rerank_threshold(self, hits: list[SearchHit]) -> list[SearchHit]:
+        """Drop hits below ``rerank_min_relevance`` after the cross-encoder reranker ran.
+
+        Only applied when at least one hit carries a ``rerank_score`` (i.e. a scoring reranker ran
+        and succeeded). If all scores are None (no reranker / scoring failed), the list is returned
+        unchanged so this path stays byte-identical to the pre-reranker behaviour.
+        Safety: never empties the list - always keeps the top-1 (highest-scored) hit.
+        """
+        if self._rerank_min_relevance <= 0.0:
+            return hits
+        if all(h.rerank_score is None for h in hits):
+            return hits
+        filtered = [
+            h
+            for h in hits
+            if h.rerank_score is None or h.rerank_score >= self._rerank_min_relevance
+        ]
+        return filtered if filtered else hits[:1]
+
     def _finalize(
         self,
         hits: list[SearchHit],
@@ -378,11 +405,15 @@ class DefaultRagAnswerer:
     ) -> tuple[list[SearchHit], dict[str, float], str, list[RankedChunk]]:
         """Given the reranked top-k + the candidate set, capture relevance, build the ranking trace,
         pack the context, and assemble the prompt."""
-        # Capture each source's importance from the FINAL relevance order (best first) before
-        # _pack_edges_best scrambles the list. Normalized rank: best = 1.0, keyed by chunk_id so it
-        # survives the reordering. (M6.4)
+        # Capture each source's importance before _pack_edges_best scrambles the list.
+        # Use the reranker's calibrated yes-probability when present (real score, [0,1]); fall back
+        # to normalized rank (best=1.0) for positional-only paths (no reranker / scoring failed).
+        # Keyed by chunk_id so the value survives the edges-best reordering. (M6.4)
         n = len(hits)
-        relevance = {hit.chunk_id: (n - i) / n for i, hit in enumerate(hits)}
+        relevance = {
+            hit.chunk_id: (hit.rerank_score if hit.rerank_score is not None else (n - i) / n)
+            for i, hit in enumerate(hits)
+        }
         ranking = _build_ranking(hits, candidates, relevance)
         packed = _pack_edges_best(hits)
         context = self._format_context(packed) + _format_graph_block(triples or [], packed)
@@ -519,6 +550,7 @@ class DefaultRagAnswerer:
         candidates, triples = result
         # Stream the reranker's thinking too (the slow 40-passage call), then finalize.
         ranked = yield from self._stream_rerank(question, candidates, limit, reasoning)
+        ranked = self._apply_rerank_threshold(ranked)
         hits, relevance, prompt, ranking = self._finalize(ranked, candidates, question, triples)
         yield ChatEvent(type="step", delta="Composing the answer")
 

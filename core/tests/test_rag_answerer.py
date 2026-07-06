@@ -1,3 +1,4 @@
+import pytest
 from doktok_contracts.schemas import QueryFilters, SearchHit
 from doktok_core.rag.answerer import REFUSAL, DefaultRagAnswerer
 
@@ -352,3 +353,131 @@ def test_stream_surfaces_rewrite_and_rerank_reasoning() -> None:
     reasoning_before_compose = any(e.type == "reasoning" for e in events[searching:composing])
     assert reasoning_before_search  # understand-phase thinking streamed
     assert reasoning_before_compose  # rerank-phase thinking streamed
+
+
+# ---------------------------------------------------------------------------
+# rerank_score: real score as relevance + rerank threshold tests
+# ---------------------------------------------------------------------------
+
+
+class ScoringFakeReranker:
+    """A reranker that sets rerank_score on the returned hits (mimics QwenReranker behaviour)."""
+
+    def __init__(self, scores: list[float]) -> None:
+        self._scores = scores  # one score per input hit, positionally
+
+    def rerank(self, query: str, hits: list[SearchHit], *, top_k: int) -> list[SearchHit]:
+        order = sorted(range(len(hits)), key=lambda i: self._scores[i], reverse=True)
+        return [hits[i].model_copy(update={"rerank_score": self._scores[i]}) for i in order[:top_k]]
+
+
+def test_relevance_uses_rerank_score_when_present() -> None:
+    # When the reranker sets rerank_score, citations carry that real score as relevance (not rank).
+    scores = [0.2, 0.8, 0.5]
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3)])
+    chat = FakeChat("Answer with no markers.")
+    answerer = DefaultRagAnswerer(
+        retriever, chat, reranker=ScoringFakeReranker(scores), retrieve_k=40
+    )
+    answer = answerer.answer("t1", "q", 3)
+
+    by_chunk = {c.chunk_id: c.relevance for c in answer.citations}
+    # Hit 2 gets rerank_score 0.8, hit 3 gets 0.5, hit 1 gets 0.2.
+    assert by_chunk["c2"] == pytest.approx(0.8)
+    assert by_chunk["c3"] == pytest.approx(0.5)
+    assert by_chunk["c1"] == pytest.approx(0.2)
+    # Values are NOT the positional (1.0, 0.666, 0.333) - they are the real scores.
+    assert by_chunk["c2"] != pytest.approx(1.0)
+
+
+def test_no_reranker_still_uses_positional_relevance() -> None:
+    # Without a reranker, relevance falls back to normalized rank as before (no regression).
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3)])
+    chat = FakeChat("Answer with no markers.")
+    answer = DefaultRagAnswerer(retriever, chat).answer("t1", "q", 3)
+
+    by_chunk = {c.chunk_id: c.relevance for c in answer.citations}
+    assert by_chunk["c1"] == pytest.approx(1.0)
+    assert by_chunk["c2"] == pytest.approx(2 / 3)
+    assert by_chunk["c3"] == pytest.approx(1 / 3)
+
+
+def test_rerank_threshold_drops_low_score_hits() -> None:
+    # Hits with rerank_score below the threshold are removed from the context.
+    scores = [0.8, 0.1, 0.05]  # only hit 1 clears a 0.3 threshold
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3)])
+    chat = FakeChat("Answer with no markers.")
+    answerer = DefaultRagAnswerer(
+        retriever,
+        chat,
+        reranker=ScoringFakeReranker(scores),
+        retrieve_k=40,
+        rerank_min_relevance=0.3,
+    )
+    answer = answerer.answer("t1", "q", 3)
+
+    # Only the hit that cleared the threshold is in the citations.
+    chunk_ids = {c.chunk_id for c in answer.citations}
+    assert "c1" in chunk_ids
+    assert "c2" not in chunk_ids
+    assert "c3" not in chunk_ids
+
+
+def test_rerank_threshold_keeps_top_one_when_all_below() -> None:
+    # Safety: when every hit is below the threshold, exactly the top-1 must be kept.
+    scores = [0.2, 0.1, 0.05]  # all below 0.3
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3)])
+    chat = FakeChat("Answer with no markers.")
+    answerer = DefaultRagAnswerer(
+        retriever,
+        chat,
+        reranker=ScoringFakeReranker(scores),
+        retrieve_k=40,
+        rerank_min_relevance=0.3,
+    )
+    answer = answerer.answer("t1", "q", 3)
+
+    # The answerer must not refuse - it still grounded with the single best hit.
+    assert answer.grounded is True
+    assert len(answer.citations) == 1
+    # The best hit (c1 with score 0.2, ranked first) is the one kept.
+    assert answer.citations[0].chunk_id == "c1"
+
+
+def test_rerank_threshold_not_applied_when_scores_all_none() -> None:
+    # When no reranker ran (all rerank_score=None), the threshold is skipped entirely.
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3)])
+    chat = FakeChat("Answer with no markers.")
+    # FakeReranker (from the earlier test) does NOT set rerank_score.
+    answerer = DefaultRagAnswerer(
+        retriever,
+        chat,
+        reranker=FakeReranker(),
+        retrieve_k=40,
+        rerank_min_relevance=0.9,  # impossibly high threshold, must be ignored
+    )
+    answer = answerer.answer("t1", "q", 3)
+
+    # All 3 hits survive because the threshold was skipped (no rerank_score on any hit).
+    assert answer.grounded is True
+    assert len(answer.citations) == 3
+
+
+def test_rerank_threshold_applied_in_streaming_path() -> None:
+    # The threshold must also apply in answer_thread_stream (consistent with the one-shot path).
+    scores = [0.8, 0.05, 0.05]  # only hit 1 clears 0.3
+    retriever = FakeRetriever([_hit(1), _hit(2), _hit(3)])
+    chat = FakeStreamingChatWithUsage("Answer with no markers.")
+    answerer = DefaultRagAnswerer(
+        retriever,
+        chat,
+        reranker=ScoringFakeReranker(scores),
+        retrieve_k=40,
+        rerank_min_relevance=0.3,
+    )
+    events = list(answerer.answer_thread_stream("t1", [], "q", 3))
+    sources_ev = next(e for e in events if e.type == "sources")
+    chunk_ids = {c.chunk_id for c in sources_ev.citations}
+    assert "c1" in chunk_ids
+    assert "c2" not in chunk_ids
+    assert "c3" not in chunk_ids

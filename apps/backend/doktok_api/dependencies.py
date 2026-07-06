@@ -336,6 +336,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
         reranker=reranker,
         retrieve_k=settings.rag_retrieve_k,
         min_score=settings.rag_min_score,
+        rerank_min_relevance=settings.rerank_min_relevance,
         graph_retriever=graph_retriever,
     )
     registry.register(RagAnswerer, answerer)

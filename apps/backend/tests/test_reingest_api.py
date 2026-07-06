@@ -12,12 +12,14 @@ from doktok_contracts.ports import (
     AuditLogRepository,
     DocumentRepository,
     IngestionJobRepository,
+    KnowledgeGraphRepository,
 )
 from doktok_contracts.schemas import Document, DocumentStatus, IngestionJob, JobStatus
 from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.ingestion.inmemory import InMemoryIngestionJobRepository
+from doktok_core.knowledge_graph.inmemory import InMemoryKnowledgeGraphRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -38,6 +40,7 @@ def _client(
     docs: InMemoryDocumentRepository,
     job_repo: InMemoryIngestionJobRepository,
     audit: InMemoryAuditLogRepository | None = None,
+    kg: InMemoryKnowledgeGraphRepository | None = None,
 ) -> TestClient:
     registry = build_registry()
     registry.register(DocumentRepository, docs)  # type: ignore[type-abstract]
@@ -46,6 +49,7 @@ def _client(
         AuditLogRepository,  # type: ignore[type-abstract]
         audit or InMemoryAuditLogRepository(),
     )
+    registry.register(KnowledgeGraphRepository, kg or InMemoryKnowledgeGraphRepository())  # type: ignore[type-abstract]
     settings = Settings(
         env="test", tenant_tokens=TOKENS, files_root=str(files_root), _env_file=None
     )  # type: ignore[call-arg]
@@ -251,6 +255,32 @@ def test_delete_removes_file_and_record(tmp_path: Path) -> None:
     assert [e.event_type for e in events] == ["document.deleted"]
     assert events[0].actor_kind == "user"
     assert events[0].doc_filename == "report.pdf"
+
+
+def test_delete_purges_orphaned_kg_nodes(tmp_path: Path) -> None:
+    from doktok_contracts.schemas import EntityType, KgEntity
+    from doktok_core.knowledge_graph.resolve import canonical_entity_id
+
+    docs = InMemoryDocumentRepository()
+    docs.add(_failed_doc(str(tmp_path)))
+    kg = InMemoryKnowledgeGraphRepository()
+    kg.upsert_entities(
+        [
+            KgEntity(
+                id=canonical_entity_id(TENANT, EntityType.ORG.value, "ghost"),
+                tenant_id=TENANT,
+                entity_type=EntityType.ORG,
+                normalized_value="ghost",
+            )
+        ]
+    )
+    assert kg.entity_count(TENANT) == 1
+
+    resp = _client(tmp_path, docs, InMemoryIngestionJobRepository(), kg=kg).delete(
+        "/api/v1/documents/d1", headers=AUTH
+    )
+    assert resp.status_code == 200
+    assert kg.entity_count(TENANT) == 0  # deletion swept the orphaned node
 
 
 def test_delete_requires_token(tmp_path: Path) -> None:

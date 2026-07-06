@@ -18,6 +18,7 @@ from doktok_contracts.ports import (
     EntityRepository,
     FeatureRepository,
     IngestionJobRepository,
+    KnowledgeGraphRepository,
     RecordRepository,
 )
 from doktok_contracts.schemas import (
@@ -58,6 +59,7 @@ from doktok_api.dependencies import (
     get_entity_repository,
     get_feature_repository,
     get_job_repository,
+    get_knowledge_graph_repository,
     get_record_repository,
 )
 
@@ -70,6 +72,7 @@ Categories = Annotated[CategoryRepository, Depends(get_category_repository)]
 Jobs = Annotated[IngestionJobRepository, Depends(get_job_repository)]
 Audit = Annotated[AuditLogRepository, Depends(get_audit_repository)]
 Records = Annotated[RecordRepository, Depends(get_record_repository)]
+Kg = Annotated[KnowledgeGraphRepository, Depends(get_knowledge_graph_repository)]
 
 # Bytes of extracted text returned inline on the detail card; the full text is fetched lazily.
 _EXCERPT_CHARS = 4000
@@ -549,7 +552,13 @@ def rotate_document(
 
 @router.delete("/{document_id}")
 def delete_document(
-    document_id: str, request: Request, tenant: Tenant, repo: Repo, jobs: Jobs, audit: Audit
+    document_id: str,
+    request: Request,
+    tenant: Tenant,
+    repo: Repo,
+    jobs: Jobs,
+    audit: Audit,
+    kg: Kg,
 ) -> dict[str, str]:
     """Delete a document, its files, and all its derived rows (chunks/entities/features/links/
     records via FK cascade)."""
@@ -561,6 +570,10 @@ def delete_document(
     base = _document_dir(document, Path(request.app.state.settings.files_root))
     jobs.delete_for_document(tenant.tenant_id, document_id)
     repo.delete(tenant.tenant_id, document_id)  # FK-cascades derived rows
+    # The cascade removes the document's kg_entity_mentions, but a canonical KG node is the FK
+    # parent of that link, so a node whose mentions all came from this document is left orphaned.
+    # Purge the KG footprint: prune orphaned nodes (edges cascade) + clear its edge provenance.
+    kg.purge_document(tenant.tenant_id, document_id)
     # Record after the delete (so it only logs actual removals) with the identity passed explicitly:
     # the document row is gone, so the activity row carries the snapshot and survives on its own.
     record_activity(

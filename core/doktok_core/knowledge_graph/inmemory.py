@@ -75,6 +75,28 @@ class InMemoryKnowledgeGraphRepository:
     def entity_count(self, tenant_id: str) -> int:
         return sum(1 for e in self._entities.values() if e.tenant_id == tenant_id)
 
+    def purge_document(self, tenant_id: str, document_id: str) -> int:
+        # Clear the document's edge provenance + prune now-evidenceless edges (reuse the edge path).
+        self.replace_edges_for_document(tenant_id, document_id, [], [])
+        # Prune canonical entities with no remaining mentions; their edges + provenance cascade.
+        live = {m.canonical_entity_id for m in self._mentions.values() if m.tenant_id == tenant_id}
+        orphans = [
+            eid for eid, e in self._entities.items() if e.tenant_id == tenant_id and eid not in live
+        ]
+        for eid in orphans:
+            del self._entities[eid]
+            dead_edges = {
+                k
+                for k, edge in self._edges.items()
+                if edge.src_entity_id == eid or edge.dst_entity_id == eid
+            }
+            for k in dead_edges:
+                del self._edges[k]
+            self._provenance = {
+                pid: p for pid, p in self._provenance.items() if p.edge_id not in dead_edges
+            }
+        return len(orphans)
+
     # ------------------------------------------------------------------ Phase 2: edges
 
     def replace_edges_for_document(

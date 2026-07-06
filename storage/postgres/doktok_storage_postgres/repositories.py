@@ -1049,6 +1049,27 @@ class PostgresKnowledgeGraphRepository:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    def purge_document(self, tenant_id: str, document_id: str) -> int:
+        """Clean a deleted document's KG footprint and return the number of entities pruned.
+
+        Document deletion cascades ``document_entities`` -> ``kg_entity_mentions``, but a canonical
+        ``kg_entities`` node is the FK *parent* of that link, so a node whose mentions all came from
+        the deleted document is left orphaned. This: (1) clears the document's edge provenance and
+        prunes now-evidenceless edges (via ``replace_edges_for_document`` with no new edges), then
+        (2) deletes canonical entities with no remaining mentions - their edges + edge provenance
+        cascade via FK. The orphan prune is tenant-wide, so it also clears pre-existing orphans.
+        Idempotent; safe to call after the document's mention rows are already gone.
+        """
+        self.replace_edges_for_document(tenant_id, document_id, [], [])
+        with self._db.connection() as conn, conn.transaction():
+            cur = conn.execute(
+                "DELETE FROM kg_entities e WHERE e.tenant_id=%s AND NOT EXISTS ("
+                "SELECT 1 FROM kg_entity_mentions m "
+                "WHERE m.tenant_id = e.tenant_id AND m.canonical_entity_id = e.id)",
+                (tenant_id,),
+            )
+            return cur.rowcount or 0
+
     # ------------------------------------------------------------------ Phase 2: edges
 
     def replace_edges_for_document(

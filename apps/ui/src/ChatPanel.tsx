@@ -28,6 +28,8 @@ import { loadJSON, saveJSON } from "./persist";
 
 const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
 const RIGHT_PANE_KEY = "doktok.chat.rightPaneCollapsed";
+// Remember the active thread so returning to Chat re-opens it instead of an empty panel.
+const LAST_THREAD_KEY = "doktok.chat.lastThread";
 
 /** The shared right rail: closed, a turn's sources, retrieve-only "explore" evidence, or a
  * document preview. */
@@ -628,6 +630,28 @@ export function ChatPanel({
   }
 
   useEffect(refreshThreads, []);
+
+  // Restore the last active thread on return so Chat doesn't come back to an empty panel. The id is
+  // captured at mount (before the persist effect below can overwrite it) and resumed once the thread
+  // list confirms it still exists. Runs at most once, and never overrides an already-open thread.
+  const lastThreadOnMount = useRef<string | null>(loadJSON<string | null>(LAST_THREAD_KEY, null));
+  const didAutoResume = useRef(false);
+  useEffect(() => {
+    if (didAutoResume.current) return;
+    const last = lastThreadOnMount.current;
+    if (!last || threadId !== null) {
+      didAutoResume.current = true;
+      return;
+    }
+    if (!threads.some((t) => t.id === last)) return; // wait for the list; skip if it was deleted
+    didAutoResume.current = true;
+    resume(last);
+  }, [threads, threadId]);
+
+  // Persist the active thread id (stores null when starting a fresh chat).
+  useEffect(() => {
+    saveJSON(LAST_THREAD_KEY, threadId);
+  }, [threadId]);
 
   // Esc stops the in-flight turn (mirrors the Stop button). Only bound while streaming.
   useEffect(() => {

@@ -6,6 +6,9 @@ import { ChatPanel } from "./ChatPanel";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // ChatPanel persists the active thread id in localStorage (auto-restore on return); clear it so
+  // it does not bleed across tests and auto-open a thread the next test did not intend.
+  localStorage.clear();
 });
 
 /** Build one SSE frame: a `data:` line carrying the event JSON, the way the backend emits it. */
@@ -303,6 +306,45 @@ test("flags unread when an answer finishes while the panel is inactive (off-tab)
 
   await waitFor(() => expect(screen.getByText("answer while away.")).toBeInTheDocument());
   expect(onBackgroundDone).toHaveBeenCalled(); // finished while inactive -> the tab goes unread
+});
+
+test("auto-restores the last active thread on mount (no click needed)", async () => {
+  // Simulate returning to Chat: the previously-active thread id is in localStorage.
+  localStorage.setItem("doktok.chat.lastThread", JSON.stringify("t-old"));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/chat/threads/t-old/messages")) {
+        return new Response(
+          JSON.stringify([
+            { id: "m1", role: "user", content: "prior question", created_at: "x" },
+            { id: "m2", role: "assistant", content: "restored answer.", created_at: "y" },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/v1/chat/threads")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "t-old",
+              title: "prior question",
+              created_at: "x",
+              updated_at: "y",
+              message_count: 2,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    }),
+  );
+
+  render(<ChatPanel />);
+  // The transcript restores automatically once the thread list confirms the thread still exists.
+  await waitFor(() => expect(screen.getByText(/restored answer\./)).toBeInTheDocument());
 });
 
 test("lists saved conversations and resumes one into the transcript", async () => {

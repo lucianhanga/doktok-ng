@@ -89,8 +89,10 @@ DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
 All model names are configurable via environment variables. See ADR-0003 (model runtime) and
-ADR-0010 (OCR engine) for the rationale. PaddleOCR needs its optional extra installed on the worker
-host: `uv pip install paddleocr paddlepaddle`.
+ADR-0010 (OCR engine) for the rationale. The OCR runtime is an optional extra installed on the
+worker host via `make ocr-paddle` (or `make ocr-rapid` / `make ocr-rapid-openvino`). These extras —
+like the local reranker (`make reranker-models`) — are intentionally **not** in the lockfile, so any
+`uv sync` / `uv run --frozen` prunes them; re-run the target (and restart the worker) after a sync.
 
 The OCR-quality judge and the Ollama JSON-repair fallback both reuse the **configured pipeline
 model** (no separate repair model). Pipeline and RAG reasoning each follow the reasoning density set

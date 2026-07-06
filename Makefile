@@ -71,10 +71,10 @@ ner-models: ## Install the local GLiNER/NuNER/GLiNER-Relex runtime (doktok-provi
 reranker-models: ## Install the local Qwen3-Reranker runtime (doktok-provider-reranker[engine])
 	uv pip install "torch>=2.2" "transformers>=4.51"
 
-ocr-paddle: ## Install the PaddleOCR runtime (the DOKTOK_OCR_ENGINE=paddleocr extra)
+ocr-paddle: ## Install the PaddleOCR runtime (paddleocr extra; not in lockfile - re-run after any `uv sync`)
 	uv pip install paddleocr paddlepaddle pillow numpy
 
-ocr-rapid: ## Install the RapidOCR runtime (the DOKTOK_OCR_ENGINE=rapidocr extra; ~6x faster on weak CPUs)
+ocr-rapid: ## Install the RapidOCR runtime (rapidocr extra, ~6x faster on weak CPUs; re-run after any `uv sync`)
 	uv pip install rapidocr-onnxruntime pillow numpy
 
 ocr-rapid-openvino: ## Install RapidOCR + the OpenVINO backend (Intel; ~20x vs Paddle on N95). Needs openvino<2025.

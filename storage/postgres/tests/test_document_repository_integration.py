@@ -232,7 +232,7 @@ def test_sort_by_chunks_and_cursor_round_trip(db: Database) -> None:
                         text=f"text {j}",
                     )
                 ],
-                [[0.1] * 3],
+                [[0.1] * 1024],  # document_chunks.embedding is vector(1024)
             )
 
     # chk2 has 2 chunks, chk1 has 1, chk0 has 0 — DESC order

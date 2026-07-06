@@ -12,11 +12,17 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@deck.gl/core": "^9.3.5",
+    "@deck.gl/layers": "^9.3.5",
+    "@deck.gl/react": "^9.3.5",
     "@tanstack/react-table": "^8.21.3",
+    "@visx/wordcloud": "^4.0.0",
+    "TagCloud": "^2.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-force-graph-2d": "^1.29.1",
     "react-markdown": "^10.1.0",
+    "regl-scatterplot": "^1.16.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {

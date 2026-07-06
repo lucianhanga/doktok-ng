@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { InfoHint } from "./InfoHint";
+import { KnowledgeGraphPanel } from "./KnowledgeGraphPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import {
   applyRestore,
@@ -1458,7 +1459,7 @@ export function SettingsPanel() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiTesting, setOpenaiTesting] = useState(false);
   const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [tab, setTab] = useState<"settings" | "models" | "drp" | "memory">("settings");
+  const [tab, setTab] = useState<"settings" | "models" | "drp" | "memory" | "graph">("settings");
   // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
   const [egressError, setEgressError] = useState<string | null>(null);
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
@@ -1630,7 +1631,9 @@ export function SettingsPanel() {
         ? "DRP"
         : tab === "memory"
           ? "Memory"
-          : "Settings";
+          : tab === "graph"
+            ? "Knowledge graph"
+            : "Settings";
 
   const saveBar = (
     <>
@@ -1701,6 +1704,15 @@ export function SettingsPanel() {
             onClick={() => setTab("drp")}
           >
             DRP
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "graph"}
+            className={tab === "graph" ? "active" : ""}
+            onClick={() => setTab("graph")}
+          >
+            Knowledge graph
           </button>
         </nav>
         <div className="settings-pane">
@@ -2153,6 +2165,7 @@ export function SettingsPanel() {
 
           {tab === "drp" && <DrpSection />}
           {tab === "memory" && <MemoryPanel />}
+          {tab === "graph" && <KnowledgeGraphPanel />}
         </div>
       </div>
     </section>

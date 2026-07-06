@@ -12,6 +12,8 @@ from collections.abc import Sequence
 
 from doktok_contracts.schemas import (
     AliasFold,
+    EntityType,
+    EntityTypeCount,
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
@@ -202,6 +204,39 @@ class InMemoryKnowledgeGraphRepository:
         return [
             e.model_copy(deep=True) for e in self._entities.values() if e.tenant_id == tenant_id
         ]
+
+    def list_entities_page(
+        self,
+        tenant_id: str,
+        *,
+        entity_type: EntityType | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[KgEntity]:
+        rows = [e for e in self._entities.values() if e.tenant_id == tenant_id]
+        if entity_type is not None:
+            rows = [e for e in rows if e.entity_type == entity_type]
+        if query is not None:
+            needle = query.lower()
+            rows = [e for e in rows if needle in e.normalized_value.lower()]
+        rows.sort(key=lambda e: e.normalized_value)
+        return [e.model_copy(deep=True) for e in rows[offset : offset + limit]]
+
+    def get_entities(self, tenant_id: str, entity_ids: Sequence[str]) -> list[KgEntity]:
+        ids = set(entity_ids)
+        return [
+            e.model_copy(deep=True)
+            for e in self._entities.values()
+            if e.tenant_id == tenant_id and e.id in ids
+        ]
+
+    def entity_type_counts(self, tenant_id: str) -> list[EntityTypeCount]:
+        counts: dict[str, int] = {}
+        for e in self._entities.values():
+            if e.tenant_id == tenant_id:
+                counts[e.entity_type.value] = counts.get(e.entity_type.value, 0) + 1
+        return [EntityTypeCount(entity_type=t, count=c) for t, c in sorted(counts.items())]
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
         return {

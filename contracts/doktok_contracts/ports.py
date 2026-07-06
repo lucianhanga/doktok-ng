@@ -53,6 +53,7 @@ from doktok_contracts.schemas import (
     EmbeddingProjection,
     EntitySummary,
     EntityType,
+    EntityTypeCount,
     ExtractedRecord,
     FeatureMetrics,
     GraphRetrieval,
@@ -790,6 +791,36 @@ class KnowledgeGraphRepository(Protocol):
 
     def list_entities(self, tenant_id: str) -> list[KgEntity]:
         """Every canonical node for a tenant - the input to the alias-folding pass."""
+        ...
+
+    # ------------------------------------------------------------------ Phase 1: traversal API
+
+    def list_entities_page(
+        self,
+        tenant_id: str,
+        *,
+        entity_type: EntityType | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[KgEntity]:
+        """Paginated, filterable canonical node list for the KG traversal UI (KAG Phase 1).
+
+        Optional ``entity_type`` filter and case-insensitive ``query`` substring match on
+        ``normalized_value`` (``ILIKE '%query%'``). Results are ordered by ``normalized_value``
+        ASC. Does not modify ``list_entities``, which the alias pass uses.
+        """
+        ...
+
+    def get_entities(self, tenant_id: str, entity_ids: Sequence[str]) -> list[KgEntity]:
+        """Batch-fetch canonical nodes by id; returns an empty list for empty input.
+
+        Used to resolve the node set referenced by ``neighborhood`` edges.
+        """
+        ...
+
+    def entity_type_counts(self, tenant_id: str) -> list[EntityTypeCount]:
+        """Count of canonical nodes per entity type for a tenant (for the KG stats endpoint)."""
         ...
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:

@@ -403,6 +403,32 @@ class AliasFold(BaseModel):
     canonical_id: str  # the surviving canonical node's id
 
 
+class KgStats(BaseModel):
+    """Graph-level statistics for a tenant's knowledge graph (KAG traversal API).
+
+    ``by_type`` is the per-entity-type canonical node count (references ``EntityTypeCount``,
+    defined later in this module - forward reference resolved by ``from __future__ import
+    annotations``).
+    """
+
+    entity_count: int
+    edge_count: int
+    by_type: list[EntityTypeCount]
+
+
+class KgNeighborhood(BaseModel):
+    """A bounded subgraph around a focus entity node (KAG traversal API, Phase 1).
+
+    ``focus`` is the requested root node. ``nodes`` is every canonical node in the returned
+    subgraph including the focus. ``edges`` are the relation edges of the connected subgraph.
+    Provenance is omitted to keep the Phase-1 payload lean.
+    """
+
+    focus: KgEntity
+    nodes: list[KgEntity]
+    edges: list[KgEdge]
+
+
 class SearchHit(BaseModel):
     """A hybrid-search result (brief section 17)."""
 

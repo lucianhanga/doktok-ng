@@ -58,12 +58,39 @@ curl http://localhost:8000/health
 | Command | Process | Notes |
 |---|---|---|
 | `make db` | `docker compose up -d` (containers `doktok-db`, `doktok-gotenberg`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5432`); Gotenberg (office -> PDF) on `DOKTOK_GOTENBERG_PORT` (default `3000`). |
-| `make run-backend` | `uvicorn doktok_api.main:app --reload --port 8000` | Foreground. Serves `/api/v1` (token-protected) and public `/health`. |
-| `make run-worker` | `uv run doktok-worker` | Foreground. Watches each tenant's `ingest/` folder and runs the pipeline. |
+| `make run-backend` | `uvicorn doktok_api.main:app --reload --port 8000` | Foreground. Runs the backend model-stack preflight first (see below), then serves `/api/v1` (token-protected) and public `/health`. |
+| `make run-worker` | `uv run doktok-worker` | Foreground. Runs the worker model-stack preflight first (see below), then watches each tenant's `ingest/` folder and runs the pipeline. |
 | `make run-ui` | `pnpm --filter @doktok/ui dev` | Foreground. Vite dev server; the dev proxy injects the bearer token. |
 
 Stop any foreground process with `Ctrl+C`. Stop the database with `make db-down` (this keeps the
 volume; see below).
+
+## Model-stack preflight
+
+`make run-backend` and `make run-worker` each run a **preflight** step first (the Make targets
+`preflight-backend` / `preflight-worker`, which call `scripts/preflight.sh`). The preflight
+provisions every *local* model-stack resource that service could select **before** the service
+starts, so a freshly synced checkout is ready to ingest and answer without a first-request stall.
+
+- **Per-service scope.** Each service provisions only the runtimes and models it actually uses.
+  The **worker** installs the OCR (Paddle + Rapid), GLiNER NER/Relex, and projection-engine
+  runtimes, pulls the local chat/enrich model, the embedding model, and the `glm-ocr` vision model,
+  and prefetches the GLiNER NER + Relex weights. The **backend** installs the Qwen3-Reranker
+  runtime, pulls the chat/RAG model and the embedding model, and prefetches both Qwen3-Reranker
+  weight sets. The exact list is derived from `MODEL_CATALOG` (`core/doktok_core/settings/catalog.py`)
+  plus the configured defaults in `core/doktok_core/config.py`, so it stays correct as those change.
+  Remote OpenAI options are egress-gated and are never pulled.
+- **Idempotent.** `uv pip install` and `ollama pull` both skip work already present, so a warm run
+  is quick with no re-downloads; a cold run does the one-time installs and pulls.
+- **Tolerant of a missing Ollama / offline HF.** If the `ollama` CLI is absent or the daemon is
+  unreachable, or a Hugging Face prefetch fails, the preflight prints a yellow warning and
+  **continues** - those artifacts download on first use later. Only a genuine `pip` install failure
+  stops the run target.
+- **Escape hatch.** Set `DOKTOK_SKIP_PREFLIGHT=1` to skip the preflight entirely (for example when
+  you are offline and manage the models yourself): `DOKTOK_SKIP_PREFLIGHT=1 make run-worker`.
+
+You can also run a provisioning pass on its own without starting the service, e.g. `make
+preflight-worker` or `make preflight-backend`.
 
 ## What persists vs. what you restart
 
@@ -141,7 +168,7 @@ For throughput tuning see [performance-and-ollama.md](performance-and-ollama.md)
 | `make db` fails / port already in use | Another local Postgres on `DOKTOK_DB_PORT` | Set `DOKTOK_DB_PORT=5433` (or another free port) in `.env`, then `make db`. |
 | Backend or worker can't reach the database | `doktok-db` container not running | Run `make db`; confirm with `docker ps` (container `doktok-db`). |
 | Worker or chat errors mentioning the model server | Ollama not running, or model not pulled | Start Ollama; `ollama list` to confirm the models in `.env` are present. |
-| OCR ingestion fails with `ModuleNotFoundError` (`paddleocr`/`rapidocr`) after a dependency change | The OCR runtime extra was pruned by `uv sync` — these extras are intentionally **not** in the lockfile, so any `uv sync`/`uv run --frozen` removes them | Re-run the matching target on the worker host (`make ocr-paddle`, `make ocr-rapid`, or `make ocr-rapid-openvino`), then **restart the worker** (an engine/runtime change applies only on restart). The local Qwen3-Reranker (`make reranker-models`) is pruned the same way. The engine the worker uses is the stored `ocr_settings.engine`, falling back to `DOKTOK_OCR_ENGINE` (default `paddleocr`) when unset — the value shown in Settings may be a device *recommendation*, not the applied engine. |
+| OCR ingestion fails with `ModuleNotFoundError` (`paddleocr`/`rapidocr`) after a dependency change | The OCR runtime extra was pruned by `uv sync` — these extras are intentionally **not** in the lockfile, so any `uv sync`/`uv run --frozen` removes them | Normally the model-stack preflight (above) restores these automatically the next time you `make run-worker` / `make run-backend`, since it re-runs `make ocr-paddle`, `make ocr-rapid`, `make ner-models`, `make projection-engine` (worker) and `make reranker-models` (backend) idempotently. If you skipped it with `DOKTOK_SKIP_PREFLIGHT=1`, re-run the matching target on the worker host by hand (`make ocr-paddle`, `make ocr-rapid`, or `make ocr-rapid-openvino`), then **restart the worker** (an engine/runtime change applies only on restart). The engine the worker uses is the stored `ocr_settings.engine`, falling back to `DOKTOK_OCR_ENGINE` (default `paddleocr`) when unset — the value shown in Settings may be a device *recommendation*, not the applied engine. |
 | Office (`.docx`/`.xlsx`/`.pptx`) ingestion fails with `needs_ocr` | Gotenberg container not running or unreachable | Run `make db` (starts `doktok-gotenberg`); confirm with `docker ps`. Check `DOKTOK_GOTENBERG_URL` / `DOKTOK_GOTENBERG_PORT`. |
 | UI loads but API calls are unauthorized | UI started without the dev proxy | Start the UI via `make run-ui` so the proxy injects the bearer token. |
 

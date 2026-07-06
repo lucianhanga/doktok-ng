@@ -22,8 +22,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Iterable
 
-from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_contracts.schemas import ModelOption
+from doktok_core.settings.catalog import MODEL_CATALOG
 
 # Per-service Python runtime extras, expressed as the Makefile targets that own their package
 # lists. Kept explicit (not catalog-derived) because these extras map to features - OCR engines,
@@ -64,7 +64,7 @@ def _settings():
 
         return get_settings()
     except Exception:
-        # Bypass validation and fall back to the field defaults so preflight still knows what to pull.
+        # Bypass validation, fall back to field defaults so preflight still knows what to pull.
         from doktok_core.config import Settings
 
         return Settings.model_construct()

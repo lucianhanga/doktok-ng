@@ -733,6 +733,15 @@ class KnowledgeGraphRepository(Protocol):
         """Number of distinct canonical nodes for a tenant."""
         ...
 
+    def purge_document(self, tenant_id: str, document_id: str) -> int:
+        """Remove a deleted document's KG footprint; return the number of entities pruned.
+
+        Clears the document's edge provenance (pruning now-evidenceless edges) and deletes canonical
+        entities left with no mentions - their edges + provenance cascade. The orphan prune is
+        tenant-wide, so it also clears any pre-existing orphaned nodes. Call after the document's
+        ``kg_entity_mentions`` rows are gone (they cascade from ``document_entities``)."""
+        ...
+
     def replace_edges_for_document(
         self,
         tenant_id: str,

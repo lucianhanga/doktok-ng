@@ -37,7 +37,11 @@ def test_resolve_link_and_filter(db: Database) -> None:
 
     # dedupe via normalized slug + trigram
     assert cats.find_by_normalized(TENANT, "invoice").id == invoice.id  # type: ignore[union-attr]
-    assert cats.find_similar(TENANT, "invoic") is not None  # trigram-close
+    # The fuzzy match still merges close slugs at a low threshold; the raised default (0.70, #503)
+    # is intentionally stricter, so a loosely-similar slug like "invoic" now stays distinct - that
+    # is what lets the taxonomy grow richer instead of collapsing near-variants together.
+    assert cats.find_similar(TENANT, "invoic", threshold=0.55) is not None  # trigram-close
+    assert cats.find_similar(TENANT, "invoic") is None  # below the new 0.70 default -> not merged
 
     cats.set_document_categories(TENANT, "dc1", [invoice.id, report.id])
     cats.set_document_categories(TENANT, "dc2", [invoice.id])

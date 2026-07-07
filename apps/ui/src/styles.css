@@ -5387,3 +5387,76 @@ tr.row-selected {
   font-size: 1.1rem;
   font-weight: 600;
 }
+
+/* ---- Categories panel bar chart ---- */
+.cats-note {
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+}
+.cats-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.cats-row {
+  display: flex;
+}
+.cats-row-btn {
+  display: grid;
+  grid-template-columns: 14rem 1fr 3.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.cats-row-btn:hover,
+.cats-row-btn:focus-visible {
+  background: var(--hover-fill, rgba(127, 127, 127, 0.1));
+  border-color: var(--border, #2e3540);
+  outline: none;
+}
+.cats-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.cats-track {
+  position: relative;
+  height: 1rem;
+  background: var(--surface-3, #2a303b);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.cats-bar {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  min-width: 2px;
+  transition: width 0.2s ease;
+}
+.cats-count {
+  text-align: right;
+  color: var(--muted, #8b949e);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+  .cats-row-btn {
+    grid-template-columns: 8rem 1fr 3rem;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+  }
+}

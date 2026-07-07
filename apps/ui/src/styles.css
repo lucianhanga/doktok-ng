@@ -5234,6 +5234,211 @@ tr.row-selected {
   gap: 0.3rem;
 }
 
+/* Suggested merges review section (#508 Wave 2b) */
+.kg-merge-section {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.kg-merge-success {
+  color: var(--success);
+}
+
+.kg-merge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.kg-merge-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.82rem;
+}
+
+.kg-merge-direction {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.kg-merge-alias {
+  font-weight: 500;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 10rem;
+}
+
+.kg-merge-arrow {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.kg-merge-canonical {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 10rem;
+}
+
+.kg-merge-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.kg-merge-method-chip {
+  display: inline-block;
+  padding: 0.1rem 0.42rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.kg-merge-method-chip[data-method="token_set"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selected-fill);
+}
+
+.kg-merge-score {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.kg-merge-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+}
+
+.kg-merge-btn {
+  padding: 0.18rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.kg-merge-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.kg-merge-btn.approve {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.kg-merge-btn.approve:hover {
+  background: rgba(76, 194, 102, 0.12);
+}
+
+.kg-merge-btn.reject {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.kg-merge-btn.reject:hover {
+  background: rgba(224, 101, 109, 0.12);
+}
+
+.kg-merge-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.kg-merge-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Split action in detail rail */
+.kg-split-section {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.kg-split-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.kg-split-warn {
+  font-size: 0.78rem;
+  color: var(--warning);
+  flex-basis: 100%;
+}
+
+.kg-split-btn {
+  padding: 0.18rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.kg-split-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.kg-split-btn.confirm {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.kg-split-btn.confirm:hover {
+  background: rgba(224, 101, 109, 0.12);
+}
+
+.kg-split-btn.cancel {
+  border-color: var(--border);
+  color: var(--muted);
+}
+
+.kg-split-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.kg-split-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* --- Embedding map + Word cloud viz panels (#476) ----------------------------------------- */
 /* Shared segmented 2D/3D toggle + chips (kept spartan, theme-token driven). */
 .emap .seg,

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { KnowledgeGraphPanel, pickLabeledNodeIds } from "./KnowledgeGraphPanel";
-import type { KgEntity, KgNeighborhood, KgStats } from "./api";
+import type { KgEntity, KgMergeSuggestion, KgNeighborhood, KgStats } from "./api";
 
 // ---- Stub react-force-graph-2d (canvas/WebGL does not work in jsdom) ----
 
@@ -59,6 +59,29 @@ const DEFAULT_STATS: KgStats = {
 
 const DEFAULT_NODES: KgEntity[] = [ALICE, ACME];
 
+// Merge suggestion fixtures
+const ALICE_ALIAS: KgMergeSuggestion = {
+  tenant_id: "t1",
+  entity_type: "PERSON",
+  canonical_id: "e1",
+  canonical_value: "Alice",
+  alias_id: "e3",
+  alias_value: "Alice Smith",
+  method: "token_set",
+  score: 0.92,
+};
+
+const ACME_ALIAS: KgMergeSuggestion = {
+  tenant_id: "t1",
+  entity_type: "ORG",
+  canonical_id: "e2",
+  canonical_value: "Acme Corp",
+  alias_id: "e4",
+  alias_value: "ACME Corporation",
+  method: "fuzzy_trgm",
+  score: 0.78,
+};
+
 const DEFAULT_NEIGHBORHOOD: KgNeighborhood = {
   focus: ALICE,
   nodes: [ACME],
@@ -77,55 +100,88 @@ const DEFAULT_NEIGHBORHOOD: KgNeighborhood = {
 
 // ---- Fetch stub helper ----
 
+type FetchMock = ReturnType<typeof vi.fn>;
+
 function stubFetch(opts: {
   stats?: KgStats;
   nodes?: KgEntity[];
   neighborhood?: KgNeighborhood;
+  suggestions?: KgMergeSuggestion[];
+  mergeResult?: KgEntity;
   statsErr?: boolean;
   nodesErr?: boolean;
   nbErr?: boolean;
+  suggErr?: boolean;
+  mergeErr?: boolean;
+  splitErr?: boolean;
   onFetch?: (url: string) => void;
-} = {}): void {
+} = {}): FetchMock {
   const {
     stats = DEFAULT_STATS,
     nodes = DEFAULT_NODES,
     neighborhood = DEFAULT_NEIGHBORHOOD,
+    suggestions = [],
+    mergeResult = ALICE,
     statsErr = false,
     nodesErr = false,
     nbErr = false,
+    suggErr = false,
+    mergeErr = false,
+    splitErr = false,
     onFetch,
   } = opts;
 
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = input.toString();
-      onFetch?.(url);
+  const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = input.toString();
+    onFetch?.(url);
 
-      if (url.includes("/entities/stats")) {
-        if (statsErr) return new Response(null, { status: 500 });
-        return new Response(JSON.stringify(stats), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.includes("/neighborhood")) {
-        if (nbErr) return new Response(null, { status: 500 });
-        return new Response(JSON.stringify(neighborhood), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.includes("/entities/nodes")) {
-        if (nodesErr) return new Response(null, { status: 500 });
-        return new Response(JSON.stringify(nodes), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response(null, { status: 404 });
-    }),
-  );
+    if (url.includes("/entities/stats")) {
+      if (statsErr) return new Response(null, { status: 500 });
+      return new Response(JSON.stringify(stats), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/neighborhood")) {
+      if (nbErr) return new Response(null, { status: 500 });
+      return new Response(JSON.stringify(neighborhood), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/merge-suggestions")) {
+      if (suggErr) return new Response(null, { status: 500 });
+      return new Response(JSON.stringify(suggestions), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (/\/entities\/[^/]+\/merge/.test(url)) {
+      if (mergeErr) return new Response(null, { status: 500 });
+      return new Response(JSON.stringify(mergeResult), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (/\/entities\/[^/]+\/split/.test(url)) {
+      if (splitErr) return new Response(null, { status: 500 });
+      return new Response(JSON.stringify({ status: "split" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/entities/nodes")) {
+      if (nodesErr) return new Response(null, { status: 500 });
+      return new Response(JSON.stringify(nodes), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(null, { status: 404 });
+  });
+
+  vi.stubGlobal("fetch", mockFetch);
+  return mockFetch;
 }
 
 afterEach(() => {
@@ -397,6 +453,259 @@ describe("KnowledgeGraphPanel", () => {
     // The stub always returns DEFAULT_NEIGHBORHOOD with focus=Alice; just verify no crash
     await waitFor(() => {
       expect(screen.getByTestId("force-graph")).toBeInTheDocument();
+    });
+  });
+});
+
+// ---- Component tests: merge/split review UI ----
+
+describe("KnowledgeGraphPanel - merge suggestions", () => {
+  it("shows loading state while fetching suggestions", async () => {
+    stubFetch({ suggestions: [ALICE_ALIAS] });
+    render(<KnowledgeGraphPanel />);
+    // Loading status text appears before data resolves
+    expect(screen.getByText("Loading suggestions...")).toBeInTheDocument();
+  });
+
+  it("renders suggestion cards with alias -> canonical direction and score", async () => {
+    stubFetch({ suggestions: [ALICE_ALIAS, ACME_ALIAS] });
+    render(<KnowledgeGraphPanel />);
+
+    await waitFor(() => {
+      // alias value appears
+      expect(screen.getByText("Alice Smith")).toBeInTheDocument();
+      // canonical value appears
+      expect(screen.getAllByText("Alice").length).toBeGreaterThan(0);
+    });
+
+    // Method chip
+    expect(screen.getByText("Token match")).toBeInTheDocument();
+    expect(screen.getByText("Fuzzy")).toBeInTheDocument();
+
+    // Confidence scores
+    expect(screen.getByText("92% confidence")).toBeInTheDocument();
+    expect(screen.getByText("78% confidence")).toBeInTheDocument();
+  });
+
+  it("shows empty state when no suggestions are returned", async () => {
+    stubFetch({ suggestions: [] });
+    render(<KnowledgeGraphPanel />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No suggested merges - your entities look resolved/),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("shows error alert when fetchMergeSuggestions fails", async () => {
+    stubFetch({ suggErr: true });
+    render(<KnowledgeGraphPanel />);
+
+    await waitFor(() => {
+      const alerts = screen.getAllByRole("alert");
+      const hasSuggErr = alerts.some(el =>
+        el.textContent?.toLowerCase().includes("could not") ||
+        el.textContent?.toLowerCase().includes("server"),
+      );
+      expect(hasSuggErr).toBe(true);
+    });
+  });
+
+  it("Approve calls merge endpoint with correct canonical/alias ids and removes the row", async () => {
+    const mockFetch = stubFetch({ suggestions: [ALICE_ALIAS], mergeResult: ALICE });
+    render(<KnowledgeGraphPanel />);
+
+    // Wait for the suggestion card to appear
+    await waitFor(() => screen.getByText("Alice Smith"));
+
+    // Click Approve
+    fireEvent.click(screen.getByRole("button", { name: /Approve merge of Alice Smith/i }));
+
+    // Row is removed from the queue
+    await waitFor(() => {
+      expect(screen.queryByText("Alice Smith")).not.toBeInTheDocument();
+    });
+
+    // Success feedback is shown (text includes the merged value)
+    await waitFor(() => {
+      expect(screen.getByText(/Merged "Alice Smith" into "Alice"/i)).toBeInTheDocument();
+    });
+
+    // Verify the merge endpoint was called with the correct URL and body
+    const mergeCalls = (mockFetch.mock.calls as Array<[RequestInfo | URL, RequestInit | undefined]>)
+      .filter(([url]) => /\/entities\/[^/]+\/merge/.test(String(url)));
+
+    expect(mergeCalls.length).toBe(1);
+    const [mergeUrl, mergeInit] = mergeCalls[0];
+    expect(String(mergeUrl)).toContain(`/entities/${ALICE_ALIAS.canonical_id}/merge`);
+
+    const body = JSON.parse(mergeInit?.body as string) as Record<string, unknown>;
+    expect(body.alias_id).toBe(ALICE_ALIAS.alias_id);
+    expect(body.method).toBe(ALICE_ALIAS.method);
+  });
+
+  it("Approve removes all other suggestions that share the same alias_id", async () => {
+    // Two suggestions that differ only in canonical but share the same alias
+    const duplicate: KgMergeSuggestion = {
+      ...ALICE_ALIAS,
+      canonical_id: "e99",
+      canonical_value: "Alice J.",
+    };
+    stubFetch({ suggestions: [ALICE_ALIAS, duplicate], mergeResult: ALICE });
+    render(<KnowledgeGraphPanel />);
+
+    await waitFor(() => screen.getAllByText("Alice Smith"));
+
+    // Approve the first one
+    const approveButtons = screen.getAllByRole("button", { name: /Approve merge of Alice Smith/i });
+    fireEvent.click(approveButtons[0]);
+
+    // Both cards (sharing alias e3) should disappear
+    await waitFor(() => {
+      expect(screen.queryByText("Alice Smith")).not.toBeInTheDocument();
+    });
+  });
+
+  it("Reject dismisses the suggestion without calling the merge endpoint", async () => {
+    const mockFetch = stubFetch({ suggestions: [ALICE_ALIAS] });
+    render(<KnowledgeGraphPanel />);
+
+    await waitFor(() => screen.getByText("Alice Smith"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Reject suggestion to merge Alice Smith/i }));
+
+    // Row disappears
+    await waitFor(() => {
+      expect(screen.queryByText("Alice Smith")).not.toBeInTheDocument();
+    });
+
+    // No merge endpoint was called
+    const mergeCalls = (mockFetch.mock.calls as Array<[RequestInfo | URL, RequestInit | undefined]>)
+      .filter(([url]) => /\/entities\/[^/]+\/merge/.test(String(url)));
+    expect(mergeCalls.length).toBe(0);
+  });
+
+  it("shows merge error alert and keeps the row when Approve fails", async () => {
+    stubFetch({ suggestions: [ALICE_ALIAS], mergeErr: true });
+    render(<KnowledgeGraphPanel />);
+
+    await waitFor(() => screen.getByText("Alice Smith"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Approve merge of Alice Smith/i }));
+
+    // Error feedback appears
+    await waitFor(() => {
+      const alerts = screen.getAllByRole("alert");
+      const hasMergeErr = alerts.some(el =>
+        el.textContent?.toLowerCase().includes("server") ||
+        el.textContent?.toLowerCase().includes("merge failed") ||
+        el.textContent?.toLowerCase().includes("could not"),
+      );
+      expect(hasMergeErr).toBe(true);
+    });
+
+    // The row remains in the queue
+    expect(screen.getByText("Alice Smith")).toBeInTheDocument();
+  });
+});
+
+describe("KnowledgeGraphPanel - split action", () => {
+  it("shows Split button in detail rail when an entity is selected", async () => {
+    stubFetch();
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Alice"));
+
+    fireEvent.click(screen.getByText("Alice"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Split" })).toBeInTheDocument();
+    });
+  });
+
+  it("clicking Split shows an inline confirm prompt", async () => {
+    stubFetch();
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Alice"));
+
+    fireEvent.click(screen.getByText("Alice"));
+    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Split" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Undo merge on this entity/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Yes, split/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    });
+  });
+
+  it("Cancel hides the confirm prompt", async () => {
+    stubFetch();
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Alice"));
+
+    fireEvent.click(screen.getByText("Alice"));
+    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Split" }));
+    await waitFor(() => screen.getByRole("button", { name: /Yes, split/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Undo merge on this entity/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Split" })).toBeInTheDocument();
+    });
+  });
+
+  it("confirming Split calls the split endpoint with the entity id", async () => {
+    const mockFetch = stubFetch();
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Alice"));
+
+    fireEvent.click(screen.getByText("Alice"));
+    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Split" }));
+    await waitFor(() => screen.getByRole("button", { name: /Yes, split/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Yes, split/i }));
+
+    await waitFor(() => {
+      const splitCalls = (
+        mockFetch.mock.calls as Array<[RequestInfo | URL, RequestInit | undefined]>
+      ).filter(([url]) => /\/entities\/[^/]+\/split/.test(String(url)));
+      expect(splitCalls.length).toBe(1);
+      expect(String(splitCalls[0][0])).toContain(`/entities/${ALICE.id}/split`);
+    });
+
+    // Confirm prompt disappears on success
+    await waitFor(() => {
+      expect(screen.queryByText(/Undo merge on this entity/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows error alert when split fails", async () => {
+    stubFetch({ splitErr: true });
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Alice"));
+
+    fireEvent.click(screen.getByText("Alice"));
+    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Split" }));
+    await waitFor(() => screen.getByRole("button", { name: /Yes, split/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Yes, split/i }));
+
+    await waitFor(() => {
+      const alerts = screen.getAllByRole("alert");
+      const hasSplitErr = alerts.some(el =>
+        el.textContent?.toLowerCase().includes("split failed") ||
+        el.textContent?.toLowerCase().includes("server"),
+      );
+      expect(hasSplitErr).toBe(true);
     });
   });
 });

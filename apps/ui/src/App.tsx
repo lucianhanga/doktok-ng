@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useState } from "react";
 
 import { ActivityPanel } from "./ActivityPanel";
 import { ChatPanel } from "./ChatPanel";
@@ -56,8 +56,22 @@ const TABS: { id: View; label: string }[] = [
   { id: "settings", label: "Settings" },
 ];
 
+const TAB_IDS = new Set<string>(TABS.map((t) => t.id));
+
+/** The URL hash IS the active section, so the menu items are real links: right-click "Open in new
+ * tab", cmd/middle-click, deep-linking, back/forward all work. "#/chat" -> "chat"; unknown/empty
+ * falls back to overview. */
+function viewFromHash(): View {
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  return TAB_IDS.has(raw) ? (raw as View) : "overview";
+}
+
+function hrefFor(view: View): string {
+  return `#/${view}`;
+}
+
 export default function App() {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(viewFromHash);
   const [openDoc, setOpenDoc] = useState<string | null>(null);
   const [docsNeedsAttention, setDocsNeedsAttention] = useState(false);
   // Unread badge on the Chat tab: set when a backgrounded answer finishes off-tab, cleared on visit.
@@ -65,24 +79,46 @@ export default function App() {
   // The activity event to highlight when opening the Activity tab from the Overview timeline.
   const [activityFocusId, setActivityFocusId] = useState<string | null>(null);
 
-  function go(next: View) {
-    setOpenDoc(null);
-    setDocsNeedsAttention(false);
-    if (next === "chat") setChatUnread(false);
-    if (next !== "activity") setActivityFocusId(null);
-    setView(next);
+  // The hash drives the active section. Reacting to `hashchange` covers link clicks, back/forward,
+  // and a freshly opened tab landing on "#/chat". The per-view side effects that navigation used to
+  // do inline live here so every entry point (link, programmatic, new tab) behaves identically.
+  useEffect(() => {
+    function sync() {
+      const next = viewFromHash();
+      setOpenDoc(null);
+      if (next !== "documents") setDocsNeedsAttention(false);
+      if (next !== "activity") setActivityFocusId(null);
+      if (next === "chat") setChatUnread(false);
+      setView(next);
+    }
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  /** In-app navigation: point the hash at the section; `sync` above applies the state. */
+  function navigate(next: View) {
+    if (viewFromHash() === next) return; // already there (re-click) - nothing to do
+    window.location.hash = hrefFor(next);
+  }
+
+  /** Left-click navigates in-app; modified/middle clicks fall through so the browser can open the
+   * link in a new tab/window (the whole point of making these real anchors). */
+  function onNavClick(e: ReactMouseEvent, next: View) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    navigate(next);
   }
 
   function openActivity(eventId: string) {
-    setOpenDoc(null);
     setActivityFocusId(eventId);
-    setView("activity");
+    if (viewFromHash() === "activity") setView("activity");
+    else window.location.hash = hrefFor("activity"); // sync() keeps the focus id (it only clears off-Activity)
   }
 
   function showPendingFeatures() {
-    setOpenDoc(null);
     setDocsNeedsAttention(true);
-    setView("documents");
+    if (viewFromHash() === "documents") setView("documents");
+    else window.location.hash = hrefFor("documents"); // sync() keeps the flag (only clears off-Documents)
   }
 
   return (
@@ -93,19 +129,19 @@ export default function App() {
             <h1>DokTok NG</h1>
             <nav className="tabs" aria-label="Sections" role="tablist">
               {TABS.map((tab) => (
-                <button
+                <a
                   key={tab.id}
-                  type="button"
                   role="tab"
                   aria-selected={view === tab.id && !openDoc}
                   className={view === tab.id && !openDoc ? "active" : ""}
-                  onClick={() => go(tab.id)}
+                  href={hrefFor(tab.id)}
+                  onClick={(e) => onNavClick(e, tab.id)}
                 >
                   {tab.label}
                   {tab.id === "chat" && chatUnread && view !== "chat" && (
                     <span className="tab-unread" aria-label="new answer" title="New answer ready" />
                   )}
-                </button>
+                </a>
               ))}
             </nav>
             <div className="app-header-end">

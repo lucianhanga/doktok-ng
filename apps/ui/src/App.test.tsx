@@ -7,6 +7,7 @@ import type { HealthStatus } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  window.location.hash = ""; // reset the routing hash so deep-link tests don't bleed
 });
 
 const HEALTH: HealthStatus = {
@@ -42,6 +43,34 @@ test("renders the DokTok NG shell with the Overview landing", async () => {
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Overview" })).toBeInTheDocument(),
   );
+});
+
+test("main-menu sections are real links so the browser can open them in a new tab", async () => {
+  mockRoutes();
+  render(<App />);
+  // Each tab is an <a href="#/section"> (not a button), which is what enables the browser's
+  // "Open in new tab" context menu, cmd/middle-click, and deep-linking.
+  for (const [name, hash] of [
+    ["Overview", "#/overview"],
+    ["Documents", "#/documents"],
+    ["Chat", "#/chat"],
+    ["Activity", "#/activity"],
+    ["Settings", "#/settings"],
+  ] as const) {
+    const link = screen.getByRole("tab", { name });
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", hash);
+  }
+});
+
+test("opens directly on the section named in the URL hash (a fresh tab)", async () => {
+  mockRoutes();
+  window.location.hash = "#/documents"; // as if the tab was opened straight to this link
+  render(<App />);
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Documents" })).toHaveAttribute("aria-selected", "true"),
+  );
+  expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "false");
 });
 
 test("the fixed status bar shows backend health (no Status tab)", async () => {

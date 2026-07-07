@@ -1299,6 +1299,19 @@ export async function retryDocumentFeature(id: string, feature: string): Promise
   }
 }
 
+export async function reprocessAllFeature(
+  feature: string,
+): Promise<{ status: string; count: number }> {
+  const response = await fetch(
+    `/api/v1/documents/features/${encodeURIComponent(feature)}/reprocess-all`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    throw new Error(`Reprocess all request failed: ${response.status}`);
+  }
+  return response.json() as Promise<{ status: string; count: number }>;
+}
+
 /** Re-ingest (re-OCR) a document. profile="enhanced" uses the slower, higher-quality OCR pass. */
 export async function reingestDocument(
   id: string,

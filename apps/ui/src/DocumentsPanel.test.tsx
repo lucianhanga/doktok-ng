@@ -513,3 +513,43 @@ test("a bulk action fans out to every selected id under a bounded concurrency ca
   fireEvent.click(screen.getByText("Delete selected"));
   await waitFor(() => expect(deleted.sort()).toEqual([...ids].sort()));
 });
+
+test("reprocess-all button confirms then calls endpoint and shows returned count", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/v1/features/catalog")) {
+      return new Response(
+        JSON.stringify([{ name: "entities", version: 3, label: "Entities & keywords", description: "..." }]),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/reprocess-all") && init?.method === "POST") {
+      return new Response(JSON.stringify({ status: "queued", count: 7 }), { status: 200 });
+    }
+    if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+    return new Response(JSON.stringify({ items: [], total: 0, next_cursor: null }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByLabelText("Feature to reprocess all")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText("Feature to reprocess all"), {
+    target: { value: "entities" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Reprocess all" }));
+
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("every document"));
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/documents/features/entities/reprocess-all",
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(/Re-queued Entities & keywords for 7 documents/),
+  );
+});

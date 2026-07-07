@@ -49,6 +49,7 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
+from doktok_core.features.catalog import FEATURE_CATALOG
 from doktok_core.features.telemetry import build_processing_summary, build_processing_telemetry
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
@@ -77,6 +78,9 @@ Jobs = Annotated[IngestionJobRepository, Depends(get_job_repository)]
 Audit = Annotated[AuditLogRepository, Depends(get_audit_repository)]
 Records = Annotated[RecordRepository, Depends(get_record_repository)]
 Kg = Annotated[KnowledgeGraphRepository, Depends(get_knowledge_graph_repository)]
+
+# Known reprocessable feature names (validated against incoming requests).
+_CATALOG_FEATURE_NAMES: frozenset[str] = frozenset(spec.name for spec in FEATURE_CATALOG)
 
 # Bytes of extracted text returned inline on the detail card; the full text is fetched lazily.
 _EXCERPT_CHARS = 4000
@@ -452,6 +456,34 @@ def retry_document_feature(
         details={"feature": feature},
     )
     return {"status": "queued"}
+
+
+@router.post("/features/{feature}/reprocess-all")
+def reprocess_all_documents_feature(
+    feature: str, tenant: Tenant, repo: Repo, features: Features, audit: Audit
+) -> dict[str, str | int]:
+    """Re-queue one catalog feature for every document in the tenant's corpus.
+
+    Validates that ``feature`` is a known reprocessable name, then calls
+    ``features.reset`` for each document id in the tenant.  Only successful
+    resets are counted.  A single audit row is written for the bulk action.
+    """
+    if feature not in _CATALOG_FEATURE_NAMES:
+        raise HTTPException(status_code=404, detail="unknown feature")
+    ids, _total, _truncated = repo.list_document_ids(tenant.tenant_id)
+    count = sum(1 for doc_id in ids if features.reset(tenant.tenant_id, doc_id, feature))
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.FEATURE_RETRIED,
+        actor="user",
+        actor_kind="user",
+        description=f"{feature} re-queued for {count} documents",
+        record_kind="feature",
+        record_id=feature,
+        details={"feature": feature, "count": count},
+    )
+    return {"status": "queued", "count": count}
 
 
 def _document_dir(document: Document, files_root: Path) -> Path | None:

@@ -46,6 +46,8 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.RESTORE_REQUESTED.value: ("user", "warning", "Portable restore requested"),
     AuditEventType.RESTORE_COMPLETED.value: ("system", "info", "Portable restore completed"),
     AuditEventType.RESTORE_FAILED.value: ("system", "error", "Portable restore failed"),
+    AuditEventType.ENTITY_MERGED.value: ("user", "info", "Entity merged"),
+    AuditEventType.ENTITY_SPLIT.value: ("user", "info", "Entity split"),
 }
 
 

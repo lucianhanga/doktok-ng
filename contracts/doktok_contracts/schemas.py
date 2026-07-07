@@ -90,6 +90,9 @@ class AuditEventType(StrEnum):
     RESTORE_REQUESTED = "restore.requested"
     RESTORE_COMPLETED = "restore.completed"
     RESTORE_FAILED = "restore.failed"
+    # Knowledge-graph entity resolution actions (user-initiated merge/split, #508).
+    ENTITY_MERGED = "entity.merged"
+    ENTITY_SPLIT = "entity.split"
 
 
 class EntityType(StrEnum):

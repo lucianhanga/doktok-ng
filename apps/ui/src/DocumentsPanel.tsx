@@ -486,13 +486,15 @@ function TitleFilterBar({ value, onChange }: { value: string; onChange: (v: stri
 export function DocumentsPanel({
   onOpenDocument,
   initialNeedsAttention = false,
+  initialCategory = "",
 }: {
   onOpenDocument?: (id: string) => void;
   initialNeedsAttention?: boolean;
+  initialCategory?: string;
 }) {
   const [state, setState] = useState<DocsState>({ kind: "loading" });
   const [categories, setCategories] = useState<CategorySummary[]>([]);
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState(initialCategory);
   const [status, setStatus] = useState("");
   const [needsAttention, setNeedsAttention] = useState(initialNeedsAttention);
   const [unidentifiable, setUnidentifiable] = useState(false);

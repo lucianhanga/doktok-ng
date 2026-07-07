@@ -53,6 +53,7 @@ test("main-menu sections are real links so the browser can open them in a new ta
   for (const [name, hash] of [
     ["Overview", "#/overview"],
     ["Documents", "#/documents"],
+    ["Insights", "#/insights"],
     ["Chat", "#/chat"],
     ["Activity", "#/activity"],
     ["Settings", "#/settings"],

@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { EmbeddingMapPanel } from "./EmbeddingMapPanel";
 import { InfoHint } from "./InfoHint";
-import { KnowledgeGraphPanel } from "./KnowledgeGraphPanel";
-import { MemoryPanel } from "./MemoryPanel";
-import { WordCloudPanel } from "./WordCloudPanel";
 import {
   applyRestore,
   downloadBackupArchive,
@@ -1461,9 +1457,7 @@ export function SettingsPanel() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiTesting, setOpenaiTesting] = useState(false);
   const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [tab, setTab] = useState<
-    "settings" | "models" | "drp" | "memory" | "graph" | "map" | "cloud"
-  >("settings");
+  const [tab, setTab] = useState<"settings" | "models" | "drp">("settings");
   // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
   const [egressError, setEgressError] = useState<string | null>(null);
   const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
@@ -1633,15 +1627,7 @@ export function SettingsPanel() {
       ? "Model stack"
       : tab === "drp"
         ? "DRP"
-        : tab === "memory"
-          ? "Memory"
-          : tab === "graph"
-            ? "Knowledge graph"
-            : tab === "map"
-              ? "Embedding map"
-              : tab === "cloud"
-                ? "Word cloud"
-                : "Settings";
+        : "Settings";
 
   const saveBar = (
     <>
@@ -1698,47 +1684,11 @@ export function SettingsPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "memory"}
-            className={tab === "memory" ? "active" : ""}
-            onClick={() => setTab("memory")}
-          >
-            Memory
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={tab === "drp"}
             className={tab === "drp" ? "active" : ""}
             onClick={() => setTab("drp")}
           >
             DRP
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "graph"}
-            className={tab === "graph" ? "active" : ""}
-            onClick={() => setTab("graph")}
-          >
-            Knowledge graph
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "map"}
-            className={tab === "map" ? "active" : ""}
-            onClick={() => setTab("map")}
-          >
-            Embedding map
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "cloud"}
-            className={tab === "cloud" ? "active" : ""}
-            onClick={() => setTab("cloud")}
-          >
-            Word cloud
           </button>
         </nav>
         <div className="settings-pane">
@@ -2190,10 +2140,6 @@ export function SettingsPanel() {
         ))}
 
           {tab === "drp" && <DrpSection />}
-          {tab === "memory" && <MemoryPanel />}
-          {tab === "graph" && <KnowledgeGraphPanel />}
-          {tab === "map" && <EmbeddingMapPanel />}
-          {tab === "cloud" && <WordCloudPanel />}
         </div>
       </div>
     </section>

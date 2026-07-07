@@ -4,6 +4,7 @@ import { ActivityPanel } from "./ActivityPanel";
 import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
+import { InsightsPanel } from "./InsightsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
@@ -46,11 +47,12 @@ function BackendDot() {
   );
 }
 
-type View = "overview" | "documents" | "chat" | "activity" | "settings";
+type View = "overview" | "documents" | "insights" | "chat" | "activity" | "settings";
 
 const TABS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "documents", label: "Documents" },
+  { id: "insights", label: "Insights" },
   { id: "chat", label: "Chat" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
@@ -60,10 +62,12 @@ const TAB_IDS = new Set<string>(TABS.map((t) => t.id));
 
 /** The URL hash IS the active section, so the menu items are real links: right-click "Open in new
  * tab", cmd/middle-click, deep-linking, back/forward all work. "#/chat" -> "chat"; unknown/empty
- * falls back to overview. */
+ * falls back to overview. Two-segment hashes like "#/insights/map" match on the first segment so
+ * InsightsPanel owns the sub-segment. */
 function viewFromHash(): View {
   const raw = window.location.hash.replace(/^#\/?/, "");
-  return TAB_IDS.has(raw) ? (raw as View) : "overview";
+  const first = raw.split("/")[0] ?? "";
+  return TAB_IDS.has(first) ? (first as View) : "overview";
 }
 
 function hrefFor(view: View): string {
@@ -74,6 +78,8 @@ export default function App() {
   const [view, setView] = useState<View>(viewFromHash);
   const [openDoc, setOpenDoc] = useState<string | null>(null);
   const [docsNeedsAttention, setDocsNeedsAttention] = useState(false);
+  // Category pre-filter set when navigating from the Categories tab to Documents.
+  const [docsCategoryFilter, setDocsCategoryFilter] = useState("");
   // Unread badge on the Chat tab: set when a backgrounded answer finishes off-tab, cleared on visit.
   const [chatUnread, setChatUnread] = useState(false);
   // The activity event to highlight when opening the Activity tab from the Overview timeline.
@@ -87,6 +93,7 @@ export default function App() {
       const next = viewFromHash();
       setOpenDoc(null);
       if (next !== "documents") setDocsNeedsAttention(false);
+      if (next !== "documents") setDocsCategoryFilter("");
       if (next !== "activity") setActivityFocusId(null);
       if (next === "chat") setChatUnread(false);
       setView(next);
@@ -119,6 +126,16 @@ export default function App() {
     setDocsNeedsAttention(true);
     if (viewFromHash() === "documents") setView("documents");
     else window.location.hash = hrefFor("documents"); // sync() keeps the flag (only clears off-Documents)
+  }
+
+  /** Navigate to Documents with an initial category filter pre-applied. */
+  function showCategoryFilter(category: string) {
+    setDocsCategoryFilter(category);
+    if (viewFromHash() !== "documents") {
+      window.location.hash = hrefFor("documents"); // sync() keeps the filter (only clears off-Documents)
+    }
+    // When already on Documents the state change alone triggers a re-render and remounts
+    // DocumentsPanel via the key change (which includes docsCategoryFilter).
   }
 
   return (
@@ -173,10 +190,14 @@ export default function App() {
             )}
             {view === "documents" && (
               <DocumentsPanel
-                key={`docs-${docsNeedsAttention}`}
+                key={`docs-${docsNeedsAttention}-${docsCategoryFilter}`}
                 onOpenDocument={setOpenDoc}
                 initialNeedsAttention={docsNeedsAttention}
+                initialCategory={docsCategoryFilter}
               />
+            )}
+            {view === "insights" && (
+              <InsightsPanel onFilterByCategory={showCategoryFilter} />
             )}
             {/* Chat stays MOUNTED across tab switches (hidden when inactive) so a streamed answer
                 keeps running in the background and the transcript survives; an answer that finishes

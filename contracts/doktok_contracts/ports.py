@@ -608,8 +608,10 @@ class CategoryRepository(Protocol):
     def primary_categories(self, tenant_id: str, document_ids: list[str]) -> dict[str, str]:
         """Map each document to its single primary category name, for embedding-map coloring (M7.1).
 
-        The primary is the linked category with the highest tenant-wide document count (name as
-        tiebreak). Documents with no category are omitted (the caller colors them 'Uncategorized').
+        The primary is the rank-0 category as stored by set_document_categories (the first element
+        of the category_ids list, i.e. the classifier's most-confident label).  Name is the
+        tiebreak for backfilled rows that share rank 0.  Documents with no active category are
+        omitted (the caller colors them 'Uncategorized').
         """
         ...
 

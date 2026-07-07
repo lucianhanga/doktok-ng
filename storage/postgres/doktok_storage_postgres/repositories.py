@@ -1972,11 +1972,12 @@ class PostgresCategoryRepository:
                 "DELETE FROM document_category_links WHERE tenant_id=%s AND document_id=%s",
                 (tenant_id, document_id),
             )
-            for category_id in category_ids:
+            for rank, category_id in enumerate(category_ids):
                 conn.execute(
-                    "INSERT INTO document_category_links (tenant_id, document_id, category_id) "
-                    "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
-                    (tenant_id, document_id, category_id),
+                    "INSERT INTO document_category_links "
+                    "(tenant_id, document_id, category_id, rank) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    (tenant_id, document_id, category_id, rank),
                 )
 
     def list_for_document(self, tenant_id: str, document_id: str) -> list[Category]:
@@ -2022,21 +2023,18 @@ class PostgresCategoryRepository:
     def primary_categories(self, tenant_id: str, document_ids: list[str]) -> dict[str, str]:
         if not document_ids:
             return {}
-        # Rank each doc's categories by tenant-wide document count (name tiebreak); keep the top.
+        # Pick each document's lowest-rank category (rank 0 = classifier's primary intent).
+        # Name is the tiebreak for backfilled rows that share rank 0.
         with self._db.connection() as conn:
             rows = conn.execute(
-                "WITH counts AS ("
-                "  SELECT category_id, count(*) AS dc FROM document_category_links "
-                "  WHERE tenant_id=%s GROUP BY category_id"
-                "), ranked AS ("
+                "WITH ranked AS ("
                 "  SELECT l.document_id, c.name, row_number() OVER ("
-                "    PARTITION BY l.document_id ORDER BY co.dc DESC, c.name ASC) AS rn "
+                "    PARTITION BY l.document_id ORDER BY l.rank ASC, c.name ASC) AS rn "
                 "  FROM document_category_links l "
                 "  JOIN categories c ON c.id = l.category_id AND c.status='active' "
-                "  JOIN counts co ON co.category_id = l.category_id "
                 "  WHERE l.tenant_id=%s AND l.document_id = ANY(%s)"
                 ") SELECT document_id, name FROM ranked WHERE rn = 1",
-                (tenant_id, tenant_id, list(document_ids)),
+                (tenant_id, list(document_ids)),
             ).fetchall()
         return {r[0]: r[1] for r in rows}
 

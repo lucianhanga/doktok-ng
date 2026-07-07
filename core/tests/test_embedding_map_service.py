@@ -78,7 +78,7 @@ def test_map_colors_points_by_primary_category_with_snippets() -> None:
     assert result.computed is True and result.dim == 2 and len(result.points) == 3
     by_doc = {p.document_id: p for p in result.points}
     assert by_doc["d0"].category == "Invoices"
-    assert by_doc["d1"].category == "Invoices"  # primary = higher tenant-wide count (Invoices=2)
+    assert by_doc["d1"].category == "Invoices"  # primary = rank-0 (Invoices passed first)
     assert by_doc["d2"].category == UNCATEGORIZED
     # Snippets are present and capped.
     assert by_doc["d0"].snippet and len(by_doc["d0"].snippet) <= 21
@@ -127,3 +127,55 @@ def test_recompute_request_shows_as_pending() -> None:
     service.request_recompute(TENANT)
     assert service.get_status(TENANT).recompute_pending is True
     assert service.get_map(TENANT, 2).recompute_pending is True
+
+
+def test_map_distinct_categories_for_different_rank_zero() -> None:
+    """Two docs with different rank-0 categories must produce two distinct point categories.
+
+    This is the regression guard for issue #496: when a generic label (e.g. 'Internal
+    Communication') is attached to more documents than a specific label ('Finance'), the
+    old tenant-wide-count logic collapsed every document's primary to that generic label.
+    The new rank-based logic must return each document's own rank-0 label instead.
+    """
+    chunks = InMemoryChunkRepository()
+    chunk_objs = [
+        DocumentChunk(
+            id=f"cx{i}",
+            tenant_id=TENANT,
+            document_id=f"dx{i}",
+            version_id="v1",
+            text=f"content of document {i} " * 30,
+        )
+        for i in range(2)
+    ]
+    chunks.add_chunks(chunk_objs, [[float(i), 1.0, 0.0] for i in range(2)])
+
+    categories = InMemoryCategoryRepository()
+    internal = categories.create(TENANT, "Internal Communication", "internal communication")
+    finance = categories.create(TENANT, "Finance", "finance")
+    assert internal and finance
+
+    # dx0: rank-0 = Finance (minority label - only 1 doc)
+    # dx1: rank-0 = Internal Communication (globally most common - also linked to dx0 as rank-1)
+    categories.set_document_categories(TENANT, "dx0", [finance.id, internal.id])
+    categories.set_document_categories(TENANT, "dx1", [internal.id])
+
+    projections = InMemoryEmbeddingProjectionRepository()
+    requests = InMemoryProjectionRequestRepository()
+    ProjectionService(chunks, FakeProjector(), projections, algorithm="umap").recompute(TENANT)
+    service = EmbeddingMapService(
+        projections, chunks, categories, requests, algorithm="umap", snippet_chars=20
+    )
+
+    result = service.get_map(TENANT, 2)
+    by_doc = {p.document_id: p for p in result.points}
+
+    # dx0's primary must be Finance (its rank-0), not Internal Communication (globally more common).
+    assert by_doc["dx0"].category == "Finance"
+    assert by_doc["dx1"].category == "Internal Communication"
+
+    legend_names = {e.category for e in result.legend}
+    assert "Finance" in legend_names
+    assert "Internal Communication" in legend_names
+    # Both categories are distinct in the legend - map does not collapse to one color.
+    assert len(legend_names) == 2

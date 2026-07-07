@@ -76,3 +76,49 @@ def test_document_cap_trigger_blocks_6th_link(db: Database) -> None:
             "VALUES (%s, %s, %s)",
             (TENANT, "dc6", ids[5]),
         )
+
+
+def test_set_document_categories_stores_rank_in_list_order(db: Database) -> None:
+    """Ranks written by set_document_categories match the position in the input list."""
+    docs = PostgresDocumentRepository(db)
+    cats = PostgresCategoryRepository(db)
+    _doc(docs, "dr1")
+    finance = cats.create(TENANT, "Finance", "finance")
+    internal = cats.create(TENANT, "Internal Communication", "internal communication")
+    assert finance and internal
+
+    # Finance at index 0 -> rank 0; Internal Communication at index 1 -> rank 1.
+    cats.set_document_categories(TENANT, "dr1", [finance.id, internal.id])
+    with db.connection() as conn:
+        rows = conn.execute(
+            "SELECT category_id, rank FROM document_category_links "
+            "WHERE tenant_id=%s AND document_id=%s ORDER BY rank",
+            (TENANT, "dr1"),
+        ).fetchall()
+    assert rows[0] == (finance.id, 0)
+    assert rows[1] == (internal.id, 1)
+
+
+def test_primary_categories_returns_rank_zero_not_globally_most_common(db: Database) -> None:
+    """primary_categories must respect each doc's rank-0 label, not the tenant-wide count."""
+    docs = PostgresDocumentRepository(db)
+    cats = PostgresCategoryRepository(db)
+    _doc(docs, "dp1")
+    _doc(docs, "dp2")
+    _doc(docs, "dp3")
+    _doc(docs, "dp4")
+    finance = cats.create(TENANT, "Finance", "finance")
+    internal = cats.create(TENANT, "Internal Communication", "internal communication")
+    assert finance and internal
+
+    # dp1: rank-0 = Finance (minority label)
+    # dp2, dp3, dp4: rank-0 = Internal Communication (globally most common)
+    cats.set_document_categories(TENANT, "dp1", [finance.id, internal.id])
+    cats.set_document_categories(TENANT, "dp2", [internal.id])
+    cats.set_document_categories(TENANT, "dp3", [internal.id])
+    cats.set_document_categories(TENANT, "dp4", [internal.id])
+
+    primary = cats.primary_categories(TENANT, ["dp1", "dp2"])
+    # dp1's primary must be Finance even though Internal Communication is globally more common.
+    assert primary["dp1"] == "Finance"
+    assert primary["dp2"] == "Internal Communication"

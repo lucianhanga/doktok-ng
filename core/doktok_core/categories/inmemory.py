@@ -109,9 +109,9 @@ class InMemoryCategoryRepository:
         return []
 
     def primary_categories(self, tenant_id: str, document_ids: list[str]) -> dict[str, str]:
-        # Rank categories by tenant-wide document count (name tiebreak), then pick each document's
-        # highest-ranked linked category - mirrors the Postgres window query.
-        rank = {s.name: i for i, s in enumerate(self.list_summary(tenant_id))}
+        # Pick each document's rank-0 category: the first entry in the stored list, which mirrors
+        # the classifier's intended primary.  Mirrors the Postgres ORDER BY l.rank ASC / rn=1
+        # window query; name tiebreak is not needed here because the list position is authoritative.
         wanted = set(document_ids)
         result: dict[str, str] = {}
         for (tid, doc), ids in self._links.items():
@@ -119,5 +119,5 @@ class InMemoryCategoryRepository:
                 continue
             names = [self._cats[i].name for i in ids if i in self._cats]
             if names:
-                result[doc] = min(names, key=lambda n: (rank.get(n, len(rank)), n))
+                result[doc] = names[0]
         return result

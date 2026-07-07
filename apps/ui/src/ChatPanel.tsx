@@ -33,6 +33,20 @@ const RIGHT_PANE_KEY = "doktok.chat.rightPaneCollapsed";
 const LAST_THREAD_KEY = "doktok.chat.lastThread";
 // Chat mode (classic RAG vs agent tool loop); both stream. Persisted across sessions.
 const CHAT_MODE_KEY = "doktok.chat.mode";
+// Composer draft: persist the unsent text in sessionStorage (tab-scoped, like personalAI's
+// DRAFT_KEY) so it survives remount/reload. Cleared on successful send.
+const DRAFT_KEY = "doktok.chat.composerDraft";
+
+function loadDraft(): string {
+  try { return sessionStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; }
+}
+
+function saveDraft(v: string): void {
+  try {
+    if (v) sessionStorage.setItem(DRAFT_KEY, v);
+    else sessionStorage.removeItem(DRAFT_KEY);
+  } catch { /* best-effort */ }
+}
 
 /** The shared right rail: closed, a turn's sources, retrieve-only "explore" evidence, or a
  * document preview. */
@@ -291,6 +305,51 @@ function InlineReasoningDetails({
   );
 }
 
+/** Collapsed-by-default context breakdown under the assistant answer footer (personalAI
+ * MessageContext parity). Shows per-turn context window composition from turn.metrics.context. */
+function InlineContextDisclosure({ metrics }: { metrics: TurnMetrics | null }): React.ReactElement | null {
+  const [open, setOpen] = useState(false);
+
+  const segs = metrics?.context ?? [];
+  const limit = metrics?.context_limit ?? 0;
+  if (segs.length === 0) return null;
+
+  const total = segs.reduce((s, x) => s + x.tokens, 0);
+  const pct = limit > 0 ? Math.round((total / limit) * 100) : null;
+  const summary = `Context (~${fmtTokens(total)} tok${pct != null ? `, ${pct}%` : ""})`;
+
+  return (
+    <div className="chat-inline-context" data-testid="inline-context">
+      <button
+        type="button"
+        className="chat-inline-context-toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label={open ? "Collapse context breakdown" : "Show context breakdown"}
+      >
+        {open ? "▾" : "▸"} {summary}
+      </button>
+      {open && (
+        <div className="chat-inline-context-body">
+          <ul className="chat-inline-context-segs">
+            {segs.map((seg) => (
+              <li key={seg.label}>
+                <span>{seg.label}</span>
+                <span>~{fmtTokens(seg.tokens)}</span>
+              </li>
+            ))}
+          </ul>
+          {pct != null && (
+            <p className="muted chat-inline-context-total">
+              {fmtTokens(total)} / {fmtTokens(limit)} tokens ({pct}% of budget)
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The per-turn ranked candidate chunks (M8 #4/#7): winners first, with RRF score + rank %. */
 function AnswerBlock({
   turn,
@@ -302,6 +361,7 @@ function AnswerBlock({
   onCopyQuestion,
   canModify = false,
   showReasoning = true,
+  turnsToRemove = 1,
 }: {
   turn: TurnView;
   onOpenDocument?: (id: string) => void;
@@ -314,9 +374,18 @@ function AnswerBlock({
   canModify?: boolean;
   /** Mirror the "Show reasoning" toggle so the inline disclosure respects the user's preference. */
   showReasoning?: boolean;
+  /** Number of turns (this + all later ones) removed when Edit/Delete is confirmed. */
+  turnsToRemove?: number;
 }) {
   const [questionExpanded, setQuestionExpanded] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingEdit, setConfirmingEdit] = useState(false);
+  const confirmCancelRef = useRef<HTMLButtonElement>(null);
+  // Focus the Cancel button when a confirm dialog opens so accidental Enter dismisses it.
+  useEffect(() => {
+    if (confirmingDelete || confirmingEdit) confirmCancelRef.current?.focus();
+  }, [confirmingDelete, confirmingEdit]);
   const isLongQuestion = turn.question.length > 200;
   // Map citation index -> document, so a clicked [n] marker in the answer opens that document.
   const citeMap = new Map(turn.citations.map((c) => [c.index, c.document_id]));
@@ -393,7 +462,7 @@ function AnswerBlock({
                 className="chat-q-action link-button"
                 aria-label="Edit this question and resubmit"
                 title="Edit & resubmit"
-                onClick={onEdit}
+                onClick={() => setConfirmingEdit(true)}
               >
                 &#9998;
               </button>
@@ -404,7 +473,7 @@ function AnswerBlock({
                 className="chat-q-action link-button"
                 aria-label="Delete this question and everything after it"
                 title="Delete from here"
-                onClick={onDelete}
+                onClick={() => setConfirmingDelete(true)}
               >
                 &times;
               </button>
@@ -420,6 +489,54 @@ function AnswerBlock({
           >
             {questionExpanded ? "Show less" : "Show more"}
           </button>
+        )}
+        {confirmingDelete && canModify && (
+          <div className="chat-q-confirm chat-q-confirm--delete" role="dialog" aria-label="Confirm delete">
+            <span className="chat-q-confirm-text">
+              {turnsToRemove === 1
+                ? "Delete this question and its answer? This can't be undone."
+                : `Delete this and ${turnsToRemove - 1} later turn(s)? This can't be undone.`}
+            </span>
+            <button
+              type="button"
+              className="chat-q-confirm-btn chat-q-confirm-btn--danger"
+              onClick={() => { setConfirmingDelete(false); onDelete?.(); }}
+            >
+              Delete {turnsToRemove} turn{turnsToRemove === 1 ? "" : "s"}
+            </button>
+            <button
+              type="button"
+              ref={confirmCancelRef}
+              className="chat-q-confirm-btn"
+              onClick={() => setConfirmingDelete(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {confirmingEdit && canModify && (
+          <div className="chat-q-confirm" role="dialog" aria-label="Confirm edit">
+            <span className="chat-q-confirm-text">
+              {turnsToRemove === 1
+                ? "Resubmit will replace this question's current answer."
+                : `Resubmit will remove ${turnsToRemove - 1} later turn(s) and their answers.`}
+            </span>
+            <button
+              type="button"
+              className="chat-q-confirm-btn"
+              onClick={() => { setConfirmingEdit(false); onEdit?.(); }}
+            >
+              Edit &amp; resubmit
+            </button>
+            <button
+              type="button"
+              ref={confirmCancelRef}
+              className="chat-q-confirm-btn"
+              onClick={() => setConfirmingEdit(false)}
+            >
+              Cancel
+            </button>
+          </div>
         )}
       </div>
       {!collapsed && (
@@ -497,6 +614,9 @@ function AnswerBlock({
               {fmtTokens(metricsTotalTokens(turn.metrics))} tok ·{" "}
               {fmtMs(turn.metrics.total_ms ?? 0)}
             </p>
+          )}
+          {!turn.streaming && (
+            <InlineContextDisclosure metrics={turn.metrics} />
           )}
         </>
       )}
@@ -696,7 +816,7 @@ export function ChatPanel({
   active?: boolean; // false when the Chat tab is not the visible one
   onBackgroundDone?: () => void; // called when a streamed answer finishes while inactive (off-tab)
 }) {
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(() => loadDraft());
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
@@ -708,6 +828,10 @@ export function ChatPanel({
   useEffect(() => {
     saveJSON(CHAT_MODE_KEY, chatMode);
   }, [chatMode]);
+  // Persist the composer draft so it survives remount or page reload (clears on successful send).
+  useEffect(() => {
+    saveDraft(question);
+  }, [question]);
   // Long-term memory (ADR-0022): recall facts from past chats + store one. On by default; turn off
   // (or use Incognito) for a private conversation that neither recalls nor stores memory.
   const [remember, setRemember] = useState(true);
@@ -1216,6 +1340,7 @@ export function ChatPanel({
                   onDelete={() => deleteQuestion(i)}
                   onCopyQuestion={() => setQuestion(turn.question)}
                   showReasoning={showReasoning}
+                  turnsToRemove={exchanges.length - i}
                 />
               </li>
             ))}

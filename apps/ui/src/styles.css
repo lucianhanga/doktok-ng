@@ -2731,6 +2731,10 @@ tr.row-selected {
   font-size: 1rem;
   line-height: 1;
   padding: 0 0.25rem;
+  /* Hover-reveal (#494 item 1): hidden by default on hover-capable pointers; revealed by the
+     parent row's :hover or :focus-within so keyboard users see the buttons on Tab. */
+  opacity: 0;
+  transition: opacity 0.12s;
 }
 .chat-q-action:hover {
   color: var(--accent, #6ea8fe);
@@ -2738,6 +2742,109 @@ tr.row-selected {
 .chat-q-action[aria-label^="Delete"]:hover {
   color: var(--danger, #d9534f);
 }
+/* Reveal on parent hover or any descendant focus (keyboard reachability). */
+.chat-question-row:hover .chat-q-action,
+.chat-question-row:focus-within .chat-q-action {
+  opacity: 1;
+}
+/* Touch / coarse-pointer devices have no hover — keep buttons always visible. */
+@media (hover: none) {
+  .chat-q-action {
+    opacity: 1;
+  }
+}
+
+/* Inline delete/edit confirm (#494 item 2): appears inside the question bubble on action click. */
+.chat-q-confirm {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.chat-q-confirm--delete {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+}
+.chat-q-confirm-text {
+  flex: 1;
+  min-width: 10rem;
+}
+.chat-q-confirm-btn {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+}
+.chat-q-confirm-btn:hover {
+  background: var(--hover-fill);
+}
+.chat-q-confirm-btn--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+}
+.chat-q-confirm-btn--danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* Inline context breakdown disclosure (#494 item 3): collapsed toggle + per-segment list. */
+.chat-inline-context {
+  margin-top: 0.2rem;
+}
+.chat-inline-context-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-family: inherit;
+  line-height: 1.4;
+}
+.chat-inline-context-toggle:hover {
+  color: var(--text);
+}
+.chat-inline-context-body {
+  margin-top: 0.2rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+}
+.chat-inline-context-segs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.chat-inline-context-segs li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.chat-inline-context-total {
+  margin: 0.25rem 0 0;
+  font-size: 0.7rem;
+}
+
 .chat-rewritten {
   margin: 0;
   font-style: italic;

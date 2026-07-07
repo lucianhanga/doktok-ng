@@ -9,6 +9,8 @@ afterEach(() => {
   // ChatPanel persists the active thread id in localStorage (auto-restore on return); clear it so
   // it does not bleed across tests and auto-open a thread the next test did not intend.
   localStorage.clear();
+  // Clear the composer draft (sessionStorage) so tests do not see each other's draft state.
+  sessionStorage.clear();
 });
 
 /** Build one SSE frame: a `data:` line carrying the event JSON, the way the backend emits it. */
@@ -806,8 +808,11 @@ test("delete a question truncates the thread from that turn", async () => {
   await userEvent.click(screen.getByText("prior"));
   await waitFor(() => expect(screen.getByText(/second question/)).toBeInTheDocument());
 
-  // Delete the second turn -> truncate from its user message; the first turn survives.
+  // Delete the second turn: first click shows the inline confirm, then confirm to actually delete.
   await userEvent.click(screen.getAllByRole("button", { name: /Delete this question/ })[1]);
+  // The inline confirm appears; "Delete 1 turn" is the confirm action button.
+  expect(screen.getByRole("dialog", { name: "Confirm delete" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Delete 1 turn/ }));
   await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
   expect(screen.queryByText(/second question/)).not.toBeInTheDocument();
   expect(screen.getByText(/first question/)).toBeInTheDocument();
@@ -821,7 +826,10 @@ test("edit a question truncates and loads it back into the input", async () => {
   await userEvent.click(screen.getByText("prior"));
   await waitFor(() => expect(screen.getByText(/second question/)).toBeInTheDocument());
 
+  // Edit the second turn: first click shows the inline confirm, then confirm to edit & resubmit.
   await userEvent.click(screen.getAllByRole("button", { name: /Edit this question/ })[1]);
+  expect(screen.getByRole("dialog", { name: "Confirm edit" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Edit & resubmit/ }));
   await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
   // The edited question is loaded back into the ask box for editing + resubmission.
   expect(screen.getByLabelText("Question")).toHaveValue("second question");
@@ -1142,4 +1150,154 @@ test("reasoning is not shown in the activity pane (it is inline in the transcrip
   expect(screen.getByText(/Some reasoning\./)).toBeInTheDocument();
   // The inline disclosure is in the transcript, not the activity pane.
   expect(screen.getByTestId("inline-details")).toBeInTheDocument();
+});
+
+// --- Issue #494: personalAI-parity quick wins ---
+
+test("action buttons are always in the DOM for keyboard/SR access (hover-reveal is CSS-only)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("Answer.")).toBeInTheDocument());
+
+  // The Copy/Edit/Delete buttons must be in the DOM (always, for keyboard access).
+  // CSS opacity hides them visually on hover-capable pointers; jsdom does not apply CSS.
+  expect(screen.getByRole("button", { name: "Copy to composer" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Edit this question and resubmit" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Delete this question and everything after it" })).toBeInTheDocument();
+  // Each button carries the css class used for the opacity transition.
+  expect(screen.getByRole("button", { name: "Copy to composer" })).toHaveClass("chat-q-action");
+  expect(screen.getByRole("button", { name: "Edit this question and resubmit" })).toHaveClass("chat-q-action");
+  expect(screen.getByRole("button", { name: "Delete this question and everything after it" })).toHaveClass("chat-q-action");
+});
+
+test("delete shows inline confirm with turn count before truncating", async () => {
+  const deletes: string[] = [];
+  vi.stubGlobal("fetch", stubResumeThread((u) => deletes.push(u)));
+  render(<ChatPanel />);
+  await waitFor(() => expect(screen.getByText("prior")).toBeInTheDocument());
+  await userEvent.click(screen.getByText("prior"));
+  await waitFor(() => expect(screen.getByText(/first question/)).toBeInTheDocument());
+
+  // Delete the FIRST turn (index 0) so turnsToRemove=2: confirms count includes all later turns.
+  await userEvent.click(screen.getAllByRole("button", { name: /Delete this question/ })[0]);
+  const dialog = screen.getByRole("dialog", { name: "Confirm delete" });
+  // The confirm text mentions "1 later turn(s)" (the second turn).
+  expect(dialog).toHaveTextContent(/1 later turn/);
+  // The action button says "Delete 2 turns" (this + 1 later).
+  expect(screen.getByRole("button", { name: /Delete 2 turns/ })).toBeInTheDocument();
+
+  // Cancelling the confirm does NOT truncate.
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(deletes).toHaveLength(0);
+  expect(screen.getByText(/first question/)).toBeInTheDocument();
+
+  // Clicking delete on the last turn (index 1) gives turnsToRemove=1, button says "Delete 1 turn".
+  await userEvent.click(screen.getAllByRole("button", { name: /Delete this question/ })[1]);
+  expect(screen.getByRole("button", { name: /Delete 1 turn/ })).toBeInTheDocument();
+  // Confirming triggers the actual truncation.
+  await userEvent.click(screen.getByRole("button", { name: /Delete 1 turn/ }));
+  await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
+});
+
+test("inline context disclosure renders and toggles when metrics have context", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer [1]." }),
+        frame("sources", { citations: [] }),
+        frame("metrics", {
+          metrics: {
+            prompt_tokens: 300,
+            answer_tokens: 50,
+            reasoning_tokens: 0,
+            overhead_tokens: 0,
+            reasoning_ms: 0,
+            answer_ms: 0,
+            total_ms: 900,
+            reused_previous_results: false,
+            estimated: false,
+            context_limit: 32768,
+            context: [
+              { label: "Instructions", chars: 400, tokens: 100 },
+              { label: "Tool: retrieve_passages", chars: 800, tokens: 200 },
+            ],
+          },
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "ctx?{Enter}");
+  await waitFor(() => expect(screen.getByText("Answer [1].")).toBeInTheDocument());
+
+  // The context disclosure toggle is present and starts collapsed.
+  const toggle = screen.getByTestId("inline-context");
+  expect(toggle).toBeInTheDocument();
+  const expandBtn = screen.getByRole("button", { name: "Show context breakdown" });
+  expect(expandBtn).toHaveAttribute("aria-expanded", "false");
+  // Context segments are not visible yet.
+  expect(screen.queryByText("Instructions")).not.toBeInTheDocument();
+
+  // Expanding reveals the context segments.
+  await userEvent.click(expandBtn);
+  expect(screen.getByRole("button", { name: "Collapse context breakdown" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(screen.getByText("Instructions")).toBeInTheDocument();
+  expect(screen.getByText("Tool: retrieve_passages")).toBeInTheDocument();
+
+  // Collapsing hides the segments again.
+  await userEvent.click(screen.getByRole("button", { name: "Collapse context breakdown" }));
+  expect(screen.queryByText("Instructions")).not.toBeInTheDocument();
+});
+
+test("composer draft restores from sessionStorage on remount", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  // Seed the draft before mounting.
+  sessionStorage.setItem("doktok.chat.composerDraft", "saved draft text");
+
+  render(<ChatPanel />);
+  // The textarea must be initialised with the persisted draft.
+  expect(screen.getByLabelText("Question")).toHaveValue("saved draft text");
+});
+
+test("composer draft is cleared after a successful send", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Reply." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "draft question");
+  // Draft is persisted to sessionStorage as the user types.
+  expect(sessionStorage.getItem("doktok.chat.composerDraft")).toBe("draft question");
+
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("Reply.")).toBeInTheDocument());
+
+  // After a successful send the textarea is cleared and the draft key is removed.
+  expect(screen.getByLabelText("Question")).toHaveValue("");
+  expect(sessionStorage.getItem("doktok.chat.composerDraft")).toBeNull();
 });

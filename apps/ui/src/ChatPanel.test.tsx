@@ -1301,3 +1301,141 @@ test("composer draft is cleared after a successful send", async () => {
   expect(screen.getByLabelText("Question")).toHaveValue("");
   expect(sessionStorage.getItem("doktok.chat.composerDraft")).toBeNull();
 });
+
+// --- Multi-agent trace enrichments (issue #495) ---
+
+test("selecting Multi mode sends agent_mode=multi on the stream request", async () => {
+  let streamBody: Record<string, unknown> | null = null;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      streamBody = JSON.parse((init?.body as string) ?? "{}");
+      return sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "Multi answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.selectOptions(screen.getByLabelText("Chat mode"), "multi");
+  await userEvent.type(screen.getByLabelText("Question"), "multi test?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Multi answer.")).toBeInTheDocument());
+  expect(streamBody!.agent_mode).toBe("multi");
+});
+
+test("step with role renders agent tag in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", { trace_step: { kind: "plan", label: "Planning answer", role: "planner" } }),
+        frame("token", { delta: "Plan answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "multi question?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Plan answer.")).toBeInTheDocument());
+  // The inline disclosure is open while streaming and stays open after done.
+  // A role=planner step should emit a "Planner" role header in the inline details.
+  // (The step label also appears in the composition bar and the Activity pane — use testid.)
+  expect(screen.getByTestId("inline-role-header")).toHaveTextContent("Planner");
+  expect(screen.getByTestId("inline-role-header")).toHaveStyle({ color: "#1558b0" });
+});
+
+test("verification step with verdict=pass renders green badge in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", {
+          trace_step: { kind: "verification", label: "Verifying", role: "verifier", verdict: "pass" },
+        }),
+        frame("token", { delta: "Verified answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "verify this?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Verified answer.")).toBeInTheDocument());
+  const badge = screen.getByTestId("verdict-badge");
+  expect(badge).toHaveTextContent("pass");
+  expect(badge).toHaveStyle({ color: "#1a7f37" });
+});
+
+test("verification step with verdict=fail renders red badge in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", {
+          trace_step: { kind: "verification", label: "Verifying", role: "verifier", verdict: "fail" },
+        }),
+        frame("token", { delta: "Failed answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "fail verify?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Failed answer.")).toBeInTheDocument());
+  const badge = screen.getByTestId("verdict-badge");
+  expect(badge).toHaveTextContent("fail");
+  expect(badge).toHaveStyle({ color: "#b00020" });
+});
+
+test("draft step shows attempt N dimmed when superseded in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", {
+          trace_step: { kind: "draft", label: "Draft answer", role: "researcher", attempt: 1 },
+        }),
+        frame("step", {
+          trace_step: { kind: "draft", label: "Draft answer", role: "researcher", attempt: 2 },
+        }),
+        frame("token", { delta: "Final answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "draft test?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Final answer.")).toBeInTheDocument());
+  // Attempt 1 is superseded; attempt 2 is the current draft.
+  // Use testids to scope to the inline details (attempt labels also appear in the Activity pane).
+  const supersededEl = screen.getByTestId("draft-step-superseded");
+  expect(supersededEl).toBeInTheDocument();
+  expect(supersededEl).toHaveTextContent(/attempt 1/);
+  const currentEl = screen.getByTestId("draft-step-current");
+  expect(currentEl).toBeInTheDocument();
+  expect(currentEl).toHaveTextContent(/attempt 2/);
+});

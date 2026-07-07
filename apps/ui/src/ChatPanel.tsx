@@ -243,6 +243,130 @@ function SourcesList({
   );
 }
 
+// Per-role agent tag colors for the multi-agent trace (issue #495). Adapted from personalAI's
+// AGENT palette: planner=royal-blue, researcher=slate-gray, critic=amber, verifier=rose.
+const ROLE_COLORS: Record<string, string> = {
+  planner:    "#1558b0",
+  researcher: "#6b7280",
+  critic:     "#b06f00",
+  verifier:   "#c2185b",
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  planner:    "Planner",
+  researcher: "Researcher",
+  critic:     "Critic",
+  verifier:   "Verifier",
+};
+
+// Verdict badge colors: reserved semantic hues distinct from role identity colors.
+// pass=success-green, revise=warning-amber, fail=danger-red (mirrors personalAI's TRACE.ok/err).
+const VERDICT_COLORS: Record<string, string> = {
+  pass:   "#1a7f37",
+  revise: "#b06f00",
+  fail:   "#b00020",
+};
+
+/** Inline step list with multi-agent enrichments: role-change headers, verdict badges, draft
+ * dimming, and stage heartbeat muting. Replaces the plain label-only step rows (issue #495). */
+function EnrichedStepList({ steps }: { steps: TraceStep[] }): React.ReactElement {
+  // Find the last draft step index so all earlier drafts can be marked superseded.
+  let lastDraftIdx = -1;
+  for (let j = steps.length - 1; j >= 0; j--) {
+    if (steps[j].kind === "draft") { lastDraftIdx = j; break; }
+  }
+
+  const rows: React.ReactElement[] = [];
+  let prevRole: string | null = null;
+
+  steps.forEach((step, i) => {
+    const role = step.role ?? null;
+
+    // Insert a role header whenever the agent changes (non-null role only).
+    if (role !== null && role !== prevRole) {
+      rows.push(
+        <div
+          key={`rh-${i}`}
+          className="chat-inline-role-header"
+          style={{ color: ROLE_COLORS[role] ?? "#6b7280" }}
+          data-testid="inline-role-header"
+        >
+          {ROLE_LABELS[role] ?? role}
+        </div>,
+      );
+    }
+    prevRole = role;
+
+    if (step.kind === "stage") {
+      rows.push(
+        <div key={i} className="chat-inline-step chat-inline-step--stage">
+          <span className="chat-inline-step-label">{step.label}…</span>
+        </div>,
+      );
+      return;
+    }
+
+    if (step.kind === "draft") {
+      const isSuperseded = lastDraftIdx !== -1 && i !== lastDraftIdx;
+      const draftLabel =
+        step.attempt != null
+          ? `${step.label} · attempt ${step.attempt}`
+          : step.label;
+      rows.push(
+        <div
+          key={i}
+          className={`chat-inline-step${isSuperseded ? " chat-inline-step--draft-superseded" : ""}`}
+          data-testid={isSuperseded ? "draft-step-superseded" : "draft-step-current"}
+        >
+          <span className="chat-inline-step-label">{draftLabel}</span>
+          {isSuperseded && (
+            <span className="chat-inline-step-detail muted"> (superseded)</span>
+          )}
+          {step.detail && !isSuperseded && (
+            <span className="chat-inline-step-detail muted"> · {step.detail}</span>
+          )}
+        </div>,
+      );
+      return;
+    }
+
+    if (step.kind === "verification") {
+      const verdict = step.verdict ?? null;
+      const verdictColor = verdict ? (VERDICT_COLORS[verdict] ?? "#6b7280") : undefined;
+      rows.push(
+        <div key={i} className="chat-inline-step" data-testid="verification-step">
+          <span className="chat-inline-step-label">{step.label}</span>
+          {verdict && (
+            <span
+              className="chat-inline-verdict-badge"
+              data-testid="verdict-badge"
+              style={{ color: verdictColor, fontWeight: 600 }}
+            >
+              {" "}({verdict})
+            </span>
+          )}
+          {step.detail && (
+            <span className="chat-inline-step-detail muted"> · {step.detail}</span>
+          )}
+        </div>,
+      );
+      return;
+    }
+
+    // Default: all other kinds (plan, retrieval, compose, finalize, understand, recall, …)
+    rows.push(
+      <div key={i} className="chat-inline-step">
+        <span className="chat-inline-step-label">{step.label}</span>
+        {step.detail && (
+          <span className="chat-inline-step-detail muted"> · {step.detail}</span>
+        )}
+      </div>,
+    );
+  });
+
+  return <div className="chat-inline-steps">{rows}</div>;
+}
+
 /**
  * Collapsible per-answer inline disclosure (personalAI MessageDetails parity): the model's
  * reasoning text + step trace shown inline under the assistant answer, BEFORE the Markdown body.
@@ -287,18 +411,7 @@ function InlineReasoningDetails({
       {open && (
         <div className="chat-inline-details-body">
           {hasReasoning && <ReasoningPanel text={reasoning} />}
-          {hasSteps && (
-            <div className="chat-inline-steps">
-              {steps.map((step, i) => (
-                <div key={i} className="chat-inline-step">
-                  <span className="chat-inline-step-label">{step.label}</span>
-                  {step.detail && (
-                    <span className="chat-inline-step-detail muted"> · {step.detail}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {hasSteps && <EnrichedStepList steps={steps} />}
         </div>
       )}
     </div>
@@ -820,10 +933,10 @@ export function ChatPanel({
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Chat mode (ADR-0022): "classic" answers from documents (RAG); "agent" also calls tools. Both
-  // stream the answer + reasoning. Selectable + persisted so each path is testable.
-  const [chatMode, setChatMode] = useState<"classic" | "agent">(() =>
-    loadJSON<"classic" | "agent">(CHAT_MODE_KEY, "classic"),
+  // Chat mode (ADR-0022): "classic" answers from documents (RAG); "agent" also calls tools;
+  // "multi" uses the planner/researcher/critic/verifier graph. All stream the answer + reasoning.
+  const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">(() =>
+    loadJSON<"classic" | "agent" | "multi">(CHAT_MODE_KEY, "classic"),
   );
   useEffect(() => {
     saveJSON(CHAT_MODE_KEY, chatMode);
@@ -1362,17 +1475,20 @@ export function ChatPanel({
                 <select
                   className="chat-mode-select"
                   value={chatMode}
-                  onChange={(e) => setChatMode(e.target.value as "classic" | "agent")}
+                  onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
                   disabled={streaming !== null}
                   aria-label="Chat mode"
                 >
                   <option value="classic">Classic (RAG)</option>
                   <option value="agent">Agent (tools)</option>
+                  <option value="multi">Multi (agents)</option>
                 </select>
               </label>
               <InfoHint label="Chat mode">
                 <strong>Classic</strong> answers from your documents (RAG).{" "}
-                <strong>Agent</strong> can also call tools. Both stream the answer + reasoning.
+                <strong>Agent</strong> can also call tools.{" "}
+                <strong>Multi</strong> uses a planner/researcher/critic/verifier graph.{" "}
+                All modes stream the answer + reasoning.
               </InfoHint>
             </span>
 

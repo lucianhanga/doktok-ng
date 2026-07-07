@@ -3760,6 +3760,33 @@ tr.row-selected {
 .chat-inline-step-detail {
   font-family: var(--font-mono, ui-monospace, monospace);
 }
+/* Multi-agent trace enrichments: role headers, verdict badges, draft dimming (issue #495) */
+.chat-inline-role-header {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding-top: 4px;
+  margin-top: 2px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.01em;
+}
+.chat-inline-step--stage {
+  opacity: 0.6;
+  font-style: italic;
+}
+.chat-inline-step--draft-superseded {
+  opacity: 0.45;
+}
+.chat-inline-verdict-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+/* Agent tag in the Activity-pane spine (multi-agent; mirrors role header hue) */
+.chat-timeline-agent-tag {
+  font-weight: 600;
+  font-size: 0.75rem;
+  font-family: var(--font-mono, "SF Mono", "Cascadia Mono", ui-monospace, monospace);
+}
 
 /* --- Chat: activity pane context/window meter (adapted from personalAI ContextMeter) ------- */
 .chat-context-meter {

@@ -133,8 +133,32 @@ function ChatContextMeter({
   );
 }
 
+// Per-role agent tag colors for the multi-agent trace (issue #495). Mirrored from ChatPanel.tsx
+// so the inline disclosure and the Activity pane use the same hues.
+const ROLE_COLORS: Record<string, string> = {
+  planner:    "#1558b0",
+  researcher: "#6b7280",
+  critic:     "#b06f00",
+  verifier:   "#c2185b",
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  planner:    "Planner",
+  researcher: "Researcher",
+  critic:     "Critic",
+  verifier:   "Verifier",
+};
+
+const VERDICT_COLORS: Record<string, string> = {
+  pass:   "#1a7f37",
+  revise: "#b06f00",
+  fail:   "#b00020",
+};
+
 // Color per TraceStep.kind — mirrors personalAI's agent color scheme where applicable.
-function stepDotColor(kind: string): string {
+function stepDotColor(kind: string, role?: string | null): string {
+  // When a role is known, use the role color for the spine dot so the dot matches the header tag.
+  if (role) return ROLE_COLORS[role] ?? "#6b7280";
   switch (kind) {
     case "memory":
     case "understanding":
@@ -142,7 +166,21 @@ function stepDotColor(kind: string): string {
     case "search":
       return "#7c3aed"; // violet — tool-like steps
     case "compose":
+    case "finalize":
       return "#1a7f37"; // green — synthesis
+    // Multi-agent kinds (issue #495)
+    case "plan":
+      return "#1558b0"; // planner blue
+    case "draft":
+      return "#6b7280"; // researcher gray
+    case "critique":
+      return "#b06f00"; // critic amber
+    case "verification":
+      return "#c2185b"; // verifier rose
+    case "retrieval":
+      return "#1558b0"; // royal indigo — context assembly
+    case "stage":
+      return "#b06f00"; // amber — in-progress heartbeat
     default:
       return "#6b7280"; // gray
   }
@@ -274,6 +312,166 @@ function SourcesSummary({
       )}
     </div>
   );
+}
+
+/** Render a step list for the Activity-pane timeline body with multi-agent enrichments (issue #495):
+ * role-change headers, verdict badges, draft dimming, stage heartbeat muting.
+ * Returns a Fragment so it can be dropped inline next to context/sources nodes. */
+function renderTimelineSteps(steps: TraceStep[]): React.ReactElement {
+  let lastDraftIdx = -1;
+  for (let j = steps.length - 1; j >= 0; j--) {
+    if (steps[j].kind === "draft") { lastDraftIdx = j; break; }
+  }
+
+  const rows: React.ReactElement[] = [];
+  let prevRole: string | null = null;
+
+  steps.forEach((step, i) => {
+    const role = step.role ?? null;
+
+    // Insert a role header when the acting agent changes.
+    if (role !== null && role !== prevRole) {
+      rows.push(
+        <div key={`rh-${i}`} className="chat-timeline-node">
+          <span
+            className="chat-timeline-node-dot"
+            style={{ background: ROLE_COLORS[role] ?? "#6b7280" }}
+            aria-hidden="true"
+          />
+          <div className="chat-timeline-node-content">
+            <span
+              className="chat-timeline-agent-tag"
+              data-testid="timeline-agent-tag"
+              style={{ color: ROLE_COLORS[role] ?? "#6b7280" }}
+            >
+              {ROLE_LABELS[role] ?? role}
+            </span>
+          </div>
+        </div>,
+      );
+    }
+    prevRole = role;
+
+    const dotColor = stepDotColor(step.kind, role);
+
+    if (step.kind === "stage") {
+      rows.push(
+        <div key={i} className="chat-timeline-node" data-testid="timeline-stage">
+          <span
+            className="chat-timeline-node-dot"
+            style={{ background: "#b06f00" }}
+            aria-hidden="true"
+          />
+          <div className="chat-timeline-node-content">
+            {fmtStepTime(step.at) && (
+              <time className="chat-timeline-node-time muted" dateTime={step.at ?? ""}>
+                {fmtStepTime(step.at)}
+              </time>
+            )}
+            <span
+              className="chat-timeline-step-label"
+              style={{ color: "#b06f00", fontStyle: "italic", opacity: 0.8 }}
+            >
+              {step.label}…
+            </span>
+          </div>
+        </div>,
+      );
+      return;
+    }
+
+    if (step.kind === "draft") {
+      const isSuperseded = lastDraftIdx !== -1 && i !== lastDraftIdx;
+      const draftLabel =
+        step.attempt != null ? `${step.label} · attempt ${step.attempt}` : step.label;
+      rows.push(
+        <div
+          key={i}
+          className="chat-timeline-node"
+          data-testid={isSuperseded ? "timeline-draft-superseded" : "timeline-draft-current"}
+          style={{ opacity: isSuperseded ? 0.45 : 1 }}
+        >
+          <span
+            className="chat-timeline-node-dot"
+            style={{ background: dotColor }}
+            aria-hidden="true"
+          />
+          <div className="chat-timeline-node-content">
+            {fmtStepTime(step.at) && (
+              <time className="chat-timeline-node-time muted" dateTime={step.at ?? ""}>
+                {fmtStepTime(step.at)}
+              </time>
+            )}
+            <span className="chat-timeline-step-label">{draftLabel}</span>
+            {isSuperseded && (
+              <span className="chat-timeline-node-detail muted"> (superseded)</span>
+            )}
+          </div>
+        </div>,
+      );
+      return;
+    }
+
+    if (step.kind === "verification") {
+      const verdict = step.verdict ?? null;
+      const verdictColor = verdict ? (VERDICT_COLORS[verdict] ?? "#6b7280") : undefined;
+      rows.push(
+        <div key={i} className="chat-timeline-node" data-testid="timeline-verification">
+          <span
+            className="chat-timeline-node-dot"
+            style={{ background: dotColor }}
+            aria-hidden="true"
+          />
+          <div className="chat-timeline-node-content">
+            {fmtStepTime(step.at) && (
+              <time className="chat-timeline-node-time muted" dateTime={step.at ?? ""}>
+                {fmtStepTime(step.at)}
+              </time>
+            )}
+            <span className="chat-timeline-step-label">{step.label}</span>
+            {verdict && (
+              <span
+                data-testid="timeline-verdict-badge"
+                style={{ color: verdictColor, fontWeight: 600, marginLeft: "0.3rem" }}
+              >
+                ({verdict})
+              </span>
+            )}
+            {step.detail && (
+              <span className="chat-timeline-node-detail muted"> &middot; {step.detail}</span>
+            )}
+          </div>
+        </div>,
+      );
+      return;
+    }
+
+    // Default: plan, retrieval, compose, finalize, understand, recall, tool, step, …
+    rows.push(
+      <div key={i} className="chat-timeline-node">
+        <span
+          className="chat-timeline-node-dot"
+          style={{ background: dotColor }}
+          aria-hidden="true"
+        />
+        <div className="chat-timeline-node-content">
+          {fmtStepTime(step.at) && (
+            <time className="chat-timeline-node-time muted" dateTime={step.at ?? ""}>
+              {fmtStepTime(step.at)}
+            </time>
+          )}
+          <span className={`chat-timeline-step-label chat-timeline-step-${step.kind}`}>
+            {step.label}
+          </span>
+          {step.detail && (
+            <span className="chat-timeline-node-detail muted"> &middot; {step.detail}</span>
+          )}
+        </div>
+      </div>,
+    );
+  });
+
+  return <>{rows}</>;
 }
 
 export function ChatActivityTimeline({
@@ -468,34 +666,7 @@ export function ChatActivityTimeline({
                   </div>
                 )}
 
-                {showSteps &&
-                  entry.steps.map((step, i) => (
-                    <div key={i} className="chat-timeline-node">
-                      <span
-                        className="chat-timeline-node-dot"
-                        style={{ background: stepDotColor(step.kind) }}
-                        aria-hidden="true"
-                      />
-                      <div className="chat-timeline-node-content">
-                        {fmtStepTime(step.at) && (
-                          <time className="chat-timeline-node-time muted" dateTime={step.at ?? ""}>
-                            {fmtStepTime(step.at)}
-                          </time>
-                        )}
-                        <span
-                          className={`chat-timeline-step-label chat-timeline-step-${step.kind}`}
-                        >
-                          {step.label}
-                        </span>
-                        {step.detail && (
-                          <span className="chat-timeline-node-detail muted">
-                            {" "}
-                            &middot; {step.detail}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                {showSteps && renderTimelineSteps(entry.steps)}
 
                 {!showContext && !showSources && !showSteps && (
                   <span className="muted chat-timeline-no-activity">

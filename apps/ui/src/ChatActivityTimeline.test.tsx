@@ -227,3 +227,106 @@ test("turn with startedAt shows a relative timestamp in the meta", () => {
   // The relative label appears in the turn head meta alongside tok/time data.
   expect(screen.getByText(/5m ago/)).toBeInTheDocument();
 });
+
+// --- Multi-agent trace enrichments (issue #495) ---
+
+test("verification step with verdict=pass renders green badge in timeline", () => {
+  render(
+    <ChatActivityTimeline
+      turns={[
+        makeTurn({
+          steps: [{ kind: "verification", label: "Verifying", role: "verifier", verdict: "pass" }],
+        }),
+      ]}
+      streaming={null}
+    />,
+  );
+  const badge = screen.getByTestId("timeline-verdict-badge");
+  expect(badge).toHaveTextContent("pass");
+  expect(badge).toHaveStyle({ color: "#1a7f37" });
+});
+
+test("verification step with verdict=revise renders amber badge in timeline", () => {
+  render(
+    <ChatActivityTimeline
+      turns={[
+        makeTurn({
+          steps: [{ kind: "verification", label: "Verifying", role: "verifier", verdict: "revise" }],
+        }),
+      ]}
+      streaming={null}
+    />,
+  );
+  const badge = screen.getByTestId("timeline-verdict-badge");
+  expect(badge).toHaveTextContent("revise");
+  expect(badge).toHaveStyle({ color: "#b06f00" });
+});
+
+test("verification step with verdict=fail renders red badge in timeline", () => {
+  render(
+    <ChatActivityTimeline
+      turns={[
+        makeTurn({
+          steps: [{ kind: "verification", label: "Verifying", role: "verifier", verdict: "fail" }],
+        }),
+      ]}
+      streaming={null}
+    />,
+  );
+  const badge = screen.getByTestId("timeline-verdict-badge");
+  expect(badge).toHaveTextContent("fail");
+  expect(badge).toHaveStyle({ color: "#b00020" });
+});
+
+test("draft step with attempt label is dimmed when superseded in timeline", () => {
+  render(
+    <ChatActivityTimeline
+      turns={[
+        makeTurn({
+          steps: [
+            { kind: "draft", label: "Draft answer", role: "researcher", attempt: 1 },
+            { kind: "draft", label: "Draft answer", role: "researcher", attempt: 2 },
+          ],
+        }),
+      ]}
+      streaming={null}
+    />,
+  );
+  // First draft is superseded; second is the current one.
+  expect(screen.getByTestId("timeline-draft-superseded")).toBeInTheDocument();
+  expect(screen.getByTestId("timeline-draft-current")).toBeInTheDocument();
+  expect(screen.getByText(/attempt 1/)).toBeInTheDocument();
+  expect(screen.getByText(/attempt 2/)).toBeInTheDocument();
+});
+
+test("step with role renders agent tag in timeline", () => {
+  render(
+    <ChatActivityTimeline
+      turns={[
+        makeTurn({
+          steps: [{ kind: "plan", label: "Creating plan", role: "planner" }],
+        }),
+      ]}
+      streaming={null}
+    />,
+  );
+  const tag = screen.getByTestId("timeline-agent-tag");
+  expect(tag).toHaveTextContent("Planner");
+  expect(tag).toHaveStyle({ color: "#1558b0" });
+});
+
+test("stage step renders as a muted progress line in timeline", () => {
+  render(
+    <ChatActivityTimeline
+      turns={[
+        makeTurn({
+          steps: [{ kind: "stage", label: "Planning" }],
+        }),
+      ]}
+      streaming={null}
+    />,
+  );
+  expect(screen.getByTestId("timeline-stage")).toBeInTheDocument();
+  // The stage label has "…" appended to indicate in-progress state.
+  expect(screen.getByText("Planning…")).toBeInTheDocument();
+});

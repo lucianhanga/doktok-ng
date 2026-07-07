@@ -1467,6 +1467,10 @@ export interface TraceStep {
   label: string;
   detail?: string;
   at?: string | null; // ISO-8601 UTC when the step was emitted (null on legacy rows)
+  // Multi-agent graph fields (issue #495 Phase 1 backend; null/absent on single-agent turns)
+  role?: string | null;    // "planner" | "researcher" | "critic" | "verifier"
+  verdict?: string | null; // "pass" | "revise" | "fail" (verification steps only)
+  attempt?: number | null; // draft attempt number (1, 2, …); only on draft steps
 }
 
 export interface ChatEvent {

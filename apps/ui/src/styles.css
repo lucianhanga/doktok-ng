@@ -1,60 +1,66 @@
 /* Theme tokens (M8). Dark is the default on :root (the existing `var(--x, #fallback)` usages keep
    working); light overrides on [data-theme="light"], set on <html> by the anti-FOUC script in
    index.html + the header sun/moon toggle. */
+/* Palette tuned to personalAI's look & feel: light is a faithful match (near-white surfaces,
+   subtle neutral borders, gray text scale, soft blue accent, green/amber/red semantics); dark is
+   the same design language in a dark palette. Token names are unchanged so every var(--x) re-skins
+   at once. Neutral (rgba 127) fills stay theme-agnostic, matching personalAI. */
 :root {
   color-scheme: dark;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  /* personalAI uses a system mono for code / tool-IO / trace rows. */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  --bg: #0d1117;
-  --surface: #0f1520;
-  --surface-2: #161c26;
-  --surface-3: #1b2230;
-  --border: #2a3342;
-  --border-strong: #3a4555;
-  --text: #e6edf3;
-  --muted: #8b97a8;
-  --accent: #6ea8fe;
-  --accent-strong: #3b82f6;
-  --accent-contrast: #0b1220;
-  --danger: #d9534f;
-  --success: #3fb950;
-  --warning: #d6a700;
-  --hover-fill: rgba(255, 255, 255, 0.05);
-  --track-fill: rgba(255, 255, 255, 0.1);
-  --selected-fill: rgba(110, 168, 254, 0.15);
-  --overlay-scrim: rgba(0, 0, 0, 0.5);
-  --shadow: rgba(0, 0, 0, 0.35);
+  --bg: #14171c;
+  --surface: #1a1e25;
+  --surface-2: #212630;
+  --surface-3: #2a303b;
+  --border: #2e3540;
+  --border-strong: #3c4552;
+  --text: #e7e9ee;
+  --muted: #9aa2ae;
+  --accent: #5aa0e6; /* personalAI blue (#4a90d9) lightened for dark contrast */
+  --accent-strong: #4a90d9;
+  --accent-contrast: #0e1216;
+  --danger: #e0656d; /* personalAI red (#b00020) for dark */
+  --success: #4cc266; /* personalAI green (#1a7f37) for dark */
+  --warning: #d8a53f; /* personalAI amber (#b06f00) for dark */
+  --hover-fill: rgba(127, 127, 127, 0.12);
+  --track-fill: rgba(127, 127, 127, 0.18);
+  --selected-fill: rgba(90, 160, 230, 0.16);
+  --overlay-scrim: rgba(0, 0, 0, 0.55);
+  --shadow: rgba(0, 0, 0, 0.4);
   --thumb-bg: #ffffff; /* document scans stay white in both themes */
-  --source: #8ab4ff;
-  --source-soft: rgba(138, 180, 255, 0.12);
-  --source-strong: #6ea8fe;
+  --source: #7fb2f0;
+  --source-soft: rgba(127, 178, 240, 0.14);
+  --source-strong: #5aa0e6;
 }
 
 [data-theme="light"] {
   color-scheme: light;
 
-  --bg: #f6f7f9;
+  --bg: #fbfbfc; /* personalAI near-white app background */
   --surface: #ffffff;
-  --surface-2: #eef1f5;
-  --surface-3: #e8ecf1;
-  --border: #d8dee6;
-  --border-strong: #c2cbd6;
-  --text: #1c2430;
-  --muted: #5b6675;
-  --accent: #2f6feb;
-  --accent-strong: #1f5fd0;
+  --surface-2: #f5f6f8;
+  --surface-3: #eeeff2;
+  --border: #e3e5e9; /* personalAI's soft #ddd/#eee borders */
+  --border-strong: #d1d4da;
+  --text: #2b2f36; /* personalAI primary #222/#333 */
+  --muted: #6b7280; /* personalAI gray */
+  --accent: #4a90d9; /* personalAI blue */
+  --accent-strong: #357abd;
   --accent-contrast: #ffffff;
-  --danger: #c0392b;
-  --success: #1a7f37;
-  --warning: #9a6700;
-  --hover-fill: rgba(0, 0, 0, 0.04);
-  --track-fill: rgba(0, 0, 0, 0.1);
-  --selected-fill: rgba(47, 111, 235, 0.12);
-  --overlay-scrim: rgba(0, 0, 0, 0.45);
+  --danger: #b00020; /* personalAI red */
+  --success: #1a7f37; /* exact personalAI green */
+  --warning: #b06f00; /* personalAI amber */
+  --hover-fill: rgba(127, 127, 127, 0.08);
+  --track-fill: rgba(127, 127, 127, 0.14);
+  --selected-fill: rgba(74, 144, 217, 0.1);
+  --overlay-scrim: rgba(0, 0, 0, 0.4);
   --shadow: rgba(0, 0, 0, 0.12);
-  --source: #1558b0;
-  --source-soft: rgba(21, 88, 176, 0.10);
-  --source-strong: #0e3f8c;
+  --source: #4a90d9;
+  --source-soft: rgba(74, 144, 217, 0.1);
+  --source-strong: #357abd;
 }
 
 body {

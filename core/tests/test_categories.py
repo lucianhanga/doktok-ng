@@ -66,20 +66,32 @@ def test_creates_and_reuses_categories() -> None:
     assert cats.active_count("t1") == 2  # no new category created
 
 
-def test_caps_at_five_per_document() -> None:
+def test_caps_at_eight_per_document() -> None:
     cats = InMemoryCategoryRepository()
-    names = _run(["a", "b", "c", "d", "e", "f", "g"], cats)
-    assert len(names) == 5
+    names = _run(["a", "b", "c", "d", "e", "f", "g", "h", "i"], cats)
+    assert len(names) == 8
 
 
 def test_at_tenant_cap_force_picks_nearest_existing() -> None:
     cats = InMemoryCategoryRepository()
-    for i in range(20):  # fill the 20-category vocabulary
+    for i in range(50):  # fill the 50-category vocabulary
         cats.create("t1", f"category{i:02d}", f"category{i:02d}")
-    assert cats.active_count("t1") == 20
+    assert cats.active_count("t1") == 50
     names = _run(["category00 variant"], cats)  # nothing new can be created
-    assert cats.active_count("t1") == 20  # still capped
+    assert cats.active_count("t1") == 50  # still capped
     assert names == ["category00"]  # mapped to the nearest existing
+
+
+def test_find_similar_below_new_threshold_creates_new_category() -> None:
+    """A ~0.60-similar label creates a new category, not a merge, under the 0.70 threshold.
+
+    "invoicd" shares 6 of 10 union trigrams with "invoice" -> Jaccard = 0.60.
+    The old default threshold (0.55) would merge these; the new one (0.70) does not.
+    """
+    cats = InMemoryCategoryRepository()
+    cats.create("t1", "Invoice", "invoice")
+    assert cats.find_similar("t1", "invoicd") is None  # 0.60 < 0.70 -> no merge
+    assert cats.find_similar("t1", "invoicd", threshold=0.55) is not None  # 0.60 >= 0.55
 
 
 def test_set_document_categories_stores_rank_in_list_order() -> None:

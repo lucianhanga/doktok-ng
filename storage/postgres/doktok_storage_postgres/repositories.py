@@ -1922,7 +1922,7 @@ class PostgresCategoryRepository:
         )
 
     def find_similar(
-        self, tenant_id: str, normalized: str, *, threshold: float = 0.55
+        self, tenant_id: str, normalized: str, *, threshold: float = 0.70
     ) -> Category | None:
         return self._one(
             f"SELECT {_CAT_COLUMNS} FROM categories "
@@ -1959,7 +1959,7 @@ class PostgresCategoryRepository:
                     (category_id, tenant_id, name, normalized),
                 ).fetchone()
         except pg_errors.CheckViolation:
-            return None  # tenant hit the 20-category cap (rare race)
+            return None  # tenant hit the 50-category cap (rare race)
         if row:
             return _row_to_category(row)
         return self.find_by_normalized(tenant_id, normalized)  # lost the create race -> existing

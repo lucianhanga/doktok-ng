@@ -49,7 +49,7 @@ class InMemoryCategoryRepository:
         return best, best_score
 
     def find_similar(
-        self, tenant_id: str, normalized: str, *, threshold: float = 0.55
+        self, tenant_id: str, normalized: str, *, threshold: float = 0.70
     ) -> Category | None:
         best, score = self._best(tenant_id, normalized)
         return best if score >= threshold else None

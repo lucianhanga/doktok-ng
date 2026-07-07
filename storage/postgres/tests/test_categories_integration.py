@@ -49,32 +49,31 @@ def test_resolve_link_and_filter(db: Database) -> None:
     assert summary == {"Invoice": 2, "Report": 1}
 
 
-def test_tenant_cap_trigger_blocks_21st_category(db: Database) -> None:
+def test_tenant_cap_trigger_blocks_51st_category(db: Database) -> None:
     cats = PostgresCategoryRepository(db)
-    for i in range(20):
+    for i in range(50):
         assert cats.create(TENANT, f"cat{i:02d}", f"cat{i:02d}") is not None
     # The repo swallows the cap violation and returns None.
     assert cats.create(TENANT, "overflow", "overflow") is None
-    assert cats.active_count(TENANT) == 20
+    assert cats.active_count(TENANT) == 50
 
 
-def test_document_cap_trigger_blocks_6th_link(db: Database) -> None:
+def test_document_cap_trigger_blocks_9th_link(db: Database) -> None:
     docs = PostgresDocumentRepository(db)
     cats = PostgresCategoryRepository(db)
-    _doc(docs, "dc6")
+    _doc(docs, "dc9")
     ids = []
-    for i in range(6):
-        c = cats.create(TENANT, f"k{i}", f"k{i}")
+    for i in range(9):
+        c = cats.create(TENANT, f"m{i}", f"m{i}")
         assert c is not None
         ids.append(c.id)
-    # set_document_categories slices to 5 in code, but the trigger is the hard backstop: a direct
-    # 6th insert must be rejected.
-    cats.set_document_categories(TENANT, "dc6", ids[:5])
+    # set_document_categories passes up to 8; the trigger is the hard backstop for the 9th.
+    cats.set_document_categories(TENANT, "dc9", ids[:8])
     with pytest.raises(pg_errors.CheckViolation), db.connection() as conn:
         conn.execute(
             "INSERT INTO document_category_links (tenant_id, document_id, category_id) "
             "VALUES (%s, %s, %s)",
-            (TENANT, "dc6", ids[5]),
+            (TENANT, "dc9", ids[8]),
         )
 
 

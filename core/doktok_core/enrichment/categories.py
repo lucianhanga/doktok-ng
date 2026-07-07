@@ -11,8 +11,8 @@ import re
 _WS = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^\w\s]")
 
-MAX_CATEGORIES_PER_TENANT = 20
-MAX_CATEGORIES_PER_DOCUMENT = 5
+MAX_CATEGORIES_PER_TENANT = 50
+MAX_CATEGORIES_PER_DOCUMENT = 8
 
 
 def normalize_category(name: str) -> str:

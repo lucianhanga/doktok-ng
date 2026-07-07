@@ -4,8 +4,9 @@ import type { RankedChunk, TraceStep, TurnMetrics } from "./api";
 
 /** Reasoning in a fixed-height (~12-row) window that auto-tails to the newest lines as it streams
  * (personalAI MessageDetails parity): it follows the stream while the user is at the bottom, stops
- * following if they scroll up to read, and offers a "latest" button to jump back. */
-function ReasoningPanel({ text }: { text: string }) {
+ * following if they scroll up to read, and offers a "latest" button to jump back.
+ * Exported so ChatPanel can reuse it in the inline per-answer disclosure. */
+export function ReasoningPanel({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
@@ -147,11 +148,11 @@ function stepDotColor(kind: string): string {
   }
 }
 
-type Filter = "all" | "reasoning" | "context" | "sources";
+// "Reasoning" is intentionally absent: it moved inline under each assistant answer (issue #493).
+type Filter = "all" | "context" | "sources";
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
-  { id: "reasoning", label: "Reasoning" },
   { id: "context", label: "Context" },
   { id: "sources", label: "Sources" },
 ];
@@ -328,9 +329,9 @@ export function ChatActivityTimeline({
     });
   }
 
+  // Reasoning is now shown inline in the transcript; the pane covers context/sources/steps.
   const hasAnything = entries.some(
     (e) =>
-      e.reasoning ||
       e.ranking.length > 0 ||
       (e.metrics?.context?.length ?? 0) > 0 ||
       e.steps.length > 0,
@@ -358,7 +359,6 @@ export function ChatActivityTimeline({
 
   function matchesFilter(entry: TurnEntry): boolean {
     if (filter === "all") return true;
-    if (filter === "reasoning") return Boolean(entry.reasoning);
     if (filter === "context") return (entry.metrics?.context?.length ?? 0) > 0;
     if (filter === "sources") return entry.ranking.length > 0;
     return true;
@@ -407,12 +407,10 @@ export function ChatActivityTimeline({
             : "chat-timeline-status-dot--ok";
 
         const hasContext = (entry.metrics?.context?.length ?? 0) > 0;
-        const hasReasoning = Boolean(entry.reasoning);
         const hasSources = entry.ranking.length > 0;
         const hasSteps = entry.steps.length > 0;
 
         const showContext = (filter === "all" || filter === "context") && hasContext;
-        const showReasoning = (filter === "all" || filter === "reasoning") && hasReasoning;
         const showSources = (filter === "all" || filter === "sources") && hasSources;
         const showSteps = filter === "all" && hasSteps;
 
@@ -458,19 +456,6 @@ export function ChatActivityTimeline({
                   </div>
                 )}
 
-                {showReasoning && (
-                  <div className="chat-timeline-node">
-                    <span
-                      className="chat-timeline-node-dot chat-timeline-node-dot--reasoning"
-                      aria-hidden="true"
-                    />
-                    <div className="chat-timeline-node-content">
-                      <span className="chat-timeline-node-label">Reasoning</span>
-                      <ReasoningPanel text={entry.reasoning} />
-                    </div>
-                  </div>
-                )}
-
                 {showSources && (
                   <div className="chat-timeline-node">
                     <span
@@ -512,7 +497,7 @@ export function ChatActivityTimeline({
                     </div>
                   ))}
 
-                {!showContext && !showReasoning && !showSources && !showSteps && (
+                {!showContext && !showSources && !showSteps && (
                   <span className="muted chat-timeline-no-activity">
                     No activity for this turn.
                   </span>

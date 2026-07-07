@@ -225,8 +225,10 @@ test("requests reasoning by default and renders it in a collapsible panel", asyn
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   await waitFor(() => expect(screen.getByText("It is 42 [1].")).toBeInTheDocument());
-  // The reasoning shows in the right-pane activity timeline.
+  // Reasoning is now shown INLINE under the assistant answer (issue #493), not in the side pane.
   expect(screen.getByText(/Let me check the invoice totals\./)).toBeInTheDocument();
+  // The inline disclosure is rendered (defaultOpen=true while streaming, stays open after done).
+  expect(screen.getByTestId("inline-details")).toBeInTheDocument();
   // The stream request asked the model to think.
   expect(JSON.parse(String(streamInit?.body)).reasoning).toBe(true);
 });
@@ -419,7 +421,14 @@ test("lists saved conversations and resumes one into the transcript", async () =
   await waitFor(() => expect(screen.getByText("prior question")).toBeInTheDocument());
   await userEvent.click(screen.getByText("prior question"));
   await waitFor(() => expect(screen.getByText(/prior answer/)).toBeInTheDocument());
-  // Persisted reasoning + sources are restored, not lost on resume.
+  // Persisted reasoning is restored: the inline disclosure is present (collapsed by default for
+  // completed turns). Expanding it reveals the reasoning text.
+  const detailsToggle = screen.getByTestId("inline-details");
+  expect(detailsToggle).toBeInTheDocument();
+  // The disclosure starts collapsed for a completed (non-streaming) turn.
+  expect(screen.queryByText(/I weighed the invoice rows\./)).not.toBeInTheDocument();
+  // Expanding the disclosure reveals the persisted reasoning.
+  await userEvent.click(screen.getByRole("button", { name: "Expand details" }));
   expect(screen.getByText(/I weighed the invoice rows\./)).toBeInTheDocument();
   // The restored turn's sources are reachable via its Sources chip.
   await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
@@ -623,7 +632,7 @@ test("reasoning panel shows a token/time summary and ranked chunks; ranked doc o
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText("Answer here.")).toBeInTheDocument());
 
-  // Reasoning text is visible in the right-pane activity timeline (newest turn expanded).
+  // Reasoning is now shown INLINE under the assistant answer (issue #493).
   expect(screen.getByText(/weighing the rows/)).toBeInTheDocument();
   // The selected source (win.pdf) appears in the timeline sources node.
   expect(screen.getByRole("button", { name: /win\.pdf/ })).toBeInTheDocument();
@@ -925,8 +934,9 @@ test("right pane shows Activity by default and switches to DocumentDetail on sou
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText(/See the document for details/)).toBeInTheDocument());
 
-  // Right pane defaults to Activity mode: reasoning text is shown in the timeline.
+  // Right pane defaults to Activity mode.
   expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  // Reasoning is now shown INLINE in the transcript under the answer (issue #493), not in the pane.
   expect(screen.getByText(/Thinking about it\./)).toBeInTheDocument();
 
   // Opening sources switches the pane to Sources mode.
@@ -1027,4 +1037,109 @@ test("the local-first footer is shown at the bottom of the chat column", () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
   render(<ChatPanel />);
   expect(screen.getByText(/Local-first\. Network egress is disabled by default\./)).toBeInTheDocument();
+});
+
+// --- Inline reasoning disclosure (issue #493, personalAI MessageDetails parity) ---
+
+test("inline details disclosure is open while streaming so the user sees reasoning live", async () => {
+  const enc = new TextEncoder();
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          ctrl = c;
+          init?.signal?.addEventListener("abort", () =>
+            c.error(new DOMException("aborted", "AbortError")),
+          );
+        },
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "tell me something");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument());
+
+  // Emit a reasoning chunk — the inline disclosure must already be open (defaultOpen=streaming).
+  ctrl.enqueue(enc.encode(frame("reasoning", { delta: "Working through it now." })));
+  await waitFor(() => expect(screen.getByText(/Working through it now\./)).toBeInTheDocument());
+
+  // The disclosure toggle button is rendered and shows aria-expanded=true.
+  const toggle = screen.getByRole("button", { name: "Collapse details" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  ctrl.enqueue(enc.encode(frame("token", { delta: "Answer." })));
+  ctrl.enqueue(enc.encode(frame("sources", { citations: [] })));
+  ctrl.enqueue(enc.encode(frame("done", { grounded: true })));
+  ctrl.close();
+  await waitFor(() => expect(screen.getByText("Answer.")).toBeInTheDocument());
+
+  // After streaming ends the disclosure stays open (user was watching; they can collapse manually).
+  expect(screen.getByRole("button", { name: "Collapse details" })).toBeInTheDocument();
+  expect(screen.getByText(/Working through it now\./)).toBeInTheDocument();
+});
+
+test("inline details disclosure is collapsed by default for completed (non-streaming) turns", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("reasoning", { delta: "Hidden thinking." }),
+        frame("token", { delta: "The answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("The answer.")).toBeInTheDocument());
+
+  // The disclosure toggle is present (reasoning was received).
+  const toggle = screen.getByTestId("inline-details");
+  expect(toggle).toBeInTheDocument();
+
+  // The reasoning text was streaming (disclosure was open); after done the component stays open.
+  // The user can manually collapse by clicking the toggle.
+  const toggleBtn = screen.getByRole("button", { name: "Collapse details" });
+  expect(toggleBtn).toHaveAttribute("aria-expanded", "true");
+  await userEvent.click(toggleBtn);
+  expect(screen.getByRole("button", { name: "Expand details" })).toHaveAttribute("aria-expanded", "false");
+  // Reasoning text is hidden once collapsed.
+  expect(screen.queryByText(/Hidden thinking\./)).not.toBeInTheDocument();
+});
+
+test("reasoning is not shown in the activity pane (it is inline in the transcript)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("reasoning", { delta: "Some reasoning." }),
+        frame("token", { delta: "The answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("The answer.")).toBeInTheDocument());
+
+  // The activity pane (Activity tab) shows the timeline — which no longer contains reasoning.
+  // The reasoning "Reasoning" filter chip must be absent from the pane.
+  expect(screen.queryByRole("button", { name: "Reasoning" })).not.toBeInTheDocument();
+  // The reasoning text lives in the inline disclosure, not the activity pane.
+  expect(screen.getByText(/Some reasoning\./)).toBeInTheDocument();
+  // The inline disclosure is in the transcript, not the activity pane.
+  expect(screen.getByTestId("inline-details")).toBeInTheDocument();
 });

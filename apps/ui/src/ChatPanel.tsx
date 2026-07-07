@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { ReasoningPanel } from "./ChatActivityTimeline";
 import {
   chatStream,
   createChatThread,
@@ -228,6 +229,68 @@ function SourcesList({
   );
 }
 
+/**
+ * Collapsible per-answer inline disclosure (personalAI MessageDetails parity): the model's
+ * reasoning text + step trace shown inline under the assistant answer, BEFORE the Markdown body.
+ * Open by default while streaming (so the user watches reasoning token-by-token in the chat
+ * window); collapsed by default for completed turns. Respects the "Show reasoning" toggle.
+ */
+function InlineReasoningDetails({
+  reasoning,
+  steps,
+  showReasoning: reasoningEnabled,
+  defaultOpen,
+}: {
+  reasoning: string;
+  steps: TraceStep[];
+  showReasoning: boolean;
+  defaultOpen: boolean;
+}): React.ReactElement | null {
+  const [open, setOpen] = useState(defaultOpen);
+
+  const hasReasoning = reasoningEnabled && reasoning.length > 0;
+  const hasSteps = steps.length > 0;
+  if (!hasReasoning && !hasSteps) return null;
+
+  const summary = [
+    hasReasoning ? "Reasoning" : null,
+    hasSteps ? `${steps.length} step${steps.length > 1 ? "s" : ""}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="chat-inline-details" data-testid="inline-details">
+      <button
+        type="button"
+        className="chat-inline-details-toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label={open ? "Collapse details" : "Expand details"}
+      >
+        {open ? "▾" : "▸"} {summary}
+      </button>
+      {open && (
+        <div className="chat-inline-details-body">
+          {hasReasoning && <ReasoningPanel text={reasoning} />}
+          {hasSteps && (
+            <div className="chat-inline-steps">
+              {steps.map((step, i) => (
+                <div key={i} className="chat-inline-step">
+                  <span className="chat-inline-step-label">{step.label}</span>
+                  {step.detail && (
+                    <span className="chat-inline-step-detail muted"> · {step.detail}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The per-turn ranked candidate chunks (M8 #4/#7): winners first, with RRF score + rank %. */
 function AnswerBlock({
   turn,
@@ -238,6 +301,7 @@ function AnswerBlock({
   onDelete,
   onCopyQuestion,
   canModify = false,
+  showReasoning = true,
 }: {
   turn: TurnView;
   onOpenDocument?: (id: string) => void;
@@ -248,6 +312,8 @@ function AnswerBlock({
   /** Re-load this turn's question into the composer for a quick re-ask (no truncation). */
   onCopyQuestion?: () => void;
   canModify?: boolean;
+  /** Mirror the "Show reasoning" toggle so the inline disclosure respects the user's preference. */
+  showReasoning?: boolean;
 }) {
   const [questionExpanded, setQuestionExpanded] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -396,6 +462,14 @@ function AnswerBlock({
               treat it with caution.
             </p>
           )}
+          {/* Inline reasoning disclosure (personalAI parity): open while streaming so the user
+              watches the model reason token-by-token; collapsed by default once complete. */}
+          <InlineReasoningDetails
+            reasoning={turn.reasoning}
+            steps={turn.steps}
+            showReasoning={showReasoning}
+            defaultOpen={turn.streaming}
+          />
           <div
             className={!ungrounded || turn.streaming ? "answer" : "answer empty"}
             aria-live={turn.streaming ? "polite" : undefined}
@@ -1141,6 +1215,7 @@ export function ChatPanel({
                   onEdit={() => editQuestion(i)}
                   onDelete={() => deleteQuestion(i)}
                   onCopyQuestion={() => setQuestion(turn.question)}
+                  showReasoning={showReasoning}
                 />
               </li>
             ))}

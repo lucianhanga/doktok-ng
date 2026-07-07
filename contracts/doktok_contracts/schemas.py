@@ -835,9 +835,29 @@ class TraceStep(BaseModel):
     """One step in a turn's chronological activity trace (ADR-0022). A reusable, typed unit emitted
     by both the single-agent loop and the multi-agent graph so the UI renders one consistent trace.
 
-    ``kind`` drives the per-step icon/colour: understand | recall | retrieve | graph | count |
-    aggregate | stats | categories | tool | compose | plan | gather | merge | research | review |
-    finalize | step. ``label`` is the human-readable line; ``detail`` is an optional one-liner."""
+    ``kind`` drives the per-step icon/colour.
+
+    Single-agent loop kinds: understand | recall | retrieve | graph | count | aggregate | stats |
+    categories | tool | compose.
+
+    Multi-agent graph kinds:
+      stage       - transient node-entry heartbeat (label: "Planning", "Gathering evidence", etc.)
+      plan        - planner's source selection summary (role="planner")
+      retrieval   - gather node's hit-count + source names (no role)
+      draft       - researcher's per-attempt draft (role="researcher", attempt=N)
+      critique    - critic's textual feedback (role="critic")
+      verification - critic's pass/fail/revise verdict (role="verifier", verdict=pass|fail|revise)
+      finalize    - final cleanup marker
+
+    Shared fallback: step.
+
+    ``label`` is the human-readable line; ``detail`` is an optional one-liner.
+
+    New multi-agent enrichment fields (all Optional/None - backward-compatible with legacy steps):
+      ``role``    - which agent produced this step: planner | researcher | critic | verifier
+      ``verdict`` - verification outcome: pass | fail | revise  (set on ``verification`` steps)
+      ``attempt`` - draft attempt number 1, 2, ...            (set on ``draft`` steps)
+    """
 
     kind: str = "step"
     label: str
@@ -845,6 +865,10 @@ class TraceStep(BaseModel):
     # ISO-8601 UTC timestamp of when the step was emitted (personalAI parity). None on legacy rows
     # that predate the field; the UI shows a per-step time only when present.
     at: str | None = None
+    # Multi-agent enrichment (Phase 1 #495). All Optional so old single-agent steps stay valid.
+    role: str | None = None  # planner | researcher | critic | verifier
+    verdict: str | None = None  # pass | fail | revise  (verification steps)
+    attempt: int | None = None  # 1, 2, ...             (draft steps)
 
 
 class ChatEvent(BaseModel):

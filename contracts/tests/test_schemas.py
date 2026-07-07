@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from doktok_contracts.schemas import (
     AuditEventType,
     BackupEvent,
+    ChatEvent,
     ConfidenceBuckets,
     Document,
     DocumentDetail,
@@ -15,6 +16,7 @@ from doktok_contracts.schemas import (
     JobStatus,
     MerchantRollup,
     RecordCurrencyRollup,
+    TraceStep,
 )
 
 
@@ -137,3 +139,63 @@ def test_document_detail_round_trip_with_records() -> None:
     assert again.records.by_currency[0].debit_minor == 8240
     assert again.records.confidence.unscored == 3
     assert again.records.top_merchants[0].merchant == "block house"
+
+
+# ---------------------------------------------------------------------------
+# TraceStep contract (Phase 1 #495: multi-agent trace richness)
+# ---------------------------------------------------------------------------
+
+
+def test_trace_step_defaults_are_backward_compatible() -> None:
+    # A minimal legacy step (kind + label only) must still parse and have None enrichment fields.
+    s = TraceStep(kind="retrieve", label="Searching your documents")
+    assert s.role is None
+    assert s.verdict is None
+    assert s.attempt is None
+    assert s.detail == ""
+    assert s.at is None
+
+
+def test_trace_step_old_dict_without_enrichment_fields_still_parses() -> None:
+    # Simulates a row stored before the enrichment fields were added (no keys in JSON).
+    old_payload = {"kind": "step", "label": "Some step"}
+    s = TraceStep.model_validate(old_payload)
+    assert s.role is None and s.verdict is None and s.attempt is None
+
+
+def test_trace_step_new_fields_round_trip() -> None:
+    # A fully enriched step serialises all new fields and round-trips correctly.
+    s = TraceStep(
+        kind="verification",
+        label="Verification complete",
+        role="verifier",
+        verdict="pass",
+        attempt=None,
+    )
+    payload = json.loads(s.model_dump_json())
+    again = TraceStep.model_validate(payload)
+    assert again.kind == "verification"
+    assert again.role == "verifier"
+    assert again.verdict == "pass"
+    assert again.attempt is None
+
+
+def test_trace_step_draft_with_attempt() -> None:
+    s = TraceStep(kind="draft", label="Draft 2", role="researcher", attempt=2)
+    payload = json.loads(s.model_dump_json())
+    again = TraceStep.model_validate(payload)
+    assert again.attempt == 2
+    assert again.role == "researcher"
+
+
+def test_trace_step_embedded_in_chat_event_includes_new_fields() -> None:
+    # The ChatEvent SSE serialisation must forward role/verdict/attempt through model_dump().
+    ts = TraceStep(
+        kind="verification", label="Verification complete", role="verifier", verdict="revise"
+    )
+    event = ChatEvent(type="step", delta=ts.label, trace_step=ts)
+    dumped = event.model_dump()
+    assert dumped["trace_step"] is not None
+    assert dumped["trace_step"]["role"] == "verifier"
+    assert dumped["trace_step"]["verdict"] == "revise"
+    assert dumped["trace_step"]["attempt"] is None

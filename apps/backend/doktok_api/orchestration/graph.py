@@ -27,6 +27,13 @@ from langgraph.graph import END, START, StateGraph
 _MAX_ATTEMPTS = 2
 _RETRIEVE_LIMIT = 8
 
+# Human-readable labels for tool names used in the retrieval progress step.
+_SOURCE_LABELS: dict[str, str] = {
+    "retrieve_passages": "passages",
+    "graph_lookup": "knowledge graph",
+    "count_documents": "document count",
+}
+
 _CRITIC_PROMPT = (
     "You are reviewing an assistant's answer about the user's documents against the evidence it "
     "was given. If the answer is supported by the evidence and addresses the question, reply with "
@@ -84,17 +91,35 @@ def build_chat_graph(
     """Compile the LangGraph chat graph closed over the per-turn model + gateway + tool specs."""
 
     def planner(state: _State) -> _State:
-        return {"attempts": 0, "trace": [step("plan", "Planning the approach")]}
+        # Peek at the deterministic source plan so the plan step can summarise it (cheap + no LLM).
+        sources = _plan(state["question"])
+        source_detail = ", ".join(n for n, _ in sources)
+        return {
+            "attempts": 0,
+            "trace": [
+                step("stage", "Planning"),
+                step("plan", "Planning the approach", detail=source_detail, role="planner"),
+            ],
+        }
 
     def gather(state: _State) -> _State:
         # The gateway here is tenant-bound (see _TenantGateway), so the tenant arg is ignored.
         evidence, summaries, names = gather_evidence(
             state.get("tenant_id", ""), state["question"], gateway
         )
+        hit_count = len(evidence)
+        source_label = ", ".join(_SOURCE_LABELS.get(n, n) for n in names)
         return {
             "evidence": evidence,
             "evidence_text": summaries,
-            "trace": [step("gather", f"Gathering from: {', '.join(names)}")],
+            "trace": [
+                step("stage", "Gathering evidence"),
+                step(
+                    "retrieval",
+                    f"Retrieved {hit_count} citations",
+                    detail=f"Sources: {source_label}",
+                ),
+            ],
         }
 
     def researcher(state: _State) -> _State:
@@ -115,12 +140,21 @@ def build_chat_graph(
             history=history,
         )
         citations = answer.citations or state.get("evidence", [])
+        attempt_num = state.get("attempts", 0) + 1
         return {
             "answer": answer.answer,
             "citations": citations,
             "grounded": answer.grounded,
-            "attempts": state.get("attempts", 0) + 1,
-            "trace": [step("research", "Researching the answer")],
+            "attempts": attempt_num,
+            "trace": [
+                step("stage", "Researching"),
+                step(
+                    "draft",
+                    f"Draft {attempt_num}",
+                    role="researcher",
+                    attempt=attempt_num,
+                ),
+            ],
         }
 
     def critic(state: _State) -> _State:
@@ -130,11 +164,26 @@ def build_chat_graph(
             answer=state.get("answer", ""),
         )
         turn = model.chat_with_tools([AgentMessage(role="user", content=prompt)], [])
-        verdict = turn.text.strip()
-        critique = (
-            "" if verdict.upper().startswith("OK") else verdict.removeprefix("REVISE:").strip()
-        )
-        return {"critique": critique, "trace": [step("review", "Reviewing the answer")]}
+        verdict_text = turn.text.strip()
+        ok = verdict_text.upper().startswith("OK")
+        critique = "" if ok else verdict_text.removeprefix("REVISE:").strip()
+        # Derive the verdict: pass=OK, fail=REVISE but out of attempts, revise=REVISE with budget.
+        attempts = state.get("attempts", 0)
+        if ok:
+            verdict_val = "pass"
+        elif attempts >= _MAX_ATTEMPTS:
+            verdict_val = "fail"
+        else:
+            verdict_val = "revise"
+        critique_label = "Answer passes review" if ok else f"Needs revision: {critique[:80]}"
+        return {
+            "critique": critique,
+            "trace": [
+                step("stage", "Reviewing"),
+                step("critique", critique_label, role="critic"),
+                step("verification", "Verification complete", role="verifier", verdict=verdict_val),
+            ],
+        }
 
     def _route_after_critic(state: _State) -> str:
         if state.get("critique") and state.get("attempts", 0) < _MAX_ATTEMPTS:
@@ -142,7 +191,12 @@ def build_chat_graph(
         return END
 
     def finalize(state: _State) -> _State:
-        return {"trace": [step("finalize", "Finalizing")]}
+        return {
+            "trace": [
+                step("stage", "Finalizing"),
+                step("finalize", "Answer ready"),
+            ],
+        }
 
     graph = StateGraph(_State)
     graph.add_node("planner", planner)

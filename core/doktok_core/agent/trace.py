@@ -53,8 +53,29 @@ def tool_step(name: str, args: Mapping[str, object] | None = None) -> TraceStep:
     return TraceStep(kind=kind, label=label, detail=_format_args(args) if args else "", at=_now())
 
 
-def step(kind: str, label: str, detail: str = "") -> TraceStep:
-    return TraceStep(kind=kind, label=label, detail=detail, at=_now())
+def step(
+    kind: str,
+    label: str,
+    detail: str = "",
+    *,
+    role: str | None = None,
+    verdict: str | None = None,
+    attempt: int | None = None,
+) -> TraceStep:
+    """Create a typed trace step with an ISO-8601 UTC timestamp.
+
+    ``role``/``verdict``/``attempt`` are the multi-agent enrichment fields (Phase 1 #495).
+    Keyword-only; omit for single-agent steps to keep backward compatibility.
+    """
+    return TraceStep(
+        kind=kind,
+        label=label,
+        detail=detail,
+        at=_now(),
+        role=role,
+        verdict=verdict,
+        attempt=attempt,
+    )
 
 
 def step_event(trace_step: TraceStep) -> ChatEvent:

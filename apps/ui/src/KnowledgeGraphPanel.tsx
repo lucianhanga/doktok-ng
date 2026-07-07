@@ -6,8 +6,12 @@ import {
   fetchKgNeighborhood,
   fetchKgNodes,
   fetchKgStats,
+  fetchMergeSuggestions,
+  mergeEntities,
+  splitEntity,
   type KgEdge,
   type KgEntity,
+  type KgMergeSuggestion,
   type KgNeighborhood,
   type KgStats,
 } from "./api";
@@ -155,6 +159,19 @@ export function KnowledgeGraphPanel(): JSX.Element {
   const [stats, setStats] = useState<KgStats | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
 
+  // Merge suggestions state
+  const [suggestions, setSuggestions] = useState<KgMergeSuggestion[]>([]);
+  const [suggLoading, setSuggLoading] = useState(false);
+  const [suggError, setSuggError] = useState<string | null>(null);
+  const [dismissedAliasIds, setDismissedAliasIds] = useState<Set<string>>(new Set());
+  const [approvingAliasId, setApprovingAliasId] = useState<string | null>(null);
+  const [mergeMsg, setMergeMsg] = useState<{ text: string; isError: boolean } | null>(null);
+
+  // Split state
+  const [splitConfirmId, setSplitConfirmId] = useState<string | null>(null);
+  const [splitPending, setSplitPending] = useState(false);
+  const [splitError, setSplitError] = useState<string | null>(null);
+
   // Canvas sizing
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(600);
@@ -176,6 +193,12 @@ export function KnowledgeGraphPanel(): JSX.Element {
   const labeledIds = useMemo(
     () => pickLabeledNodeIds(graphNodes, graphEdges),
     [graphNodes, graphEdges],
+  );
+
+  // Suggestions with client-side rejected aliases filtered out
+  const visibleSuggestions = useMemo(
+    () => suggestions.filter(s => !dismissedAliasIds.has(s.alias_id)),
+    [suggestions, dismissedAliasIds],
   );
 
   // ---- Canvas sizing effect ----
@@ -202,6 +225,24 @@ export function KnowledgeGraphPanel(): JSX.Element {
     fetchKgStats(c.signal)
       .then(s => setStats(s))
       .catch(() => setStatsError("Could not load stats."));
+    return () => c.abort();
+  }, []);
+
+  // Merge suggestions (mount only)
+  useEffect(() => {
+    const c = new AbortController();
+    setSuggLoading(true);
+    setSuggError(null);
+    fetchMergeSuggestions(50, c.signal)
+      .then(data => {
+        setSuggestions(data);
+        setSuggLoading(false);
+      })
+      .catch(err => {
+        if (c.signal.aborted) return;
+        setSuggError(err instanceof Error ? err.message : "Could not load suggestions.");
+        setSuggLoading(false);
+      });
     return () => c.abort();
   }, []);
 
@@ -368,6 +409,59 @@ export function KnowledgeGraphPanel(): JSX.Element {
     setFocusId(null);
     setSelectedNode(null);
     setFocusError(null);
+  }
+
+  // ---- Merge / split handlers ----
+
+  async function handleApprove(s: KgMergeSuggestion): Promise<void> {
+    setApprovingAliasId(s.alias_id);
+    setMergeMsg(null);
+    try {
+      await mergeEntities(s.canonical_id, s.alias_id, s.method, s.score);
+      // Remove all suggestions referencing this alias (it is now resolved)
+      setSuggestions(prev => prev.filter(x => x.alias_id !== s.alias_id));
+      setMergeMsg({
+        text: `Merged "${s.alias_value}" into "${s.canonical_value}".`,
+        isError: false,
+      });
+      setTimeout(() => setMergeMsg(null), 3000);
+    } catch (err) {
+      setMergeMsg({
+        text: err instanceof Error ? err.message : "Merge failed.",
+        isError: true,
+      });
+      setTimeout(() => setMergeMsg(null), 4000);
+    } finally {
+      setApprovingAliasId(null);
+    }
+  }
+
+  function handleReject(aliasId: string): void {
+    setDismissedAliasIds(prev => new Set([...prev, aliasId]));
+  }
+
+  function handleSplitRequest(entityId: string): void {
+    setSplitConfirmId(entityId);
+    setSplitError(null);
+  }
+
+  function handleSplitCancel(): void {
+    setSplitConfirmId(null);
+    setSplitError(null);
+  }
+
+  async function handleSplitConfirm(): Promise<void> {
+    if (!splitConfirmId) return;
+    setSplitPending(true);
+    setSplitError(null);
+    try {
+      await splitEntity(splitConfirmId);
+      setSplitConfirmId(null);
+    } catch (err) {
+      setSplitError(err instanceof Error ? err.message : "Split failed.");
+    } finally {
+      setSplitPending(false);
+    }
   }
 
   // ---- Canvas callbacks ----
@@ -711,10 +805,118 @@ export function KnowledgeGraphPanel(): JSX.Element {
                   })}
                 </ul>
               )}
+
+              {/* Split action — allows undoing a prior merge on this entity */}
+              <div className="kg-split-section">
+                <h4 className="kg-detail-section-label">Identity</h4>
+                {splitConfirmId === selectedNode.entity.id ? (
+                  <div className="kg-split-confirm">
+                    <span className="kg-split-warn">Undo merge on this entity?</span>
+                    <button
+                      type="button"
+                      className="kg-split-btn confirm"
+                      disabled={splitPending}
+                      onClick={() => void handleSplitConfirm()}
+                    >
+                      {splitPending ? "Splitting..." : "Yes, split"}
+                    </button>
+                    <button
+                      type="button"
+                      className="kg-split-btn cancel"
+                      disabled={splitPending}
+                      onClick={handleSplitCancel}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="kg-split-btn"
+                    onClick={() => handleSplitRequest(selectedNode.entity.id)}
+                  >
+                    Split
+                  </button>
+                )}
+                {splitError && (
+                  <p role="alert" className="kg-status status-error">
+                    {splitError}
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </aside>
       </div>
+
+      {/* Suggested merges review queue */}
+      <section className="kg-merge-section" aria-label="Suggested entity merges">
+        <h4 className="kg-detail-section-label">Suggested merges</h4>
+        {mergeMsg && (
+          <p
+            role={mergeMsg.isError ? "alert" : "status"}
+            className={`kg-status${mergeMsg.isError ? " status-error" : " kg-merge-success"}`}
+          >
+            {mergeMsg.text}
+          </p>
+        )}
+        {suggLoading ? (
+          <p role="status" className="kg-status muted">
+            Loading suggestions...
+          </p>
+        ) : suggError ? (
+          <p role="alert" className="kg-status status-error">
+            {suggError}
+          </p>
+        ) : visibleSuggestions.length === 0 ? (
+          <p className="kg-status muted">
+            No suggested merges - your entities look resolved.
+          </p>
+        ) : (
+          <ul className="kg-merge-list">
+            {visibleSuggestions.map(s => (
+              <li key={`${s.canonical_id}:${s.alias_id}`} className="kg-merge-card">
+                <div
+                  className="kg-merge-direction"
+                  aria-label={`${s.alias_value} folds into ${s.canonical_value}`}
+                >
+                  <span className="kg-merge-alias">{s.alias_value}</span>
+                  <span className="kg-merge-arrow" aria-hidden="true">{"→"}</span>
+                  <span className="kg-merge-canonical">{s.canonical_value}</span>
+                </div>
+                <div className="kg-merge-meta">
+                  <span className="kg-merge-method-chip" data-method={s.method}>
+                    {s.method === "token_set" ? "Token match" : "Fuzzy"}
+                  </span>
+                  <span className="kg-merge-score muted">
+                    {Math.round(s.score * 100)}{"% confidence"}
+                  </span>
+                </div>
+                <div className="kg-merge-actions">
+                  <button
+                    type="button"
+                    className="kg-merge-btn approve"
+                    disabled={approvingAliasId === s.alias_id}
+                    aria-label={`Approve merge of ${s.alias_value} into ${s.canonical_value}`}
+                    onClick={() => void handleApprove(s)}
+                  >
+                    {approvingAliasId === s.alias_id ? "Approving..." : "Approve"}
+                  </button>
+                  <button
+                    type="button"
+                    className="kg-merge-btn reject"
+                    disabled={approvingAliasId === s.alias_id}
+                    aria-label={`Reject suggestion to merge ${s.alias_value}`}
+                    onClick={() => handleReject(s.alias_id)}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* Type legend (only when there are graph nodes) */}
       {graphNodes.length > 0 && (

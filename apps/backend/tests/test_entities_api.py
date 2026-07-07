@@ -4,8 +4,9 @@ from datetime import UTC, datetime
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import EntityRepository, KnowledgeGraphRepository
+from doktok_contracts.ports import AuditLogRepository, EntityRepository, KnowledgeGraphRepository
 from doktok_contracts.schemas import (
+    AuditEvent,
     Document,
     DocumentEntity,
     DocumentStatus,
@@ -18,6 +19,7 @@ from doktok_contracts.schemas import (
     TokenSuggestion,
 )
 from doktok_core.config import Settings
+from doktok_core.knowledge_graph.inmemory import InMemoryKnowledgeGraphRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -272,3 +274,235 @@ def test_kg_neighborhood_isolated_node() -> None:
 
 def test_kg_neighborhood_404_for_unknown_focus() -> None:
     assert _client().get("/api/v1/entities/ghost/neighborhood", headers=_auth()).status_code == 404
+
+
+# -------------------------------------------------------- Merge / split / suggestions (#508)
+
+
+class FakeAuditLogRepository:
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def record(self, event: AuditEvent) -> None:
+        self.events.append(event)
+
+    def list_events(
+        self,
+        tenant_id: str,
+        *,
+        document_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AuditEvent]:
+        return [e for e in self.events if e.tenant_id == tenant_id]
+
+
+def _merge_setup() -> tuple[TestClient, InMemoryKnowledgeGraphRepository, FakeAuditLogRepository]:
+    """Return a client backed by a real InMemoryKnowledgeGraphRepository seeded with:
+    - e-alice / e-alice2: PERSON nodes with trigram similarity 0.69 (above 0.6 threshold)
+      so list_merge_suggestions reliably proposes a merge between them.
+    - e-bob: dissimilar node, not proposed for any merge.
+    - e-other-tenant: belongs to tenant-b, invisible to tenant-a requests.
+    """
+    audit = FakeAuditLogRepository()
+    kg = InMemoryKnowledgeGraphRepository()
+    kg.upsert_entities(
+        [
+            KgEntity(
+                id="e-alice",
+                tenant_id="tenant-a",
+                entity_type=EntityType.PERSON,
+                normalized_value="alice johnson",
+            ),
+            KgEntity(
+                id="e-alice2",
+                tenant_id="tenant-a",
+                entity_type=EntityType.PERSON,
+                normalized_value="alice jonson",
+            ),
+            KgEntity(
+                id="e-bob",
+                tenant_id="tenant-a",
+                entity_type=EntityType.PERSON,
+                normalized_value="bob",
+            ),
+            KgEntity(
+                id="e-other-tenant",
+                tenant_id="tenant-b",
+                entity_type=EntityType.PERSON,
+                normalized_value="alice johnson",
+            ),
+        ]
+    )
+    registry = build_registry()
+    registry.register(EntityRepository, FakeEntityRepository())
+    registry.register(KnowledgeGraphRepository, kg)  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    client = TestClient(create_app(settings=settings, registry=registry))
+    return client, kg, audit
+
+
+def test_merge_suggestions_returns_candidates() -> None:
+    client, _, _ = _merge_setup()
+    r = client.get("/api/v1/entities/merge-suggestions", headers=_auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, list)
+    # "alice johnson" / "alice jonson" have trigram similarity 0.69 (above the 0.6 threshold)
+    assert len(body) >= 1
+    first = body[0]
+    assert "canonical_id" in first and "alias_id" in first
+    assert "method" in first and "score" in first
+
+
+def test_merge_suggestions_limit_capped() -> None:
+    client, _, _ = _merge_setup()
+    r = client.get("/api/v1/entities/merge-suggestions?limit=1", headers=_auth())
+    assert r.status_code == 200
+    assert len(r.json()) <= 1
+
+
+def test_merge_suggestions_limit_invalid() -> None:
+    client, _, _ = _merge_setup()
+    r0 = client.get("/api/v1/entities/merge-suggestions?limit=0", headers=_auth())
+    assert r0.status_code == 422
+    r201 = client.get("/api/v1/entities/merge-suggestions?limit=201", headers=_auth())
+    assert r201.status_code == 422
+
+
+def test_merge_succeeds_and_alias_resolves_to_canonical() -> None:
+    client, kg, audit = _merge_setup()
+    r = client.post(
+        "/api/v1/entities/e-alice/merge",
+        json={"alias_id": "e-alice2", "method": "manual"},
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # Response is the canonical KgEntity
+    assert body["id"] == "e-alice"
+    assert body["entity_type"] == "PERSON"
+    # get_entity for the alias now chain-follows to the canonical
+    merged = kg.get_entity("tenant-a", "e-alice2")
+    assert merged is not None
+    assert merged.id == "e-alice"
+    # One entity.merged audit event recorded
+    types = [e.event_type for e in audit.events]
+    assert "entity.merged" in types
+
+
+def test_merge_with_optional_score() -> None:
+    client, _, _ = _merge_setup()
+    r = client.post(
+        "/api/v1/entities/e-alice/merge",
+        json={"alias_id": "e-alice2", "method": "fuzzy_trgm", "score": 0.85},
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+
+
+def test_merge_self_returns_400() -> None:
+    client, _, _ = _merge_setup()
+    r = client.post(
+        "/api/v1/entities/e-alice/merge",
+        json={"alias_id": "e-alice"},
+        headers=_auth(),
+    )
+    assert r.status_code == 400
+
+
+def test_merge_unknown_canonical_returns_404() -> None:
+    client, _, _ = _merge_setup()
+    r = client.post(
+        "/api/v1/entities/e-nope/merge",
+        json={"alias_id": "e-alice"},
+        headers=_auth(),
+    )
+    assert r.status_code == 404
+
+
+def test_merge_unknown_alias_returns_404() -> None:
+    client, _, _ = _merge_setup()
+    r = client.post(
+        "/api/v1/entities/e-alice/merge",
+        json={"alias_id": "e-nope"},
+        headers=_auth(),
+    )
+    assert r.status_code == 404
+
+
+def test_split_reverses_merge() -> None:
+    client, kg, audit = _merge_setup()
+    # Merge first
+    m = client.post(
+        "/api/v1/entities/e-alice/merge",
+        json={"alias_id": "e-alice2"},
+        headers=_auth(),
+    )
+    assert m.status_code == 200
+    # Now split the alias back
+    r = client.post("/api/v1/entities/e-alice2/split", headers=_auth())
+    assert r.status_code == 200
+    assert r.json()["status"] == "split"
+    # After split, e-alice2 is its own canonical again (not chain-following to e-alice)
+    node = kg.get_entity("tenant-a", "e-alice2")
+    assert node is not None
+    assert node.id == "e-alice2"
+    # Audit trail contains both event types
+    event_types = [e.event_type for e in audit.events]
+    assert "entity.merged" in event_types
+    assert "entity.split" in event_types
+
+
+def test_split_non_alias_returns_404() -> None:
+    client, _, _ = _merge_setup()
+    # e-alice is a canonical node, not a merged alias
+    r = client.post("/api/v1/entities/e-alice/split", headers=_auth())
+    assert r.status_code == 404
+
+
+def test_split_unknown_entity_returns_404() -> None:
+    client, _, _ = _merge_setup()
+    r = client.post("/api/v1/entities/e-ghost/split", headers=_auth())
+    assert r.status_code == 404
+
+
+def test_merge_tenant_isolation() -> None:
+    """An entity belonging to tenant-b is invisible to tenant-a; the canonical id should 404."""
+    client, _, _ = _merge_setup()
+    r = client.post(
+        "/api/v1/entities/e-other-tenant/merge",
+        json={"alias_id": "e-alice"},
+        headers=_auth(),
+    )
+    assert r.status_code == 404
+
+
+def test_merge_tenant_isolation_alias() -> None:
+    """A tenant-b entity as alias_id should also 404 for tenant-a."""
+    client, _, _ = _merge_setup()
+    r = client.post(
+        "/api/v1/entities/e-alice/merge",
+        json={"alias_id": "e-other-tenant"},
+        headers=_auth(),
+    )
+    assert r.status_code == 404
+
+
+def test_merge_requires_token() -> None:
+    client, _, _ = _merge_setup()
+    assert (
+        client.post("/api/v1/entities/e-alice/merge", json={"alias_id": "e-alice2"}).status_code
+        == 401
+    )
+
+
+def test_split_requires_token() -> None:
+    client, _, _ = _merge_setup()
+    assert client.post("/api/v1/entities/e-alice2/split").status_code == 401
+
+
+def test_merge_suggestions_requires_token() -> None:
+    client, _, _ = _merge_setup()
+    assert client.get("/api/v1/entities/merge-suggestions").status_code == 401

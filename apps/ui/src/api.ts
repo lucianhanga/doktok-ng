@@ -1823,6 +1823,8 @@ export interface KgEntity {
   tenant_id: string;
   entity_type: string;
   normalized_value: string;
+  /** Present on alias entities that have been merged into a canonical. */
+  canonical_id?: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -1883,4 +1885,64 @@ export function fetchKgNeighborhood(
     `/api/v1/entities/${encodeURIComponent(id)}/neighborhood${qs ? `?${qs}` : ""}`,
     signal,
   );
+}
+
+// ---- Knowledge graph: entity resolution (merge/split, issue #508 Wave 2b) ----
+
+export interface KgMergeSuggestion {
+  tenant_id: string;
+  entity_type: string;
+  canonical_id: string;
+  canonical_value: string;
+  alias_id: string;
+  alias_value: string;
+  /** Matching algorithm that produced this suggestion. */
+  method: "token_set" | "fuzzy_trgm";
+  /** Similarity score in the range 0..1. */
+  score: number;
+}
+
+/** Fetch entity merge suggestions from the resolution queue. */
+export function fetchMergeSuggestions(
+  limit = 50,
+  signal?: AbortSignal,
+): Promise<KgMergeSuggestion[]> {
+  return getJson<KgMergeSuggestion[]>(
+    `/api/v1/entities/merge-suggestions?limit=${limit}`,
+    signal,
+  );
+}
+
+/**
+ * Fold alias_id into canonical_id.
+ * Returns the updated canonical KgEntity on success.
+ */
+export async function mergeEntities(
+  canonicalId: string,
+  aliasId: string,
+  method?: string,
+  score?: number,
+): Promise<KgEntity> {
+  const body: { alias_id: string; method?: string; score?: number } = { alias_id: aliasId };
+  if (method !== undefined) body.method = method;
+  if (score !== undefined) body.score = score;
+  const response = await fetch(`/api/v1/entities/${encodeURIComponent(canonicalId)}/merge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as KgEntity;
+}
+
+/** Undo a merge by splitting alias_id back into a standalone entity. */
+export async function splitEntity(aliasId: string): Promise<void> {
+  const response = await fetch(`/api/v1/entities/${encodeURIComponent(aliasId)}/split`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
 }

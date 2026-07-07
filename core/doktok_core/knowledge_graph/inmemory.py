@@ -7,8 +7,10 @@ delete-then-insert a document's mention/provenance rows.
 
 from __future__ import annotations
 
+import uuid
 from collections import deque
 from collections.abc import Sequence
+from typing import Any
 
 from doktok_contracts.schemas import (
     AliasFold,
@@ -17,9 +19,18 @@ from doktok_contracts.schemas import (
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
+    KgEntityMatch,
     KgEntityMention,
+    KgMergeSuggestion,
 )
 
+from doktok_core.knowledge_graph.entity_resolution import (
+    MatchCascade,
+    TokenSetStage,
+    TrigramStage,
+    is_canonical,
+    trigram_similarity,
+)
 from doktok_core.knowledge_graph.predicates import canonical_edge_id
 
 
@@ -35,6 +46,8 @@ class InMemoryKnowledgeGraphRepository:
         self._provenance: dict[str, KgEdgeProvenance] = {}
         # (tenant_id, entity_type, alias_normalized) -> canonical_entity_id
         self._aliases: dict[tuple[str, str, str], str] = {}
+        # merge/split audit rows (mirrors kg_entity_merge_log)
+        self._merge_log: list[dict[str, Any]] = []
 
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         for entity in entities:
@@ -53,9 +66,18 @@ class InMemoryKnowledgeGraphRepository:
             self._mentions[m.mention_id] = m.model_copy(deep=True)
 
     def get_entity(self, tenant_id: str, entity_id: str) -> KgEntity | None:
+        # Reads resolve through canonical_id (#508): fetching a merged alias node returns its
+        # canonical - the node's effective identity (chain-following, cycle-guarded).
         entity = self._entities.get(entity_id)
         if entity is None or entity.tenant_id != tenant_id:
             return None
+        seen = {entity.id}
+        while entity.canonical_id and entity.canonical_id not in seen:
+            target = self._entities.get(entity.canonical_id)
+            if target is None or target.tenant_id != tenant_id:
+                break
+            seen.add(target.id)
+            entity = target
         return entity.model_copy(deep=True)
 
     def mentions_for_document(self, tenant_id: str, document_id: str) -> list[KgEntityMention]:
@@ -73,15 +95,22 @@ class InMemoryKnowledgeGraphRepository:
         ]
 
     def entity_count(self, tenant_id: str) -> int:
-        return sum(1 for e in self._entities.values() if e.tenant_id == tenant_id)
+        # Canonical nodes only: a merged alias is not a distinct entity (#508).
+        return sum(
+            1 for e in self._entities.values() if e.tenant_id == tenant_id and is_canonical(e)
+        )
 
     def purge_document(self, tenant_id: str, document_id: str) -> int:
         # Clear the document's edge provenance + prune now-evidenceless edges (reuse the edge path).
         self.replace_edges_for_document(tenant_id, document_id, [], [])
         # Prune canonical entities with no remaining mentions; their edges + provenance cascade.
+        # Alias nodes are intentional zero-mention state (their mentions were re-pointed at the
+        # canonical on merge), NOT orphans - they are kept so the merge stays reversible.
         live = {m.canonical_entity_id for m in self._mentions.values() if m.tenant_id == tenant_id}
         orphans = [
-            eid for eid, e in self._entities.items() if e.tenant_id == tenant_id and eid not in live
+            eid
+            for eid, e in self._entities.items()
+            if e.tenant_id == tenant_id and eid not in live and is_canonical(e)
         ]
         for eid in orphans:
             del self._entities[eid]
@@ -223,8 +252,11 @@ class InMemoryKnowledgeGraphRepository:
     # ------------------------------------------------------------------ alias-folding tier
 
     def list_entities(self, tenant_id: str) -> list[KgEntity]:
+        # Canonical nodes only (#508): alias nodes are folded identities, not list entries.
         return [
-            e.model_copy(deep=True) for e in self._entities.values() if e.tenant_id == tenant_id
+            e.model_copy(deep=True)
+            for e in self._entities.values()
+            if e.tenant_id == tenant_id and is_canonical(e)
         ]
 
     def list_entities_page(
@@ -236,7 +268,7 @@ class InMemoryKnowledgeGraphRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[KgEntity]:
-        rows = [e for e in self._entities.values() if e.tenant_id == tenant_id]
+        rows = [e for e in self._entities.values() if e.tenant_id == tenant_id and is_canonical(e)]
         if entity_type is not None:
             rows = [e for e in rows if e.entity_type == entity_type]
         if query is not None:
@@ -256,7 +288,7 @@ class InMemoryKnowledgeGraphRepository:
     def entity_type_counts(self, tenant_id: str) -> list[EntityTypeCount]:
         counts: dict[str, int] = {}
         for e in self._entities.values():
-            if e.tenant_id == tenant_id:
+            if e.tenant_id == tenant_id and is_canonical(e):
                 counts[e.entity_type.value] = counts.get(e.entity_type.value, 0) + 1
         return [EntityTypeCount(entity_type=t, count=c) for t, c in sorted(counts.items())]
 
@@ -284,6 +316,124 @@ class InMemoryKnowledgeGraphRepository:
             del self._entities[fold.alias_id]
             merged += 1
         return merged
+
+    # ------------------------------------------------------------------ entity resolution (#508)
+
+    def find_similar_entities(
+        self,
+        tenant_id: str,
+        entity_type: EntityType,
+        normalized_value: str,
+        *,
+        threshold: float = 0.7,
+        limit: int = 10,
+    ) -> list[KgEntityMatch]:
+        matches = [
+            KgEntityMatch(entity=e.model_copy(deep=True), score=score)
+            for e in self._entities.values()
+            if e.tenant_id == tenant_id
+            and e.entity_type == entity_type
+            and is_canonical(e)
+            and (score := trigram_similarity(normalized_value, e.normalized_value)) >= threshold
+        ]
+        matches.sort(key=lambda m: (-m.score, m.entity.id))
+        return matches[:limit]
+
+    def merge_entities(
+        self,
+        tenant_id: str,
+        canonical_id: str,
+        alias_id: str,
+        *,
+        method: str,
+        score: float | None = None,
+        actor: str = "system",
+    ) -> bool:
+        canonical = self._entities.get(canonical_id)
+        alias = self._entities.get(alias_id)
+        if (
+            canonical is None
+            or alias is None
+            or canonical.tenant_id != tenant_id
+            or alias.tenant_id != tenant_id
+            or canonical.entity_type != alias.entity_type  # merges never cross entity_type
+        ):
+            return False
+        canonical = self._canonical_root(tenant_id, canonical)
+        if canonical.id == alias.id:
+            return False  # self-merge (directly or via the chain) is a no-op
+        already_merged = alias.canonical_id == canonical.id
+        # Alias map entry: re-ingestion of this surface form resolves straight to the canonical.
+        self._aliases[(tenant_id, alias.entity_type.value, alias.normalized_value)] = canonical.id
+        # Flatten chains: anything pointing at the alias now points at the canonical.
+        for key, canon in list(self._aliases.items()):
+            if key[0] == tenant_id and canon == alias.id:
+                self._aliases[key] = canonical.id
+        for eid, e in list(self._entities.items()):
+            if e.tenant_id == tenant_id and e.canonical_id == alias.id:
+                self._entities[eid] = e.model_copy(update={"canonical_id": canonical.id})
+        self._repoint_mentions(tenant_id, alias.id, canonical.id)
+        self._repoint_edges(tenant_id, alias.id, canonical.id)
+        # Keep the alias node (reversibility) - it just points at its canonical now.
+        self._entities[alias.id] = alias.model_copy(update={"canonical_id": canonical.id})
+        if already_merged:
+            return False  # idempotent re-merge: state re-asserted, nothing new to log
+        self._merge_log.append(
+            {
+                "id": uuid.uuid4().hex,
+                "tenant_id": tenant_id,
+                "action": "merge",
+                "canonical_id": canonical.id,
+                "alias_id": alias.id,
+                "method": method,
+                "score": score,
+                "actor": actor,
+            }
+        )
+        return True
+
+    def split_entity(self, tenant_id: str, alias_id: str, *, actor: str = "system") -> bool:
+        node = self._entities.get(alias_id)
+        if node is None or node.tenant_id != tenant_id or is_canonical(node):
+            return False
+        former_canonical = node.canonical_id or ""
+        # Drop the alias mapping so future ingests resolve the surface back to its own node.
+        self._aliases.pop((tenant_id, node.entity_type.value, node.normalized_value), None)
+        self._entities[alias_id] = node.model_copy(update={"canonical_id": None})
+        self._merge_log.append(
+            {
+                "id": uuid.uuid4().hex,
+                "tenant_id": tenant_id,
+                "action": "split",
+                "canonical_id": former_canonical,
+                "alias_id": alias_id,
+                "method": "manual",
+                "score": None,
+                "actor": actor,
+            }
+        )
+        return True
+
+    def list_merge_suggestions(
+        self,
+        tenant_id: str,
+        *,
+        threshold: float = 0.6,
+        limit: int = 50,
+    ) -> list[KgMergeSuggestion]:
+        cascade = MatchCascade(stages=(TokenSetStage(), TrigramStage(threshold=threshold)))
+        return cascade.propose(self.list_entities(tenant_id), limit=limit)
+
+    def _canonical_root(self, tenant_id: str, entity: KgEntity) -> KgEntity:
+        """Follow the canonical chain to its root (cycle-guarded) so merges never build chains."""
+        seen = {entity.id}
+        while entity.canonical_id and entity.canonical_id not in seen:
+            target = self._entities.get(entity.canonical_id)
+            if target is None or target.tenant_id != tenant_id:
+                break
+            seen.add(target.id)
+            entity = target
+        return entity
 
     def _repoint_mentions(self, tenant_id: str, alias_id: str, canonical_id: str) -> None:
         for mid, m in list(self._mentions.items()):

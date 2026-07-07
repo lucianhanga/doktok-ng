@@ -61,7 +61,9 @@ from doktok_contracts.schemas import (
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
+    KgEntityMatch,
     KgEntityMention,
+    KgMergeSuggestion,
     ListAnchor,
     Memory,
     OcrSettings,
@@ -869,6 +871,76 @@ class KnowledgeGraphRepository(Protocol):
         (merging any now-duplicate edge by moving its provenance and recomputing the count),
         re-point any alias rows that targeted the folded node, then delete the folded node.
         Idempotent: folds whose node is already gone are no-ops.
+        """
+        ...
+
+    # ------------------------------------------------------------------ entity resolution (#508)
+
+    def find_similar_entities(
+        self,
+        tenant_id: str,
+        entity_type: EntityType,
+        normalized_value: str,
+        *,
+        threshold: float = 0.7,
+        limit: int = 10,
+    ) -> list[KgEntityMatch]:
+        """Canonical same-type nodes whose ``normalized_value`` is trigram-similar to the probe.
+
+        Fuzzy tier of the matching cascade: pg_trgm ``similarity()`` (word-order-insensitive) at
+        or above ``threshold``, best first, capped at ``limit``. Only CANONICAL nodes are
+        returned (``canonical_id`` unset or self); alias nodes are already merged. Index-backed
+        (GIN ``gin_trgm_ops``), never a tenant scan.
+        """
+        ...
+
+    def merge_entities(
+        self,
+        tenant_id: str,
+        canonical_id: str,
+        alias_id: str,
+        *,
+        method: str,
+        score: float | None = None,
+        actor: str = "system",
+    ) -> bool:
+        """Fold ``alias_id`` into ``canonical_id`` reversibly; True when a merge was applied.
+
+        Unlike ``resolve_aliases`` (which deletes the folded node), the alias node is KEPT with
+        ``canonical_id`` set, so ``split_entity`` can undo the merge. Re-points the alias's
+        mentions and edges onto the canonical (merging duplicate edges by moving provenance and
+        recomputing evidence counts), records the alias's surface form in ``kg_entity_aliases``
+        (so re-ingestion resolves straight to the canonical), flattens chains (nodes pointing at
+        the alias now point at the canonical), and writes a ``kg_entity_merge_log`` row with
+        ``method``/``score``/``actor``. Same-tenant, same-type only; a self-merge or missing
+        node is a no-op returning False. Idempotent: re-merging an already-merged pair re-asserts
+        the state and returns False.
+        """
+        ...
+
+    def split_entity(self, tenant_id: str, alias_id: str, *, actor: str = "system") -> bool:
+        """Undo a merge: promote ``alias_id`` back to its own canonical; True when it was an alias.
+
+        Clears ``canonical_id``, removes the node's ``kg_entity_aliases`` mapping (so future
+        ingests resolve the surface form back to its own node), and logs a ``split`` row.
+        Mentions/edges already re-pointed at the former canonical are restored by the next KG
+        feature reprocess (node ids are deterministic, so re-derivation lands them back here).
+        """
+        ...
+
+    def list_merge_suggestions(
+        self,
+        tenant_id: str,
+        *,
+        threshold: float = 0.6,
+        limit: int = 50,
+    ) -> list[KgMergeSuggestion]:
+        """Propose candidate merges among a tenant's canonical nodes; best-scoring first.
+
+        Blocking is by ``(tenant_id, entity_type)`` and trigram-index-backed (the ``%`` operator
+        against the GIN index), NOT an O(n^2) tenant scan. Pairs at or above ``threshold`` are
+        labeled ``token_set`` (identical token-sort keys, score 1.0) or ``fuzzy_trgm``. Proposals
+        only - applying one is ``merge_entities``.
         """
         ...
 

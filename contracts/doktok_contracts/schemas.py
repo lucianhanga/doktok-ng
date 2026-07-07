@@ -350,8 +350,13 @@ class KgEntity(BaseModel):
     """A canonical cross-document entity node in the knowledge graph (KAG Phase 1).
 
     One node per distinct ``(tenant_id, entity_type, normalized_value)``. The ``id`` is a
-    deterministic uuid5 of exactly that triple (see ``knowledge_graph.resolve``), so the same
-    normalized entity in two documents resolves to the same node with no clustering.
+    deterministic uuid5 of the triple with the value reduced to its token-sort key (see
+    ``knowledge_graph.resolve``), so the same normalized entity - in any token order or
+    punctuation - resolves to the same node with no clustering.
+
+    ``canonical_id`` is the entity-resolution pointer (#508): a node is CANONICAL when it is
+    ``None`` (or equal to ``id``); an ALIAS node points at the canonical it was merged into.
+    Merged nodes are kept (not deleted) so a merge is reversible via ``split_entity``.
     """
 
     id: str
@@ -359,6 +364,7 @@ class KgEntity(BaseModel):
     entity_type: EntityType
     normalized_value: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    canonical_id: str | None = None
 
 
 class KgEntityMention(BaseModel):
@@ -418,6 +424,38 @@ class AliasFold(BaseModel):
     alias_type: str  # entity_type (folds never cross types)
     alias_normalized: str  # the folded node's normalized_value (the alias-table key)
     canonical_id: str  # the surviving canonical node's id
+
+
+class KgEntityMatch(BaseModel):
+    """One fuzzy-match hit from ``KnowledgeGraphRepository.find_similar_entities`` (#508).
+
+    ``score`` is the trigram similarity in ``[0, 1]`` between the probe value and the matched
+    node's ``normalized_value`` (pg_trgm ``similarity()`` on Postgres; the compatible pure-Python
+    implementation in ``knowledge_graph.entity_resolution`` on the in-memory repo).
+    """
+
+    entity: KgEntity
+    score: float
+
+
+class KgMergeSuggestion(BaseModel):
+    """A proposed (not applied) merge of two same-type canonical nodes (#508).
+
+    Produced by the deterministic matching cascade: ``method`` names the stage that fired
+    (``token_set`` = identical token-sort keys, score 1.0; ``fuzzy_trgm`` = trigram similarity at
+    or above the suggestion threshold). Direction is chosen by canonical preference (more tokens,
+    then longer value, then smaller id), matching the alias tier's fold-into-longest philosophy.
+    Applying is a separate, logged step: ``KnowledgeGraphRepository.merge_entities``.
+    """
+
+    tenant_id: str
+    entity_type: EntityType
+    canonical_id: str
+    canonical_value: str
+    alias_id: str
+    alias_value: str
+    method: str
+    score: float
 
 
 class KgStats(BaseModel):

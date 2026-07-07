@@ -43,7 +43,9 @@ from doktok_contracts.schemas import (
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
+    KgEntityMatch,
     KgEntityMention,
+    KgMergeSuggestion,
     ListAnchor,
     Memory,
     MerchantRollup,
@@ -59,6 +61,12 @@ from doktok_contracts.schemas import (
     TokenSuggestion,
     TraceStep,
     TurnMetrics,
+)
+from doktok_core.entities.ner import normalize_entity_name
+from doktok_core.knowledge_graph.entity_resolution import (
+    METHOD_FUZZY_TRGM,
+    METHOD_TOKEN_SET,
+    canonical_preference,
 )
 from doktok_core.knowledge_graph.predicates import canonical_edge_id
 from psycopg import errors as pg_errors
@@ -1057,13 +1065,24 @@ class PostgresKnowledgeGraphRepository:
                 )
 
     def get_entity(self, tenant_id: str, entity_id: str) -> KgEntity | None:
+        # Reads resolve through canonical_id (#508): fetching a merged alias node returns its
+        # canonical - the node's effective identity. Chains are flattened at merge time, so this
+        # normally follows at most one hop (the loop guard is defensive).
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
-            row = cur.execute(
-                "SELECT id, tenant_id, entity_type, normalized_value, metadata "
-                "FROM kg_entities WHERE tenant_id=%s AND id=%s",
-                (tenant_id, entity_id),
-            ).fetchone()
+            seen: set[str] = set()
+            current = entity_id
+            row = None
+            while current and current not in seen:
+                seen.add(current)
+                candidate = cur.execute(
+                    f"SELECT {_KG_ENTITY_COLUMNS} FROM kg_entities WHERE tenant_id=%s AND id=%s",
+                    (tenant_id, current),
+                ).fetchone()
+                if candidate is None:
+                    break
+                row = candidate
+                current = candidate["canonical_id"] or ""
         return _row_to_kg_entity(row) if row else None
 
     def mentions_for_document(self, tenant_id: str, document_id: str) -> list[KgEntityMention]:
@@ -1087,9 +1106,10 @@ class PostgresKnowledgeGraphRepository:
         return [_row_to_kg_mention(row) for row in rows]
 
     def entity_count(self, tenant_id: str) -> int:
+        # Canonical nodes only: a merged alias is not a distinct entity (#508).
         with self._db.connection() as conn:
             row = conn.execute(
-                "SELECT count(*) FROM kg_entities WHERE tenant_id=%s",
+                f"SELECT count(*) FROM kg_entities WHERE tenant_id=%s AND {_KG_CANONICAL_ONLY}",
                 (tenant_id,),
             ).fetchone()
         return int(row[0]) if row else 0
@@ -1106,9 +1126,12 @@ class PostgresKnowledgeGraphRepository:
         Idempotent; safe to call after the document's mention rows are already gone.
         """
         self.replace_edges_for_document(tenant_id, document_id, [], [])
+        # Alias nodes (canonical_id set elsewhere) are intentional zero-mention state - their
+        # mentions were re-pointed on merge - NOT orphans; keep them so the merge stays reversible.
         with self._db.connection() as conn, conn.transaction():
             cur = conn.execute(
-                "DELETE FROM kg_entities e WHERE e.tenant_id=%s AND NOT EXISTS ("
+                "DELETE FROM kg_entities e WHERE e.tenant_id=%s "
+                "AND (e.canonical_id IS NULL OR e.canonical_id = e.id) AND NOT EXISTS ("
                 "SELECT 1 FROM kg_entity_mentions m "
                 "WHERE m.tenant_id = e.tenant_id AND m.canonical_entity_id = e.id)",
                 (tenant_id,),
@@ -1312,11 +1335,12 @@ class PostgresKnowledgeGraphRepository:
     # ------------------------------------------------------------------ alias-folding tier
 
     def list_entities(self, tenant_id: str) -> list[KgEntity]:
+        # Canonical nodes only (#508): alias nodes are folded identities, not list entries.
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT id, tenant_id, entity_type, normalized_value, metadata "
-                "FROM kg_entities WHERE tenant_id=%s ORDER BY id",
+                f"SELECT {_KG_ENTITY_COLUMNS} FROM kg_entities "
+                f"WHERE tenant_id=%s AND {_KG_CANONICAL_ONLY} ORDER BY id",
                 (tenant_id,),
             ).fetchall()
         return [_row_to_kg_entity(row) for row in rows]
@@ -1332,7 +1356,7 @@ class PostgresKnowledgeGraphRepository:
     ) -> list[KgEntity]:
         """Paginated, filterable canonical node list, ordered by normalized_value ASC."""
         params: list[Any] = [tenant_id]
-        where = ["tenant_id=%s"]
+        where = ["tenant_id=%s", _KG_CANONICAL_ONLY]
         if entity_type is not None:
             where.append("entity_type=%s")
             params.append(entity_type.value)
@@ -1341,7 +1365,7 @@ class PostgresKnowledgeGraphRepository:
             params.append(f"%{query}%")
         params.extend([limit, offset])
         sql = (
-            "SELECT id, tenant_id, entity_type, normalized_value, metadata "
+            f"SELECT {_KG_ENTITY_COLUMNS} "
             f"FROM kg_entities WHERE {' AND '.join(where)} "
             "ORDER BY normalized_value ASC LIMIT %s OFFSET %s"
         )
@@ -1358,8 +1382,7 @@ class PostgresKnowledgeGraphRepository:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT id, tenant_id, entity_type, normalized_value, metadata "
-                "FROM kg_entities WHERE tenant_id=%s AND id = ANY(%s)",
+                f"SELECT {_KG_ENTITY_COLUMNS} FROM kg_entities WHERE tenant_id=%s AND id = ANY(%s)",
                 (tenant_id, ids),
             ).fetchall()
         return [_row_to_kg_entity(row) for row in rows]
@@ -1370,7 +1393,8 @@ class PostgresKnowledgeGraphRepository:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
                 "SELECT entity_type, count(*) AS count "
-                "FROM kg_entities WHERE tenant_id=%s GROUP BY entity_type",
+                f"FROM kg_entities WHERE tenant_id=%s AND {_KG_CANONICAL_ONLY} "
+                "GROUP BY entity_type",
                 (tenant_id,),
             ).fetchall()
         return [EntityTypeCount(entity_type=row["entity_type"], count=row["count"]) for row in rows]
@@ -1476,11 +1500,244 @@ class PostgresKnowledgeGraphRepository:
                 (ids,),
             )
 
+    # ------------------------------------------------------------------ entity resolution (#508)
+
+    def find_similar_entities(
+        self,
+        tenant_id: str,
+        entity_type: EntityType,
+        normalized_value: str,
+        *,
+        threshold: float = 0.7,
+        limit: int = 10,
+    ) -> list[KgEntityMatch]:
+        # The `%%` (pg_trgm `%`) predicate is what engages the GIN gin_trgm_ops index; the
+        # session-local similarity_threshold makes it agree with the explicit similarity() filter.
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute(
+                "SELECT set_config('pg_trgm.similarity_threshold', %s, true)",
+                (str(threshold),),
+            )
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_KG_ENTITY_COLUMNS}, similarity(normalized_value, %s) AS score "
+                "FROM kg_entities "
+                f"WHERE tenant_id=%s AND entity_type=%s AND {_KG_CANONICAL_ONLY} "
+                "AND normalized_value %% %s "
+                "AND similarity(normalized_value, %s) >= %s "
+                "ORDER BY score DESC, id LIMIT %s",
+                (
+                    normalized_value,
+                    tenant_id,
+                    entity_type.value,
+                    normalized_value,
+                    normalized_value,
+                    threshold,
+                    limit,
+                ),
+            ).fetchall()
+        return [
+            KgEntityMatch(entity=_row_to_kg_entity(row), score=float(row["score"])) for row in rows
+        ]
+
+    def merge_entities(
+        self,
+        tenant_id: str,
+        canonical_id: str,
+        alias_id: str,
+        *,
+        method: str,
+        score: float | None = None,
+        actor: str = "system",
+    ) -> bool:
+        # Same per-tenant advisory lock as resolve_aliases: merge passes serialize per tenant.
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"kg_alias:{tenant_id}",))
+            cur = conn.cursor(row_factory=dict_row)
+            canonical = self._node_row(cur, tenant_id, canonical_id)
+            alias = self._node_row(cur, tenant_id, alias_id)
+            if (
+                canonical is None
+                or alias is None
+                or canonical["entity_type"] != alias["entity_type"]  # never cross entity_type
+            ):
+                return False
+            canonical = self._canonical_root_row(cur, tenant_id, canonical)
+            if canonical["id"] == alias["id"]:
+                return False  # self-merge (directly or via the chain) is a no-op
+            already_merged = alias["canonical_id"] == canonical["id"]
+            # 1. Alias map: re-ingestion of this surface form resolves straight to the canonical.
+            conn.execute(
+                "INSERT INTO kg_entity_aliases (tenant_id, entity_type, alias_normalized, "
+                "canonical_entity_id, surface_form, source, confidence) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (tenant_id, entity_type, alias_normalized) DO UPDATE SET "
+                "canonical_entity_id=EXCLUDED.canonical_entity_id, "
+                "surface_form=EXCLUDED.surface_form, source=EXCLUDED.source, "
+                "confidence=EXCLUDED.confidence",
+                (
+                    tenant_id,
+                    alias["entity_type"],
+                    alias["normalized_value"],
+                    canonical["id"],
+                    alias["normalized_value"],
+                    method,
+                    score,
+                ),
+            )
+            # 2. Flatten chains: anything pointing at the alias now points at the canonical.
+            conn.execute(
+                "UPDATE kg_entity_aliases SET canonical_entity_id=%s "
+                "WHERE tenant_id=%s AND canonical_entity_id=%s",
+                (canonical["id"], tenant_id, alias["id"]),
+            )
+            conn.execute(
+                "UPDATE kg_entities SET canonical_id=%s WHERE tenant_id=%s AND canonical_id=%s",
+                (canonical["id"], tenant_id, alias["id"]),
+            )
+            # 3. Re-point the alias's mentions and edges onto the canonical (edge duplicates merge
+            #    by moving provenance and recomputing evidence counts).
+            conn.execute(
+                "UPDATE kg_entity_mentions SET canonical_entity_id=%s "
+                "WHERE tenant_id=%s AND canonical_entity_id=%s",
+                (canonical["id"], tenant_id, alias["id"]),
+            )
+            self._repoint_edges(conn, tenant_id, alias["id"], canonical["id"])
+            # 4. Keep the alias node (reversibility) - it just points at its canonical now.
+            conn.execute(
+                "UPDATE kg_entities SET canonical_id=%s, updated_at=now() "
+                "WHERE tenant_id=%s AND id=%s",
+                (canonical["id"], tenant_id, alias["id"]),
+            )
+            if already_merged:
+                return False  # idempotent re-merge: state re-asserted, nothing new to log
+            conn.execute(
+                "INSERT INTO kg_entity_merge_log "
+                "(id, tenant_id, action, canonical_id, alias_id, method, score, actor) "
+                "VALUES (%s, %s, 'merge', %s, %s, %s, %s, %s)",
+                (uuid.uuid4().hex, tenant_id, canonical["id"], alias["id"], method, score, actor),
+            )
+        return True
+
+    def split_entity(self, tenant_id: str, alias_id: str, *, actor: str = "system") -> bool:
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"kg_alias:{tenant_id}",))
+            cur = conn.cursor(row_factory=dict_row)
+            node = self._node_row(cur, tenant_id, alias_id)
+            if node is None or not node["canonical_id"] or node["canonical_id"] == node["id"]:
+                return False
+            # Drop the alias mapping so future ingests resolve the surface back to its own node.
+            conn.execute(
+                "DELETE FROM kg_entity_aliases "
+                "WHERE tenant_id=%s AND entity_type=%s AND alias_normalized=%s",
+                (tenant_id, node["entity_type"], node["normalized_value"]),
+            )
+            conn.execute(
+                "UPDATE kg_entities SET canonical_id=NULL, updated_at=now() "
+                "WHERE tenant_id=%s AND id=%s",
+                (tenant_id, alias_id),
+            )
+            conn.execute(
+                "INSERT INTO kg_entity_merge_log "
+                "(id, tenant_id, action, canonical_id, alias_id, method, score, actor) "
+                "VALUES (%s, %s, 'split', %s, %s, 'manual', NULL, %s)",
+                (uuid.uuid4().hex, tenant_id, node["canonical_id"], alias_id, actor),
+            )
+        return True
+
+    def list_merge_suggestions(
+        self,
+        tenant_id: str,
+        *,
+        threshold: float = 0.6,
+        limit: int = 50,
+    ) -> list[KgMergeSuggestion]:
+        # Blocked by (tenant_id, entity_type); the `%%` join predicate probes the GIN trigram
+        # index per outer row (index-backed blocking), so this is never an O(n^2) tenant scan.
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute(
+                "SELECT set_config('pg_trgm.similarity_threshold', %s, true)",
+                (str(threshold),),
+            )
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT a.entity_type, "
+                "a.id AS a_id, a.normalized_value AS a_value, "
+                "b.id AS b_id, b.normalized_value AS b_value, "
+                "similarity(a.normalized_value, b.normalized_value) AS score "
+                "FROM kg_entities a JOIN kg_entities b "
+                "ON b.tenant_id = a.tenant_id AND b.entity_type = a.entity_type "
+                "AND b.id > a.id AND b.normalized_value %% a.normalized_value "
+                "WHERE a.tenant_id = %s "
+                "AND (a.canonical_id IS NULL OR a.canonical_id = a.id) "
+                "AND (b.canonical_id IS NULL OR b.canonical_id = b.id) "
+                "AND similarity(a.normalized_value, b.normalized_value) >= %s "
+                "ORDER BY score DESC, a.id, b.id LIMIT %s",
+                (tenant_id, threshold, limit),
+            ).fetchall()
+        suggestions: list[KgMergeSuggestion] = []
+        for row in rows:
+            entity_type = EntityType(row["entity_type"])
+            a = KgEntity(
+                id=row["a_id"],
+                tenant_id=tenant_id,
+                entity_type=entity_type,
+                normalized_value=row["a_value"],
+            )
+            b = KgEntity(
+                id=row["b_id"],
+                tenant_id=tenant_id,
+                entity_type=entity_type,
+                normalized_value=row["b_value"],
+            )
+            canonical, alias = canonical_preference(a, b)
+            # Identical token-sort keys = the deterministic tier (pre-#508 nodes that the new
+            # write-time key would have collapsed); everything else is the fuzzy suggestion tier.
+            token_set_equal = normalize_entity_name(a.normalized_value) == normalize_entity_name(
+                b.normalized_value
+            )
+            suggestions.append(
+                KgMergeSuggestion(
+                    tenant_id=tenant_id,
+                    entity_type=entity_type,
+                    canonical_id=canonical.id,
+                    canonical_value=canonical.normalized_value,
+                    alias_id=alias.id,
+                    alias_value=alias.normalized_value,
+                    method=METHOD_TOKEN_SET if token_set_equal else METHOD_FUZZY_TRGM,
+                    score=1.0 if token_set_equal else float(row["score"]),
+                )
+            )
+        return suggestions
+
+    def _node_row(self, cur: Any, tenant_id: str, entity_id: str) -> dict[str, Any] | None:
+        row = cur.execute(
+            f"SELECT {_KG_ENTITY_COLUMNS} FROM kg_entities WHERE tenant_id=%s AND id=%s",
+            (tenant_id, entity_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def _canonical_root_row(self, cur: Any, tenant_id: str, node: dict[str, Any]) -> dict[str, Any]:
+        """Follow the canonical chain to its root (cycle-guarded) so merges never build chains."""
+        seen = {node["id"]}
+        while node["canonical_id"] and node["canonical_id"] not in seen:
+            target = self._node_row(cur, tenant_id, node["canonical_id"])
+            if target is None:
+                break
+            seen.add(target["id"])
+            node = target
+        return node
+
 
 _KG_MENTION_COLUMNS = (
     "mention_id, tenant_id, canonical_entity_id, document_id, chunk_id, "
     "entity_type, normalized_value"
 )
+
+_KG_ENTITY_COLUMNS = "id, tenant_id, entity_type, normalized_value, metadata, canonical_id"
+
+# A node is canonical when its canonical_id is unset or points at itself (#508).
+_KG_CANONICAL_ONLY = "(canonical_id IS NULL OR canonical_id = id)"
 
 
 def _row_to_kg_entity(row: dict[str, Any]) -> KgEntity:
@@ -1490,6 +1747,7 @@ def _row_to_kg_entity(row: dict[str, Any]) -> KgEntity:
         entity_type=EntityType(row["entity_type"]),
         normalized_value=row["normalized_value"],
         metadata=row["metadata"] or {},
+        canonical_id=row.get("canonical_id"),
     )
 
 

@@ -17,6 +17,8 @@ import uuid
 
 from doktok_contracts.schemas import EntityType
 
+from doktok_core.entities.ner import normalize_entity_name
+
 # Stable namespace for KAG canonical-entity ids. NEVER change this: it is baked into every stored
 # node id, so altering it would orphan the entire graph. Derived once from a fixed DNS-style label.
 KG_ENTITY_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "knowledge-graph.entities.doktok")
@@ -55,6 +57,13 @@ def canonical_entity_id(tenant_id: str, entity_type: str, normalized_value: str)
 
     Pure function of the triple: identical inputs always yield the same id, across documents and
     across re-runs. ``tenant_id`` is part of the key, so tenants never share node ids.
+
+    The value part of the key is the TOKEN-SORT key (#508, ``normalize_entity_name``): casefolded,
+    punctuation-stripped, token-sorted. Word-order and punctuation variants of the same name
+    ('lucian hanga' / 'hanga,lucian' / 'hanga lucian') therefore collapse to ONE node at write
+    time; the node's stored ``normalized_value`` keeps the first-seen surface form as the display
+    name (upsert is DO NOTHING on the id). Ids minted before #508 used the raw normalized value -
+    they are not rewritten; collapsing pre-existing variant nodes requires a KG feature reprocess.
     """
-    key = f"{tenant_id}{_SEP}{entity_type}{_SEP}{normalized_value}"
+    key = f"{tenant_id}{_SEP}{entity_type}{_SEP}{normalize_entity_name(normalized_value)}"
     return uuid.uuid5(_KG_ENTITY_NAMESPACE, key).hex

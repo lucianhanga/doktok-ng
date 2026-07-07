@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from doktok_contracts.ports import AuditLogRepository, EntityRepository, KnowledgeGraphRepository
+from doktok_contracts.ports import (
+    AuditLogRepository,
+    EntityMergeAdjudicator,
+    EntityRepository,
+    KnowledgeGraphRepository,
+)
 from doktok_contracts.schemas import (
     AuditEventType,
     Document,
@@ -16,12 +21,14 @@ from doktok_contracts.schemas import (
     KgStats,
 )
 from doktok_core.audit.logger import record_activity
+from doktok_core.knowledge_graph.adjudication import adjudicate_suggestions
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from doktok_api.dependencies import (
     Tenant,
     get_audit_repository,
+    get_entity_merge_adjudicator,
     get_entity_repository,
     get_knowledge_graph_repository,
 )
@@ -31,6 +38,7 @@ router = APIRouter(prefix="/api/v1/entities", tags=["entities"])
 Repo = Annotated[EntityRepository, Depends(get_entity_repository)]
 KgRepo = Annotated[KnowledgeGraphRepository, Depends(get_knowledge_graph_repository)]
 Audit = Annotated[AuditLogRepository, Depends(get_audit_repository)]
+OptAdjudicator = Annotated[EntityMergeAdjudicator | None, Depends(get_entity_merge_adjudicator)]
 
 
 class MergeEntityBody(BaseModel):
@@ -76,9 +84,21 @@ def documents_for_entity(
 def list_merge_suggestions(
     tenant: Tenant,
     kg: KgRepo,
+    adjudicator: OptAdjudicator,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[KgMergeSuggestion]:
-    return kg.list_merge_suggestions(tenant.tenant_id, limit=limit)
+    """Return candidate entity merges, optionally enriched by the pipeline LLM adjudicator.
+
+    When the pipeline model is available the ``fuzzy_trgm`` suggestions are adjudicated:
+    pairs the LLM says are different real-world entities are dropped; surviving pairs are
+    enriched with ``llm_*`` fields. ``token_set`` suggestions (certain matches) always pass
+    through unchanged. Falls back to the plain deterministic list when the adjudicator is
+    unavailable (egress blocked, no settings, model error).
+    """
+    suggestions = kg.list_merge_suggestions(tenant.tenant_id, limit=limit)
+    if adjudicator is not None:
+        suggestions = adjudicate_suggestions(suggestions, kg, adjudicator, limit=limit)
+    return suggestions
 
 
 @router.get("/nodes", response_model=list[KgEntity])

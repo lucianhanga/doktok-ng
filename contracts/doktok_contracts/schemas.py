@@ -449,6 +449,9 @@ class KgMergeSuggestion(BaseModel):
     or above the suggestion threshold). Direction is chosen by canonical preference (more tokens,
     then longer value, then smaller id), matching the alias tier's fold-into-longest philosophy.
     Applying is a separate, logged step: ``KnowledgeGraphRepository.merge_entities``.
+
+    LLM adjudication (#510): ``fuzzy_trgm`` suggestions may be enriched by the pipeline model.
+    The ``llm_*`` fields are ``None`` when the adjudicator was unavailable or skipped (token_set).
     """
 
     tenant_id: str
@@ -459,6 +462,38 @@ class KgMergeSuggestion(BaseModel):
     alias_value: str
     method: str
     score: float
+    # LLM adjudication fields (optional, back-compatible; None = not adjudicated).
+    llm_same: bool | None = None
+    llm_confidence: float | None = None
+    llm_reason: str | None = None
+    llm_canonical: str | None = None
+
+
+class EntityProfile(BaseModel):
+    """Context profile assembled for one entity candidate in LLM merge adjudication (#510).
+
+    Carries the entity's identity (name + type) plus a compact list of its direct KG neighbors
+    (``predicate neighbor_name (TYPE)``), which the adjudicator uses as disambiguation context.
+    """
+
+    entity_id: str
+    entity_type: str
+    normalized_value: str
+    neighbors: list[str] = Field(default_factory=list)
+
+
+class MergeVerdict(BaseModel):
+    """LLM adjudicator verdict for a candidate entity pair (#510).
+
+    ``same`` is the primary decision; ``canonical`` is the LLM's preferred display name (may
+    differ from either input when the model suggests a correction); ``confidence`` is 0-1;
+    ``reason`` is a one-sentence explanation surfaced in the UI for human review.
+    """
+
+    same: bool
+    canonical: str
+    confidence: float
+    reason: str
 
 
 class KgStats(BaseModel):

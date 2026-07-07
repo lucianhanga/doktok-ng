@@ -12,6 +12,7 @@ import {
   fetchFeatures,
   processingRollup,
   reingestDocument,
+  reprocessAllFeature,
   retryDocumentFeature,
   suggestTokens,
   type CategorySummary,
@@ -513,6 +514,7 @@ export function DocumentsPanel({
   const [bulkProgress, setBulkProgress] = useState<{ label: string; done: number; total: number } | null>(null);
   const [catalog, setCatalog] = useState<FeatureCatalogEntry[]>([]);
   const [reprocessFeature, setReprocessFeature] = useState("");
+  const [reprocessAllFeatureValue, setReprocessAllFeatureValue] = useState("");
   const [notice, setNotice] = useState("");
   const loadAbort = useRef<AbortController | null>(null);
   const lastToggled = useRef<string | null>(null);
@@ -1077,6 +1079,57 @@ export function DocumentsPanel({
         onRemove={(t) => setTokens((prev) => prev.filter((x) => x !== t))}
         onMatch={setTokenMatch}
       />
+
+      {catalog.length > 0 && (
+        <div className="bulk-bar" role="region" aria-label="Reprocess all documents">
+          <span className="bulk-reprocess">
+            <select
+              aria-label="Feature to reprocess all"
+              value={reprocessAllFeatureValue}
+              disabled={busy}
+              onChange={(e) => setReprocessAllFeatureValue(e.target.value)}
+            >
+              <option value="">Reprocess all: pick feature...</option>
+              {catalog.map((c) => (
+                <option key={c.name} value={c.name} title={c.description}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busy || reprocessAllFeatureValue === ""}
+              onClick={() => {
+                const spec = catalog.find((c) => c.name === reprocessAllFeatureValue);
+                if (!spec) return;
+                if (
+                  window.confirm(
+                    `Re-run ${spec.label} on every document in this tenant?\n\n` +
+                      `This re-queues the model for ALL documents (cost + time). Continue?`,
+                  )
+                ) {
+                  setBusy(true);
+                  void reprocessAllFeature(reprocessAllFeatureValue)
+                    .then(({ count }) => {
+                      setNotice(
+                        `Re-queued ${spec.label} for ${count.toLocaleString()} document${count === 1 ? "" : "s"}.`,
+                      );
+                      setReprocessAllFeatureValue("");
+                    })
+                    .catch((err: unknown) => {
+                      setNotice(
+                        `Reprocess all failed: ${err instanceof Error ? err.message : "error"}`,
+                      );
+                    })
+                    .finally(() => setBusy(false));
+                }
+              }}
+            >
+              Reprocess all
+            </button>
+          </span>
+        </div>
+      )}
 
       {selected.size > 0 && (
         <div className="bulk-bar" role="region" aria-label="Bulk actions">

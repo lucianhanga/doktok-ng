@@ -3,10 +3,11 @@ from datetime import UTC, datetime
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import AuditLogRepository, FeatureRepository
-from doktok_contracts.schemas import DocumentFeature, FeatureStatus
+from doktok_contracts.ports import AuditLogRepository, DocumentRepository, FeatureRepository
+from doktok_contracts.schemas import Document, DocumentFeature, DocumentStatus, FeatureStatus
 from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
+from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -64,9 +65,39 @@ class FakeFeatureRepository:
         return 0
 
 
+def _doc(doc_id: str, tenant: str) -> Document:
+    return Document(
+        id=doc_id,
+        tenant_id=tenant,
+        sha256=(doc_id + "a" * 64)[:64],
+        original_filename=f"{doc_id}.txt",
+        detected_mime="text/plain",
+        title=doc_id,
+        status=DocumentStatus.ACTIVE,
+        storage_path=f"/docs/{doc_id}",
+        created_at=datetime.now(UTC),
+        activated_at=datetime.now(UTC),
+    )
+
+
 def _client(repo: FakeFeatureRepository) -> TestClient:
     registry = build_registry()
     registry.register(FeatureRepository, repo)
+    registry.register(
+        AuditLogRepository,  # type: ignore[type-abstract]
+        InMemoryAuditLogRepository(),
+    )
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    return TestClient(create_app(settings=settings, registry=registry))
+
+
+def _client_with_docs(feat_repo: FakeFeatureRepository, *docs: Document) -> TestClient:
+    doc_repo = InMemoryDocumentRepository()
+    for doc in docs:
+        doc_repo.add(doc)
+    registry = build_registry()
+    registry.register(FeatureRepository, feat_repo)
+    registry.register(DocumentRepository, doc_repo)  # type: ignore[type-abstract]
     registry.register(
         AuditLogRepository,  # type: ignore[type-abstract]
         InMemoryAuditLogRepository(),
@@ -107,3 +138,56 @@ def test_retry_unknown_feature_is_404() -> None:
         "/api/v1/documents/d1/features/missing/retry", headers=_auth()
     )
     assert resp.status_code == 404
+
+
+def test_reprocess_all_resets_feature_for_every_tenant_doc() -> None:
+    repo = FakeFeatureRepository()
+    d1 = _doc("doc-1", "tenant-a")
+    d2 = _doc("doc-2", "tenant-a")
+    resp = _client_with_docs(repo, d1, d2).post(
+        "/api/v1/documents/features/entities/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert body["count"] == 2
+    assert sorted(repo.reset_calls) == [
+        ("tenant-a", "doc-1", "entities"),
+        ("tenant-a", "doc-2", "entities"),
+    ]
+
+
+def test_reprocess_all_unknown_feature_is_404() -> None:
+    resp = _client_with_docs(FakeFeatureRepository()).post(
+        "/api/v1/documents/features/no-such-feature/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 404
+
+
+def test_reprocess_all_counts_only_successes() -> None:
+    """reset() returns False for any feature other than 'entities'; count must be 0."""
+    repo = FakeFeatureRepository()
+    d1 = _doc("doc-1", "tenant-a")
+    # "thumbnail" is a valid catalog feature; FakeFeatureRepository.reset returns False for it
+    resp = _client_with_docs(repo, d1).post(
+        "/api/v1/documents/features/thumbnail/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 0
+    # reset was still called — the feature just had no existing row to reset
+    assert repo.reset_calls == [("tenant-a", "doc-1", "thumbnail")]
+
+
+def test_reprocess_all_tenant_isolation() -> None:
+    """Documents owned by a different tenant are never touched."""
+    repo = FakeFeatureRepository()
+    own = _doc("own-doc", "tenant-a")
+    other = _doc("other-doc", "tenant-b")
+    resp = _client_with_docs(repo, own, other).post(
+        "/api/v1/documents/features/entities/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 200
+    touched_tenants = {call[0] for call in repo.reset_calls}
+    touched_docs = {call[1] for call in repo.reset_calls}
+    assert touched_tenants == {"tenant-a"}
+    assert "other-doc" not in touched_docs

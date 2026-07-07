@@ -90,4 +90,7 @@ class QwenReranker:
             logger.warning("qwen reranker scoring failed; keeping retrieval order", exc_info=True)
             return hits[:top_k]
         order = sorted(range(len(hits)), key=lambda i: scores[i], reverse=True)
-        return [hits[i] for i in order[:top_k]]
+        # Attach each hit's calibrated yes-probability so the answerer can use the real score
+        # as the citation relevance and apply a min-relevance threshold (rerank_score is None
+        # on the no-score fallback paths above, leaving downstream behaviour unchanged).
+        return [hits[i].model_copy(update={"rerank_score": scores[i]}) for i in order[:top_k]]

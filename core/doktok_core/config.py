@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     # Deterministic evidence floor: refuse before generating if the best retrieval score is below
     # this (0 = disabled). RRF scores are small (~0.01-0.05); tune against the eval set before use.
     rag_min_score: float = 0.0
+    # Minimum reranker relevance [0,1] to keep a source; chunks scoring below this are dropped as
+    # off-topic before the answer is composed. Only applied when a cross-encoder reranker ran and
+    # scored the hits (rerank_score set); skipped when rerank_score is None on all hits (no reranker
+    # or scoring failed). Safety: at least the top-1 hit is always kept regardless of this floor.
+    # 0 = disabled (no threshold). Default 0.3 trims clearly off-topic docs while preserving all
+    # hits whose relevance is uncertain.
+    rerank_min_relevance: float = 0.3
     # Reranker: model for the listwise rerank call (defaults to the chat model; swap to a smaller
     # model to free the chat slot) and a tight output cap (it only emits a short JSON array).
     rerank_model: str = ""  # empty => use default_model

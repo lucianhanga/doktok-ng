@@ -183,3 +183,30 @@ test("meta line shows token count and timing from metrics", () => {
   expect(screen.getByText(/~280 tok/)).toBeInTheDocument();
   expect(screen.getAllByText(/2\.5s/).length).toBeGreaterThan(0);
 });
+
+// --- Bucket A parity items (#485) ---
+
+test("stopped turn shows a red stopped status dot in the turn head", () => {
+  render(
+    <ChatActivityTimeline
+      turns={[makeTurn({ reasoning: "some reasoning", stopped: true })]}
+      streaming={null}
+    />,
+  );
+  // The stopped state drives a red CSS class on the status dot (amber = live, red = stopped, green = ok).
+  const dot = document.querySelector(".chat-timeline-status-dot--stopped");
+  expect(dot).toBeInTheDocument();
+});
+
+test("turn with startedAt shows a relative timestamp in the meta", () => {
+  // Use a timestamp 5 minutes in the past so the relative label is "5m ago".
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  render(
+    <ChatActivityTimeline
+      turns={[makeTurn({ reasoning: "reasoning", startedAt: fiveMinutesAgo })]}
+      streaming={null}
+    />,
+  );
+  // The relative label appears in the turn head meta alongside tok/time data.
+  expect(screen.getByText(/5m ago/)).toBeInTheDocument();
+});

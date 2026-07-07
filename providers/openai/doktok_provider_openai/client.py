@@ -13,10 +13,11 @@ import os
 import random
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
-from doktok_contracts.media import LlmUsage
+from doktok_contracts.media import AgentMessage, LlmUsage
 
 logger = logging.getLogger("doktok.provider.openai")
 
@@ -279,6 +280,188 @@ def openai_chat_with_usage(
         estimated=not usage_obj,
     )
     return content, usage
+
+
+def _execute_responses_stream(
+    *,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: float,
+    _usage_out: list[dict[str, Any]] | None = None,
+) -> Iterator[tuple[str, str]]:
+    """Execute a pre-built Responses API streaming request and yield ``(kind, text)`` tuples.
+
+    Holds the process-wide concurrency semaphore for the full duration of the stream.  Raises a
+    classified ``OpenAiError`` subclass on HTTP errors; yields ``("reasoning", delta)`` and
+    ``("answer", delta)`` for content events; appends the raw ``usage`` dict to ``_usage_out``
+    (when provided) on ``response.completed``.  Not intended to be called directly - use
+    ``openai_stream_responses`` or ``openai_stream_responses_messages`` instead.
+    """
+    with (
+        _REQUEST_SEMAPHORE,
+        httpx.stream("POST", url, headers=headers, json=payload, timeout=timeout) as resp,
+    ):
+        status = resp.status_code
+        if status in (401, 403):
+            raise OpenAiAuthError(
+                f"OpenAI authentication failed (HTTP {status}); check the API key"
+            )
+        if status == 429:
+            raise OpenAiRateLimitError("OpenAI rate limit exceeded (HTTP 429)")
+        if status >= 500:
+            raise OpenAiServerError(f"OpenAI server error (HTTP {status})")
+        if status >= 400:
+            raise OpenAiError(f"OpenAI Responses API failed (HTTP {status})")
+        for line in resp.iter_lines():
+            if not line or not line.startswith("data: "):
+                continue
+            data = line[6:]  # strip leading "data: "
+            if data == "[DONE]":
+                break
+            try:
+                event: dict[str, Any] = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            event_type: str = event.get("type") or ""
+            if event_type == "response.reasoning_summary_text.delta":
+                delta: str = event.get("delta") or ""
+                if delta:
+                    yield ("reasoning", delta)
+            elif event_type == "response.output_text.delta":
+                delta = event.get("delta") or ""
+                if delta:
+                    yield ("answer", delta)
+            elif event_type == "response.completed":
+                if _usage_out is not None:
+                    usage_data: dict[str, Any] = (event.get("response") or {}).get("usage") or {}
+                    _usage_out.append(dict(usage_data))
+                break
+            elif event_type in ("response.error", "error"):
+                err_obj: dict[str, Any] = event.get("error") or {}
+                err_msg: str = err_obj.get("message") or event.get("message") or event_type
+                raise OpenAiError(f"OpenAI stream error: {err_msg}")
+
+
+def _to_responses_input_items(
+    messages: list[AgentMessage],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Extract system instructions and map remaining ``AgentMessage``s to Responses API input items.
+
+    Returns ``(instructions, input_items)``.  ``instructions`` is the content of the first system
+    message (empty string when none).  ``input_items`` is the ordered list of Responses API input
+    objects:
+    - ``{"role": "user"|"assistant", "content": "..."}`` for plain text turns
+    - ``{"type": "function_call", ...}`` for assistant tool-call requests
+    - ``{"type": "function_call_output", ...}`` for tool results
+    """
+    instructions = ""
+    items: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.role == "system":
+            instructions = msg.content
+        elif msg.role == "user":
+            items.append({"role": "user", "content": msg.content})
+        elif msg.role == "assistant":
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": tc.id,
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        }
+                    )
+                if msg.content:
+                    items.append({"role": "assistant", "content": msg.content})
+            else:
+                items.append({"role": "assistant", "content": msg.content})
+        elif msg.role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.tool_call_id or "",
+                    "output": msg.content,
+                }
+            )
+    return instructions, items
+
+
+def openai_stream_responses(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    system: str,
+    user: str,
+    timeout: float = 120.0,
+    reasoning_effort: str | None = None,
+    _usage_out: list[dict[str, Any]] | None = None,
+) -> Iterator[tuple[str, str]]:
+    """Stream answer and reasoning-summary deltas via the OpenAI Responses API (POST /responses).
+
+    Yields ``(kind, text)`` tuples where ``kind`` is ``"reasoning"`` or ``"answer"``.  Reasoning
+    summary deltas are only present for reasoning models when ``reasoning_effort`` is provided;
+    the API emits ``response.reasoning_summary_text.delta`` events with ``summary: "auto"``.
+
+    On ``response.completed`` the raw ``usage`` dict is appended to ``_usage_out`` (when provided)
+    so the caller can update token accounting without coupling the generator's return value.
+
+    The process-wide concurrency semaphore is held for the full duration of the stream so the
+    total in-flight request count (streaming + non-streaming) stays within
+    ``DOKTOK_OPENAI_MAX_CONCURRENCY``.
+    """
+    url = f"{base_url.rstrip('/')}/responses"
+    payload: dict[str, Any] = {
+        "model": model,
+        "instructions": system,
+        "input": user,
+        "stream": True,
+    }
+    if reasoning_effort is not None:
+        payload["reasoning"] = {"effort": reasoning_effort, "summary": "auto"}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    yield from _execute_responses_stream(
+        url=url, headers=headers, payload=payload, timeout=timeout, _usage_out=_usage_out
+    )
+
+
+def openai_stream_responses_messages(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    messages: list[AgentMessage],
+    timeout: float = 120.0,
+    reasoning_effort: str | None = None,
+    _usage_out: list[dict[str, Any]] | None = None,
+) -> Iterator[tuple[str, str]]:
+    """Stream via the Responses API using a full ``AgentMessage`` list as context.
+
+    Extracts the system message as ``instructions``; maps the remaining messages to Responses API
+    input items (user/assistant text turns, ``function_call`` items for tool requests, and
+    ``function_call_output`` items for tool results).  The model generates its final answer with
+    the full conversation context visible.
+
+    Yields ``(kind, text)`` and populates ``_usage_out`` identically to
+    ``openai_stream_responses``.  The process-wide concurrency semaphore is held for the full
+    duration of the stream.
+    """
+    instructions, input_items = _to_responses_input_items(messages)
+    url = f"{base_url.rstrip('/')}/responses"
+    payload: dict[str, Any] = {
+        "model": model,
+        "instructions": instructions,
+        "input": input_items,
+        "stream": True,
+    }
+    if reasoning_effort is not None:
+        payload["reasoning"] = {"effort": reasoning_effort, "summary": "auto"}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    yield from _execute_responses_stream(
+        url=url, headers=headers, payload=payload, timeout=timeout, _usage_out=_usage_out
+    )
 
 
 def loads_object(content: str) -> dict[str, Any] | None:

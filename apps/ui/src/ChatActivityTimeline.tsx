@@ -1,6 +1,49 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { RankedChunk, TraceStep, TurnMetrics } from "./api";
+
+/** Reasoning in a fixed-height (~12-row) window that auto-tails to the newest lines as it streams
+ * (personalAI MessageDetails parity): it follows the stream while the user is at the bottom, stops
+ * following if they scroll up to read, and offers a "latest" button to jump back. */
+function ReasoningPanel({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+
+  // Follow new reasoning only while pinned to the bottom (personalAI's `stick`).
+  useEffect(() => {
+    const el = ref.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [text]);
+
+  function onScroll() {
+    const el = ref.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    stick.current = near;
+    setAtBottom(near);
+  }
+  function jumpToLatest() {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stick.current = true;
+    setAtBottom(true);
+  }
+
+  return (
+    <div className="chat-reasoning-panel">
+      {!atBottom && (
+        <button type="button" className="chat-reasoning-jump" onClick={jumpToLatest}>
+          ▾ latest
+        </button>
+      )}
+      <div ref={ref} className="chat-timeline-reasoning" onScroll={onScroll}>
+        {text}
+      </div>
+    </div>
+  );
+}
 
 // --- Context meter (adapted from personalAI ContextMeter) ------------------------------------
 
@@ -122,6 +165,7 @@ export interface TimelineTurn {
   metrics: TurnMetrics | null;
   streaming: boolean;
   stopped: boolean;
+  startedAt?: number; // epoch-ms when the question was submitted (for relative timestamps)
 }
 
 export interface TimelineStreaming {
@@ -142,11 +186,24 @@ interface TurnEntry {
   metrics: TurnMetrics | null;
   isLive: boolean;
   stopped: boolean;
+  startedAt?: number; // epoch-ms when the question was submitted
 }
 
 function fmtMs(ms: number): string {
   if (ms <= 0) return "0s";
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** Coarse relative label from an epoch-ms timestamp, mirroring personalAI's ActivityTimeline. */
+function relTime(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 10) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
 }
 
 function fmtTok(n: number): string {
@@ -255,6 +312,7 @@ export function ChatActivityTimeline({
     metrics: t.metrics,
     isLive: false,
     stopped: t.stopped,
+    startedAt: t.startedAt,
   }));
 
   if (streaming) {
@@ -337,6 +395,7 @@ export function ChatActivityTimeline({
         const meta = [
           totalTok != null && totalTok > 0 ? `~${fmtTok(totalTok)} tok` : null,
           elapsed != null && elapsed > 0 ? fmtMs(elapsed) : null,
+          entry.startedAt ? relTime(entry.startedAt) : null,
         ]
           .filter(Boolean)
           .join(" · ");
@@ -407,7 +466,7 @@ export function ChatActivityTimeline({
                     />
                     <div className="chat-timeline-node-content">
                       <span className="chat-timeline-node-label">Reasoning</span>
-                      <div className="chat-timeline-reasoning">{entry.reasoning}</div>
+                      <ReasoningPanel text={entry.reasoning} />
                     </div>
                   </div>
                 )}

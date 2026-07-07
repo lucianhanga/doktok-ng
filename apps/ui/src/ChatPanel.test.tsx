@@ -6,6 +6,9 @@ import { ChatPanel } from "./ChatPanel";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // ChatPanel persists the active thread id in localStorage (auto-restore on return); clear it so
+  // it does not bleed across tests and auto-open a thread the next test did not intend.
+  localStorage.clear();
 });
 
 /** Build one SSE frame: a `data:` line carrying the event JSON, the way the backend emits it. */
@@ -79,7 +82,9 @@ test("streams a grounded answer with sources", async () => {
   expect(screen.getByText(/invoice.txt/)).toBeInTheDocument();
 });
 
-test("chat sends agent_mode=agent on the stream request", async () => {
+test("chat sends agent_mode=classic on the stream request", async () => {
+  // Classic mode streams the RAG answer + reasoning; the blocking agent tool loop stays off until it
+  // streams (see chatMode). The pipeline steps still stream live as SSE `step` events.
   let streamBody: Record<string, unknown> | null = null;
   vi.stubGlobal(
     "fetch",
@@ -87,7 +92,7 @@ test("chat sends agent_mode=agent on the stream request", async () => {
       streamBody = JSON.parse((init?.body as string) ?? "{}");
       return sseResponse([
         frame("meta", {}),
-        frame("step", { delta: "Using count_documents" }),
+        frame("step", { delta: "Searching and ranking your documents" }),
         frame("token", { delta: "There are 57 documents [1]." }),
         frame("sources", { citations: [] }),
         frame("done", { grounded: true }),
@@ -101,9 +106,33 @@ test("chat sends agent_mode=agent on the stream request", async () => {
 
   await waitFor(() => expect(screen.getByText(/There are 57 documents/)).toBeInTheDocument());
   expect(streamBody).not.toBeNull();
+  expect(streamBody!.agent_mode).toBe("classic");
+  // the pipeline steps stream live and render (composition bar + timeline)
+  expect(screen.getAllByText("Searching and ranking your documents").length).toBeGreaterThan(0);
+});
+
+test("selecting Agent mode sends agent_mode=agent on the stream request", async () => {
+  let streamBody: Record<string, unknown> | null = null;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      streamBody = JSON.parse((init?.body as string) ?? "{}");
+      return sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "Tomorrow is Tuesday [1]." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.selectOptions(screen.getByLabelText("Chat mode"), "agent");
+  await userEvent.type(screen.getByLabelText("Question"), "what is tomorrow?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText(/Tomorrow is Tuesday/)).toBeInTheDocument());
   expect(streamBody!.agent_mode).toBe("agent");
-  // the agent's tool steps render in the composition bar (and in the timeline)
-  expect(screen.getAllByText("Using count_documents").length).toBeGreaterThan(0);
 });
 
 test("shows inferred retrieval filters from the meta event", async () => {
@@ -303,6 +332,45 @@ test("flags unread when an answer finishes while the panel is inactive (off-tab)
 
   await waitFor(() => expect(screen.getByText("answer while away.")).toBeInTheDocument());
   expect(onBackgroundDone).toHaveBeenCalled(); // finished while inactive -> the tab goes unread
+});
+
+test("auto-restores the last active thread on mount (no click needed)", async () => {
+  // Simulate returning to Chat: the previously-active thread id is in localStorage.
+  localStorage.setItem("doktok.chat.lastThread", JSON.stringify("t-old"));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/chat/threads/t-old/messages")) {
+        return new Response(
+          JSON.stringify([
+            { id: "m1", role: "user", content: "prior question", created_at: "x" },
+            { id: "m2", role: "assistant", content: "restored answer.", created_at: "y" },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/v1/chat/threads")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "t-old",
+              title: "prior question",
+              created_at: "x",
+              updated_at: "y",
+              message_count: 2,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    }),
+  );
+
+  render(<ChatPanel />);
+  // The transcript restores automatically once the thread list confirms the thread still exists.
+  await waitFor(() => expect(screen.getByText(/restored answer\./)).toBeInTheDocument());
 });
 
 test("lists saved conversations and resumes one into the transcript", async () => {
@@ -894,4 +962,69 @@ test("incognito mode disables Remember (no persistence/recall)", async () => {
   await userEvent.click(incognito);
   // ...then incognito forces memory off and locks the Remember toggle.
   expect(screen.getByLabelText("Remember")).toBeDisabled();
+});
+
+// --- Bucket A parity items (#485) ---
+
+test("stopped turn shows 'Generation stopped.' marker", async () => {
+  const enc = new TextEncoder();
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal(
+    "fetch",
+    // Wire the fetch AbortSignal to the ReadableStream so reader.read() throws when Stop is clicked.
+    stubChat((init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          ctrl = c;
+          init?.signal?.addEventListener("abort", () => {
+            c.error(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        },
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "a question to stop");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  // Wait for the Stop button to appear (streaming has begun).
+  await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument());
+
+  // Emit a partial token so there is something to persist, then click Stop.
+  ctrl.enqueue(enc.encode(frame("token", { delta: "Partial answer." })));
+  await waitFor(() => expect(screen.getByText(/Partial answer\./)).toBeInTheDocument());
+
+  await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+  // The amber "Generation stopped." marker must appear under the partial answer.
+  await waitFor(() => expect(screen.getByText("Generation stopped.")).toBeInTheDocument());
+});
+
+test("copy to composer populates the input with the turn's question", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer text." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "What is the answer?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/Answer text\./)).toBeInTheDocument());
+
+  // The textarea should be empty after sending; clicking "Copy to composer" loads the question back.
+  expect(screen.getByLabelText("Question")).toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: "Copy to composer" }));
+  expect(screen.getByLabelText("Question")).toHaveValue("What is the answer?");
+});
+
+test("the local-first footer is shown at the bottom of the chat column", () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  render(<ChatPanel />);
+  expect(screen.getByText(/Local-first\. Network egress is disabled by default\./)).toBeInTheDocument();
 });

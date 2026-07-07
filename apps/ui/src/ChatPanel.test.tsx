@@ -9,6 +9,8 @@ afterEach(() => {
   // ChatPanel persists the active thread id in localStorage (auto-restore on return); clear it so
   // it does not bleed across tests and auto-open a thread the next test did not intend.
   localStorage.clear();
+  // Clear the composer draft (sessionStorage) so tests do not see each other's draft state.
+  sessionStorage.clear();
 });
 
 /** Build one SSE frame: a `data:` line carrying the event JSON, the way the backend emits it. */
@@ -225,8 +227,10 @@ test("requests reasoning by default and renders it in a collapsible panel", asyn
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   await waitFor(() => expect(screen.getByText("It is 42 [1].")).toBeInTheDocument());
-  // The reasoning shows in the right-pane activity timeline.
+  // Reasoning is now shown INLINE under the assistant answer (issue #493), not in the side pane.
   expect(screen.getByText(/Let me check the invoice totals\./)).toBeInTheDocument();
+  // The inline disclosure is rendered (defaultOpen=true while streaming, stays open after done).
+  expect(screen.getByTestId("inline-details")).toBeInTheDocument();
   // The stream request asked the model to think.
   expect(JSON.parse(String(streamInit?.body)).reasoning).toBe(true);
 });
@@ -419,7 +423,14 @@ test("lists saved conversations and resumes one into the transcript", async () =
   await waitFor(() => expect(screen.getByText("prior question")).toBeInTheDocument());
   await userEvent.click(screen.getByText("prior question"));
   await waitFor(() => expect(screen.getByText(/prior answer/)).toBeInTheDocument());
-  // Persisted reasoning + sources are restored, not lost on resume.
+  // Persisted reasoning is restored: the inline disclosure is present (collapsed by default for
+  // completed turns). Expanding it reveals the reasoning text.
+  const detailsToggle = screen.getByTestId("inline-details");
+  expect(detailsToggle).toBeInTheDocument();
+  // The disclosure starts collapsed for a completed (non-streaming) turn.
+  expect(screen.queryByText(/I weighed the invoice rows\./)).not.toBeInTheDocument();
+  // Expanding the disclosure reveals the persisted reasoning.
+  await userEvent.click(screen.getByRole("button", { name: "Expand details" }));
   expect(screen.getByText(/I weighed the invoice rows\./)).toBeInTheDocument();
   // The restored turn's sources are reachable via its Sources chip.
   await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
@@ -623,7 +634,7 @@ test("reasoning panel shows a token/time summary and ranked chunks; ranked doc o
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText("Answer here.")).toBeInTheDocument());
 
-  // Reasoning text is visible in the right-pane activity timeline (newest turn expanded).
+  // Reasoning is now shown INLINE under the assistant answer (issue #493).
   expect(screen.getByText(/weighing the rows/)).toBeInTheDocument();
   // The selected source (win.pdf) appears in the timeline sources node.
   expect(screen.getByRole("button", { name: /win\.pdf/ })).toBeInTheDocument();
@@ -797,8 +808,11 @@ test("delete a question truncates the thread from that turn", async () => {
   await userEvent.click(screen.getByText("prior"));
   await waitFor(() => expect(screen.getByText(/second question/)).toBeInTheDocument());
 
-  // Delete the second turn -> truncate from its user message; the first turn survives.
+  // Delete the second turn: first click shows the inline confirm, then confirm to actually delete.
   await userEvent.click(screen.getAllByRole("button", { name: /Delete this question/ })[1]);
+  // The inline confirm appears; "Delete 1 turn" is the confirm action button.
+  expect(screen.getByRole("dialog", { name: "Confirm delete" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Delete 1 turn/ }));
   await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
   expect(screen.queryByText(/second question/)).not.toBeInTheDocument();
   expect(screen.getByText(/first question/)).toBeInTheDocument();
@@ -812,7 +826,10 @@ test("edit a question truncates and loads it back into the input", async () => {
   await userEvent.click(screen.getByText("prior"));
   await waitFor(() => expect(screen.getByText(/second question/)).toBeInTheDocument());
 
+  // Edit the second turn: first click shows the inline confirm, then confirm to edit & resubmit.
   await userEvent.click(screen.getAllByRole("button", { name: /Edit this question/ })[1]);
+  expect(screen.getByRole("dialog", { name: "Confirm edit" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Edit & resubmit/ }));
   await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
   // The edited question is loaded back into the ask box for editing + resubmission.
   expect(screen.getByLabelText("Question")).toHaveValue("second question");
@@ -925,8 +942,9 @@ test("right pane shows Activity by default and switches to DocumentDetail on sou
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByText(/See the document for details/)).toBeInTheDocument());
 
-  // Right pane defaults to Activity mode: reasoning text is shown in the timeline.
+  // Right pane defaults to Activity mode.
   expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  // Reasoning is now shown INLINE in the transcript under the answer (issue #493), not in the pane.
   expect(screen.getByText(/Thinking about it\./)).toBeInTheDocument();
 
   // Opening sources switches the pane to Sources mode.
@@ -1027,4 +1045,397 @@ test("the local-first footer is shown at the bottom of the chat column", () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
   render(<ChatPanel />);
   expect(screen.getByText(/Local-first\. Network egress is disabled by default\./)).toBeInTheDocument();
+});
+
+// --- Inline reasoning disclosure (issue #493, personalAI MessageDetails parity) ---
+
+test("inline details disclosure is open while streaming so the user sees reasoning live", async () => {
+  const enc = new TextEncoder();
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          ctrl = c;
+          init?.signal?.addEventListener("abort", () =>
+            c.error(new DOMException("aborted", "AbortError")),
+          );
+        },
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "tell me something");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument());
+
+  // Emit a reasoning chunk — the inline disclosure must already be open (defaultOpen=streaming).
+  ctrl.enqueue(enc.encode(frame("reasoning", { delta: "Working through it now." })));
+  await waitFor(() => expect(screen.getByText(/Working through it now\./)).toBeInTheDocument());
+
+  // The disclosure toggle button is rendered and shows aria-expanded=true.
+  const toggle = screen.getByRole("button", { name: "Collapse details" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  ctrl.enqueue(enc.encode(frame("token", { delta: "Answer." })));
+  ctrl.enqueue(enc.encode(frame("sources", { citations: [] })));
+  ctrl.enqueue(enc.encode(frame("done", { grounded: true })));
+  ctrl.close();
+  await waitFor(() => expect(screen.getByText("Answer.")).toBeInTheDocument());
+
+  // After streaming ends the disclosure stays open (user was watching; they can collapse manually).
+  expect(screen.getByRole("button", { name: "Collapse details" })).toBeInTheDocument();
+  expect(screen.getByText(/Working through it now\./)).toBeInTheDocument();
+});
+
+test("inline details disclosure is collapsed by default for completed (non-streaming) turns", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("reasoning", { delta: "Hidden thinking." }),
+        frame("token", { delta: "The answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("The answer.")).toBeInTheDocument());
+
+  // The disclosure toggle is present (reasoning was received).
+  const toggle = screen.getByTestId("inline-details");
+  expect(toggle).toBeInTheDocument();
+
+  // The reasoning text was streaming (disclosure was open); after done the component stays open.
+  // The user can manually collapse by clicking the toggle.
+  const toggleBtn = screen.getByRole("button", { name: "Collapse details" });
+  expect(toggleBtn).toHaveAttribute("aria-expanded", "true");
+  await userEvent.click(toggleBtn);
+  expect(screen.getByRole("button", { name: "Expand details" })).toHaveAttribute("aria-expanded", "false");
+  // Reasoning text is hidden once collapsed.
+  expect(screen.queryByText(/Hidden thinking\./)).not.toBeInTheDocument();
+});
+
+test("reasoning is not shown in the activity pane (it is inline in the transcript)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("reasoning", { delta: "Some reasoning." }),
+        frame("token", { delta: "The answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("The answer.")).toBeInTheDocument());
+
+  // The activity pane (Activity tab) shows the timeline — which no longer contains reasoning.
+  // The reasoning "Reasoning" filter chip must be absent from the pane.
+  expect(screen.queryByRole("button", { name: "Reasoning" })).not.toBeInTheDocument();
+  // The reasoning text lives in the inline disclosure, not the activity pane.
+  expect(screen.getByText(/Some reasoning\./)).toBeInTheDocument();
+  // The inline disclosure is in the transcript, not the activity pane.
+  expect(screen.getByTestId("inline-details")).toBeInTheDocument();
+});
+
+// --- Issue #494: personalAI-parity quick wins ---
+
+test("action buttons are always in the DOM for keyboard/SR access (hover-reveal is CSS-only)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "q");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("Answer.")).toBeInTheDocument());
+
+  // The Copy/Edit/Delete buttons must be in the DOM (always, for keyboard access).
+  // CSS opacity hides them visually on hover-capable pointers; jsdom does not apply CSS.
+  expect(screen.getByRole("button", { name: "Copy to composer" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Edit this question and resubmit" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Delete this question and everything after it" })).toBeInTheDocument();
+  // Each button carries the css class used for the opacity transition.
+  expect(screen.getByRole("button", { name: "Copy to composer" })).toHaveClass("chat-q-action");
+  expect(screen.getByRole("button", { name: "Edit this question and resubmit" })).toHaveClass("chat-q-action");
+  expect(screen.getByRole("button", { name: "Delete this question and everything after it" })).toHaveClass("chat-q-action");
+});
+
+test("delete shows inline confirm with turn count before truncating", async () => {
+  const deletes: string[] = [];
+  vi.stubGlobal("fetch", stubResumeThread((u) => deletes.push(u)));
+  render(<ChatPanel />);
+  await waitFor(() => expect(screen.getByText("prior")).toBeInTheDocument());
+  await userEvent.click(screen.getByText("prior"));
+  await waitFor(() => expect(screen.getByText(/first question/)).toBeInTheDocument());
+
+  // Delete the FIRST turn (index 0) so turnsToRemove=2: confirms count includes all later turns.
+  await userEvent.click(screen.getAllByRole("button", { name: /Delete this question/ })[0]);
+  const dialog = screen.getByRole("dialog", { name: "Confirm delete" });
+  // The confirm text mentions "1 later turn(s)" (the second turn).
+  expect(dialog).toHaveTextContent(/1 later turn/);
+  // The action button says "Delete 2 turns" (this + 1 later).
+  expect(screen.getByRole("button", { name: /Delete 2 turns/ })).toBeInTheDocument();
+
+  // Cancelling the confirm does NOT truncate.
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(deletes).toHaveLength(0);
+  expect(screen.getByText(/first question/)).toBeInTheDocument();
+
+  // Clicking delete on the last turn (index 1) gives turnsToRemove=1, button says "Delete 1 turn".
+  await userEvent.click(screen.getAllByRole("button", { name: /Delete this question/ })[1]);
+  expect(screen.getByRole("button", { name: /Delete 1 turn/ })).toBeInTheDocument();
+  // Confirming triggers the actual truncation.
+  await userEvent.click(screen.getByRole("button", { name: /Delete 1 turn/ }));
+  await waitFor(() => expect(deletes[0]).toContain("/messages/u2/after"));
+});
+
+test("inline context disclosure renders and toggles when metrics have context", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Answer [1]." }),
+        frame("sources", { citations: [] }),
+        frame("metrics", {
+          metrics: {
+            prompt_tokens: 300,
+            answer_tokens: 50,
+            reasoning_tokens: 0,
+            overhead_tokens: 0,
+            reasoning_ms: 0,
+            answer_ms: 0,
+            total_ms: 900,
+            reused_previous_results: false,
+            estimated: false,
+            context_limit: 32768,
+            context: [
+              { label: "Instructions", chars: 400, tokens: 100 },
+              { label: "Tool: retrieve_passages", chars: 800, tokens: 200 },
+            ],
+          },
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "ctx?{Enter}");
+  await waitFor(() => expect(screen.getByText("Answer [1].")).toBeInTheDocument());
+
+  // The context disclosure toggle is present and starts collapsed.
+  const toggle = screen.getByTestId("inline-context");
+  expect(toggle).toBeInTheDocument();
+  const expandBtn = screen.getByRole("button", { name: "Show context breakdown" });
+  expect(expandBtn).toHaveAttribute("aria-expanded", "false");
+  // Context segments are not visible yet.
+  expect(screen.queryByText("Instructions")).not.toBeInTheDocument();
+
+  // Expanding reveals the context segments.
+  await userEvent.click(expandBtn);
+  expect(screen.getByRole("button", { name: "Collapse context breakdown" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(screen.getByText("Instructions")).toBeInTheDocument();
+  expect(screen.getByText("Tool: retrieve_passages")).toBeInTheDocument();
+
+  // Collapsing hides the segments again.
+  await userEvent.click(screen.getByRole("button", { name: "Collapse context breakdown" }));
+  expect(screen.queryByText("Instructions")).not.toBeInTheDocument();
+});
+
+test("composer draft restores from sessionStorage on remount", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  // Seed the draft before mounting.
+  sessionStorage.setItem("doktok.chat.composerDraft", "saved draft text");
+
+  render(<ChatPanel />);
+  // The textarea must be initialised with the persisted draft.
+  expect(screen.getByLabelText("Question")).toHaveValue("saved draft text");
+});
+
+test("composer draft is cleared after a successful send", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("token", { delta: "Reply." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "draft question");
+  // Draft is persisted to sessionStorage as the user types.
+  expect(sessionStorage.getItem("doktok.chat.composerDraft")).toBe("draft question");
+
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText("Reply.")).toBeInTheDocument());
+
+  // After a successful send the textarea is cleared and the draft key is removed.
+  expect(screen.getByLabelText("Question")).toHaveValue("");
+  expect(sessionStorage.getItem("doktok.chat.composerDraft")).toBeNull();
+});
+
+// --- Multi-agent trace enrichments (issue #495) ---
+
+test("selecting Multi mode sends agent_mode=multi on the stream request", async () => {
+  let streamBody: Record<string, unknown> | null = null;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      streamBody = JSON.parse((init?.body as string) ?? "{}");
+      return sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "Multi answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.selectOptions(screen.getByLabelText("Chat mode"), "multi");
+  await userEvent.type(screen.getByLabelText("Question"), "multi test?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Multi answer.")).toBeInTheDocument());
+  expect(streamBody!.agent_mode).toBe("multi");
+});
+
+test("step with role renders agent tag in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", { trace_step: { kind: "plan", label: "Planning answer", role: "planner" } }),
+        frame("token", { delta: "Plan answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "multi question?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Plan answer.")).toBeInTheDocument());
+  // The inline disclosure is open while streaming and stays open after done.
+  // A role=planner step should emit a "Planner" role header in the inline details.
+  // (The step label also appears in the composition bar and the Activity pane — use testid.)
+  expect(screen.getByTestId("inline-role-header")).toHaveTextContent("Planner");
+  expect(screen.getByTestId("inline-role-header")).toHaveStyle({ color: "#1558b0" });
+});
+
+test("verification step with verdict=pass renders green badge in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", {
+          trace_step: { kind: "verification", label: "Verifying", role: "verifier", verdict: "pass" },
+        }),
+        frame("token", { delta: "Verified answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "verify this?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Verified answer.")).toBeInTheDocument());
+  const badge = screen.getByTestId("verdict-badge");
+  expect(badge).toHaveTextContent("pass");
+  expect(badge).toHaveStyle({ color: "#1a7f37" });
+});
+
+test("verification step with verdict=fail renders red badge in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", {
+          trace_step: { kind: "verification", label: "Verifying", role: "verifier", verdict: "fail" },
+        }),
+        frame("token", { delta: "Failed answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "fail verify?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Failed answer.")).toBeInTheDocument());
+  const badge = screen.getByTestId("verdict-badge");
+  expect(badge).toHaveTextContent("fail");
+  expect(badge).toHaveStyle({ color: "#b00020" });
+});
+
+test("draft step shows attempt N dimmed when superseded in inline details", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("step", {
+          trace_step: { kind: "draft", label: "Draft answer", role: "researcher", attempt: 1 },
+        }),
+        frame("step", {
+          trace_step: { kind: "draft", label: "Draft answer", role: "researcher", attempt: 2 },
+        }),
+        frame("token", { delta: "Final answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel />);
+  await userEvent.type(screen.getByLabelText("Question"), "draft test?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Final answer.")).toBeInTheDocument());
+  // Attempt 1 is superseded; attempt 2 is the current draft.
+  // Use testids to scope to the inline details (attempt labels also appear in the Activity pane).
+  const supersededEl = screen.getByTestId("draft-step-superseded");
+  expect(supersededEl).toBeInTheDocument();
+  expect(supersededEl).toHaveTextContent(/attempt 1/);
+  const currentEl = screen.getByTestId("draft-step-current");
+  expect(currentEl).toBeInTheDocument();
+  expect(currentEl).toHaveTextContent(/attempt 2/);
 });

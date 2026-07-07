@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { ReasoningPanel } from "./ChatActivityTimeline";
 import {
   chatStream,
   createChatThread,
@@ -32,6 +33,20 @@ const RIGHT_PANE_KEY = "doktok.chat.rightPaneCollapsed";
 const LAST_THREAD_KEY = "doktok.chat.lastThread";
 // Chat mode (classic RAG vs agent tool loop); both stream. Persisted across sessions.
 const CHAT_MODE_KEY = "doktok.chat.mode";
+// Composer draft: persist the unsent text in sessionStorage (tab-scoped, like personalAI's
+// DRAFT_KEY) so it survives remount/reload. Cleared on successful send.
+const DRAFT_KEY = "doktok.chat.composerDraft";
+
+function loadDraft(): string {
+  try { return sessionStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; }
+}
+
+function saveDraft(v: string): void {
+  try {
+    if (v) sessionStorage.setItem(DRAFT_KEY, v);
+    else sessionStorage.removeItem(DRAFT_KEY);
+  } catch { /* best-effort */ }
+}
 
 /** The shared right rail: closed, a turn's sources, retrieve-only "explore" evidence, or a
  * document preview. */
@@ -228,6 +243,226 @@ function SourcesList({
   );
 }
 
+// Per-role agent tag colors for the multi-agent trace (issue #495). Adapted from personalAI's
+// AGENT palette: planner=royal-blue, researcher=slate-gray, critic=amber, verifier=rose.
+const ROLE_COLORS: Record<string, string> = {
+  planner:    "#1558b0",
+  researcher: "#6b7280",
+  critic:     "#b06f00",
+  verifier:   "#c2185b",
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  planner:    "Planner",
+  researcher: "Researcher",
+  critic:     "Critic",
+  verifier:   "Verifier",
+};
+
+// Verdict badge colors: reserved semantic hues distinct from role identity colors.
+// pass=success-green, revise=warning-amber, fail=danger-red (mirrors personalAI's TRACE.ok/err).
+const VERDICT_COLORS: Record<string, string> = {
+  pass:   "#1a7f37",
+  revise: "#b06f00",
+  fail:   "#b00020",
+};
+
+/** Inline step list with multi-agent enrichments: role-change headers, verdict badges, draft
+ * dimming, and stage heartbeat muting. Replaces the plain label-only step rows (issue #495). */
+function EnrichedStepList({ steps }: { steps: TraceStep[] }): React.ReactElement {
+  // Find the last draft step index so all earlier drafts can be marked superseded.
+  let lastDraftIdx = -1;
+  for (let j = steps.length - 1; j >= 0; j--) {
+    if (steps[j].kind === "draft") { lastDraftIdx = j; break; }
+  }
+
+  const rows: React.ReactElement[] = [];
+  let prevRole: string | null = null;
+
+  steps.forEach((step, i) => {
+    const role = step.role ?? null;
+
+    // Insert a role header whenever the agent changes (non-null role only).
+    if (role !== null && role !== prevRole) {
+      rows.push(
+        <div
+          key={`rh-${i}`}
+          className="chat-inline-role-header"
+          style={{ color: ROLE_COLORS[role] ?? "#6b7280" }}
+          data-testid="inline-role-header"
+        >
+          {ROLE_LABELS[role] ?? role}
+        </div>,
+      );
+    }
+    prevRole = role;
+
+    if (step.kind === "stage") {
+      rows.push(
+        <div key={i} className="chat-inline-step chat-inline-step--stage">
+          <span className="chat-inline-step-label">{step.label}…</span>
+        </div>,
+      );
+      return;
+    }
+
+    if (step.kind === "draft") {
+      const isSuperseded = lastDraftIdx !== -1 && i !== lastDraftIdx;
+      const draftLabel =
+        step.attempt != null
+          ? `${step.label} · attempt ${step.attempt}`
+          : step.label;
+      rows.push(
+        <div
+          key={i}
+          className={`chat-inline-step${isSuperseded ? " chat-inline-step--draft-superseded" : ""}`}
+          data-testid={isSuperseded ? "draft-step-superseded" : "draft-step-current"}
+        >
+          <span className="chat-inline-step-label">{draftLabel}</span>
+          {isSuperseded && (
+            <span className="chat-inline-step-detail muted"> (superseded)</span>
+          )}
+          {step.detail && !isSuperseded && (
+            <span className="chat-inline-step-detail muted"> · {step.detail}</span>
+          )}
+        </div>,
+      );
+      return;
+    }
+
+    if (step.kind === "verification") {
+      const verdict = step.verdict ?? null;
+      const verdictColor = verdict ? (VERDICT_COLORS[verdict] ?? "#6b7280") : undefined;
+      rows.push(
+        <div key={i} className="chat-inline-step" data-testid="verification-step">
+          <span className="chat-inline-step-label">{step.label}</span>
+          {verdict && (
+            <span
+              className="chat-inline-verdict-badge"
+              data-testid="verdict-badge"
+              style={{ color: verdictColor, fontWeight: 600 }}
+            >
+              {" "}({verdict})
+            </span>
+          )}
+          {step.detail && (
+            <span className="chat-inline-step-detail muted"> · {step.detail}</span>
+          )}
+        </div>,
+      );
+      return;
+    }
+
+    // Default: all other kinds (plan, retrieval, compose, finalize, understand, recall, …)
+    rows.push(
+      <div key={i} className="chat-inline-step">
+        <span className="chat-inline-step-label">{step.label}</span>
+        {step.detail && (
+          <span className="chat-inline-step-detail muted"> · {step.detail}</span>
+        )}
+      </div>,
+    );
+  });
+
+  return <div className="chat-inline-steps">{rows}</div>;
+}
+
+/**
+ * Collapsible per-answer inline disclosure (personalAI MessageDetails parity): the model's
+ * reasoning text + step trace shown inline under the assistant answer, BEFORE the Markdown body.
+ * Open by default while streaming (so the user watches reasoning token-by-token in the chat
+ * window); collapsed by default for completed turns. Respects the "Show reasoning" toggle.
+ */
+function InlineReasoningDetails({
+  reasoning,
+  steps,
+  showReasoning: reasoningEnabled,
+  defaultOpen,
+}: {
+  reasoning: string;
+  steps: TraceStep[];
+  showReasoning: boolean;
+  defaultOpen: boolean;
+}): React.ReactElement | null {
+  const [open, setOpen] = useState(defaultOpen);
+
+  const hasReasoning = reasoningEnabled && reasoning.length > 0;
+  const hasSteps = steps.length > 0;
+  if (!hasReasoning && !hasSteps) return null;
+
+  const summary = [
+    hasReasoning ? "Reasoning" : null,
+    hasSteps ? `${steps.length} step${steps.length > 1 ? "s" : ""}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="chat-inline-details" data-testid="inline-details">
+      <button
+        type="button"
+        className="chat-inline-details-toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label={open ? "Collapse details" : "Expand details"}
+      >
+        {open ? "▾" : "▸"} {summary}
+      </button>
+      {open && (
+        <div className="chat-inline-details-body">
+          {hasReasoning && <ReasoningPanel text={reasoning} />}
+          {hasSteps && <EnrichedStepList steps={steps} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Collapsed-by-default context breakdown under the assistant answer footer (personalAI
+ * MessageContext parity). Shows per-turn context window composition from turn.metrics.context. */
+function InlineContextDisclosure({ metrics }: { metrics: TurnMetrics | null }): React.ReactElement | null {
+  const [open, setOpen] = useState(false);
+
+  const segs = metrics?.context ?? [];
+  const limit = metrics?.context_limit ?? 0;
+  if (segs.length === 0) return null;
+
+  const total = segs.reduce((s, x) => s + x.tokens, 0);
+  const pct = limit > 0 ? Math.round((total / limit) * 100) : null;
+  const summary = `Context (~${fmtTokens(total)} tok${pct != null ? `, ${pct}%` : ""})`;
+
+  return (
+    <div className="chat-inline-context" data-testid="inline-context">
+      <button
+        type="button"
+        className="chat-inline-context-toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label={open ? "Collapse context breakdown" : "Show context breakdown"}
+      >
+        {open ? "▾" : "▸"} {summary}
+      </button>
+      {open && (
+        <div className="chat-inline-context-body">
+          <ul className="chat-inline-context-segs">
+            {segs.map((seg) => (
+              <li key={seg.label}>
+                <span>{seg.label}</span>
+                <span>~{fmtTokens(seg.tokens)}</span>
+              </li>
+            ))}
+          </ul>
+          {pct != null && (
+            <p className="muted chat-inline-context-total">
+              {fmtTokens(total)} / {fmtTokens(limit)} tokens ({pct}% of budget)
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The per-turn ranked candidate chunks (M8 #4/#7): winners first, with RRF score + rank %. */
 function AnswerBlock({
   turn,
@@ -238,6 +473,8 @@ function AnswerBlock({
   onDelete,
   onCopyQuestion,
   canModify = false,
+  showReasoning = true,
+  turnsToRemove = 1,
 }: {
   turn: TurnView;
   onOpenDocument?: (id: string) => void;
@@ -248,9 +485,20 @@ function AnswerBlock({
   /** Re-load this turn's question into the composer for a quick re-ask (no truncation). */
   onCopyQuestion?: () => void;
   canModify?: boolean;
+  /** Mirror the "Show reasoning" toggle so the inline disclosure respects the user's preference. */
+  showReasoning?: boolean;
+  /** Number of turns (this + all later ones) removed when Edit/Delete is confirmed. */
+  turnsToRemove?: number;
 }) {
   const [questionExpanded, setQuestionExpanded] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingEdit, setConfirmingEdit] = useState(false);
+  const confirmCancelRef = useRef<HTMLButtonElement>(null);
+  // Focus the Cancel button when a confirm dialog opens so accidental Enter dismisses it.
+  useEffect(() => {
+    if (confirmingDelete || confirmingEdit) confirmCancelRef.current?.focus();
+  }, [confirmingDelete, confirmingEdit]);
   const isLongQuestion = turn.question.length > 200;
   // Map citation index -> document, so a clicked [n] marker in the answer opens that document.
   const citeMap = new Map(turn.citations.map((c) => [c.index, c.document_id]));
@@ -327,7 +575,7 @@ function AnswerBlock({
                 className="chat-q-action link-button"
                 aria-label="Edit this question and resubmit"
                 title="Edit & resubmit"
-                onClick={onEdit}
+                onClick={() => setConfirmingEdit(true)}
               >
                 &#9998;
               </button>
@@ -338,7 +586,7 @@ function AnswerBlock({
                 className="chat-q-action link-button"
                 aria-label="Delete this question and everything after it"
                 title="Delete from here"
-                onClick={onDelete}
+                onClick={() => setConfirmingDelete(true)}
               >
                 &times;
               </button>
@@ -354,6 +602,54 @@ function AnswerBlock({
           >
             {questionExpanded ? "Show less" : "Show more"}
           </button>
+        )}
+        {confirmingDelete && canModify && (
+          <div className="chat-q-confirm chat-q-confirm--delete" role="dialog" aria-label="Confirm delete">
+            <span className="chat-q-confirm-text">
+              {turnsToRemove === 1
+                ? "Delete this question and its answer? This can't be undone."
+                : `Delete this and ${turnsToRemove - 1} later turn(s)? This can't be undone.`}
+            </span>
+            <button
+              type="button"
+              className="chat-q-confirm-btn chat-q-confirm-btn--danger"
+              onClick={() => { setConfirmingDelete(false); onDelete?.(); }}
+            >
+              Delete {turnsToRemove} turn{turnsToRemove === 1 ? "" : "s"}
+            </button>
+            <button
+              type="button"
+              ref={confirmCancelRef}
+              className="chat-q-confirm-btn"
+              onClick={() => setConfirmingDelete(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {confirmingEdit && canModify && (
+          <div className="chat-q-confirm" role="dialog" aria-label="Confirm edit">
+            <span className="chat-q-confirm-text">
+              {turnsToRemove === 1
+                ? "Resubmit will replace this question's current answer."
+                : `Resubmit will remove ${turnsToRemove - 1} later turn(s) and their answers.`}
+            </span>
+            <button
+              type="button"
+              className="chat-q-confirm-btn"
+              onClick={() => { setConfirmingEdit(false); onEdit?.(); }}
+            >
+              Edit &amp; resubmit
+            </button>
+            <button
+              type="button"
+              ref={confirmCancelRef}
+              className="chat-q-confirm-btn"
+              onClick={() => setConfirmingEdit(false)}
+            >
+              Cancel
+            </button>
+          </div>
         )}
       </div>
       {!collapsed && (
@@ -396,6 +692,14 @@ function AnswerBlock({
               treat it with caution.
             </p>
           )}
+          {/* Inline reasoning disclosure (personalAI parity): open while streaming so the user
+              watches the model reason token-by-token; collapsed by default once complete. */}
+          <InlineReasoningDetails
+            reasoning={turn.reasoning}
+            steps={turn.steps}
+            showReasoning={showReasoning}
+            defaultOpen={turn.streaming}
+          />
           <div
             className={!ungrounded || turn.streaming ? "answer" : "answer empty"}
             aria-live={turn.streaming ? "polite" : undefined}
@@ -423,6 +727,9 @@ function AnswerBlock({
               {fmtTokens(metricsTotalTokens(turn.metrics))} tok ·{" "}
               {fmtMs(turn.metrics.total_ms ?? 0)}
             </p>
+          )}
+          {!turn.streaming && (
+            <InlineContextDisclosure metrics={turn.metrics} />
           )}
         </>
       )}
@@ -622,18 +929,22 @@ export function ChatPanel({
   active?: boolean; // false when the Chat tab is not the visible one
   onBackgroundDone?: () => void; // called when a streamed answer finishes while inactive (off-tab)
 }) {
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(() => loadDraft());
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
-  // Chat mode (ADR-0022): "classic" answers from documents (RAG); "agent" also calls tools. Both
-  // stream the answer + reasoning. Selectable + persisted so each path is testable.
-  const [chatMode, setChatMode] = useState<"classic" | "agent">(() =>
-    loadJSON<"classic" | "agent">(CHAT_MODE_KEY, "classic"),
+  // Chat mode (ADR-0022): "classic" answers from documents (RAG); "agent" also calls tools;
+  // "multi" uses the planner/researcher/critic/verifier graph. All stream the answer + reasoning.
+  const [chatMode, setChatMode] = useState<"classic" | "agent" | "multi">(() =>
+    loadJSON<"classic" | "agent" | "multi">(CHAT_MODE_KEY, "classic"),
   );
   useEffect(() => {
     saveJSON(CHAT_MODE_KEY, chatMode);
   }, [chatMode]);
+  // Persist the composer draft so it survives remount or page reload (clears on successful send).
+  useEffect(() => {
+    saveDraft(question);
+  }, [question]);
   // Long-term memory (ADR-0022): recall facts from past chats + store one. On by default; turn off
   // (or use Incognito) for a private conversation that neither recalls nor stores memory.
   const [remember, setRemember] = useState(true);
@@ -1141,6 +1452,8 @@ export function ChatPanel({
                   onEdit={() => editQuestion(i)}
                   onDelete={() => deleteQuestion(i)}
                   onCopyQuestion={() => setQuestion(turn.question)}
+                  showReasoning={showReasoning}
+                  turnsToRemove={exchanges.length - i}
                 />
               </li>
             ))}
@@ -1162,17 +1475,20 @@ export function ChatPanel({
                 <select
                   className="chat-mode-select"
                   value={chatMode}
-                  onChange={(e) => setChatMode(e.target.value as "classic" | "agent")}
+                  onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
                   disabled={streaming !== null}
                   aria-label="Chat mode"
                 >
                   <option value="classic">Classic (RAG)</option>
                   <option value="agent">Agent (tools)</option>
+                  <option value="multi">Multi (agents)</option>
                 </select>
               </label>
               <InfoHint label="Chat mode">
                 <strong>Classic</strong> answers from your documents (RAG).{" "}
-                <strong>Agent</strong> can also call tools. Both stream the answer + reasoning.
+                <strong>Agent</strong> can also call tools.{" "}
+                <strong>Multi</strong> uses a planner/researcher/critic/verifier graph.{" "}
+                All modes stream the answer + reasoning.
               </InfoHint>
             </span>
 

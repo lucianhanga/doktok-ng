@@ -880,9 +880,11 @@ export function KnowledgeGraphPanel(): JSX.Element {
                   className="kg-merge-direction"
                   aria-label={`${s.alias_value} folds into ${s.canonical_value}`}
                 >
-                  <span className="kg-merge-alias">{s.alias_value}</span>
+                  <span className="kg-merge-alias" title={s.alias_value}>{s.alias_value}</span>
                   <span className="kg-merge-arrow" aria-hidden="true">{"→"}</span>
-                  <span className="kg-merge-canonical">{s.canonical_value}</span>
+                  <span className="kg-merge-canonical" title={s.canonical_value}>
+                    {s.canonical_value}
+                  </span>
                 </div>
                 <div className="kg-merge-meta">
                   <span className="kg-merge-method-chip" data-method={s.method}>

@@ -32,6 +32,10 @@ class FeatureGroupEntry(BaseModel):
     id: str
     label: str
     badge_members: list[str]
+    # The full set reset on a group reprocess - wider than badge_members when re-extraction
+    # auto-invalidates downstream features (Entities also rebuilds entity_graph + relations). The UI
+    # uses this so a per-document group reprocess chains the same features as the all-docs action.
+    reprocess_set: list[str]
 
 
 @router.get("/groups", response_model=list[FeatureGroupEntry])
@@ -45,7 +49,12 @@ def feature_groups(tenant: Tenant) -> list[FeatureGroupEntry]:
     """
     _ = tenant  # auth-gated; the group definitions are the same for every tenant
     return [
-        FeatureGroupEntry(id=g.id, label=g.label, badge_members=list(g.badge_members))
+        FeatureGroupEntry(
+            id=g.id,
+            label=g.label,
+            badge_members=list(g.badge_members),
+            reprocess_set=list(g.reprocess_set),
+        )
         for g in FEATURE_GROUPS
     ]
 

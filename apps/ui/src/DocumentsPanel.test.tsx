@@ -170,7 +170,7 @@ test("reprocess dropdown re-queues the chosen feature for selected documents", a
   fireEvent.click(screen.getByLabelText("Select ok.pdf"));
 
   // The dropdown is populated from the catalog; choosing a feature + Reprocess posts the retry.
-  fireEvent.change(screen.getByLabelText("Feature to reprocess"), {
+  fireEvent.change(screen.getByLabelText("Group or feature to reprocess"), {
     target: { value: "entities" },
   });
   fireEvent.click(screen.getByText("Reprocess"));
@@ -205,10 +205,10 @@ test("preselects the failing feature when selecting documents that need attentio
   await waitFor(() => expect(screen.getByText("stmt.pdf")).toBeInTheDocument());
   fireEvent.click(screen.getByLabelText("Select stmt.pdf"));
 
-  const select = screen.getByLabelText("Feature to reprocess") as HTMLSelectElement;
+  const select = screen.getByLabelText("Group or feature to reprocess") as HTMLSelectElement;
   // The single failing feature is pre-selected, annotated with a count, and a hint is shown.
   await waitFor(() => expect(select.value).toBe("ner"));
-  expect(screen.getByText(/1 feature need attention in the selection/i)).toBeInTheDocument();
+  expect(screen.getByText(/1 item need attention in the selection/i)).toBeInTheDocument();
   expect(
     screen.getByRole("option", { name: /People & orgs - needs attention \(1\)/ }),
   ).toBeInTheDocument();
@@ -659,8 +659,18 @@ test("thumbnail selection checkbox is present in the DOM for keyboard access (ho
 // --- Feature group badge collapsing (#521) -------------------------------------------------------
 
 const KG_GROUPS = [
-  { id: "entities", label: "Entities", badge_members: ["entities", "ner"] },
-  { id: "knowledge_graph", label: "Knowledge graph", badge_members: ["entity_graph", "relations"] },
+  {
+    id: "entities",
+    label: "Entities",
+    badge_members: ["entities", "ner"],
+    reprocess_set: ["entities", "ner", "entity_graph", "relations"],
+  },
+  {
+    id: "knowledge_graph",
+    label: "Knowledge graph",
+    badge_members: ["entity_graph", "relations"],
+    reprocess_set: ["entity_graph", "relations"],
+  },
 ];
 
 test("grouped features render as 2 group chips not 4 individual chips", async () => {
@@ -691,6 +701,30 @@ test("grouped features render as 2 group chips not 4 individual chips", async ()
 
   // Non-grouped feature (chunk_embed) still renders individually.
   expect(screen.getByText("rag ✓")).toBeInTheDocument();
+});
+
+test("clicking the Entities group chip auto-chains the graph (resets the full reprocess_set)", async () => {
+  const fetchMock = mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf" })],
+    [feat("a", "entities"), feat("a", "ner"), feat("a", "entity_graph"), feat("a", "relations")],
+    [],
+    KG_GROUPS,
+  );
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  // Per-doc group reprocess must reset the group's FULL reprocess_set - including entity_graph +
+  // relations - so the graph rebuilds too, not just the entities/ner badge members.
+  fireEvent.click(screen.getByRole("button", { name: "Entities ✓" }));
+  for (const feature of ["entities", "ner", "entity_graph", "relations"]) {
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/v1/documents/a/features/${feature}/retry`,
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  }
 });
 
 test("group chip shows worst-of member status and lists members in tooltip", async () => {
@@ -729,12 +763,13 @@ test("non-grouped features still render individually when no group member is pre
   // chunk_embed is not in any group: renders as the "rag" individual chip.
   expect(screen.getByText("rag ✓")).toBeInTheDocument();
 
-  // No group chip appears when no group members are present for the doc.
-  expect(screen.queryByText(/^Entities/)).not.toBeInTheDocument();
-  expect(screen.queryByText(/^Knowledge graph/)).not.toBeInTheDocument();
+  // No group CHIP appears when no group members are present for the doc. The group names still show
+  // as options in the reprocess dropdown, so scope this to the chip buttons (not any text).
+  expect(screen.queryByRole("button", { name: /^Entities/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Knowledge graph/ })).not.toBeInTheDocument();
 });
 
-test("toolbar group reprocess button calls group endpoint and shows count feedback", async () => {
+test("toolbar reprocess-all runs a group via the dropdown + group endpoint", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
@@ -755,13 +790,10 @@ test("toolbar group reprocess button calls group endpoint and shows count feedba
   vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<DocumentsPanel />);
-  // Wait for the group buttons to appear (fetched on mount alongside catalog).
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Reprocess Entities" })).toBeInTheDocument(),
-  );
-  expect(screen.getByRole("button", { name: "Reprocess Knowledge graph" })).toBeInTheDocument();
-
-  fireEvent.click(screen.getByRole("button", { name: "Reprocess Entities" }));
+  // Pick the "Entities" group in the reprocess-all dropdown (groups fetched on mount), then run it.
+  const select = await screen.findByLabelText("Group or feature to reprocess for all documents");
+  fireEvent.change(select, { target: { value: "group:entities" } });
+  fireEvent.click(screen.getByRole("button", { name: "Reprocess all" }));
 
   // Confirm dialog mentions the group label and its members.
   expect((window.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("Entities");
@@ -798,9 +830,13 @@ test("reprocess-all button confirms then calls endpoint and shows returned count
   vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<DocumentsPanel />);
-  await waitFor(() => expect(screen.getByLabelText("Feature to reprocess all")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText("Group or feature to reprocess for all documents"),
+    ).toBeInTheDocument(),
+  );
 
-  fireEvent.change(screen.getByLabelText("Feature to reprocess all"), {
+  fireEvent.change(screen.getByLabelText("Group or feature to reprocess for all documents"), {
     target: { value: "entities" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Reprocess all" }));

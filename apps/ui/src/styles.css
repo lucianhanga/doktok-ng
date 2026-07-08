@@ -4620,6 +4620,20 @@ tr.row-selected {
 .timeline-entry:not(:disabled):hover {
   background: var(--hover-fill, rgba(255, 255, 255, 0.05));
 }
+/* Recent-activity rows tinted by severity, matching the Activity tab (.severity-error/-warning).
+   Inset shadow (not border) so the row doesn't shift; the event-type badge takes the color too. */
+.timeline-entry--error {
+  box-shadow: inset 3px 0 0 var(--danger, #d9534f);
+}
+.timeline-entry--error .badge {
+  color: var(--danger, #d9534f);
+}
+.timeline-entry--warning {
+  box-shadow: inset 3px 0 0 #d6a700;
+}
+.timeline-entry--warning .badge {
+  color: #d6a700;
+}
 .timeline-time {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;

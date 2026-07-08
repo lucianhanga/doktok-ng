@@ -51,6 +51,7 @@ from doktok_contracts.schemas import (
     DocumentStatus,
     DocumentVersion,
     EmbeddingProjection,
+    EntityProfile,
     EntitySummary,
     EntityType,
     EntityTypeCount,
@@ -66,6 +67,7 @@ from doktok_contracts.schemas import (
     KgMergeSuggestion,
     ListAnchor,
     Memory,
+    MergeVerdict,
     OcrSettings,
     ProjectionRequest,
     QueryFilters,
@@ -538,6 +540,18 @@ class CategoryClassifier(Protocol):
     """Assign up to 5 category labels, preferring the supplied existing vocabulary (M6.2)."""
 
     def classify(self, text: str, existing: list[str]) -> list[str]: ...
+
+
+@runtime_checkable
+class EntityMergeAdjudicator(Protocol):
+    """Decide whether two entity profiles refer to the same real-world entity (#510).
+
+    Returns a ``MergeVerdict`` with a boolean decision, the preferred canonical name, a confidence
+    score 0-1, and a one-sentence reason. Raises on model failure; callers must catch and fall back
+    gracefully (never let an adjudicator error break the human-review merge queue).
+    """
+
+    def adjudicate(self, a: EntityProfile, b: EntityProfile) -> MergeVerdict: ...
 
 
 @runtime_checkable

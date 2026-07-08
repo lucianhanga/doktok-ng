@@ -22,6 +22,7 @@ from doktok_contracts.ports import (
     DocumentRepository,
     EmbeddingProjectionRepository,
     EmbeddingProvider,
+    EntityMergeAdjudicator,
     EntityRepository,
     FeatureRepository,
     IngestionJobRepository,
@@ -521,6 +522,95 @@ def get_tool_registry(request: Request) -> ToolRegistry:
         stats=get_stats_repository(request),
         categories=get_category_repository(request),
     )
+
+
+def get_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator | None:
+    """Resolve the pipeline-model adjudicator for entity merge suggestions (#510).
+
+    Returns None (graceful fallback) when:
+    - the adjudicator is already cached as None (egress blocked, test mode without a DB),
+    - app settings are unavailable (test mode, no database configured),
+    - the pipeline destination is off-host while no-egress is on.
+
+    The caller (``list_merge_suggestions``) falls back to deterministic suggestions when None.
+    """
+    registry = request.app.state.registry
+    if registry.is_registered(EntityMergeAdjudicator):
+        return cast(EntityMergeAdjudicator, registry.resolve(EntityMergeAdjudicator))
+
+    try:
+        adjudicator = _build_entity_merge_adjudicator(request)
+    except Exception:
+        logger.warning(
+            "could not build entity merge adjudicator; merge-suggestions will be deterministic",
+            exc_info=True,
+        )
+        return None
+
+    if adjudicator is not None:
+        registry.register(EntityMergeAdjudicator, adjudicator)
+    return adjudicator
+
+
+def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator | None:
+    """Build the adjudicator from the configured pipeline model (no new model required)."""
+    from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
+
+    settings = request.app.state.settings
+    app_settings = get_app_settings_repository(request)
+    ai = app_settings.get_ai_settings()
+    pl = ai.pipeline
+    pl_url: str = pl.ollama_base_url or settings.ollama_base_url
+    openai_key: str = app_settings.get_openai_api_key() or settings.openai_api_key
+    no_egress = effective_no_egress(
+        app_settings.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
+    )
+    pipeline_egress_blocked = no_egress and purpose_requires_egress(
+        pl.provider, pl.ollama_base_url, default_url=settings.ollama_base_url
+    )
+    if pipeline_egress_blocked:
+        logger.warning(
+            "entity merge adjudicator: pipeline destination is off-host while no-egress is on; "
+            "merge-suggestions will be deterministic"
+        )
+        return None
+
+    use_openai = pl.provider == "openai" and openai_egress_allowed(
+        key=openai_key, no_egress=no_egress
+    )
+    timeout: float = settings.ollama_timeout_seconds
+
+    if use_openai:
+        from doktok_provider_openai.adjudicator import OpenAiEntityMergeAdjudicator
+
+        # Adjudication is a fast yes/no JSON call - force reasoning OFF regardless of the pipeline
+        # density (no reasoning tokens: requirement + cost). The annotation also gives mypy a
+        # concrete return type when `providers` isn't in its scope (CI).
+        openai_adj: EntityMergeAdjudicator = OpenAiEntityMergeAdjudicator(
+            pl.model,
+            openai_key,
+            timeout=timeout,
+            reasoning_effort=openai_reasoning_effort("off", pl.model),
+        )
+        return openai_adj
+    else:
+        from doktok_provider_ollama.adjudicator import OllamaEntityMergeAdjudicator
+
+        p_model = pl.model if pl.provider == "ollama" else settings.default_model
+        p_ctx = pl.num_ctx if pl.provider == "ollama" else settings.enrich_num_ctx
+        # Force thinking off ("off"), not pl.reasoning, so adjudication never reasons - except a MoE
+        # model that cannot disable thinking with structured output (arch limitation).
+        p_think = ollama_think_for("off", p_model, structured=True)
+        ollama_adj: EntityMergeAdjudicator = OllamaEntityMergeAdjudicator(
+            p_model,
+            p_model,
+            pl_url,
+            timeout=timeout,
+            num_ctx=p_ctx,
+            think=p_think,
+            keep_alive=settings.enrich_keep_alive,
+        )
+        return ollama_adj
 
 
 Tenant = Annotated[TenantContext, Depends(require_tenant)]

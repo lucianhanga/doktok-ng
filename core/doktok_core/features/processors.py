@@ -292,11 +292,12 @@ class EntitiesFeature:
 
 
 class NerFeature:
-    """Extract named entities (PERSON/ORG/GPE) via an LLM, stored as document entities (M7.4).
+    """Extract named entities (PERSON/ORG/GPE/JOB_TITLE) via NER, stored as document entities.
 
-    The rule-based ``EntitiesFeature`` cannot find people/organisations/places (they need NER), so
-    this fills them. It owns ONLY the NER entity types in the shared ``document_entities`` table and
-    replaces just those rows each run, so it backfills/retries independently of ``entities``.
+    The rule-based ``EntitiesFeature`` cannot find people/organisations/places/job titles (they
+    need a model), so this fills them (M7.4; JOB_TITLE is #518 Phase 2). It owns ONLY the NER
+    entity types in the shared ``document_entities`` table and replaces just those rows each run,
+    so it backfills/retries independently of ``entities``.
     """
 
     name = "ner"

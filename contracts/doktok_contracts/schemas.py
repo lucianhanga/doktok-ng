@@ -114,6 +114,11 @@ class EntityType(StrEnum):
     VAT_ID = "VAT_ID"
     TAX_NUMBER = "TAX_NUMBER"
     REGISTRATION_NUMBER = "REGISTRATION_NUMBER"
+    # Model-based semantic type (#518 Phase 2): professional job titles / roles / positions
+    # ("Geschäftsführerin", "Senior Software Engineer"). Open-class, so it is produced by the NER
+    # model path (GLiNER open-vocabulary labels or the LLM NER fallback), never by a regex; the
+    # GLiNER adapter applies a stricter per-label confidence threshold to keep precision high.
+    JOB_TITLE = "JOB_TITLE"
     # No longer extracted (M8.x, #312): the regex matches were mostly noise on real documents.
     # Kept in the vocabulary so historical rows + the cleanup migration still resolve.
     DATE = "DATE"

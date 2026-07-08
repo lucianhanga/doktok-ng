@@ -126,6 +126,47 @@ def test_replaces_only_ner_types_leaving_rule_based_entities() -> None:
     assert EntityType.GPE not in by_type  # none in this doc
 
 
+def test_job_titles_flow_into_document_entities_and_are_ner_owned() -> None:
+    """JOB_TITLE (#518 Phase 2) is a NER-owned type: extracted occurrences (multilingual) land in
+    document_entities normalized like PERSON/ORG/GPE, and a re-run replaces stale JOB_TITLE rows
+    while leaving rule-based entities untouched."""
+    repo = InMemoryDocumentRepository()
+    repo.add(_doc())
+    files = FakeFileStorage(
+        {
+            "/store/d1/content.md": (
+                b"Maria Weber ist  Gesch\xc3\xa4ftsf\xc3\xbchrerin. "
+                b"A Senior Software Engineer signed."
+            )
+        }
+    )
+    shared = InMemoryEntityRepository()
+    # a stale JOB_TITLE row (must be replaced) + a rule-based row (must survive)
+    shared.add_entities(
+        [
+            _entity("d1", "Old Title", EntityType.JOB_TITLE),
+            _entity("d1", "a@b.com", EntityType.EMAIL),
+        ]
+    )
+    ner = FakeNer(
+        [
+            _occ("Maria Weber", EntityType.PERSON),
+            _occ("Geschäftsführerin", EntityType.JOB_TITLE),
+            _occ("Senior  Software Engineer", EntityType.JOB_TITLE),  # ragged whitespace
+        ]
+    )
+    NerFeature(repo, files, ner, shared).process("t1", "d1")
+
+    values = {(e.entity_type, e.normalized_value) for e in shared.list_for_document("t1", "d1")}
+    # multilingual titles stored, normalized via normalize_ner_name (casefold + collapse spaces)
+    assert (EntityType.JOB_TITLE, "geschäftsführerin") in values
+    assert (EntityType.JOB_TITLE, "senior software engineer") in values
+    assert (EntityType.PERSON, "maria weber") in values
+    # NER re-run replaces stale JOB_TITLE rows but never rule-based rows
+    assert (EntityType.JOB_TITLE, "old title") not in values
+    assert (EntityType.EMAIL, "a@b.com") in values
+
+
 def test_skips_when_no_content_but_clears_stale_ner() -> None:
     repo = InMemoryDocumentRepository()
     repo.add(_doc())

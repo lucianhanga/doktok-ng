@@ -10,9 +10,13 @@ from doktok_provider_gliner import GlinerEntityNerExtractor, NuNerEntityNerExtra
 class _FakeModel:
     """Stands in for `gliner.GLiNER`: finds canned surfaces and returns span dicts per chunk."""
 
-    def __init__(self, surfaces: dict[str, list[str]]):
-        # surfaces maps a model label -> list of surface strings to locate in each chunk.
+    def __init__(
+        self, surfaces: dict[str, list[str]], scores: dict[str, float] | None = None
+    ) -> None:
+        # surfaces maps a model label -> list of surface strings to locate in each chunk;
+        # scores maps a surface -> its confidence (default 0.95, i.e. above every threshold).
         self.surfaces = surfaces
+        self.scores = scores or {}
         self.calls = 0
 
     def predict_entities(
@@ -31,7 +35,7 @@ class _FakeModel:
                         "label": label,
                         "start": pos,
                         "end": pos + len(surface),
-                        "score": 0.95,
+                        "score": self.scores.get(surface, 0.95),
                     }
                 )
         return out
@@ -95,6 +99,50 @@ def test_nuner_adapter_shares_behaviour() -> None:
         (EntityType.PERSON, "Maria"),
         (EntityType.ORG, "Akme GmbH"),
     }
+
+
+def test_job_title_labels_map_to_job_title_multilingually() -> None:
+    """Both open-vocabulary job-title labels map to JOB_TITLE; the label prompt is language-
+    agnostic, so German and English titles come back from the same request (#518 Phase 2)."""
+    model = _FakeModel(
+        {
+            "job title": ["Geschäftsführerin", "Senior Software Engineer"],
+            "professional role": ["Steuerberater"],
+            "person": ["Maria Weber"],
+        }
+    )
+    text = (
+        "Maria Weber ist Geschäftsführerin. Der Steuerberater prüft alles. "
+        "A Senior Software Engineer reviewed the contract."
+    )
+    out = GlinerEntityNerExtractor(model=model).extract(text)
+
+    titles = {e.normalized_value for e in out if e.entity_type is EntityType.JOB_TITLE}
+    assert titles == {"Geschäftsführerin", "Senior Software Engineer", "Steuerberater"}
+    # PERSON extraction is unchanged by the additional labels.
+    assert {e.normalized_value for e in out if e.entity_type is EntityType.PERSON} == {
+        "Maria Weber"
+    }
+    for e in out:
+        assert text[e.start_offset : e.end_offset] == e.entity_text
+
+
+def test_job_title_confidence_gate_drops_low_confidence_spans() -> None:
+    """JOB_TITLE uses a stricter acceptance threshold (0.70) than the named-entity default (0.50):
+    a common-noun span the model half-believes is a title (0.60) must be dropped, while a person
+    span at the same confidence passes. This is the precision gate against over-firing on generic
+    nouns like 'Mitarbeiter'."""
+    model = _FakeModel(
+        {"job title": ["Mitarbeiter", "Rechtsanwältin"], "person": ["Stefan Vogel"]},
+        scores={"Mitarbeiter": 0.60, "Rechtsanwältin": 0.88, "Stefan Vogel": 0.60},
+    )
+    text = "Der Mitarbeiter sprach mit Stefan Vogel und der Rechtsanwältin."
+    out = GlinerEntityNerExtractor(model=model).extract(text)
+
+    titles = {e.normalized_value for e in out if e.entity_type is EntityType.JOB_TITLE}
+    assert titles == {"Rechtsanwältin"}  # 0.60 < 0.70 gate: 'Mitarbeiter' dropped
+    persons = {e.normalized_value for e in out if e.entity_type is EntityType.PERSON}
+    assert persons == {"Stefan Vogel"}  # same 0.60 passes the default 0.50 threshold
 
 
 def test_max_chars_caps_input() -> None:

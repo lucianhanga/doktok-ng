@@ -1,11 +1,12 @@
 """Adapt the vendored GLiNER / NuNER refiners to doktokNG's ``EntityNerExtractor`` port.
 
 GLiNER and NuNER are local span-extraction models (run via the ``gliner`` package). doktokNG's NER
-port emits only PERSON / ORG / GPE occurrences, so this adapter asks the model for the matching
-open-vocabulary labels (``person`` / ``organization`` / ``location``) and maps the spans back to the
-``EntityType`` enum. Unlike the LLM adapters (which truncate the doc to a single prompt and report
-zero offsets), this windows the whole document so the small-context model is not truncated, shifts
-each span back to document coordinates, and de-duplicates on ``(type, normalized)``.
+port emits PERSON / ORG / GPE / JOB_TITLE occurrences, so this adapter asks the model for the
+matching open-vocabulary labels (``person`` / ``organization`` / ``location`` / ``job title`` /
+``professional role``) and maps the spans back to the ``EntityType`` enum. Unlike the LLM
+adapters (which truncate the doc to a single prompt and report zero offsets), this windows the
+whole document so the small-context model is not truncated, shifts each span back to document
+coordinates, and de-duplicates on ``(type, normalized)``.
 """
 
 from __future__ import annotations
@@ -18,14 +19,37 @@ from doktok_contracts.schemas import EntityType
 
 from .refiners import GLiNERNER, NuNERNER, RefinementConfig
 
-# doktok NER emits PERSON / ORG / GPE. Request these open-vocabulary labels from the model and map
-# the returned spans back to the enum (mirrors the LLM NER people/organizations/places -> enum map).
+# doktok NER emits PERSON / ORG / GPE / JOB_TITLE. Request these open-vocabulary labels from the
+# model and map the returned spans back to the enum (mirrors the LLM NER people/organizations/
+# places/job_titles -> enum map). The label strings are language-agnostic prompts: GLiNER matches
+# them cross-lingually, so German "Geschäftsführerin" is found by the English "job title" label
+# without per-language wordlists.
 _LABEL_TO_TYPE: dict[str, EntityType] = {
     "person": EntityType.PERSON,
     "organization": EntityType.ORG,
     "location": EntityType.GPE,
+    # #518 Phase 2: open-class job titles / roles. Two phrasings raise recall on both standalone
+    # titles ("Steuerberater") and role-of-a-person mentions; both map to the single JOB_TITLE type.
+    "job title": EntityType.JOB_TITLE,
+    "professional role": EntityType.JOB_TITLE,
 }
 _DEFAULT_LABELS: tuple[str, ...] = tuple(_LABEL_TO_TYPE)
+
+# Job titles are common nouns, so the model over-fires on generic words ("Mitarbeiter", "team")
+# far more than on names. Gate the JOB_TITLE labels at a stricter acceptance threshold than the
+# named-entity default (RefinementConfig.default_threshold, 0.50); the refinement pipeline applies
+# these per-label thresholds after candidate generation.
+_JOB_TITLE_THRESHOLD = 0.70
+_JOB_TITLE_LABELS: tuple[str, ...] = tuple(
+    label for label, etype in _LABEL_TO_TYPE.items() if etype is EntityType.JOB_TITLE
+)
+
+
+def _default_config() -> RefinementConfig:
+    """The adapter's default refinement config: stock thresholds for the named-entity labels,
+    stricter acceptance for the open-class JOB_TITLE labels (precision over recall, #518)."""
+    return RefinementConfig(label_thresholds=dict.fromkeys(_JOB_TITLE_LABELS, _JOB_TITLE_THRESHOLD))
+
 
 # Parity with the LLM NER's ``_MAX_CHARS`` ceiling, so the benchmark compares the same input budget.
 _MAX_CHARS = 12_000
@@ -111,7 +135,7 @@ class GlinerEntityNerExtractor(_RefinerNerExtractor):
     ) -> None:
         refiner = GLiNERNER(
             model_name,
-            config=config or RefinementConfig(),
+            config=config or _default_config(),
             device=device,
             model=model,
             load_kwargs=load_kwargs,
@@ -136,7 +160,7 @@ class NuNerEntityNerExtractor(_RefinerNerExtractor):
     ) -> None:
         refiner = NuNERNER(
             model_name,
-            config=config or RefinementConfig(),
+            config=config or _default_config(),
             device=device,
             model=model,
             load_kwargs=load_kwargs,

@@ -185,7 +185,10 @@ def test_record_extraction() -> None:
 
 
 def test_ner_caps_output_and_extracts_types() -> None:
-    content = '{"people":["Bob"],"organizations":["IBM"],"places":["Berlin"]}'
+    content = (
+        '{"people":["Bob"],"organizations":["IBM"],"places":["Berlin"],'
+        '"job_titles":["Geschäftsführer"]}'
+    )
     with patch("doktok_provider_openai.client.httpx.post", return_value=_resp(content)) as post:
         out = OpenAiEntityNerExtractor("gpt-4o-mini", "k").extract("text")
     pairs = {(e.entity_type, e.entity_text) for e in out}
@@ -193,10 +196,12 @@ def test_ner_caps_output_and_extracts_types() -> None:
         (EntityType.PERSON, "Bob"),
         (EntityType.ORG, "IBM"),
         (EntityType.GPE, "Berlin"),
+        (EntityType.JOB_TITLE, "Geschäftsführer"),
     }
     # The schema bounds each array so dense documents can't overrun the output and truncate.
     schema = post.call_args.kwargs["json"]["response_format"]["json_schema"]["schema"]
     assert schema["properties"]["people"]["maxItems"] == 60
+    assert "job_titles" in schema["required"]  # #518 P2: job titles are part of the contract
 
 
 def test_chat_with_tools_parses_tool_calls() -> None:

@@ -9,10 +9,12 @@ import {
   fetchDocumentIds,
   fetchDocuments,
   fetchFeatureCatalog,
+  fetchFeatureGroups,
   fetchFeatures,
   processingRollup,
   reingestDocument,
   reprocessAllFeature,
+  reprocessFeatureGroup,
   retryDocumentFeature,
   suggestTokens,
   type CategorySummary,
@@ -20,6 +22,7 @@ import {
   type DocumentSort,
   type DokDocument,
   type FeatureCatalogEntry,
+  type FeatureGroup,
   type ProcessingSummary,
   type SortDir,
   type TokenMatch,
@@ -188,6 +191,83 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   thumbnail: "Thumbnail — first-page preview image for the document card and grid/list views",
 };
 
+// Status severity ranking for worst-of-members calculation. Lower index = worse status.
+const STATUS_RANK: Record<string, number> = { failed: 0, processing: 1, pending: 2, done: 3 };
+
+function worstMemberStatus(members: DocumentFeature[]): string {
+  let rank = 3; // default to "done"
+  for (const f of members) {
+    const r = STATUS_RANK[f.status] ?? 3;
+    if (r < rank) rank = r;
+  }
+  return (["failed", "processing", "pending", "done"] as const)[rank] ?? "done";
+}
+
+/** One collapsed group chip derived from a document's features.
+ * `members` contains only the features actually present on that document (not all badge_members). */
+interface GroupChip {
+  id: string;
+  label: string;
+  members: DocumentFeature[];
+  worstStatus: string;
+  membersTooltip: string;
+}
+
+/** Partition a document's features into group chips and individual (non-grouped) features.
+ * Groups with no present members produce no chip. When `groups` is empty all features are
+ * returned as individuals so the pre-groups render is identical to before. */
+function buildChipSections(
+  features: DocumentFeature[],
+  groups: FeatureGroup[],
+): { groupChips: GroupChip[]; individualFeatures: DocumentFeature[] } {
+  if (groups.length === 0) {
+    return { groupChips: [], individualFeatures: features };
+  }
+
+  const memberToGroupId = new Map<string, string>();
+  for (const g of groups) {
+    for (const m of g.badge_members) {
+      memberToGroupId.set(m, g.id);
+    }
+  }
+
+  const groupFeatureMap = new Map<string, DocumentFeature[]>();
+  const individualFeatures: DocumentFeature[] = [];
+
+  for (const f of features) {
+    const gid = memberToGroupId.get(f.feature);
+    if (gid) {
+      const list = groupFeatureMap.get(gid) ?? [];
+      list.push(f);
+      groupFeatureMap.set(gid, list);
+    } else {
+      individualFeatures.push(f);
+    }
+  }
+
+  const chipGlyph = (status: string) =>
+    status === "done" ? "✓" : status === "failed" ? "✗" : "…";
+
+  const groupChips: GroupChip[] = [];
+  for (const g of groups) {
+    const members = groupFeatureMap.get(g.id);
+    if (!members || members.length === 0) continue;
+    const ws = worstMemberStatus(members);
+    const membersTooltip = members
+      .map((m) => {
+        const label = FEATURE_LABELS[m.feature] ?? m.feature;
+        const glyph = chipGlyph(m.status);
+        return m.last_error
+          ? `${label} ${glyph}: ${m.status} — ${m.last_error}`
+          : `${label} ${glyph}: ${m.status}`;
+      })
+      .join("\n");
+    groupChips.push({ id: g.id, label: g.label, members, worstStatus: ws, membersTooltip });
+  }
+
+  return { groupChips, individualFeatures };
+}
+
 /** Per-feature tooltip body. When a document-level processing rollup is known it is prepended as a
  * concise first line so the whole-document outcome is visible without opening the card. */
 function featureTooltip(f: DocumentFeature, rollup?: string | null): string {
@@ -200,18 +280,55 @@ function FeatureChips({
   features,
   rollup,
   onReprocess,
+  groups,
+  onReprocessGroup,
 }: {
   features: DocumentFeature[];
   rollup?: string | null;
   onReprocess?: (feature: string) => void;
+  groups?: FeatureGroup[];
+  onReprocessGroup?: (members: string[], groupLabel: string) => void;
 }) {
   if (features.length === 0) return <span className="muted">-</span>;
-  const sorted = features.slice().sort((a, b) => a.feature.localeCompare(b.feature));
+
+  const chipGlyph = (status: string) =>
+    status === "done" ? "✓" : status === "failed" ? "✗" : "…";
+
+  const { groupChips, individualFeatures } = buildChipSections(features, groups ?? []);
+  const sortedIndividual = individualFeatures.slice().sort((a, b) => a.feature.localeCompare(b.feature));
+
   return (
     <span className="feature-chips">
-      {sorted.map((f) => {
+      {groupChips.map((gc) => {
+        const tip = onReprocessGroup
+          ? `${gc.membersTooltip}\n(click to reprocess)`
+          : gc.membersTooltip;
+        const memberNames = gc.members.map((m) => m.feature);
+        if (!onReprocessGroup) {
+          return (
+            <span key={gc.id} className={`chip feat-${gc.worstStatus}`} title={tip}>
+              {gc.label} {chipGlyph(gc.worstStatus)}
+            </span>
+          );
+        }
+        return (
+          <button
+            key={gc.id}
+            type="button"
+            className={`chip chip-button feat-${gc.worstStatus}`}
+            title={tip}
+            onClick={(e) => {
+              e.stopPropagation();
+              onReprocessGroup(memberNames, gc.label);
+            }}
+          >
+            {gc.label} {chipGlyph(gc.worstStatus)}
+          </button>
+        );
+      })}
+      {sortedIndividual.map((f) => {
         const label = FEATURE_LABELS[f.feature] ?? f.feature;
-        const glyph = f.status === "done" ? "✓" : f.status === "failed" ? "✗" : "…";
+        const glyph = chipGlyph(f.status);
         if (!onReprocess) {
           return (
             <span key={f.feature} className={`chip feat-${f.status}`} title={featureTooltip(f, rollup)}>
@@ -239,31 +356,50 @@ function FeatureChips({
 }
 
 /** Thumbnail-only variant of FeatureChips: shrinks chips, caps by size, adds a "+N" overflow chip
- * whose tooltip lists every hidden badge so they remain discoverable. Reprocess clicks still work
- * on the visible chips. Does NOT change the list view's FeatureChips. */
+ * whose tooltip lists every hidden badge so they remain discoverable. Group chips are placed first
+ * (collapsing their members), then individual chips alphabetically. The cap applies to the combined
+ * list. Reprocess clicks still work on the visible chips. Does NOT change the list view's FeatureChips. */
 function ThumbnailFeatureChips({
   features,
   rollup,
   onReprocess,
   thumbSize,
+  groups,
+  onReprocessGroup,
 }: {
   features: DocumentFeature[];
   rollup?: string | null;
   onReprocess?: (feature: string) => void;
   thumbSize: ThumbSize;
+  groups?: FeatureGroup[];
+  onReprocessGroup?: (members: string[], groupLabel: string) => void;
 }) {
   if (features.length === 0) return null;
-  const sorted = features.slice().sort((a, b) => a.feature.localeCompare(b.feature));
-  const cap = THUMB_CHIP_CAP[thumbSize];
-  const visible = sorted.slice(0, cap);
-  const hidden = sorted.slice(cap);
 
-  function chipGlyph(status: string) {
-    return status === "done" ? "✓" : status === "failed" ? "✗" : "…";
-  }
+  const chipGlyph = (status: string) =>
+    status === "done" ? "✓" : status === "failed" ? "✗" : "…";
+
+  const { groupChips, individualFeatures } = buildChipSections(features, groups ?? []);
+  const sortedIndividual = individualFeatures.slice().sort((a, b) => a.feature.localeCompare(b.feature));
+
+  // Combined ordered list: group chips first, then individual chips alphabetically.
+  type ChipItem = { kind: "group"; gc: GroupChip } | { kind: "feature"; f: DocumentFeature };
+  const allChips: ChipItem[] = [
+    ...groupChips.map((gc) => ({ kind: "group" as const, gc })),
+    ...sortedIndividual.map((f) => ({ kind: "feature" as const, f })),
+  ];
+
+  const cap = THUMB_CHIP_CAP[thumbSize];
+  const visible = allChips.slice(0, cap);
+  const hidden = allChips.slice(cap);
 
   const overflowTooltip = hidden
-    .map((f) => {
+    .map((item) => {
+      if (item.kind === "group") {
+        const { gc } = item;
+        return `${gc.label} ${chipGlyph(gc.worstStatus)}: ${gc.worstStatus}`;
+      }
+      const { f } = item;
       const label = FEATURE_LABELS[f.feature] ?? f.feature;
       const glyph = chipGlyph(f.status);
       return f.last_error
@@ -274,7 +410,38 @@ function ThumbnailFeatureChips({
 
   return (
     <span className="feature-chips tile-feature-chips">
-      {visible.map((f) => {
+      {visible.map((item) => {
+        if (item.kind === "group") {
+          const { gc } = item;
+          const tip = onReprocessGroup
+            ? `${gc.membersTooltip}\n(click to reprocess)`
+            : gc.membersTooltip;
+          const memberNames = gc.members.map((m) => m.feature);
+          if (!onReprocessGroup) {
+            return (
+              <span key={gc.id} className={`chip feat-${gc.worstStatus}`} title={tip}>
+                {gc.label} {chipGlyph(gc.worstStatus)}
+              </span>
+            );
+          }
+          return (
+            <button
+              key={gc.id}
+              type="button"
+              className={`chip chip-button feat-${gc.worstStatus}`}
+              title={tip}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReprocessGroup(memberNames, gc.label);
+              }}
+            >
+              {gc.label} {chipGlyph(gc.worstStatus)}
+            </button>
+          );
+        }
+
+        // Individual feature chip
+        const { f } = item;
         const label = FEATURE_LABELS[f.feature] ?? f.feature;
         const glyph = chipGlyph(f.status);
         if (!onReprocess) {
@@ -347,6 +514,8 @@ function DocumentCard({
   onToggle,
   onOpen,
   onReprocessFeature,
+  onReprocessFeatureGroup,
+  featureGroups,
   thumbSize,
   tileFields,
   anySelected,
@@ -358,6 +527,8 @@ function DocumentCard({
   onToggle: (id: string, shiftKey: boolean) => void;
   onOpen?: (id: string) => void;
   onReprocessFeature?: (documentId: string, feature: string, filename: string) => void;
+  onReprocessFeatureGroup?: (documentId: string, members: string[], groupLabel: string, filename: string) => void;
+  featureGroups?: FeatureGroup[];
   thumbSize: ThumbSize;
   tileFields: TileFields;
   anySelected: boolean;
@@ -419,9 +590,16 @@ function DocumentCard({
               features={features}
               rollup={rollup}
               thumbSize={thumbSize}
+              groups={featureGroups}
               onReprocess={
                 onReprocessFeature
                   ? (feat) => onReprocessFeature(doc.id, feat, doc.original_filename)
+                  : undefined
+              }
+              onReprocessGroup={
+                onReprocessFeatureGroup
+                  ? (members, groupLabel) =>
+                      onReprocessFeatureGroup(doc.id, members, groupLabel, doc.original_filename)
                   : undefined
               }
             />
@@ -763,6 +941,7 @@ export function DocumentsPanel({
   // Live progress for a running bulk action (bounded-concurrency fan-out); null when idle.
   const [bulkProgress, setBulkProgress] = useState<{ label: string; done: number; total: number } | null>(null);
   const [catalog, setCatalog] = useState<FeatureCatalogEntry[]>([]);
+  const [featureGroups, setFeatureGroups] = useState<FeatureGroup[]>([]);
   const [reprocessFeature, setReprocessFeature] = useState("");
   const [reprocessAllFeatureValue, setReprocessAllFeatureValue] = useState("");
   const [notice, setNotice] = useState("");
@@ -874,6 +1053,9 @@ export function DocumentsPanel({
     fetchFeatureCatalog()
       .then(setCatalog)
       .catch(() => setCatalog([]));
+    fetchFeatureGroups()
+      .then(setFeatureGroups)
+      .catch(() => setFeatureGroups([]));
   }, []);
 
   const docs = state.kind === "ok" ? state.docs : [];
@@ -1012,6 +1194,30 @@ export function DocumentsPanel({
       .then(() => setNotice(`Reprocess ${label}: scheduled for ${filename}.`))
       .catch((err: unknown) =>
         setNotice(`Reprocess ${label} failed: ${err instanceof Error ? err.message : "error"}`),
+      )
+      .finally(() => {
+        setBusy(false);
+        load();
+      });
+  }
+
+  // Click a group chip to re-queue all present group members for that document.
+  // `members` already contains only features that exist on this doc (filtered in buildChipSections).
+  function reprocessOneGroup(
+    documentId: string,
+    members: string[],
+    groupLabel: string,
+    filename: string,
+  ) {
+    if (!window.confirm(`Reprocess "${groupLabel}" for ${filename}?`)) return;
+    setBusy(true);
+    setNotice("");
+    void Promise.all(members.map((m) => retryDocumentFeature(documentId, m)))
+      .then(() => setNotice(`Reprocess ${groupLabel}: scheduled for ${filename}.`))
+      .catch((err: unknown) =>
+        setNotice(
+          `Reprocess ${groupLabel} failed: ${err instanceof Error ? err.message : "error"}`,
+        ),
       )
       .finally(() => {
         setBusy(false);
@@ -1242,13 +1448,17 @@ export function DocumentsPanel({
             <FeatureChips
               features={features}
               rollup={rollup}
+              groups={featureGroups}
               onReprocess={(feat) => reprocessOne(d.id, feat, d.original_filename)}
+              onReprocessGroup={(members, groupLabel) =>
+                reprocessOneGroup(d.id, members, groupLabel, d.original_filename)
+              }
             />
           );
         },
       },
     ],
-    [allLoadedSelected, toggleAll, selected, toggle, onOpenDocument, state, reprocessOne],
+    [allLoadedSelected, toggleAll, selected, toggle, onOpenDocument, state, reprocessOne, reprocessOneGroup, featureGroups],
   );
 
   return (
@@ -1336,54 +1546,87 @@ export function DocumentsPanel({
         onMatch={setTokenMatch}
       />
 
-      {catalog.length > 0 && (
+      {(featureGroups.length > 0 || catalog.length > 0) && (
         <div className="bulk-bar" role="region" aria-label="Reprocess all documents">
-          <span className="bulk-reprocess">
-            <select
-              aria-label="Feature to reprocess all"
-              value={reprocessAllFeatureValue}
-              disabled={busy}
-              onChange={(e) => setReprocessAllFeatureValue(e.target.value)}
-            >
-              <option value="">Reprocess all: pick feature...</option>
-              {catalog.map((c) => (
-                <option key={c.name} value={c.name} title={c.description}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+          {featureGroups.map((g) => (
             <button
+              key={g.id}
               type="button"
-              disabled={busy || reprocessAllFeatureValue === ""}
+              disabled={busy}
               onClick={() => {
-                const spec = catalog.find((c) => c.name === reprocessAllFeatureValue);
-                if (!spec) return;
                 if (
                   window.confirm(
-                    `Re-run ${spec.label} on every document in this tenant?\n\n` +
-                      `This re-queues the model for ALL documents (cost + time). Continue?`,
+                    `Reprocess ${g.label} for all documents?\n\n` +
+                      `This re-runs ${g.badge_members.join(", ")} on every document. Continue?`,
                   )
                 ) {
                   setBusy(true);
-                  void reprocessAllFeature(reprocessAllFeatureValue)
+                  void reprocessFeatureGroup(g.id)
                     .then(({ count }) => {
                       setNotice(
-                        `Re-queued ${spec.label} for ${count.toLocaleString()} document${count === 1 ? "" : "s"}.`,
+                        `Re-queued ${g.label} for ${count.toLocaleString()} document${count === 1 ? "" : "s"}.`,
                       );
-                      setReprocessAllFeatureValue("");
                     })
                     .catch((err: unknown) => {
                       setNotice(
-                        `Reprocess all failed: ${err instanceof Error ? err.message : "error"}`,
+                        `Reprocess ${g.label} failed: ${err instanceof Error ? err.message : "error"}`,
                       );
                     })
                     .finally(() => setBusy(false));
                 }
               }}
             >
-              Reprocess all
+              Reprocess {g.label}
             </button>
-          </span>
+          ))}
+          {catalog.length > 0 && (
+            <span className="bulk-reprocess">
+              <select
+                aria-label="Feature to reprocess all"
+                value={reprocessAllFeatureValue}
+                disabled={busy}
+                onChange={(e) => setReprocessAllFeatureValue(e.target.value)}
+              >
+                <option value="">Reprocess all: pick feature...</option>
+                {catalog.map((c) => (
+                  <option key={c.name} value={c.name} title={c.description}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={busy || reprocessAllFeatureValue === ""}
+                onClick={() => {
+                  const spec = catalog.find((c) => c.name === reprocessAllFeatureValue);
+                  if (!spec) return;
+                  if (
+                    window.confirm(
+                      `Re-run ${spec.label} on every document in this tenant?\n\n` +
+                        `This re-queues the model for ALL documents (cost + time). Continue?`,
+                    )
+                  ) {
+                    setBusy(true);
+                    void reprocessAllFeature(reprocessAllFeatureValue)
+                      .then(({ count }) => {
+                        setNotice(
+                          `Re-queued ${spec.label} for ${count.toLocaleString()} document${count === 1 ? "" : "s"}.`,
+                        );
+                        setReprocessAllFeatureValue("");
+                      })
+                      .catch((err: unknown) => {
+                        setNotice(
+                          `Reprocess all failed: ${err instanceof Error ? err.message : "error"}`,
+                        );
+                      })
+                      .finally(() => setBusy(false));
+                  }
+                }}
+              >
+                Reprocess all
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -1576,6 +1819,8 @@ export function DocumentsPanel({
                 onToggle={toggle}
                 onOpen={onOpenDocument}
                 onReprocessFeature={reprocessOne}
+                onReprocessFeatureGroup={reprocessOneGroup}
+                featureGroups={featureGroups}
                 thumbSize={thumbSize}
                 tileFields={tileFields}
                 anySelected={selected.size > 0}

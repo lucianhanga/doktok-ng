@@ -1329,6 +1329,34 @@ export async function reprocessAllFeature(
   return response.json() as Promise<{ status: string; count: number }>;
 }
 
+/** A group of features that are collapsed into a single badge chip in the document list and tiles.
+ * badge_members lists the individual feature names that belong to the group. */
+export interface FeatureGroup {
+  id: string;
+  label: string;
+  badge_members: string[];
+}
+
+/** Fetch the feature groups used to collapse badges (e.g. "entities" groups entities+ner). */
+export function fetchFeatureGroups(signal?: AbortSignal): Promise<FeatureGroup[]> {
+  return getJson<FeatureGroup[]>("/api/v1/features/groups", signal);
+}
+
+/** Reprocess all documents for a feature group (e.g. "entities" or "knowledge_graph"). Returns
+ * the count of documents queued and the list of feature names that were reset. */
+export async function reprocessFeatureGroup(
+  groupId: string,
+): Promise<{ status: string; count: number; features: string[] }> {
+  const response = await fetch(
+    `/api/v1/documents/features/group/${encodeURIComponent(groupId)}/reprocess-all`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    throw new Error(`Reprocess group failed: ${response.status}`);
+  }
+  return response.json() as Promise<{ status: string; count: number; features: string[] }>;
+}
+
 /** Re-ingest (re-OCR) a document. profile="enhanced" uses the slower, higher-quality OCR pass. */
 export async function reingestDocument(
   id: string,

@@ -583,29 +583,34 @@ def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator 
     if use_openai:
         from doktok_provider_openai.adjudicator import OpenAiEntityMergeAdjudicator
 
-        effort = openai_reasoning_effort(pl.reasoning, pl.model)
-        return OpenAiEntityMergeAdjudicator(
+        # Adjudication is a fast yes/no JSON call - force reasoning OFF regardless of the pipeline
+        # density (no reasoning tokens: requirement + cost). The annotation also gives mypy a
+        # concrete return type when `providers` isn't in its scope (CI).
+        openai_adj: EntityMergeAdjudicator = OpenAiEntityMergeAdjudicator(
             pl.model,
             openai_key,
             timeout=timeout,
-            reasoning_effort=effort,
+            reasoning_effort=openai_reasoning_effort("off", pl.model),
         )
+        return openai_adj
     else:
         from doktok_provider_ollama.adjudicator import OllamaEntityMergeAdjudicator
 
         p_model = pl.model if pl.provider == "ollama" else settings.default_model
         p_ctx = pl.num_ctx if pl.provider == "ollama" else settings.enrich_num_ctx
-        p_think = ollama_think_for(pl.reasoning, p_model, structured=True)
-        p_repair = p_model
-        return OllamaEntityMergeAdjudicator(
+        # Force thinking off ("off"), not pl.reasoning, so adjudication never reasons - except a MoE
+        # model that cannot disable thinking with structured output (arch limitation).
+        p_think = ollama_think_for("off", p_model, structured=True)
+        ollama_adj: EntityMergeAdjudicator = OllamaEntityMergeAdjudicator(
             p_model,
-            p_repair,
+            p_model,
             pl_url,
             timeout=timeout,
             num_ctx=p_ctx,
             think=p_think,
             keep_alive=settings.enrich_keep_alive,
         )
+        return ollama_adj
 
 
 Tenant = Annotated[TenantContext, Depends(require_tenant)]

@@ -191,3 +191,99 @@ def test_reprocess_all_tenant_isolation() -> None:
     touched_docs = {call[1] for call in repo.reset_calls}
     assert touched_tenants == {"tenant-a"}
     assert "other-doc" not in touched_docs
+
+
+# --- POST /api/v1/documents/features/group/{group}/reprocess-all ---
+
+
+def test_reprocess_group_unknown_is_404() -> None:
+    resp = _client_with_docs(FakeFeatureRepository()).post(
+        "/api/v1/documents/features/group/no_such_group/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 404
+
+
+def test_reprocess_group_entities_resets_all_four_features_for_every_doc() -> None:
+    """The entities group reprocess_set includes entities, ner, entity_graph, relations."""
+    repo = FakeFeatureRepository()
+    d1 = _doc("doc-1", "tenant-a")
+    d2 = _doc("doc-2", "tenant-a")
+    resp = _client_with_docs(repo, d1, d2).post(
+        "/api/v1/documents/features/group/entities/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 200
+    # Verify all four features were reset for each document.
+    reset_by_doc: dict[str, set[str]] = {}
+    for tenant_id, doc_id, feat in repo.reset_calls:
+        assert tenant_id == "tenant-a"
+        reset_by_doc.setdefault(doc_id, set()).add(feat)
+    assert reset_by_doc.get("doc-1") == {"entities", "ner", "entity_graph", "relations"}
+    assert reset_by_doc.get("doc-2") == {"entities", "ner", "entity_graph", "relations"}
+
+
+def test_reprocess_group_entities_response_shape() -> None:
+    """Response includes status, count, and the full reprocess_set feature list."""
+    repo = FakeFeatureRepository()
+    d1 = _doc("doc-1", "tenant-a")
+    d2 = _doc("doc-2", "tenant-a")
+    body = (
+        _client_with_docs(repo, d1, d2)
+        .post("/api/v1/documents/features/group/entities/reprocess-all", headers=_auth())
+        .json()
+    )
+    assert body["status"] == "queued"
+    # FakeFeatureRepository.reset returns True only for "entities"; each doc has at least one
+    # successful reset, so count == 2.
+    assert body["count"] == 2
+    assert set(body["features"]) == {"entities", "ner", "entity_graph", "relations"}
+
+
+def test_reprocess_group_knowledge_graph_resets_only_graph_features() -> None:
+    """The knowledge_graph group resets only entity_graph and relations."""
+    repo = FakeFeatureRepository()
+    d1 = _doc("doc-1", "tenant-a")
+    resp = _client_with_docs(repo, d1).post(
+        "/api/v1/documents/features/group/knowledge_graph/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 200
+    reset_features = {feat for _, _, feat in repo.reset_calls}
+    assert reset_features == {"entity_graph", "relations"}
+    # Neither entities nor ner should have been touched.
+    assert "entities" not in reset_features
+    assert "ner" not in reset_features
+
+
+def test_reprocess_group_knowledge_graph_response_shape() -> None:
+    repo = FakeFeatureRepository()
+    d1 = _doc("doc-1", "tenant-a")
+    body = (
+        _client_with_docs(repo, d1)
+        .post("/api/v1/documents/features/group/knowledge_graph/reprocess-all", headers=_auth())
+        .json()
+    )
+    assert body["status"] == "queued"
+    # FakeFeatureRepository.reset returns False for entity_graph and relations, so count is 0.
+    assert body["count"] == 0
+    assert set(body["features"]) == {"entity_graph", "relations"}
+
+
+def test_reprocess_group_requires_token() -> None:
+    resp = _client_with_docs(FakeFeatureRepository()).post(
+        "/api/v1/documents/features/group/entities/reprocess-all"
+    )
+    assert resp.status_code == 401
+
+
+def test_reprocess_group_tenant_isolation() -> None:
+    """Documents from a different tenant are never touched."""
+    repo = FakeFeatureRepository()
+    own = _doc("own-doc", "tenant-a")
+    other = _doc("other-doc", "tenant-b")
+    resp = _client_with_docs(repo, own, other).post(
+        "/api/v1/documents/features/group/entities/reprocess-all", headers=_auth()
+    )
+    assert resp.status_code == 200
+    touched_tenants = {call[0] for call in repo.reset_calls}
+    touched_docs = {call[1] for call in repo.reset_calls}
+    assert touched_tenants == {"tenant-a"}
+    assert "other-doc" not in touched_docs

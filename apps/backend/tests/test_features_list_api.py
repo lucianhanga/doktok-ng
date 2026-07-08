@@ -136,3 +136,56 @@ def test_catalog_lists_reprocessable_features() -> None:
     }
     assert "extract" not in names
     assert all(entry["label"] and entry["description"] for entry in body)
+
+
+# --- GET /api/v1/features/groups ---
+
+
+def test_groups_requires_token() -> None:
+    assert _client().get("/api/v1/features/groups").status_code == 401
+
+
+def test_groups_returns_exactly_two_groups() -> None:
+    body = (
+        _client().get("/api/v1/features/groups", headers={"Authorization": "Bearer tok-a"}).json()
+    )
+    assert len(body) == 2
+    assert {entry["id"] for entry in body} == {"entities", "knowledge_graph"}
+
+
+def test_groups_each_entry_has_required_fields() -> None:
+    body = (
+        _client().get("/api/v1/features/groups", headers={"Authorization": "Bearer tok-a"}).json()
+    )
+    for entry in body:
+        assert entry["id"]
+        assert entry["label"]
+        assert isinstance(entry["badge_members"], list)
+        assert len(entry["badge_members"]) > 0
+
+
+def test_groups_entities_badge_members() -> None:
+    body = (
+        _client().get("/api/v1/features/groups", headers={"Authorization": "Bearer tok-a"}).json()
+    )
+    entities = next(e for e in body if e["id"] == "entities")
+    assert entities["label"] == "Entities"
+    assert set(entities["badge_members"]) == {"entities", "ner"}
+
+
+def test_groups_knowledge_graph_badge_members() -> None:
+    body = (
+        _client().get("/api/v1/features/groups", headers={"Authorization": "Bearer tok-a"}).json()
+    )
+    kg = next(e for e in body if e["id"] == "knowledge_graph")
+    assert kg["label"] == "Knowledge graph"
+    assert set(kg["badge_members"]) == {"entity_graph", "relations"}
+
+
+def test_groups_does_not_expose_reprocess_set() -> None:
+    """The reprocess_set is an internal detail; the groups endpoint only exposes badge_members."""
+    body = (
+        _client().get("/api/v1/features/groups", headers={"Authorization": "Bearer tok-a"}).json()
+    )
+    for entry in body:
+        assert "reprocess_set" not in entry

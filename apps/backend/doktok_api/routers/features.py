@@ -6,7 +6,7 @@ from typing import Annotated
 
 from doktok_contracts.ports import FeatureRepository
 from doktok_contracts.schemas import DocumentFeature
-from doktok_core.features.catalog import FEATURE_CATALOG
+from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
@@ -24,6 +24,30 @@ class FeatureCatalogEntry(BaseModel):
     version: int
     label: str
     description: str
+
+
+class FeatureGroupEntry(BaseModel):
+    """A logical feature group for badge aggregation and group reprocess actions."""
+
+    id: str
+    label: str
+    badge_members: list[str]
+
+
+@router.get("/groups", response_model=list[FeatureGroupEntry])
+def feature_groups(tenant: Tenant) -> list[FeatureGroupEntry]:
+    """The KG-related feature groups for badge aggregation and group reprocess actions.
+
+    The frontend derives two things from this response:
+    - which feature names to collapse into each group badge
+    - which group ids to pass to POST /api/v1/documents/features/group/{group}/reprocess-all
+    No hardcoding of group structure in the UI.
+    """
+    _ = tenant  # auth-gated; the group definitions are the same for every tenant
+    return [
+        FeatureGroupEntry(id=g.id, label=g.label, badge_members=list(g.badge_members))
+        for g in FEATURE_GROUPS
+    ]
 
 
 @router.get("/catalog", response_model=list[FeatureCatalogEntry])

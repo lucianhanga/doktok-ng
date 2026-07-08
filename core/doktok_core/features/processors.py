@@ -212,7 +212,10 @@ class EntitiesFeature:
     """Re-extract structured entities + multilingual lexical terms for a document."""
 
     name = "entities"
-    version = 3  # bumped for plausibility-filtered lexical terms -> reconciler re-extracts corpus
+    # v4 (#518 Phase 1): validated PHONE/IBAN/VAT_ID/TAX_NUMBER/REGISTRATION_NUMBER (+ADDRESS/
+    # POSTAL_CODE with libpostal) -> the reconciler re-extracts the corpus, so values previously
+    # only visible as CUSTOM_TOKEN keywords (or missed entirely) get their proper types.
+    version = 4
     dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(

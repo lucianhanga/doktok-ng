@@ -1,5 +1,5 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend run-worker run-ui preflight-backend preflight-worker clean-tenant rag-eval enrich-eval ocr-paddle ocr-rapid ocr-rapid-openvino projection-engine db db-down \
+        run-backend run-worker run-ui preflight-backend preflight-worker clean-tenant rag-eval enrich-eval ocr-paddle ocr-rapid ocr-rapid-openvino projection-engine address-libpostal db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks deploy-box drp-selftest backup
 
@@ -88,6 +88,9 @@ ocr-rapid-openvino: ## Install RapidOCR + the OpenVINO backend (Intel; ~20x vs P
 
 projection-engine: ## Install the embedding-projection runtime (PCA/UMAP/HDBSCAN for the Insights tab)
 	uv pip install umap-learn scikit-learn hdbscan numpy
+
+address-libpostal: ## Install the libpostal address-parsing runtime (needs the C lib: `brew install libpostal`; not in lockfile - re-run after any `uv sync`)
+	uv pip install postal
 
 db: ## Start local Postgres + pgvector and Gotenberg (docker compose)
 	docker compose up -d

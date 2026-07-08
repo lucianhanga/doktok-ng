@@ -12,6 +12,9 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "langdetect>=1.0.9",
+    # Pure-Python libphonenumber port for PHONE validation (#518). Lightweight -> normal lockfile
+    # dep (unlike libpostal, which is a heavy engine extra; see `make address-libpostal`).
+    "phonenumbers>=8.13",
 ]
 
 [tool.hatch.build.targets.wheel]

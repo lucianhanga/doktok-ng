@@ -47,7 +47,8 @@ FEATURE_CATALOG: list[FeatureSpec] = [
         EntitiesFeature.name,
         EntitiesFeature.version,
         "Entities & keywords",
-        "Extracts structured entities (IBAN, dates, money, ...) and meaningful keyword tokens.",
+        "Extracts validated structured entities (IBAN, phone, VAT ID, tax/registration numbers, "
+        "addresses) and meaningful keyword tokens.",
     ),
     FeatureSpec(
         NerFeature.name,

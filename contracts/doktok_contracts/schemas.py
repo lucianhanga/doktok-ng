@@ -103,6 +103,17 @@ class EntityType(StrEnum):
     EMAIL = "EMAIL"
     URL = "URL"
     CUSTOM_TOKEN = "CUSTOM_TOKEN"
+    # Validated structured identifiers (#518 Phase 1). Each is emitted only after a real
+    # validator/parser accepts it (mod-97 checksum, libphonenumber, libpostal, required context
+    # cue), never on a bare regex hit, so precision stays near 100%. FAX numbers are typed PHONE
+    # (kept simple on purpose).
+    PHONE = "PHONE"
+    ADDRESS = "ADDRESS"
+    POSTAL_CODE = "POSTAL_CODE"
+    IBAN = "IBAN"
+    VAT_ID = "VAT_ID"
+    TAX_NUMBER = "TAX_NUMBER"
+    REGISTRATION_NUMBER = "REGISTRATION_NUMBER"
     # No longer extracted (M8.x, #312): the regex matches were mostly noise on real documents.
     # Kept in the vocabulary so historical rows + the cleanup migration still resolve.
     DATE = "DATE"

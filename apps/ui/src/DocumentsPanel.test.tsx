@@ -23,6 +23,7 @@ function mockSelectAll(opts: {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/features/groups")) return new Response("[]", { status: 200 });
     if (url.includes("/api/v1/documents/ids")) {
       return new Response(
         JSON.stringify({
@@ -49,11 +50,15 @@ function mockSelectAll(opts: {
   return { fetchMock, deleted };
 }
 
-function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknown[] = []) {
+function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknown[] = [], groups: unknown[] = []) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/api/v1/features/catalog")) {
       return new Response(JSON.stringify(catalog), { status: 200 });
+    }
+    // /features/groups must be checked before the general /features guard.
+    if (url.includes("/api/v1/features/groups")) {
+      return new Response(JSON.stringify(groups), { status: 200 });
     }
     if (url.includes("/api/v1/features")) {
       return new Response(JSON.stringify(features), { status: 200 });
@@ -649,6 +654,128 @@ test("thumbnail selection checkbox is present in the DOM for keyboard access (ho
 
   // The checkbox must be in the DOM (opacity:0 at rest does not remove it from keyboard order).
   expect(await screen.findByLabelText("Select kbd.pdf")).toBeInTheDocument();
+});
+
+// --- Feature group badge collapsing (#521) -------------------------------------------------------
+
+const KG_GROUPS = [
+  { id: "entities", label: "Entities", badge_members: ["entities", "ner"] },
+  { id: "knowledge_graph", label: "Knowledge graph", badge_members: ["entity_graph", "relations"] },
+];
+
+test("grouped features render as 2 group chips not 4 individual chips", async () => {
+  mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf" })],
+    [
+      feat("a", "entities"),
+      feat("a", "ner"),
+      feat("a", "entity_graph"),
+      feat("a", "relations"),
+      feat("a", "chunk_embed"),
+    ],
+    [],
+    KG_GROUPS,
+  );
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  // Two group chips collapse the four KG features.
+  expect(screen.getByText("Entities ✓")).toBeInTheDocument();
+  expect(screen.getByText("Knowledge graph ✓")).toBeInTheDocument();
+
+  // Individual KG feature labels must NOT appear as standalone chips.
+  expect(screen.queryByText("ents ✓")).not.toBeInTheDocument();
+  expect(screen.queryByText("names ✓")).not.toBeInTheDocument();
+  expect(screen.queryByText("graph ✓")).not.toBeInTheDocument();
+  expect(screen.queryByText("rel ✓")).not.toBeInTheDocument();
+
+  // Non-grouped feature (chunk_embed) still renders individually.
+  expect(screen.getByText("rag ✓")).toBeInTheDocument();
+});
+
+test("group chip shows worst-of member status and lists members in tooltip", async () => {
+  mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf" })],
+    [
+      feat("a", "entities", "done"),
+      { ...feat("a", "ner", "failed"), last_error: "NER timeout" },
+    ],
+    [],
+    KG_GROUPS,
+  );
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  // Worst-of failed: the group chip shows the failed glyph.
+  const groupChip = screen.getByText("Entities ✗");
+  expect(groupChip).toBeInTheDocument();
+
+  // Tooltip lists each member with its status glyph.
+  const title = groupChip.getAttribute("title") ?? "";
+  expect(title).toContain("ents ✓");
+  expect(title).toContain("names ✗");
+});
+
+test("non-grouped features still render individually when no group member is present", async () => {
+  mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf" })],
+    [feat("a", "chunk_embed", "done")],
+    [],
+    KG_GROUPS,
+  );
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  // chunk_embed is not in any group: renders as the "rag" individual chip.
+  expect(screen.getByText("rag ✓")).toBeInTheDocument();
+
+  // No group chip appears when no group members are present for the doc.
+  expect(screen.queryByText(/^Entities/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Knowledge graph/)).not.toBeInTheDocument();
+});
+
+test("toolbar group reprocess button calls group endpoint and shows count feedback", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/features/groups")) {
+      return new Response(JSON.stringify(KG_GROUPS), { status: 200 });
+    }
+    if (url.includes("/api/v1/documents/features/group/entities/reprocess-all") && init?.method === "POST") {
+      return new Response(
+        JSON.stringify({ status: "queued", count: 5, features: ["entities", "ner"] }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+    return new Response(JSON.stringify({ items: [], total: 0, next_cursor: null }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<DocumentsPanel />);
+  // Wait for the group buttons to appear (fetched on mount alongside catalog).
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Reprocess Entities" })).toBeInTheDocument(),
+  );
+  expect(screen.getByRole("button", { name: "Reprocess Knowledge graph" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Reprocess Entities" }));
+
+  // Confirm dialog mentions the group label and its members.
+  expect((window.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("Entities");
+  expect((window.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("entities, ner");
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/documents/features/group/entities/reprocess-all",
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(/Re-queued Entities for 5 documents/),
+  );
 });
 
 test("reprocess-all button confirms then calls endpoint and shows returned count", async () => {

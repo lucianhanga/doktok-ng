@@ -19,6 +19,7 @@ from doktok_contracts.schemas import (
     AliasFold,
     AuditEvent,
     Category,
+    CategoryCoOccurrence,
     CategorySummary,
     ChatMessage,
     ChatThread,
@@ -2295,6 +2296,37 @@ class PostgresCategoryRepository:
                 (tenant_id, list(document_ids)),
             ).fetchall()
         return {r[0]: r[1] for r in rows}
+
+    def category_co_occurrence(self, tenant_id: str) -> list[CategoryCoOccurrence]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT a.category_id AS a_id, ca.name AS a_name, "
+                "b.category_id AS b_id, cb.name AS b_name, "
+                "count(DISTINCT a.document_id) AS shared "
+                "FROM document_category_links a "
+                "JOIN document_category_links b "
+                "ON a.tenant_id = b.tenant_id "
+                "AND a.document_id = b.document_id "
+                "AND a.category_id < b.category_id "
+                "JOIN categories ca ON ca.id = a.category_id AND ca.status = 'active' "
+                "JOIN categories cb ON cb.id = b.category_id AND cb.status = 'active' "
+                "WHERE a.tenant_id = %s "
+                "GROUP BY a.category_id, ca.name, b.category_id, cb.name "
+                "HAVING count(DISTINCT a.document_id) > 0 "
+                "ORDER BY count(DISTINCT a.document_id) DESC, ca.name, cb.name",
+                (tenant_id,),
+            ).fetchall()
+        return [
+            CategoryCoOccurrence(
+                a_id=r["a_id"],
+                a_name=r["a_name"],
+                b_id=r["b_id"],
+                b_name=r["b_name"],
+                count=int(r["shared"]),
+            )
+            for r in rows
+        ]
 
 
 _REC_COLUMNS = (

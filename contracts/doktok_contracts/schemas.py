@@ -795,6 +795,16 @@ class CategorySummary(BaseModel):
     document_count: int
 
 
+class CategoryCoOccurrence(BaseModel):
+    """An unordered pair of active categories that co-occur on at least one document (M6.2)."""
+
+    a_id: str
+    a_name: str
+    b_id: str
+    b_name: str
+    count: int
+
+
 class ChatTurn(BaseModel):
     """One prior message in a chat conversation (ADR-0018). Used to rewrite follow-ups."""
 

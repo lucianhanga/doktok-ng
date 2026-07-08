@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from doktok_contracts.schemas import Category, CategorySummary, Document
+from doktok_contracts.schemas import Category, CategoryCoOccurrence, CategorySummary, Document
 
 from doktok_core.enrichment import MAX_CATEGORIES_PER_DOCUMENT, MAX_CATEGORIES_PER_TENANT
 
@@ -121,3 +121,33 @@ class InMemoryCategoryRepository:
             if names:
                 result[doc] = names[0]
         return result
+
+    def category_co_occurrence(self, tenant_id: str) -> list[CategoryCoOccurrence]:
+        # For each document collect its active category ids, then emit every unordered pair.
+        counts: dict[tuple[str, str], int] = {}
+        for (tid, _doc), ids in self._links.items():
+            if tid != tenant_id:
+                continue
+            active = [
+                i
+                for i in ids
+                if i in self._cats
+                and self._cats[i].status == "active"
+                and self._cats[i].tenant_id == tenant_id
+            ]
+            for i, a_id in enumerate(active):
+                for b_id in active[i + 1 :]:
+                    pair = (min(a_id, b_id), max(a_id, b_id))
+                    counts[pair] = counts.get(pair, 0) + 1
+        result = [
+            CategoryCoOccurrence(
+                a_id=a_id,
+                a_name=self._cats[a_id].name,
+                b_id=b_id,
+                b_name=self._cats[b_id].name,
+                count=n,
+            )
+            for (a_id, b_id), n in counts.items()
+            if n > 0
+        ]
+        return sorted(result, key=lambda r: (-r.count, r.a_name, r.b_name))

@@ -186,6 +186,23 @@ export function fetchCategories(signal?: AbortSignal): Promise<CategorySummary[]
   return getJson<CategorySummary[]>("/api/v1/categories", signal);
 }
 
+/** One unordered category pair and the number of documents that belong to both.
+ * `(a_id, b_id)` is an opaque unordered pair — `a` is not necessarily first alphabetically.
+ * The backend returns rows ordered by count desc. */
+export interface CategoryCoOccurrence {
+  a_id: string;
+  a_name: string;
+  b_id: string;
+  b_name: string;
+  count: number;
+}
+
+export function fetchCategoryCoOccurrence(
+  signal?: AbortSignal,
+): Promise<CategoryCoOccurrence[]> {
+  return getJson<CategoryCoOccurrence[]>("/api/v1/categories/co-occurrence", signal);
+}
+
 export type ActivitySeverity = "info" | "warning" | "error";
 
 export interface AuditEvent {

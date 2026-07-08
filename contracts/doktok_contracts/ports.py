@@ -35,6 +35,7 @@ from doktok_contracts.schemas import (
     AliasFold,
     AuditEvent,
     Category,
+    CategoryCoOccurrence,
     CategorySummary,
     ChatEvent,
     ChatMessage,
@@ -628,6 +629,14 @@ class CategoryRepository(Protocol):
         of the category_ids list, i.e. the classifier's most-confident label).  Name is the
         tiebreak for backfilled rows that share rank 0.  Documents with no active category are
         omitted (the caller colors them 'Uncategorized').
+        """
+        ...
+
+    def category_co_occurrence(self, tenant_id: str) -> list[CategoryCoOccurrence]:
+        """Return every unordered active-category pair that share at least one document.
+
+        Each pair appears exactly once (a_id < b_id by string ordering).  Results are ordered by
+        shared document count descending, then by a_name and b_name for stability.
         """
         ...
 

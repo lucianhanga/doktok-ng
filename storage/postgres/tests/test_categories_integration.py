@@ -125,3 +125,37 @@ def test_primary_categories_returns_rank_zero_not_globally_most_common(db: Datab
     # dp1's primary must be Finance even though Internal Communication is globally more common.
     assert primary["dp1"] == "Finance"
     assert primary["dp2"] == "Internal Communication"
+
+
+def test_category_co_occurrence(db: Database) -> None:
+    """A+B share 2 docs, A+C share 1 doc, B+C share 1 doc; D is solo."""
+    docs = PostgresDocumentRepository(db)
+    cats = PostgresCategoryRepository(db)
+    for doc_id in ("co1", "co2", "co3", "co4"):
+        _doc(docs, doc_id)
+
+    a = cats.create(TENANT, "Alpha", "alpha")
+    b = cats.create(TENANT, "Beta", "beta")
+    c = cats.create(TENANT, "Gamma", "gamma")
+    d = cats.create(TENANT, "Delta", "delta")
+    assert a and b and c and d
+
+    # co1: Alpha + Beta + Gamma, co2: Alpha + Beta, co3: Alpha + Gamma, co4: Beta (solo)
+    cats.set_document_categories(TENANT, "co1", [a.id, b.id, c.id])
+    cats.set_document_categories(TENANT, "co2", [a.id, b.id])
+    cats.set_document_categories(TENANT, "co3", [a.id, c.id])
+    cats.set_document_categories(TENANT, "co4", [b.id])
+
+    result = cats.category_co_occurrence(TENANT)
+    pairs = {(r.a_name, r.b_name): r.count for r in result}
+    # Normalise key order so name-pair direction doesn't affect assertion
+    pair_set = {frozenset([a_n, b_n]): cnt for (a_n, b_n), cnt in pairs.items()}
+
+    assert pair_set[frozenset(["Alpha", "Beta"])] == 2
+    assert pair_set[frozenset(["Alpha", "Gamma"])] == 2
+    assert pair_set[frozenset(["Beta", "Gamma"])] == 1
+    # Delta is solo - must not appear
+    assert all("Delta" not in (r.a_name, r.b_name) for r in result)
+    # Ordered by count desc
+    counts = [r.count for r in result]
+    assert counts == sorted(counts, reverse=True)

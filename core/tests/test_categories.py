@@ -128,3 +128,71 @@ def test_primary_categories_returns_rank_zero_not_globally_most_common() -> None
     # d1's primary must be Finance even though Internal Communication is globally more common.
     assert primary["d1"] == "Finance"
     assert primary["d2"] == "Internal Communication"
+
+
+# ---------------------------------------------------------------------------
+# category_co_occurrence
+# ---------------------------------------------------------------------------
+
+
+def _setup_cooc() -> InMemoryCategoryRepository:
+    """Three documents: A+B share 2, A+C share 1, B+C share 1, D alone shares with nobody.
+
+    cat A, B, C, D all active.
+    doc1: A, B, C
+    doc2: A, B
+    doc3: A, C
+    doc4: B       (single-category doc - contributes no pair)
+    """
+    cats = InMemoryCategoryRepository()
+    a = cats.create("t1", "Alpha", "alpha")
+    b = cats.create("t1", "Beta", "beta")
+    c = cats.create("t1", "Gamma", "gamma")
+    d = cats.create("t1", "Delta", "delta")
+    assert a and b and c and d
+    cats.set_document_categories("t1", "doc1", [a.id, b.id, c.id])
+    cats.set_document_categories("t1", "doc2", [a.id, b.id])
+    cats.set_document_categories("t1", "doc3", [a.id, c.id])
+    cats.set_document_categories("t1", "doc4", [b.id])
+    return cats
+
+
+def test_co_occurrence_pair_counts() -> None:
+    cats = _setup_cooc()
+    # Use frozenset keys: a_id/b_id order is by UUID string, not by name.
+    pairs = {frozenset([r.a_name, r.b_name]): r.count for r in cats.category_co_occurrence("t1")}
+    # A+B: doc1, doc2 -> 2
+    assert pairs[frozenset(["Alpha", "Beta"])] == 2
+    # A+C: doc1, doc3 -> 2
+    assert pairs[frozenset(["Alpha", "Gamma"])] == 2
+    # B+C: doc1 only -> 1
+    assert pairs[frozenset(["Beta", "Gamma"])] == 1
+    # D is solo - no pairs
+    assert all("Delta" not in (r.a_name, r.b_name) for r in cats.category_co_occurrence("t1"))
+
+
+def test_co_occurrence_single_category_contributes_no_pair() -> None:
+    cats = InMemoryCategoryRepository()
+    a = cats.create("t1", "Alpha", "alpha")
+    assert a
+    cats.set_document_categories("t1", "doc1", [a.id])
+    assert cats.category_co_occurrence("t1") == []
+
+
+def test_co_occurrence_ordered_by_shared_desc() -> None:
+    cats = _setup_cooc()
+    result = cats.category_co_occurrence("t1")
+    counts = [r.count for r in result]
+    assert counts == sorted(counts, reverse=True)
+
+
+def test_co_occurrence_tenant_isolation() -> None:
+    cats = _setup_cooc()
+    # Tenant t2 has its own overlapping pair
+    x = cats.create("t2", "X", "x")
+    y = cats.create("t2", "Y", "y")
+    assert x and y
+    cats.set_document_categories("t2", "dx", [x.id, y.id])
+    t1_pairs = {(r.a_name, r.b_name) for r in cats.category_co_occurrence("t1")}
+    t2_pairs = {(r.a_name, r.b_name) for r in cats.category_co_occurrence("t2")}
+    assert not t1_pairs.intersection(t2_pairs)

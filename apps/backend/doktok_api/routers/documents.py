@@ -49,10 +49,11 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
-from doktok_core.features.catalog import FEATURE_CATALOG
+from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS_BY_ID
 from doktok_core.features.telemetry import build_processing_summary, build_processing_telemetry
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 
 from doktok_api.dependencies import (
     Tenant,
@@ -484,6 +485,60 @@ def reprocess_all_documents_feature(
         details={"feature": feature, "count": count},
     )
     return {"status": "queued", "count": count}
+
+
+class GroupReprocessResponse(BaseModel):
+    """Response for a successful group reprocess request."""
+
+    status: str
+    count: int
+    features: list[str]
+
+
+@router.post(
+    "/features/group/{group}/reprocess-all",
+    response_model=GroupReprocessResponse,
+)
+def reprocess_all_documents_group(
+    group: str, tenant: Tenant, repo: Repo, features: Features, audit: Audit
+) -> GroupReprocessResponse:
+    """Re-queue all features in a named group for every document in the tenant's corpus.
+
+    ``group`` must be a known group id (else 404).  Every feature in the group's reprocess_set is
+    reset for each tenant document; the reconciler then runs them in dependency order automatically.
+    A single audit row is written for the bulk action.  Returns ``{status, count, features}`` where
+    ``count`` is the number of documents for which at least one feature reset succeeded and
+    ``features`` is the full reprocess_set that was targeted.
+    """
+    feature_group = FEATURE_GROUPS_BY_ID.get(group)
+    if feature_group is None:
+        raise HTTPException(status_code=404, detail="unknown feature group")
+    ids, _total, _truncated = repo.list_document_ids(tenant.tenant_id)
+    count = 0
+    for doc_id in ids:
+        # Reset ALL features in the set for this document (no short-circuit) so the reconciler
+        # sees every feature as pending.  Count the document if any reset succeeded.
+        results = [
+            features.reset(tenant.tenant_id, doc_id, feat) for feat in feature_group.reprocess_set
+        ]
+        if any(results):
+            count += 1
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.FEATURE_RETRIED,
+        actor="user",
+        actor_kind="user",
+        description=f"reprocess group {feature_group.label} ({count} docs)",
+        record_kind="feature",
+        record_id=group,
+        details={"group": group, "features": list(feature_group.reprocess_set), "count": count},
+    )
+    return GroupReprocessResponse(
+        status="queued",
+        count=count,
+        features=list(feature_group.reprocess_set),
+    )
 
 
 def _document_dir(document: Document, files_root: Path) -> Path | None:

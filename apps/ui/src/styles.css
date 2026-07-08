@@ -2271,6 +2271,41 @@ tr.row-selected {
   color: rgba(80, 80, 80, 0.7);
   background: rgba(127, 127, 127, 0.12);
 }
+/* Enhancement 3: hover-revealed controls — checkbox (top-left) and open button (bottom-right).
+   opacity:0 by default so they stay keyboard-operable but don't clutter the card at rest.
+   Revealed on hover, :focus-within, when the card is selected (.selected), or when any doc in
+   the panel is selected (.bulk-active — Drive/Photos pattern). Touch devices always show them.
+   Transitions are suppressed by prefers-reduced-motion. */
+.doc-card-check,
+.doc-card-open {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .doc-card-check,
+  .doc-card-open {
+    transition: opacity 0.15s ease;
+  }
+}
+
+.doc-card-grid:hover .doc-card-check,
+.doc-card-grid:hover .doc-card-open,
+.doc-card-grid:focus-within .doc-card-check,
+.doc-card-grid:focus-within .doc-card-open,
+.doc-card-grid.selected .doc-card-check,
+.doc-card-grid.selected .doc-card-open,
+.doc-card-grid.bulk-active .doc-card-check,
+.doc-card-grid.bulk-active .doc-card-open {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .doc-card-check,
+  .doc-card-open {
+    opacity: 1;
+  }
+}
+
 /* Overlays: selection box top-left, status top-right, feature badges along the bottom. */
 .doc-card-check {
   position: absolute;
@@ -2286,6 +2321,35 @@ tr.row-selected {
   top: 0.3rem;
   right: 0.3rem;
 }
+
+/* Enhancement 3: discreet "Open document" eye button, bottom-right of the thumbnail overlay.
+   Positioned after doc-card-badges in DOM so it stacks above the badge gradient strip naturally.
+   Minimum 24px touch target meets accessibility requirements. */
+.doc-card-open {
+  position: absolute;
+  bottom: 0.3rem;
+  right: 0.3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0.18rem;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  line-height: 0;
+}
+.doc-card-open:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+.doc-card-open:focus-visible {
+  outline: 2px solid var(--accent, #6ea8fe);
+  outline-offset: 1px;
+}
+
 /* Authored-date column: yellow warning icon in the header (the date is content-extracted). */
 .doc-date-warning {
   color: var(--warning, #d6a700);
@@ -2329,6 +2393,85 @@ tr.row-selected {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* Enhancement 2: metadata fields rendered below the title (authored date, acquired, filename). */
+.doc-card-meta {
+  margin: 0;
+  font-size: 0.75rem;
+  color: rgba(127, 127, 127, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Enhancement 1: thumbnail feature chips — slightly smaller than the list view, with wrapping
+   allowed so the badge strip can use the full tile width. */
+.doc-card-badges .feature-chips {
+  flex-wrap: wrap;
+}
+.doc-card-badges .feature-chips .chip {
+  font-size: 0.55rem;
+  padding: 0.02rem 0.18rem;
+}
+/* "+N" overflow chip: neutral tint, not clickable. */
+.chip-overflow {
+  background: rgba(127, 127, 127, 0.22);
+  border-color: rgba(127, 127, 127, 0.45);
+  color: inherit;
+  cursor: default;
+}
+
+/* Enhancement 4: dim white document scans in dark mode to reduce glare. Applied directly to the
+   img/fallback element (NOT the wrapper) so overlay badges, status ring, and scrim are unaffected
+   and remain at full brightness on the layer above. Light theme resets to no filter. */
+:root .doc-card-thumb {
+  filter: brightness(0.87);
+}
+[data-theme="light"] .doc-card-thumb {
+  filter: none;
+}
+
+/* Enhancement 2: field-chooser popover control, rendered next to the S/M/L size control. */
+.tile-fields-control {
+  position: relative;
+  display: inline-flex;
+}
+.tile-fields-btn {
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 6px;
+  padding: 0.15rem 0.5rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.tile-fields-btn[aria-expanded="true"] {
+  background: rgba(127, 127, 127, 0.25);
+  font-weight: 600;
+}
+.tile-fields-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  background: var(--surface, #1a1e25);
+  border: 1px solid var(--border, #2e3540);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 140px;
+  box-shadow: 0 4px 12px var(--shadow, rgba(0, 0, 0, 0.4));
+}
+.tile-fields-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 

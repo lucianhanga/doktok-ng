@@ -36,6 +36,7 @@ def test_parses_each_type_and_dedupes(monkeypatch: Any) -> None:
             "people": ["Angela Merkel", "angela merkel"],  # dup (case-insensitive)
             "organizations": ["Siemens"],
             "places": ["Berlin"],
+            "job_titles": ["Bundeskanzlerin", "Software Engineer"],  # multilingual (#518 P2)
         }
     )
     _patch(monkeypatch, [reply])
@@ -45,6 +46,8 @@ def test_parses_each_type_and_dedupes(monkeypatch: Any) -> None:
     assert (EntityType.PERSON, "Angela Merkel") in pairs
     assert (EntityType.ORG, "Siemens") in pairs
     assert (EntityType.GPE, "Berlin") in pairs
+    assert (EntityType.JOB_TITLE, "Bundeskanzlerin") in pairs
+    assert (EntityType.JOB_TITLE, "Software Engineer") in pairs
     assert len([p for p in pairs if p[0] == EntityType.PERSON]) == 1  # deduped
 
 
@@ -58,6 +61,16 @@ def test_repairs_invalid_json(monkeypatch: Any) -> None:
 
 
 def test_missing_arrays_yield_no_entities(monkeypatch: Any) -> None:
-    _patch(monkeypatch, [json.dumps({"people": []})])  # organizations/places absent
+    _patch(monkeypatch, [json.dumps({"people": []})])  # organizations/places/job_titles absent
     out = OllamaEntityNerExtractor("primary", "repair", "http://x").extract("text")
     assert out == []
+
+
+def test_schema_requests_job_titles(monkeypatch: Any) -> None:
+    # The structured-output schema must ask the model for job_titles so the field is never omitted.
+    reply = json.dumps({"people": [], "organizations": [], "places": [], "job_titles": []})
+    calls = _patch(monkeypatch, [reply])
+    OllamaEntityNerExtractor("primary", "repair", "http://x").extract("text")
+    schema = calls[0]["format"]
+    assert "job_titles" in schema["properties"]
+    assert "job_titles" in schema["required"]

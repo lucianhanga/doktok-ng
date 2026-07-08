@@ -54,7 +54,7 @@ FEATURE_CATALOG: list[FeatureSpec] = [
         NerFeature.name,
         NerFeature.version,
         "People & orgs",
-        "Recognises named people, organisations and places (LLM-assisted NER).",
+        "Recognises named people, organisations, places and job titles (model-based NER).",
     ),
     FeatureSpec(
         EntityGraphFeature.name,

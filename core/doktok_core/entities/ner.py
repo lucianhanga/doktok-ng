@@ -1,9 +1,10 @@
 """LLM-assisted named-entity recognition support (M7.4).
 
-PERSON / ORG / GPE can't be found with regex (they need to recognise *names*), so an LLM-assisted
-``EntityNerExtractor`` fills them. NER and the rule-based ``EntitiesFeature`` write to the same
-``document_entities`` table but own DISJOINT entity-type sets, so each can re-run (backfill, retry,
-version bump) without clobbering the other's rows.
+PERSON / ORG / GPE / JOB_TITLE can't be found with regex (they need to recognise *names* and
+open-class role phrases), so a model-backed ``EntityNerExtractor`` fills them. NER and the
+rule-based ``EntitiesFeature`` write to the same ``document_entities`` table but own DISJOINT
+entity-type sets, so each can re-run (backfill, retry, version bump) without clobbering the
+other's rows.
 """
 
 from __future__ import annotations
@@ -13,10 +14,13 @@ import re
 from doktok_contracts.schemas import EntityType
 
 # The entity types owned by the NER feature. Everything else belongs to the rule-based extractor.
+# JOB_TITLE (#518 Phase 2) is model-based like PERSON/ORG/GPE (an open-class semantic type, not a
+# validated pattern), so the NER feature owns it too and it populates on re-extraction of "ner".
 NER_ENTITY_TYPES: tuple[EntityType, ...] = (
     EntityType.PERSON,
     EntityType.ORG,
     EntityType.GPE,
+    EntityType.JOB_TITLE,
 )
 
 _WHITESPACE = re.compile(r"\s+")

@@ -1335,6 +1335,10 @@ export interface FeatureGroup {
   id: string;
   label: string;
   badge_members: string[];
+  /** The full set of features reset on a group reprocess - wider than badge_members when
+   * re-extraction auto-invalidates downstream features (Entities also rebuilds the graph). Used so
+   * a per-document group reprocess chains the same features as the all-documents action. */
+  reprocess_set: string[];
 }
 
 /** Fetch the feature groups used to collapse badges (e.g. "entities" groups entities+ner). */

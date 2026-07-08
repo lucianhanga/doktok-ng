@@ -182,10 +182,14 @@ def test_groups_knowledge_graph_badge_members() -> None:
     assert set(kg["badge_members"]) == {"entity_graph", "relations"}
 
 
-def test_groups_does_not_expose_reprocess_set() -> None:
-    """The reprocess_set is an internal detail; the groups endpoint only exposes badge_members."""
+def test_groups_expose_reprocess_set_with_the_entities_auto_chain() -> None:
+    """reprocess_set is exposed so a per-document group reprocess chains the same features as the
+    all-docs action. Entities auto-chains the graph (entity_graph + relations); knowledge_graph does
+    not widen beyond its own two features."""
     body = (
         _client().get("/api/v1/features/groups", headers={"Authorization": "Bearer tok-a"}).json()
     )
-    for entry in body:
-        assert "reprocess_set" not in entry
+    entities = next(e for e in body if e["id"] == "entities")
+    assert entities["reprocess_set"] == ["entities", "ner", "entity_graph", "relations"]
+    kg = next(e for e in body if e["id"] == "knowledge_graph")
+    assert kg["reprocess_set"] == ["entity_graph", "relations"]

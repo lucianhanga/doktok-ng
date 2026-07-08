@@ -1174,14 +1174,61 @@ export function DocumentsPanel({
   }
 
   function reprocessSelected() {
-    const feature = reprocessFeature;
-    const spec = catalog.find((c) => c.name === feature);
+    const value = reprocessFeature;
+    if (value.startsWith("group:")) {
+      const g = featureGroups.find((x) => x.id === value.slice("group:".length));
+      if (!g) return;
+      if (!window.confirm(`Reprocess "${g.label}" for ${selected.size} document(s)?`)) return;
+      // Re-queue the group's full reprocess set (auto-chain) for each selected document.
+      void runBulk(
+        (id) => Promise.all(g.reprocess_set.map((m) => retryDocumentFeature(id, m))).then(() => {}),
+        `Reprocess ${g.label}`,
+      );
+      setReprocessFeature("");
+      reprocessAutoPicked.current = false;
+      return;
+    }
+    const spec = catalog.find((c) => c.name === value);
     if (!spec) return;
     if (!window.confirm(`Reprocess "${spec.label}" for ${selected.size} document(s)?`)) return;
     // Resetting the feature re-queues it; the worker's reconciler re-derives it from stored content.
-    void runBulk((id) => retryDocumentFeature(id, feature), `Reprocess ${spec.label}`);
+    void runBulk((id) => retryDocumentFeature(id, value), `Reprocess ${spec.label}`);
     setReprocessFeature("");
     reprocessAutoPicked.current = false;
+  }
+
+  // Toolbar "Reprocess all documents": the chosen value is either a group (group:<id>, which runs
+  // the whole group in dependency order server-side) or a single non-grouped feature.
+  function reprocessAllSelection() {
+    const value = reprocessAllFeatureValue;
+    if (value === "") return;
+    const isGroup = value.startsWith("group:");
+    const group = isGroup ? featureGroups.find((g) => g.id === value.slice("group:".length)) : null;
+    const spec = isGroup ? null : catalog.find((c) => c.name === value);
+    const label = group?.label ?? spec?.label;
+    if (!label) return;
+    const detail = group
+      ? `This re-runs ${group.badge_members.join(", ")} (and its dependents) on every document`
+      : "This re-queues the model for ALL documents";
+    if (
+      !window.confirm(
+        `Re-run ${label} on every document in this tenant?\n\n${detail} (cost + time). Continue?`,
+      )
+    )
+      return;
+    setBusy(true);
+    const run = group ? reprocessFeatureGroup(group.id) : reprocessAllFeature(value);
+    void run
+      .then(({ count }) => {
+        setNotice(
+          `Re-queued ${label} for ${count.toLocaleString()} document${count === 1 ? "" : "s"}.`,
+        );
+        setReprocessAllFeatureValue("");
+      })
+      .catch((err: unknown) => {
+        setNotice(`Reprocess all failed: ${err instanceof Error ? err.message : "error"}`);
+      })
+      .finally(() => setBusy(false));
   }
 
   // Click a single document's badge to re-queue just that feature for that document.
@@ -1210,9 +1257,13 @@ export function DocumentsPanel({
     filename: string,
   ) {
     if (!window.confirm(`Reprocess "${groupLabel}" for ${filename}?`)) return;
+    // Reset the group's FULL reprocess set (auto-chain: Entities also rebuilds entity_graph +
+    // relations), not just the clicked badge members. Fall back to the members if group is unknown.
+    const group = featureGroups.find((g) => g.label === groupLabel);
+    const toReset = group ? group.reprocess_set : members;
     setBusy(true);
     setNotice("");
-    void Promise.all(members.map((m) => retryDocumentFeature(documentId, m)))
+    void Promise.all(toReset.map((m) => retryDocumentFeature(documentId, m)))
       .then(() => setNotice(`Reprocess ${groupLabel}: scheduled for ${filename}.`))
       .catch((err: unknown) =>
         setNotice(
@@ -1239,21 +1290,50 @@ export function DocumentsPanel({
     return counts;
   }, [selected, state]);
 
+  // Features that belong to a group (entities/ner/entity_graph/relations) are offered via the group
+  // options, never as standalone individuals - so both reprocess dropdowns stay grouped.
+  const groupedMemberNames = useMemo(
+    () => new Set(featureGroups.flatMap((g) => g.badge_members)),
+    [featureGroups],
+  );
+  const groupIdByMember = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of featureGroups) for (const name of g.badge_members) m.set(name, g.id);
+    return m;
+  }, [featureGroups]);
+  const nonGroupedCatalog = useMemo(
+    () => catalog.filter((c) => !groupedMemberNames.has(c.name)),
+    [catalog, groupedMemberNames],
+  );
+
+  // Selected-doc reprocess dropdown: only the NON-grouped features as individuals (grouped ones are
+  // offered as groups); failing features sort to the top.
   const reprocessOptions = useMemo(
     () =>
-      [...catalog].sort(
+      [...nonGroupedCatalog].sort(
         (a, b) =>
           (featuresNeedingAttention.has(a.name) ? 0 : 1) -
           (featuresNeedingAttention.has(b.name) ? 0 : 1),
       ),
-    [catalog, featuresNeedingAttention],
+    [nonGroupedCatalog, featuresNeedingAttention],
   );
+
+  // "Needs attention" mapped onto dropdown VALUES: a grouped member's failures roll up to its group
+  // value (group:<id>); a non-grouped feature keeps its own name. Drives the count + auto-pick.
+  const attentionByValue = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [feat, n] of featuresNeedingAttention) {
+      const val = groupIdByMember.has(feat) ? `group:${groupIdByMember.get(feat)}` : feat;
+      m.set(val, (m.get(val) ?? 0) + n);
+    }
+    return m;
+  }, [featuresNeedingAttention, groupIdByMember]);
 
   // Pre-select the failing feature when exactly one needs attention. Tracked so we only auto-fill
   // (or clear our own pick) and never override a manual choice.
   const reprocessAutoPicked = useRef(false);
   useEffect(() => {
-    const failing = [...featuresNeedingAttention.keys()];
+    const failing = [...attentionByValue.keys()];
     if (failing.length === 1 && (reprocessFeature === "" || reprocessAutoPicked.current)) {
       setReprocessFeature(failing[0]);
       reprocessAutoPicked.current = true;
@@ -1262,7 +1342,7 @@ export function DocumentsPanel({
       reprocessAutoPicked.current = false;
     }
     // Reacts to the selection's failing features, not to our own setReprocessFeature.
-  }, [featuresNeedingAttention]);
+  }, [attentionByValue]);
 
   // --- DataTable controlled sort wiring ---------------------------------------------------------
   // Derive a TanStack SortingState from the parent's sort/dir (which also drives the fetch).
@@ -1548,85 +1628,37 @@ export function DocumentsPanel({
 
       {(featureGroups.length > 0 || catalog.length > 0) && (
         <div className="bulk-bar" role="region" aria-label="Reprocess all documents">
-          {featureGroups.map((g) => (
-            <button
-              key={g.id}
-              type="button"
+          <span className="bulk-reprocess">
+            <select
+              aria-label="Group or feature to reprocess for all documents"
+              value={reprocessAllFeatureValue}
               disabled={busy}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Reprocess ${g.label} for all documents?\n\n` +
-                      `This re-runs ${g.badge_members.join(", ")} on every document. Continue?`,
-                  )
-                ) {
-                  setBusy(true);
-                  void reprocessFeatureGroup(g.id)
-                    .then(({ count }) => {
-                      setNotice(
-                        `Re-queued ${g.label} for ${count.toLocaleString()} document${count === 1 ? "" : "s"}.`,
-                      );
-                    })
-                    .catch((err: unknown) => {
-                      setNotice(
-                        `Reprocess ${g.label} failed: ${err instanceof Error ? err.message : "error"}`,
-                      );
-                    })
-                    .finally(() => setBusy(false));
-                }
-              }}
+              onChange={(e) => setReprocessAllFeatureValue(e.target.value)}
             >
-              Reprocess {g.label}
+              <option value="">Reprocess all: pick...</option>
+              {featureGroups.map((g) => (
+                <option
+                  key={g.id}
+                  value={`group:${g.id}`}
+                  title={`Re-runs ${g.badge_members.join(", ")} (and dependents)`}
+                >
+                  {g.label}
+                </option>
+              ))}
+              {nonGroupedCatalog.map((c) => (
+                <option key={c.name} value={c.name} title={c.description}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busy || reprocessAllFeatureValue === ""}
+              onClick={reprocessAllSelection}
+            >
+              Reprocess all
             </button>
-          ))}
-          {catalog.length > 0 && (
-            <span className="bulk-reprocess">
-              <select
-                aria-label="Feature to reprocess all"
-                value={reprocessAllFeatureValue}
-                disabled={busy}
-                onChange={(e) => setReprocessAllFeatureValue(e.target.value)}
-              >
-                <option value="">Reprocess all: pick feature...</option>
-                {catalog.map((c) => (
-                  <option key={c.name} value={c.name} title={c.description}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={busy || reprocessAllFeatureValue === ""}
-                onClick={() => {
-                  const spec = catalog.find((c) => c.name === reprocessAllFeatureValue);
-                  if (!spec) return;
-                  if (
-                    window.confirm(
-                      `Re-run ${spec.label} on every document in this tenant?\n\n` +
-                        `This re-queues the model for ALL documents (cost + time). Continue?`,
-                    )
-                  ) {
-                    setBusy(true);
-                    void reprocessAllFeature(reprocessAllFeatureValue)
-                      .then(({ count }) => {
-                        setNotice(
-                          `Re-queued ${spec.label} for ${count.toLocaleString()} document${count === 1 ? "" : "s"}.`,
-                        );
-                        setReprocessAllFeatureValue("");
-                      })
-                      .catch((err: unknown) => {
-                        setNotice(
-                          `Reprocess all failed: ${err instanceof Error ? err.message : "error"}`,
-                        );
-                      })
-                      .finally(() => setBusy(false));
-                  }
-                }}
-              >
-                Reprocess all
-              </button>
-            </span>
-          )}
+          </span>
         </div>
       )}
 
@@ -1665,11 +1697,11 @@ export function DocumentsPanel({
           >
             Delete selected
           </button>
-          {catalog.length > 0 && (
+          {(featureGroups.length > 0 || catalog.length > 0) && (
             <span className="bulk-reprocess">
               <select
-                aria-label="Feature to reprocess"
-                className={featuresNeedingAttention.size > 0 ? "has-attention" : undefined}
+                aria-label="Group or feature to reprocess"
+                className={attentionByValue.size > 0 ? "has-attention" : undefined}
                 value={reprocessFeature}
                 disabled={busy}
                 onChange={(e) => {
@@ -1678,6 +1710,19 @@ export function DocumentsPanel({
                 }}
               >
                 <option value="">Reprocess feature...</option>
+                {featureGroups.map((g) => {
+                  const failing = attentionByValue.get(`group:${g.id}`);
+                  return (
+                    <option
+                      key={g.id}
+                      value={`group:${g.id}`}
+                      title={`Re-runs ${g.badge_members.join(", ")}`}
+                    >
+                      {g.label}
+                      {failing ? ` - needs attention (${failing})` : ""}
+                    </option>
+                  );
+                })}
                 {reprocessOptions.map((c) => {
                   const failing = featuresNeedingAttention.get(c.name);
                   return (
@@ -1695,10 +1740,10 @@ export function DocumentsPanel({
               >
                 Reprocess
               </button>
-              {featuresNeedingAttention.size > 0 && (
+              {attentionByValue.size > 0 && (
                 <span className="muted bulk-attention-hint">
-                  {featuresNeedingAttention.size} feature
-                  {featuresNeedingAttention.size === 1 ? "" : "s"} need attention in the selection
+                  {attentionByValue.size} item
+                  {attentionByValue.size === 1 ? "" : "s"} need attention in the selection
                 </span>
               )}
             </span>

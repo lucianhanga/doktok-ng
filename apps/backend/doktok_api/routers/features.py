@@ -33,8 +33,8 @@ class FeatureGroupEntry(BaseModel):
     label: str
     badge_members: list[str]
     # The full set reset on a group reprocess - wider than badge_members when re-extraction
-    # auto-invalidates downstream features (Entities also rebuilds entity_graph + relations). The
-    # UI uses this so a PER-DOCUMENT group reprocess chains the same features as the all-docs action.
+    # auto-invalidates downstream features (Entities also rebuilds entity_graph + relations). The UI
+    # uses this so a per-document group reprocess chains the same features as the all-docs action.
     reprocess_set: list[str]
 
 

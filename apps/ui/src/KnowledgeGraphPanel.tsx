@@ -27,16 +27,16 @@ const CANVAS_HEIGHT = 460;
 const KG_TYPE_META: Record<string, { color: string; badge: string; label: string }> = {
   PERSON:       { color: "#1d6fa8", badge: "P", label: "Person" },
   ORG:          { color: "#7c3aed", badge: "O", label: "Organization" },
-  GPE:          { color: "#0d7d7d", badge: "G", label: "Geopolitical" },
+  GPE:          { color: "#0d7d7d", badge: "G", label: "Place" },
   LOCATION:     { color: "#0f766e", badge: "L", label: "Location" },
   EMAIL:        { color: "#c2410c", badge: "E", label: "Email" },
-  URL:          { color: "#9333ea", badge: "U", label: "URL" },
+  URL:          { color: "#9333ea", badge: "U", label: "Link" },
   DATE:         { color: "#a16207", badge: "D", label: "Date" },
   MONEY:        { color: "#16a34a", badge: "$", label: "Money" },
-  CUSTOM_TOKEN: { color: "#64748b", badge: "C", label: "Custom" },
-  DOCUMENT_ID:  { color: "#475569", badge: "I", label: "Doc ID" },
-  INVOICE_ID:   { color: "#374151", badge: "N", label: "Invoice" },
-  CONTRACT_ID:  { color: "#1e293b", badge: "K", label: "Contract" },
+  CUSTOM_TOKEN: { color: "#64748b", badge: "C", label: "Token" },
+  DOCUMENT_ID:  { color: "#475569", badge: "I", label: "Document ID" },
+  INVOICE_ID:   { color: "#374151", badge: "N", label: "Invoice ID" },
+  CONTRACT_ID:  { color: "#1e293b", badge: "K", label: "Contract ID" },
 };
 const KG_TYPE_OTHER = { color: "#555e6d", badge: "?", label: "Other" };
 

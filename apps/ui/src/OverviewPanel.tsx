@@ -233,11 +233,19 @@ export function OverviewPanel({
             {recent.map((ev) => {
               const label = activityLabel(ev);
               const detail = activityDetail(ev);
+              // Tint error/warning rows with the SAME colors as the Activity tab (severity-*).
+              const sev = ev.severity ?? "info";
+              const sevClass =
+                sev === "error"
+                  ? " timeline-entry--error"
+                  : sev === "warning"
+                    ? " timeline-entry--warning"
+                    : "";
               return (
                 <li key={ev.id}>
                   <button
                     type="button"
-                    className="timeline-entry link-button"
+                    className={`timeline-entry link-button${sevClass}`}
                     onClick={() => onOpenActivity?.(ev.id)}
                     disabled={!onOpenActivity}
                     title="Open in the Activity tab"

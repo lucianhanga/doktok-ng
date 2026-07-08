@@ -56,6 +56,33 @@ test("renders counts and recent activity", async () => {
   expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
 });
 
+test("recent-activity error/warning rows are tinted (same colors as the Activity tab)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/stats")) {
+        return new Response(
+          JSON.stringify({ documents: 1, jobs: {}, entities: 0, pending_ingest: 0 }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify([
+          { id: "e-err", event_type: "feature.failed", actor: "worker", document_id: "d1", job_id: null, timestamp: "2026-06-10T00:00:00Z", severity: "error", metadata: { error: "entity_graph failed" } },
+          { id: "e-warn", event_type: "feature.retried", actor: "user", document_id: "d2", job_id: null, timestamp: "2026-06-10T00:00:00Z", severity: "warning", metadata: {} },
+        ]),
+        { status: 200 },
+      );
+    }),
+  );
+  render(<OverviewPanel />);
+  const errRow = (await screen.findByText("feature.failed")).closest("button");
+  expect(errRow?.className).toContain("timeline-entry--error");
+  const warnRow = screen.getByText("feature.retried").closest("button");
+  expect(warnRow?.className).toContain("timeline-entry--warning");
+});
+
 test("counts documents whose features are reprocessing as Processing (no non-terminal job)", async () => {
   // Re-scheduled extraction: the doc is already 'active' (terminal job), the work is in its
   // features. Without documents_processing_features the Processing count read 0 (#bug).

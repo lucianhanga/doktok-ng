@@ -6,6 +6,7 @@ import type { DokDocument } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 /** A fetch mock for the select-all-matching flow: the documents list reports a `total` larger than
@@ -512,6 +513,142 @@ test("a bulk action fans out to every selected id under a bounded concurrency ca
 
   fireEvent.click(screen.getByText("Delete selected"));
   await waitFor(() => expect(deleted.sort()).toEqual([...ids].sort()));
+});
+
+// --- Thumbnail enhancements -----------------------------------------------------------------------
+
+/** Build a feature object matching the DocumentFeature shape used by the test mock. */
+function feat(document_id: string, feature: string, status = "done") {
+  return { document_id, feature, status, feature_version: 1, attempts: 1, max_attempts: 3 };
+}
+
+test("thumbnail +N overflow chip appears when features exceed the size cap for size M (cap=6)", async () => {
+  // Eight features, M cap = 6 -> two hidden -> "+2" chip.
+  const features = [
+    feat("a", "chunk_embed"),
+    feat("a", "doc_classify"),
+    feat("a", "doc_metadata"),
+    feat("a", "entities"),
+    feat("a", "extract"),
+    feat("a", "ner"),
+    feat("a", "structured_records"),
+    feat("a", "thumbnail"),
+  ];
+  mockDocs([doc({ id: "a", original_filename: "multi.pdf" })], features);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("multi.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Thumbnails"));
+
+  // Default size is M (cap=6): 8 features -> 2 hidden -> "+2" chip visible.
+  const overflowChip = await screen.findByText("+2");
+  expect(overflowChip).toBeInTheDocument();
+
+  // Tooltip on the overflow chip lists the hidden badges (sorted alphabetically: structured_records
+  // -> "recs", thumbnail -> "thumb").
+  const title = overflowChip.getAttribute("title") ?? "";
+  expect(title).toContain("recs");
+  expect(title).toContain("thumb");
+});
+
+test("thumbnail +N chip tooltip includes status for each hidden badge", async () => {
+  const features = [
+    feat("a", "chunk_embed"),
+    feat("a", "doc_classify"),
+    feat("a", "doc_metadata"),
+    feat("a", "entities"),
+    feat("a", "extract"),
+    feat("a", "ner"),
+    // The 7th feature (past the M cap of 6) has a failed status.
+    { ...feat("a", "structured_records"), status: "failed", last_error: "boom" },
+  ];
+  mockDocs([doc({ id: "a", original_filename: "fail.pdf" })], features);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("fail.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Thumbnails"));
+
+  const overflowChip = await screen.findByText("+1");
+  const title = overflowChip.getAttribute("title") ?? "";
+  // The status and label should both appear in the tooltip.
+  expect(title).toContain("recs");
+  expect(title).toContain("failed");
+});
+
+test("tile field chooser toggles Summary off and persists to localStorage", async () => {
+  mockDocs([doc({ id: "a", original_filename: "a.pdf", summary: "A brief summary" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("a.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Thumbnails"));
+
+  // Summary is ON by default and visible (size M, not S).
+  expect(await screen.findByText("A brief summary")).toBeInTheDocument();
+
+  // Open the field chooser.
+  fireEvent.click(screen.getByLabelText("Choose tile fields"));
+
+  // Uncheck Summary.
+  const summaryCheckbox = screen.getByRole("checkbox", { name: /Summary/i });
+  fireEvent.click(summaryCheckbox);
+
+  // Summary text should no longer appear on the tile.
+  await waitFor(() => expect(screen.queryByText("A brief summary")).not.toBeInTheDocument());
+
+  // Verify the change was persisted to localStorage.
+  const stored = localStorage.getItem("doktok.docs.tileFields");
+  expect(stored).not.toBeNull();
+  const parsed = JSON.parse(stored!);
+  expect(parsed.summary).toBe(false);
+});
+
+test("tile field chooser enables Filename and shows it on the tile", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Thumbnails"));
+
+  // Filename is OFF by default — the meta line should not be present yet.
+  // (The title button already shows the filename, but doc-card-meta-filename is separate.)
+  fireEvent.click(screen.getByLabelText("Choose tile fields"));
+  const filenameCheckbox = screen.getByRole("checkbox", { name: /Filename/i });
+  expect(filenameCheckbox).not.toBeChecked();
+
+  // Enable it.
+  fireEvent.click(filenameCheckbox);
+
+  await waitFor(() => expect(filenameCheckbox).toBeChecked());
+  // localStorage should now have filename: true.
+  const stored = localStorage.getItem("doktok.docs.tileFields");
+  expect(JSON.parse(stored!).filename).toBe(true);
+});
+
+test("thumbnail open button is in the DOM with correct aria-label and calls the open handler", async () => {
+  const onOpen = vi.fn();
+  mockDocs([doc({ id: "doc-eye", original_filename: "eye.pdf" })]);
+  render(<DocumentsPanel onOpenDocument={onOpen} />);
+  await waitFor(() => expect(screen.getByText("eye.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Thumbnails"));
+
+  // The eye button must be present in the DOM (CSS handles visibility — opacity:0 at rest).
+  const openBtn = await screen.findByRole("button", { name: "Open document" });
+  expect(openBtn).toBeInTheDocument();
+
+  fireEvent.click(openBtn);
+  expect(onOpen).toHaveBeenCalledWith("doc-eye");
+});
+
+test("thumbnail selection checkbox is present in the DOM for keyboard access (hover reveal is CSS)", async () => {
+  mockDocs([doc({ id: "a", original_filename: "kbd.pdf" })]);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(screen.getByText("kbd.pdf")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Thumbnails"));
+
+  // The checkbox must be in the DOM (opacity:0 at rest does not remove it from keyboard order).
+  expect(await screen.findByLabelText("Select kbd.pdf")).toBeInTheDocument();
 });
 
 test("reprocess-all button confirms then calls endpoint and shows returned count", async () => {

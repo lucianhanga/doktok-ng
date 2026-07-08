@@ -43,8 +43,23 @@ type DocsState =
 type View = "list" | "thumbnails";
 type ThumbSize = "s" | "m" | "l";
 
+type TileFields = {
+  summary: boolean;
+  authored: boolean;
+  acquired: boolean;
+  filename: boolean;
+};
+
+const TILE_FIELDS_DEFAULT: TileFields = {
+  summary: true,
+  authored: true,
+  acquired: false,
+  filename: false,
+};
+
 const PAGE_SIZE = 50;
 const THUMB_SIZE_KEY = "doktok.docs.thumbSize";
+const TILE_FIELDS_KEY = "doktok.docs.tileFields";
 
 // Server-side cap on "select all matching" (mirrors the backend); above it we select the first N and
 // tell the user the selection is partial - we never claim "all" when truncated.
@@ -70,6 +85,30 @@ function readThumbSize(): ThumbSize {
 function persistThumbSize(size: ThumbSize): void {
   try {
     localStorage.setItem(THUMB_SIZE_KEY, size);
+  } catch {
+    /* storage unavailable - non-fatal */
+  }
+}
+
+function readTileFields(): TileFields {
+  try {
+    const raw = localStorage.getItem(TILE_FIELDS_KEY);
+    if (!raw) return { ...TILE_FIELDS_DEFAULT };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      summary: typeof parsed.summary === "boolean" ? parsed.summary : TILE_FIELDS_DEFAULT.summary,
+      authored: typeof parsed.authored === "boolean" ? parsed.authored : TILE_FIELDS_DEFAULT.authored,
+      acquired: typeof parsed.acquired === "boolean" ? parsed.acquired : TILE_FIELDS_DEFAULT.acquired,
+      filename: typeof parsed.filename === "boolean" ? parsed.filename : TILE_FIELDS_DEFAULT.filename,
+    };
+  } catch {
+    return { ...TILE_FIELDS_DEFAULT };
+  }
+}
+
+function persistTileFields(fields: TileFields): void {
+  try {
+    localStorage.setItem(TILE_FIELDS_KEY, JSON.stringify(fields));
   } catch {
     /* storage unavailable - non-fatal */
   }
@@ -117,6 +156,9 @@ function groupByDocument(features: DocumentFeature[]): Map<string, DocumentFeatu
   }
   return map;
 }
+
+// Cap on how many feature chips show in the thumbnail tile per size; extras collapse to "+N".
+const THUMB_CHIP_CAP: Record<ThumbSize, number> = { s: 3, m: 6, l: 8 };
 
 // Short labels for the compact list chips; the full explanation + status go in the tooltip.
 const FEATURE_LABELS: Record<string, string> = {
@@ -196,6 +238,91 @@ function FeatureChips({
   );
 }
 
+/** Thumbnail-only variant of FeatureChips: shrinks chips, caps by size, adds a "+N" overflow chip
+ * whose tooltip lists every hidden badge so they remain discoverable. Reprocess clicks still work
+ * on the visible chips. Does NOT change the list view's FeatureChips. */
+function ThumbnailFeatureChips({
+  features,
+  rollup,
+  onReprocess,
+  thumbSize,
+}: {
+  features: DocumentFeature[];
+  rollup?: string | null;
+  onReprocess?: (feature: string) => void;
+  thumbSize: ThumbSize;
+}) {
+  if (features.length === 0) return null;
+  const sorted = features.slice().sort((a, b) => a.feature.localeCompare(b.feature));
+  const cap = THUMB_CHIP_CAP[thumbSize];
+  const visible = sorted.slice(0, cap);
+  const hidden = sorted.slice(cap);
+
+  function chipGlyph(status: string) {
+    return status === "done" ? "✓" : status === "failed" ? "✗" : "…";
+  }
+
+  const overflowTooltip = hidden
+    .map((f) => {
+      const label = FEATURE_LABELS[f.feature] ?? f.feature;
+      const glyph = chipGlyph(f.status);
+      return f.last_error
+        ? `${label} ${glyph}: ${f.status} — ${f.last_error}`
+        : `${label} ${glyph}: ${f.status}`;
+    })
+    .join("\n");
+
+  return (
+    <span className="feature-chips tile-feature-chips">
+      {visible.map((f) => {
+        const label = FEATURE_LABELS[f.feature] ?? f.feature;
+        const glyph = chipGlyph(f.status);
+        if (!onReprocess) {
+          return (
+            <span key={f.feature} className={`chip feat-${f.status}`} title={featureTooltip(f, rollup)}>
+              {label} {glyph}
+            </span>
+          );
+        }
+        return (
+          <button
+            key={f.feature}
+            type="button"
+            className={`chip chip-button feat-${f.status}`}
+            title={`${featureTooltip(f, rollup)}\n(click to reprocess)`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onReprocess(f.feature);
+            }}
+          >
+            {label} {glyph}
+          </button>
+        );
+      })}
+      {hidden.length > 0 && (
+        <span className="chip chip-overflow" title={overflowTooltip}>
+          +{hidden.length}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Minimal eye icon used in the hover-revealed "Open document" button on thumbnail cards. */
+function EyeIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M1 8c0 0 2.5-5 7-5s7 5 7 5-2.5 5-7 5-7-5-7-5z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="8" cy="8" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+
 function mimeGlyph(mime: string | null): string {
   if (!mime) return "DOC";
   if (mime.includes("pdf")) return "PDF";
@@ -205,7 +332,13 @@ function mimeGlyph(mime: string | null): string {
 }
 
 /** A thumbnail card for the gallery view: first-page preview with the selection box, status, and
- * feature badges overlaid, and the title + short description below. */
+ * feature badges overlaid, and the title + optional fields below.
+ *
+ * Enhancement 3: the checkbox and open button are opacity:0 by default and revealed on hover,
+ * :focus-within, when the card is selected, or when any bulk selection is active (.bulk-active),
+ * using CSS transitions (disabled by prefers-reduced-motion; always-on for touch devices).
+ * Enhancement 4: in dark mode the thumbnail image is dimmed via CSS (filter on the img element
+ * so the overlay badges and status ring are unaffected). */
 function DocumentCard({
   doc,
   features,
@@ -214,6 +347,9 @@ function DocumentCard({
   onToggle,
   onOpen,
   onReprocessFeature,
+  thumbSize,
+  tileFields,
+  anySelected,
 }: {
   doc: DokDocument;
   features: DocumentFeature[];
@@ -222,11 +358,24 @@ function DocumentCard({
   onToggle: (id: string, shiftKey: boolean) => void;
   onOpen?: (id: string) => void;
   onReprocessFeature?: (documentId: string, feature: string, filename: string) => void;
+  thumbSize: ThumbSize;
+  tileFields: TileFields;
+  anySelected: boolean;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
+  const cardClass = [
+    "doc-card-grid",
+    selected ? "selected" : "",
+    anySelected ? "bulk-active" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`doc-card-grid${selected ? " selected" : ""}`}>
+    <div className={cardClass}>
       <div className="doc-card-thumb-wrap">
+        {/* Enhancement 3: checkbox is opacity:0 by default, revealed by CSS on hover / selected /
+            bulk-active / focus-within. Always visible on touch (hover:none). */}
         <span className="doc-card-check" onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
@@ -265,9 +414,11 @@ function DocumentCard({
         )}
         {features.length > 0 && (
           <div className="doc-card-badges">
-            <FeatureChips
+            {/* Enhancement 1: thumbnail-specific chips with per-size cap and "+N" overflow. */}
+            <ThumbnailFeatureChips
               features={features}
               rollup={rollup}
+              thumbSize={thumbSize}
               onReprocess={
                 onReprocessFeature
                   ? (feat) => onReprocessFeature(doc.id, feat, doc.original_filename)
@@ -276,6 +427,18 @@ function DocumentCard({
             />
           </div>
         )}
+        {/* Enhancement 3: discreet eye button, bottom-right, same opacity reveal as checkbox. */}
+        <button
+          type="button"
+          className="doc-card-open"
+          aria-label="Open document"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen?.(doc.id);
+          }}
+        >
+          <EyeIcon />
+        </button>
       </div>
       <button
         type="button"
@@ -285,8 +448,92 @@ function DocumentCard({
       >
         {doc.title ?? doc.original_filename}
       </button>
-      {doc.summary && <p className="doc-card-summary">{doc.summary}</p>}
+      {/* Enhancement 2: field chooser — render only toggled fields; summary hidden at size S. */}
+      {tileFields.filename && (
+        <p className="doc-card-meta doc-card-meta-filename" title={doc.original_filename}>
+          {doc.original_filename}
+        </p>
+      )}
+      {tileFields.authored && doc.document_date && (
+        <p
+          className="doc-card-meta"
+          title="Authored date is extracted from the document's content and may be inaccurate — it is not the system ingest time."
+        >
+          {formatDate(doc.document_date)}
+        </p>
+      )}
+      {tileFields.acquired && (
+        <p className="doc-card-meta">{formatDate(doc.created_at)}</p>
+      )}
+      {tileFields.summary && thumbSize !== "s" && doc.summary && (
+        <p className="doc-card-summary">{doc.summary}</p>
+      )}
     </div>
+  );
+}
+
+/** Enhancement 2: spartan field-chooser popover, rendered next to the S/M/L size control in
+ * thumbnails mode. Toggles which metadata fields appear on each tile. Persisted to localStorage
+ * by the parent (mirrors the thumbSize pattern). */
+function FieldsControl({
+  fields,
+  onChange,
+}: {
+  fields: TileFields;
+  onChange: (f: TileFields) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  function toggle(key: keyof TileFields) {
+    onChange({ ...fields, [key]: !fields[key] });
+  }
+
+  const FIELD_LABELS: [keyof TileFields, string][] = [
+    ["summary", "Summary"],
+    ["authored", "Authored date"],
+    ["acquired", "Acquired date"],
+    ["filename", "Filename"],
+  ];
+
+  return (
+    <span className="tile-fields-control" ref={containerRef}>
+      <button
+        type="button"
+        className="tile-fields-btn"
+        aria-label="Choose tile fields"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((v) => !v)}
+      >
+        Fields
+      </button>
+      {open && (
+        <div className="tile-fields-popover" role="dialog" aria-label="Tile fields">
+          {FIELD_LABELS.map(([key, label]) => (
+            <label key={key} className="tile-fields-item">
+              <input
+                type="checkbox"
+                checked={fields[key]}
+                onChange={() => toggle(key)}
+              />{" "}
+              {label}
+            </label>
+          ))}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -505,6 +752,7 @@ export function DocumentsPanel({
   const [tokens, setTokens] = useState<string[]>([]);
   const [tokenMatch, setTokenMatch] = useState<TokenMatch>("all");
   const [thumbSize, setThumbSize] = useState<ThumbSize>(() => readThumbSize());
+  const [tileFields, setTileFields] = useState<TileFields>(() => readTileFields());
   const [windowSize, setWindowSize] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("manual");
@@ -595,6 +843,7 @@ export function DocumentsPanel({
   }, [category, status, needsAttention, unidentifiable, sort, dir, title, tokens, tokenMatch]);
 
   useEffect(() => persistThumbSize(thumbSize), [thumbSize]);
+  useEffect(() => persistTileFields(tileFields), [tileFields]);
 
   // Keep the bulk selection in sync with what's actually shown (filter/poll can drop documents),
   // so an action never targets a hidden/gone document and select-all stays correct. CRITICAL: in
@@ -1069,7 +1318,12 @@ export function DocumentsPanel({
           Unidentifiable
         </label>
         <SortControl sort={sort} dir={dir} onSort={setSort} onDir={setDir} />
-        {view === "thumbnails" && <ThumbSizeControl size={thumbSize} onChange={setThumbSize} />}
+        {view === "thumbnails" && (
+          <>
+            <ThumbSizeControl size={thumbSize} onChange={setThumbSize} />
+            <FieldsControl fields={tileFields} onChange={setTileFields} />
+          </>
+        )}
       </div>
 
       <TitleFilterBar value={title} onChange={setTitle} />
@@ -1322,6 +1576,9 @@ export function DocumentsPanel({
                 onToggle={toggle}
                 onOpen={onOpenDocument}
                 onReprocessFeature={reprocessOne}
+                thumbSize={thumbSize}
+                tileFields={tileFields}
+                anySelected={selected.size > 0}
               />
             ))}
           </div>

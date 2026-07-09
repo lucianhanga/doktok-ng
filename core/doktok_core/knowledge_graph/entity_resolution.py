@@ -324,15 +324,81 @@ def canonical_preference(a: KgEntity, b: KgEntity) -> tuple[KgEntity, KgEntity]:
     ('lucian hanga' folds into 'lucian cosmin hanga', not the reverse).
     """
 
-    def rank(entity: KgEntity) -> tuple[int, int]:
-        key = normalize_entity_name(entity.normalized_value)
-        return (len(key.split()), len(entity.normalized_value))
-
-    if rank(a) > rank(b):
+    if _name_rank(a.normalized_value) > _name_rank(b.normalized_value):
         return a, b
-    if rank(b) > rank(a):
+    if _name_rank(b.normalized_value) > _name_rank(a.normalized_value):
         return b, a
     return (a, b) if a.id < b.id else (b, a)
+
+
+def _name_rank(value: str) -> tuple[int, int]:
+    """How informative a name is: token count in the sort key, then length. Higher = more complete
+    ('lucian cosmin hanga' > 'lucian hanga'). The cluster representative maximizes this."""
+    return (len(normalize_entity_name(value).split()), len(value))
+
+
+def retarget_to_cluster_root(suggestions: list[KgMergeSuggestion]) -> list[KgMergeSuggestion]:
+    """Re-point each merge suggestion at its cluster's most-complete name (transitive closure).
+
+    The cascade proposes PAIRWISE matches, so a chain like ``hanja lucian`` -> ``lucian hanga`` ->
+    ``lucian cosmin hanga`` surfaces as one-hop suggestions - the OCR variant targets its nearest
+    neighbour, not the terminal canonical. This groups the connected suggestions (union-find over
+    endpoint ids) and emits, per non-representative node, ONE suggestion pointing at the cluster
+    representative (highest ``_name_rank`` node), so ``hanja lucian`` -> ``lucian cosmin hanga``.
+    Each re-pointed suggestion keeps the node's STRONGEST original method/score (its evidence of
+    belonging); the per-pair ``llm_canonical`` is cleared since direction is now cluster-derived.
+    A plain two-node pair is unchanged (its representative is already the canonical side).
+    """
+    if not suggestions:
+        return []
+
+    parent: dict[str, str] = {}
+
+    def find(node: str) -> str:
+        parent.setdefault(node, node)
+        root = node
+        while parent[root] != root:
+            root = parent[root]
+        while parent[node] != root:  # path-compress
+            parent[node], node = root, parent[node]
+        return root
+
+    value: dict[str, str] = {}
+    strongest: dict[str, KgMergeSuggestion] = {}
+    for s in suggestions:
+        parent.setdefault(s.canonical_id, s.canonical_id)
+        parent.setdefault(s.alias_id, s.alias_id)
+        parent[find(s.alias_id)] = find(s.canonical_id)
+        value[s.canonical_id] = s.canonical_value
+        value[s.alias_id] = s.alias_value
+        for node_id in (s.canonical_id, s.alias_id):
+            if node_id not in strongest or s.score > strongest[node_id].score:
+                strongest[node_id] = s
+
+    clusters: dict[str, list[str]] = {}
+    for node_id in value:
+        clusters.setdefault(find(node_id), []).append(node_id)
+
+    result: list[KgMergeSuggestion] = []
+    for members in clusters.values():
+        rep = min(members, key=lambda n: (-_name_rank(value[n])[0], -_name_rank(value[n])[1], n))
+        for node_id in members:
+            if node_id == rep:
+                continue
+            src = strongest[node_id]
+            result.append(
+                src.model_copy(
+                    update={
+                        "canonical_id": rep,
+                        "canonical_value": value[rep],
+                        "alias_id": node_id,
+                        "alias_value": value[node_id],
+                        "llm_canonical": None,
+                    }
+                )
+            )
+    result.sort(key=lambda s: (-s.score, s.canonical_id, s.alias_id))
+    return result
 
 
 @dataclass(frozen=True)

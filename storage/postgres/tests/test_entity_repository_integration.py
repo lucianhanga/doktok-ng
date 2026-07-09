@@ -99,16 +99,12 @@ def test_delete_for_document_types_source_filters_keep_producers_disjoint(db: Da
 
     # keep_source="ner": the rule-based re-run deletes its own libpostal row but leaves the
     # NER-owned row (and rows carrying the key but a different value would also be deleted).
-    repo.delete_for_document_types(
-        TENANT, "dp", [EntityType.POSTAL_CODE.value], keep_source="ner"
-    )
+    repo.delete_for_document_types(TENANT, "dp", [EntityType.POSTAL_CODE.value], keep_source="ner")
     assert postal_ids() == {"p_ner"}
 
     # Re-add the libpostal row; now the NER feature re-runs and deletes ONLY its own source rows.
     repo.add_entities([_entity("p_lib", "dp", EntityType.POSTAL_CODE, "80331", 1)])
-    repo.delete_for_document_types(
-        TENANT, "dp", [EntityType.POSTAL_CODE.value], source="ner"
-    )
+    repo.delete_for_document_types(TENANT, "dp", [EntityType.POSTAL_CODE.value], source="ner")
     assert postal_ids() == {"p_lib"}
 
     # The unrelated EMAIL row was never in scope.

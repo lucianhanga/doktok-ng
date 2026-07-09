@@ -5174,7 +5174,8 @@ tr.row-selected {
 .kg-detail-rail {
   flex: 0 0 210px;
   min-width: 0;
-  max-height: 520px;
+  /* Fill the section height (mirrors the viewport-based canvas) instead of a short fixed cap. */
+  max-height: clamp(420px, 74vh, 760px);
   overflow-y: auto;
   overflow-x: hidden;
   border-left: 1px solid var(--border);

@@ -3,7 +3,7 @@ import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
 
 import {
-  fetchEntityDocuments,
+  fetchKgEntityDocuments,
   fetchKgNeighborhood,
   fetchKgNodes,
   fetchKgStats,
@@ -365,11 +365,12 @@ export function KnowledgeGraphPanel({
     return !(st && hiddenTypes.has(st)) && !(tt && hiddenTypes.has(tt));
   }
 
-  // Documents containing the selected entity: fetched whenever the selection changes (#kg-docs).
+  // Documents containing the selected entity: resolved by NODE ID via mentions, so a merged/folded
+  // entity still shows the documents that mentioned its aliases (#kg-docs fix).
   const selectedType = selectedNode?.entity.entity_type ?? null;
-  const selectedValue = selectedNode?.entity.normalized_value ?? null;
+  const selectedDocsId = selectedNode?.entity.id ?? null;
   useEffect(() => {
-    if (!selectedType || !selectedValue) {
+    if (!selectedDocsId) {
       setEntityDocs([]);
       setDocsError(null);
       return;
@@ -377,7 +378,7 @@ export function KnowledgeGraphPanel({
     const controller = new AbortController();
     setDocsLoading(true);
     setDocsError(null);
-    fetchEntityDocuments(selectedType, selectedValue, controller.signal)
+    fetchKgEntityDocuments(selectedDocsId, controller.signal)
       .then(docs => {
         if (!controller.signal.aborted) setEntityDocs(docs);
       })
@@ -390,7 +391,7 @@ export function KnowledgeGraphPanel({
         if (!controller.signal.aborted) setDocsLoading(false);
       });
     return () => controller.abort();
-  }, [selectedType, selectedValue]);
+  }, [selectedDocsId]);
 
   // Manual-merge candidate search: same-type entities matching the query, excluding the selection.
   const selectedId = selectedNode?.entity.id ?? null;

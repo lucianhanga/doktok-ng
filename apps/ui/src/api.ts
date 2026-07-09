@@ -287,6 +287,24 @@ export async function fetchEntityDocuments(
   return (await response.json()) as DokDocument[];
 }
 
+/**
+ * Documents containing a KG node, resolved through its mentions (by node id, not value) so a
+ * merged/folded entity still returns the documents that mentioned its aliases (#kg-docs fix).
+ */
+export async function fetchKgEntityDocuments(
+  entityId: string,
+  signal?: AbortSignal,
+): Promise<DokDocument[]> {
+  const response = await fetch(
+    `/api/v1/entities/${encodeURIComponent(entityId)}/documents`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw new Error(`KG entity documents request failed: ${response.status}`);
+  }
+  return (await response.json()) as DokDocument[];
+}
+
 /** Map an HTTP status to a user-facing message (auth expiry / server / generic). */
 export function friendlyHttpError(status: number): Error {
   if (status === 401 || status === 403) {

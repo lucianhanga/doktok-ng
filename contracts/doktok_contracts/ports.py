@@ -60,6 +60,7 @@ from doktok_contracts.schemas import (
     FeatureMetrics,
     GraphRetrieval,
     IngestionJob,
+    KgAdjudicationVerdict,
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
@@ -967,6 +968,35 @@ class KnowledgeGraphRepository(Protocol):
         single-character-typo token pair, 0.75) or ``fuzzy_trgm``. Proposals only - applying one
         is ``merge_entities``; only ``token_set`` is certain, everything else is LLM-adjudicated.
         """
+        ...
+
+    # ------------------------------------------------------------------ adjudication cache (#535)
+
+    def get_cached_verdicts(
+        self, tenant_id: str, keys: Sequence[tuple[str, str, str]]
+    ) -> dict[tuple[str, str, str], KgAdjudicationVerdict]:
+        """Batch-read cached LLM adjudication verdicts for ``(pair_key, method, score_bucket)``.
+
+        Returns a map from each requested key to its cached ``KgAdjudicationVerdict`` (missing keys
+        are absent). Lets ``adjudicate_suggestions`` short-circuit the LLM on a cache hit so a
+        repeat ``GET /merge-suggestions`` over unchanged candidates makes zero model calls (#535).
+        The key is order-independent and normalized (see ``merge_adjudication_pair_key``), so it
+        survives a KG rebuild that re-mints the suggestion rows.
+        """
+        ...
+
+    def put_cached_verdict(
+        self,
+        tenant_id: str,
+        *,
+        pair_key: str,
+        method: str,
+        score_bucket: str,
+        verdict: KgAdjudicationVerdict,
+    ) -> None:
+        """Persist one adjudication verdict, keyed on the normalized pair (#535). Idempotent
+        upsert on ``(tenant_id, pair_key, method, score_bucket)`` - a re-adjudication of the same
+        bucket overwrites the stored verdict."""
         ...
 
 

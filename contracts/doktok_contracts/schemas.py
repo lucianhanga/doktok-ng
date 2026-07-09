@@ -515,6 +515,23 @@ class MergeVerdict(BaseModel):
     reason: str
 
 
+class KgAdjudicationVerdict(BaseModel):
+    """A cached LLM adjudication verdict for a normalized entity pair (#535).
+
+    Persisted by ``KnowledgeGraphRepository.put_cached_verdict`` and read back by
+    ``get_cached_verdicts`` so a repeat ``GET /merge-suggestions`` over unchanged candidates makes
+    ZERO LLM calls. Keyed (outside this model) on the order-independent normalized ``pair_key``
+    plus ``method`` and a rounded ``score_bucket``, so the verdict survives a KG rebuild that
+    re-mints the suggestion rows with fresh node ids. ``same``/``canonical``/``confidence``/
+    ``reason`` mirror the fields the pipeline ``MergeVerdict`` produced.
+    """
+
+    same: bool
+    canonical: str | None
+    confidence: float
+    reason: str
+
+
 class KgStats(BaseModel):
     """Graph-level statistics for a tenant's knowledge graph (KAG traversal API).
 

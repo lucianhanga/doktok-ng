@@ -133,6 +133,59 @@ def _name_tokens(value: str) -> frozenset[str]:
     return frozenset(normalize_entity_name(value).split())
 
 
+# Ordinal/numeral tokens that DISTINGUISH otherwise-identical names: "München II" is not "München",
+# "Henry VIII" is not "Henry", "Section 2" is not "Section 3". A closed roman-numeral set (i..xx),
+# not a regex like ^[ivxlcdm]+$ which also matches real words ("mix", "dim", "civil"); pure-digit
+# tokens are numeric by construction.
+_ROMAN_NUMERALS: frozenset[str] = frozenset(
+    [
+        "i",
+        "ii",
+        "iii",
+        "iv",
+        "v",
+        "vi",
+        "vii",
+        "viii",
+        "ix",
+        "x",
+        "xi",
+        "xii",
+        "xiii",
+        "xiv",
+        "xv",
+        "xvi",
+        "xvii",
+        "xviii",
+        "xix",
+        "xx",
+    ]
+)
+
+
+def is_ordinal_token(token: str) -> bool:
+    """A pure-digit or roman-numeral (i..xx) token - an ordinal that distinguishes entities (#563).
+
+    Shared by the merge cascade (:meth:`MatchCascade.score_pair`) and the containment alias-fold
+    (``alias.compute_alias_folds``) so both refuse to collapse "München" into "München II"."""
+    return token.isdigit() or token in _ROMAN_NUMERALS
+
+
+def differs_only_by_ordinal(a_value: str, b_value: str) -> bool:
+    """True when two names share a base word and differ ONLY by ordinal/number tokens (#563).
+
+    "münchen" vs "münchen ii", "münchen ii" vs "münchen iii", "section 2" vs "section 3": the
+    differing tokens are ordinals/numerals, so the names denote DIFFERENT entities and must never be
+    a merge candidate. Requires a non-empty shared base so degenerate all-numeral names ("ii" vs
+    "iii") fall through to the normal stages instead.
+    """
+    ta, tb = _name_tokens(a_value), _name_tokens(b_value)
+    diff = ta ^ tb
+    if not diff or not (ta & tb):
+        return False
+    return all(is_ordinal_token(token) for token in diff)
+
+
 def _within_one_edit(a: str, b: str) -> bool:
     """Damerau-Levenshtein distance <= 1, computed directly (no DP table needed at cap 1):
     equal strings, one substitution, one ADJACENT transposition, or one insertion/deletion."""
@@ -299,6 +352,10 @@ class MatchCascade:
         """``(method, score)`` from the first firing stage; None when no stage fires or the
         pair is not comparable (different tenant or entity type - merges never cross either)."""
         if a.tenant_id != b.tenant_id or a.entity_type != b.entity_type or a.id == b.id:
+            return None
+        # Names differing only by an ordinal/numeral are distinct entities ("München II" vs
+        # "München"), even when trigram-similar - block before any stage fires (#563).
+        if differs_only_by_ordinal(a.normalized_value, b.normalized_value):
             return None
         for stage in self.stages:
             score = stage.score(a.normalized_value, b.normalized_value)

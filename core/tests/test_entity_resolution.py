@@ -26,6 +26,7 @@ from doktok_core.knowledge_graph.entity_resolution import (
     TokenTypoStage,
     TrigramStage,
     canonical_preference,
+    differs_only_by_ordinal,
     is_canonical,
     is_typo_token_pair,
     trigram_set,
@@ -193,6 +194,29 @@ def test_score_pair_is_none_across_tenants_types_and_for_identical_ids() -> None
     assert cascade.score_pair(a, _entity("b", "lucian hanga", tenant="t2")) is None
     assert cascade.score_pair(a, _entity("b", "lucian hanga", entity_type=EntityType.ORG)) is None
     assert cascade.score_pair(a, _entity("a", "lucian hanga")) is None
+
+
+def test_differs_only_by_ordinal_blocks_distinct_ordinals() -> None:
+    # Distinct entities that differ only by an ordinal/numeral (#563).
+    assert differs_only_by_ordinal("münchen", "münchen ii") is True
+    assert differs_only_by_ordinal("münchen ii", "münchen iii") is True
+    assert differs_only_by_ordinal("section 2", "section 3") is True
+    assert differs_only_by_ordinal("henry viii", "henry") is True
+    # Real variants that SHOULD stay mergeable are not blocked.
+    assert differs_only_by_ordinal("lucian hanga", "lucian cosmin hanga") is False
+    assert differs_only_by_ordinal("münchen", "münchen zentral") is False
+    assert differs_only_by_ordinal("münchen", "münchen") is False  # identical
+    assert differs_only_by_ordinal("ii", "iii") is False  # no shared base word
+
+
+def test_score_pair_blocks_ordinal_distinguished_places() -> None:
+    # The München / "München II" false-merge (#563): trigram-similar (0.73 >= 0.6) but distinct,
+    # so score_pair must return None instead of proposing the merge.
+    cascade = MatchCascade()
+    muc = _entity("a", "münchen", entity_type=EntityType.GPE)
+    muc2 = _entity("b", "münchen ii", entity_type=EntityType.GPE)
+    assert TrigramStage().score("münchen", "münchen ii") is not None  # would have matched
+    assert cascade.score_pair(muc, muc2) is None  # ...but the guard blocks it
 
 
 def test_score_pair_first_firing_stage_labels_the_pair() -> None:

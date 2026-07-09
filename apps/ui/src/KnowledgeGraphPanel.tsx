@@ -745,15 +745,16 @@ export function KnowledgeGraphPanel({
     if (!selectedNode || !mergeTarget) return;
     setMergePending(true);
     try {
-      // Fold the picked entity INTO the selected node (selected = canonical). Reversible via Split.
-      await mergeEntities(selectedNode.entity.id, mergeTarget.id, "manual");
+      // Fold the SELECTED (wrong) entity INTO the picked (correct) one: picked = canonical.
+      // Reversible via Split.
+      await mergeEntities(mergeTarget.id, selectedNode.entity.id, "manual");
       setMergeMsg({
-        text: `Merged "${mergeTarget.normalized_value}" into "${selectedNode.entity.normalized_value}".`,
+        text: `Merged "${selectedNode.entity.normalized_value}" into "${mergeTarget.normalized_value}".`,
         isError: false,
       });
       setTimeout(() => setMergeMsg(null), 3000);
       closeMergePicker();
-      loadNeighborhood(selectedNode.entity.id); // refresh so the folded node disappears
+      loadNeighborhood(mergeTarget.id); // focus the surviving (correct) canonical
     } catch (err) {
       setMergeMsg({
         text: err instanceof Error ? err.message : "Merge failed.",
@@ -1284,13 +1285,13 @@ export function KnowledgeGraphPanel({
                 {/* Manual merge: fold another same-type entity into this one (not auto-suggested). */}
                 {!mergePickerOpen ? (
                   <button type="button" className="kg-split-btn" onClick={openMergePicker}>
-                    Merge with...
+                    Merge into...
                   </button>
                 ) : mergeTarget ? (
                   <div className="kg-split-confirm">
                     <span className="kg-split-warn">
-                      Merge &quot;{mergeTarget.normalized_value}&quot; into &quot;
-                      {selectedNode.entity.normalized_value}&quot;?
+                      Merge &quot;{selectedNode.entity.normalized_value}&quot; into &quot;
+                      {mergeTarget.normalized_value}&quot;?
                     </span>
                     <button
                       type="button"
@@ -1314,8 +1315,8 @@ export function KnowledgeGraphPanel({
                     <input
                       type="search"
                       className="kg-merge-search"
-                      placeholder={`Find a ${typeMeta(selectedNode.entity.entity_type).label} to merge...`}
-                      aria-label="Search entities to merge into this one"
+                      placeholder={`Find the correct ${typeMeta(selectedNode.entity.entity_type).label} to merge into...`}
+                      aria-label="Search for the correct entity to merge this one into"
                       value={mergeQuery}
                       onChange={e => setMergeQuery(e.target.value)}
                     />

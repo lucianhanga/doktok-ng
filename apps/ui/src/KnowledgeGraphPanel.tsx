@@ -3,13 +3,15 @@ import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
 
 import {
-  fetchEntityDocuments,
+  entityDisplayName,
+  fetchKgEntityDocuments,
   fetchKgNeighborhood,
   fetchKgNodes,
   fetchKgStats,
   fetchMergeSuggestions,
   mergeEntities,
   rejectMergeSuggestion,
+  renameEntity,
   splitEntity,
   type DokDocument,
   type KgEdge,
@@ -281,6 +283,10 @@ export function KnowledgeGraphPanel({
   const [mergeSearching, setMergeSearching] = useState(false);
   const [mergeTarget, setMergeTarget] = useState<KgEntity | null>(null); // confirm step
   const [mergePending, setMergePending] = useState(false);
+  // Rename state: display-name override on the selected node (fix an OCR'd name).
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renamePending, setRenamePending] = useState(false);
 
   // Canvas sizing
   const canvasAreaRef = useRef<HTMLDivElement>(null);
@@ -365,11 +371,12 @@ export function KnowledgeGraphPanel({
     return !(st && hiddenTypes.has(st)) && !(tt && hiddenTypes.has(tt));
   }
 
-  // Documents containing the selected entity: fetched whenever the selection changes (#kg-docs).
+  // Documents containing the selected entity: resolved by NODE ID via mentions, so a merged/folded
+  // entity still shows the documents that mentioned its aliases (#kg-docs fix).
   const selectedType = selectedNode?.entity.entity_type ?? null;
-  const selectedValue = selectedNode?.entity.normalized_value ?? null;
+  const selectedDocsId = selectedNode?.entity.id ?? null;
   useEffect(() => {
-    if (!selectedType || !selectedValue) {
+    if (!selectedDocsId) {
       setEntityDocs([]);
       setDocsError(null);
       return;
@@ -377,7 +384,7 @@ export function KnowledgeGraphPanel({
     const controller = new AbortController();
     setDocsLoading(true);
     setDocsError(null);
-    fetchEntityDocuments(selectedType, selectedValue, controller.signal)
+    fetchKgEntityDocuments(selectedDocsId, controller.signal)
       .then(docs => {
         if (!controller.signal.aborted) setEntityDocs(docs);
       })
@@ -390,7 +397,7 @@ export function KnowledgeGraphPanel({
         if (!controller.signal.aborted) setDocsLoading(false);
       });
     return () => controller.abort();
-  }, [selectedType, selectedValue]);
+  }, [selectedDocsId]);
 
   // Manual-merge candidate search: same-type entities matching the query, excluding the selection.
   const selectedId = selectedNode?.entity.id ?? null;
@@ -522,7 +529,7 @@ export function KnowledgeGraphPanel({
       if (!nodeDataRef.current.has(e.id)) {
         nodeDataRef.current.set(e.id, {
           entityType: e.entity_type,
-          label: e.normalized_value,
+          label: entityDisplayName(e),
           addedAt: now,
         });
       }
@@ -739,6 +746,37 @@ export function KnowledgeGraphPanel({
   function closeMergePicker(): void {
     setMergePickerOpen(false);
     setMergeTarget(null);
+  }
+
+  function openRename(): void {
+    if (!selectedNode) return;
+    setRenameValue(entityDisplayName(selectedNode.entity));
+    setRenameOpen(true);
+  }
+
+  async function handleRename(): Promise<void> {
+    if (!selectedNode) return;
+    setRenamePending(true);
+    try {
+      const updated = await renameEntity(selectedNode.entity.id, renameValue);
+      setSelectedNode({ entity: updated, edges: selectedNode.edges });
+      const label = entityDisplayName(updated);
+      // Update the on-canvas label in place (loadNeighborhood won't overwrite an existing node).
+      const nd = nodeDataRef.current.get(updated.id);
+      if (nd) nodeDataRef.current.set(updated.id, { ...nd, label });
+      setGraphNodes(prev => prev.map(n => (n.id === updated.id ? { ...n, label } : n)));
+      setMergeMsg({ text: `Renamed to "${label}".`, isError: false });
+      setTimeout(() => setMergeMsg(null), 3000);
+      setRenameOpen(false);
+    } catch (err) {
+      setMergeMsg({
+        text: err instanceof Error ? err.message : "Rename failed.",
+        isError: true,
+      });
+      setTimeout(() => setMergeMsg(null), 4000);
+    } finally {
+      setRenamePending(false);
+    }
   }
 
   async function handleManualMerge(): Promise<void> {
@@ -1172,7 +1210,9 @@ export function KnowledgeGraphPanel({
                 >
                   {typeMeta(selectedNode.entity.entity_type).badge}
                 </span>
-                <strong className="kg-detail-label">{selectedNode.entity.normalized_value}</strong>
+                <strong className="kg-detail-label">
+                  {entityDisplayName(selectedNode.entity)}
+                </strong>
                 <span className="kg-detail-type muted">
                   {typeMeta(selectedNode.entity.entity_type).label}
                 </span>
@@ -1280,6 +1320,39 @@ export function KnowledgeGraphPanel({
                   <p role="alert" className="kg-status status-error">
                     {splitError}
                   </p>
+                )}
+
+                {/* Rename: display-name override (fix an OCR'd name); id + edges unchanged. */}
+                {renameOpen ? (
+                  <div className="kg-rename">
+                    <input
+                      type="text"
+                      className="kg-merge-search"
+                      aria-label="New display name for this entity"
+                      value={renameValue}
+                      onChange={e => setRenameValue(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="kg-split-btn confirm"
+                      disabled={renamePending}
+                      onClick={() => void handleRename()}
+                    >
+                      {renamePending ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      className="kg-split-btn cancel"
+                      disabled={renamePending}
+                      onClick={() => setRenameOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" className="kg-split-btn" onClick={openRename}>
+                    Rename...
+                  </button>
                 )}
 
                 {/* Manual merge: fold another same-type entity into this one (not auto-suggested). */}

@@ -1829,6 +1829,16 @@ class PostgresKnowledgeGraphRepository:
             ).fetchall()
         return {row[0] for row in rows}
 
+    def rename_entity(self, tenant_id: str, entity_id: str, display_name: str | None) -> bool:
+        clean = (display_name or "").strip() or None  # empty/blank clears the override
+        with self._db.connection() as conn:
+            cur = conn.execute(
+                "UPDATE kg_entities SET display_name=%s, updated_at=now() "
+                "WHERE tenant_id=%s AND id=%s",
+                (clean, tenant_id, entity_id),
+            )
+            return (cur.rowcount or 0) > 0
+
     def _node_row(self, cur: Any, tenant_id: str, entity_id: str) -> dict[str, Any] | None:
         row = cur.execute(
             f"SELECT {_KG_ENTITY_COLUMNS} FROM kg_entities WHERE tenant_id=%s AND id=%s",
@@ -1853,7 +1863,9 @@ _KG_MENTION_COLUMNS = (
     "entity_type, normalized_value"
 )
 
-_KG_ENTITY_COLUMNS = "id, tenant_id, entity_type, normalized_value, metadata, canonical_id"
+_KG_ENTITY_COLUMNS = (
+    "id, tenant_id, entity_type, normalized_value, display_name, metadata, canonical_id"
+)
 
 # A node is canonical when its canonical_id is unset or points at itself (#508).
 _KG_CANONICAL_ONLY = "(canonical_id IS NULL OR canonical_id = id)"
@@ -1865,6 +1877,7 @@ def _row_to_kg_entity(row: dict[str, Any]) -> KgEntity:
         tenant_id=row["tenant_id"],
         entity_type=EntityType(row["entity_type"]),
         normalized_value=row["normalized_value"],
+        display_name=row.get("display_name"),
         metadata=row["metadata"] or {},
         canonical_id=row.get("canonical_id"),
     )

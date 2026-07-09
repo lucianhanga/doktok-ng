@@ -93,6 +93,7 @@ class AuditEventType(StrEnum):
     # Knowledge-graph entity resolution actions (user-initiated merge/split, #508).
     ENTITY_MERGED = "entity.merged"
     ENTITY_SPLIT = "entity.split"
+    ENTITY_MERGE_REJECTED = "entity.merge_rejected"  # #530: user rejected a suggested merge
 
 
 class EntityType(StrEnum):

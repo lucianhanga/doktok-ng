@@ -1986,6 +1986,24 @@ export async function mergeEntities(
   return (await response.json()) as KgEntity;
 }
 
+/**
+ * Persist a rejected merge suggestion so it is not re-proposed (#530). Keyed on the two entity
+ * values (order-independent on the backend), so a later reload no longer surfaces the pair.
+ */
+export async function rejectMergeSuggestion(
+  canonicalValue: string,
+  aliasValue: string,
+): Promise<void> {
+  const response = await fetch("/api/v1/entities/merge-suggestions/reject", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ canonical_value: canonicalValue, alias_value: aliasValue }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+}
+
 /** Undo a merge by splitting alias_id back into a standalone entity. */
 export async function splitEntity(aliasId: string): Promise<void> {
   const response = await fetch(`/api/v1/entities/${encodeURIComponent(aliasId)}/split`, {

@@ -1814,6 +1814,21 @@ class PostgresKnowledgeGraphRepository:
                 ),
             )
 
+    def reject_merge(self, tenant_id: str, pair_key: str, *, actor: str = "user") -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO kg_merge_rejection (tenant_id, pair_key, actor) VALUES (%s, %s, %s) "
+                "ON CONFLICT (tenant_id, pair_key) DO NOTHING",
+                (tenant_id, pair_key, actor),
+            )
+
+    def rejected_pair_keys(self, tenant_id: str) -> set[str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT pair_key FROM kg_merge_rejection WHERE tenant_id=%s", (tenant_id,)
+            ).fetchall()
+        return {row[0] for row in rows}
+
     def _node_row(self, cur: Any, tenant_id: str, entity_id: str) -> dict[str, Any] | None:
         row = cur.execute(
             f"SELECT {_KG_ENTITY_COLUMNS} FROM kg_entities WHERE tenant_id=%s AND id=%s",

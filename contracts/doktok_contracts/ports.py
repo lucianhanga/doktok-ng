@@ -1050,6 +1050,19 @@ class KnowledgeGraphRepository(Protocol):
         bucket overwrites the stored verdict."""
         ...
 
+    # ------------------------------------------------------------------ rejected merges (#530)
+
+    def reject_merge(self, tenant_id: str, pair_key: str, *, actor: str = "user") -> None:
+        """Record that a user rejected the merge of a pair, keyed on the normalized, order-
+        independent ``merge_adjudication_pair_key`` (#530). Idempotent: re-rejecting the same pair
+        is a no-op. Persisted so the pair is never re-proposed, even after a KG rebuild."""
+        ...
+
+    def rejected_pair_keys(self, tenant_id: str) -> set[str]:
+        """The set of normalized pair keys the user has rejected for this tenant (#530). The
+        merge-suggestions endpoint drops any suggestion whose pair key is in this set."""
+        ...
+
 
 @runtime_checkable
 class Retriever(Protocol):

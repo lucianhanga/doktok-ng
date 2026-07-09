@@ -8,6 +8,7 @@ import {
   fetchKgStats,
   fetchMergeSuggestions,
   mergeEntities,
+  rejectMergeSuggestion,
   splitEntity,
   type KgEdge,
   type KgEntity,
@@ -567,8 +568,11 @@ export function KnowledgeGraphPanel(): JSX.Element {
     }
   }
 
-  function handleReject(aliasId: string): void {
-    setDismissedAliasIds(prev => new Set([...prev, aliasId]));
+  function handleReject(s: KgMergeSuggestion): void {
+    // Optimistically dismiss, then persist so the pair is not re-proposed on reload (#530). On a
+    // persistence failure the pair simply reappears next load - no worse than the old behavior.
+    setDismissedAliasIds(prev => new Set([...prev, s.alias_id]));
+    void rejectMergeSuggestion(s.canonical_value, s.alias_value).catch(() => {});
   }
 
   function handleSplitRequest(entityId: string): void {
@@ -1124,7 +1128,7 @@ export function KnowledgeGraphPanel(): JSX.Element {
                     className="kg-merge-btn reject"
                     disabled={approvingAliasId === s.alias_id}
                     aria-label={`Reject suggestion to merge ${s.alias_value}`}
-                    onClick={() => handleReject(s.alias_id)}
+                    onClick={() => handleReject(s)}
                   >
                     Reject
                   </button>

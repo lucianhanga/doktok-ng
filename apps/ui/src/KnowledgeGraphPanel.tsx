@@ -19,9 +19,82 @@ import {
 // ---- Domain constants ----
 
 const MAX_NODES = 200;
-const LABEL_COUNT = 8; // max auto-labeled nodes beyond the focus node
+const LABEL_COUNT = 8; // max auto-labeled nodes beyond the focus node (Orient tier)
 const SEARCH_DEBOUNCE_MS = 250;
-const CANVAS_HEIGHT = 460;
+
+// ---- Canvas sizing ----
+// The canvas height is measured from the viewport rather than fixed, so collapsing the Insights
+// sub-nav (or resizing the window) gives the graph more room. clamp(min, viewport-based, max).
+const CANVAS_HEIGHT_MIN = 420;
+const CANVAS_HEIGHT_MAX = 760;
+// Fraction of the viewport height allotted to the canvas (leaves room for stats header, rails,
+// merge queue and the app chrome above/below).
+const CANVAS_HEIGHT_VH = 0.62;
+
+function measuredCanvasHeight(): number {
+  const vh = typeof window !== "undefined" ? window.innerHeight : 760;
+  return Math.round(Math.min(CANVAS_HEIGHT_MAX, Math.max(CANVAS_HEIGHT_MIN, vh * CANVAS_HEIGHT_VH)));
+}
+
+// ---- Semantic zoom (Level-of-Detail) ----
+// Four tiers keyed off the force-graph globalScale (k). Zooming in reveals progressively more
+// information (labels -> predicates -> in-node type badges) instead of just enlarging geometry.
+//   Overview (<0.75):   dots only, no labels
+//   Orient   (0.75-1.5): focus + top-8 degree-ranked labels (legacy behavior)
+//   Read     (1.5-3):    viewport-culled label budget (~40) + predicates on focus edges
+//   Inspect  (>=3):      all in-viewport labels + all predicates + in-node type badge letters
+type LodTier = "overview" | "orient" | "read" | "inspect";
+
+const LOD_OVERVIEW_MAX = 0.75;
+const LOD_ORIENT_MAX = 1.5;
+const LOD_READ_MAX = 3;
+// ±0.05 hysteresis dead zone at each boundary so a tiny scroll near a threshold does not flicker
+// the tier back and forth.
+const LOD_HYSTERESIS = 0.05;
+// Label budget for the Read/Inspect tiers (viewport-culled, degree-ranked).
+const LOD_LABEL_BUDGET = 40;
+// Constant on-screen label size in CSS pixels (divided by globalScale so it stays constant as you
+// zoom). This is the fix for "zoom just makes text bigger".
+const LABEL_SCREEN_PX = 12;
+
+/**
+ * Map a globalScale (k) to a LOD tier, applying a ±0.05 hysteresis dead zone around each boundary
+ * so the tier only changes once k moves decisively past a threshold. `prev` is the current tier;
+ * within a dead zone the tier is held. Pure + exported for tier-transition tests.
+ */
+export function tierFor(k: number, prev: LodTier | null = null): LodTier {
+  const raw = (kk: number): LodTier =>
+    kk < LOD_OVERVIEW_MAX ? "overview" : kk < LOD_ORIENT_MAX ? "orient" : kk < LOD_READ_MAX ? "read" : "inspect";
+
+  const next = raw(k);
+  if (!prev || next === prev) return next;
+
+  // In the dead zone around the boundary between prev and next, hold prev.
+  const boundaries: Array<{ at: number; below: LodTier; above: LodTier }> = [
+    { at: LOD_OVERVIEW_MAX, below: "overview", above: "orient" },
+    { at: LOD_ORIENT_MAX, below: "orient", above: "read" },
+    { at: LOD_READ_MAX, below: "read", above: "inspect" },
+  ];
+  for (const b of boundaries) {
+    const crossingThis =
+      (prev === b.below && next === b.above) || (prev === b.above && next === b.below);
+    if (crossingThis && Math.abs(k - b.at) < LOD_HYSTERESIS) return prev;
+  }
+  return next;
+}
+
+/** Max number of auto-labeled nodes (beyond the focus) for a given tier. */
+function labelBudgetForTier(tier: LodTier): number {
+  switch (tier) {
+    case "overview":
+      return 0;
+    case "orient":
+      return LABEL_COUNT;
+    case "read":
+    case "inspect":
+      return LOD_LABEL_BUDGET;
+  }
+}
 
 // EntityType display config (mirrors doktok_contracts/schemas.py EntityType enum)
 const KG_TYPE_META: Record<string, { color: string; badge: string; label: string }> = {
@@ -85,6 +158,11 @@ interface GraphLink {
  * Always includes the focus node. Fills up to maxExtra more, sorted by degree
  * (highest first), breaking ties by name.
  *
+ * `visible` (optional) restricts the candidate pool to nodes currently inside the
+ * viewport — this is how the Read/Inspect LOD tiers apply their ~40 label budget to
+ * whatever the user has zoomed to, rather than always labeling the global top-40.
+ * When omitted (Orient tier / unit tests), all nodes are candidates.
+ *
  * Handles both string ids and node objects in source/target since the force
  * engine replaces string ids with node objects after the simulation starts.
  */
@@ -92,6 +170,7 @@ export function pickLabeledNodeIds(
   nodes: GraphNode[],
   links: GraphLink[],
   maxExtra: number = LABEL_COUNT,
+  visible?: (n: GraphNode) => boolean,
 ): Set<string> {
   const labeled = new Set<string>();
   const focus = nodes.find(n => n.focus);
@@ -112,7 +191,7 @@ export function pickLabeledNodeIds(
   }
 
   const candidates = nodes
-    .filter(n => !n.focus)
+    .filter(n => !n.focus && (visible ? visible(n) : true))
     .sort((a, b) => {
       const d = (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0);
       return d !== 0 ? d : a.label.localeCompare(b.label);
@@ -176,6 +255,25 @@ export function KnowledgeGraphPanel(): JSX.Element {
   // Canvas sizing
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(600);
+  const [canvasHeight, setCanvasHeight] = useState<number>(measuredCanvasHeight);
+
+  // Latest onZoom transform, kept in a ref so viewport culling / LOD reads it during the canvas
+  // draw loop WITHOUT triggering a React re-render on every zoom/pan frame.
+  const transformRef = useRef<{ k: number; x: number; y: number }>({ k: 1, x: 0, y: 0 });
+  // Current LOD tier, held in a ref so tierFor() can apply hysteresis against the previous tier.
+  const tierRef = useRef<LodTier>("orient");
+  // Cache of the labeled-id set for the current tier, so we do not recompute the degree ranking on
+  // every animation frame — only when the tier or viewport window meaningfully changes.
+  const labelCacheRef = useRef<{ tier: LodTier; key: string; ids: Set<string> }>({
+    tier: "orient",
+    key: "",
+    ids: new Set(),
+  });
+  // Double-click detection (this react-force-graph version exposes no dblclick prop): we time
+  // consecutive clicks on the same target ourselves.
+  const lastNodeClickRef = useRef<{ id: string; t: number }>({ id: "", t: 0 });
+  const lastBgClickRef = useRef<number>(0);
+  const DOUBLE_CLICK_MS = 300;
 
   // Canonical graph data kept in refs so the force engine's in-place mutations
   // (source/target string -> node object) never corrupt state.
@@ -190,12 +288,6 @@ export function KnowledgeGraphPanel(): JSX.Element {
 
   const reduced = useMemo(prefersReducedMotion, []);
 
-  // Label set for canvas node rendering
-  const labeledIds = useMemo(
-    () => pickLabeledNodeIds(graphNodes, graphEdges),
-    [graphNodes, graphEdges],
-  );
-
   // Suggestions with client-side rejected aliases filtered out
   const visibleSuggestions = useMemo(
     () => suggestions.filter(s => !dismissedAliasIds.has(s.alias_id)),
@@ -207,15 +299,25 @@ export function KnowledgeGraphPanel(): JSX.Element {
   useEffect(() => {
     const el = canvasAreaRef.current;
     if (!el) return;
-    const measure = () => setCanvasWidth(el.offsetWidth || 600);
+    // Width tracks the canvas area (so collapsing the Insights sub-nav widens the graph);
+    // height is derived from the viewport height, clamped.
+    const measure = () => {
+      setCanvasWidth(el.offsetWidth || 600);
+      setCanvasHeight(measuredCanvasHeight());
+    };
     measure();
+    let ob: ResizeObserver | undefined;
     if (typeof ResizeObserver !== "undefined") {
-      const ob = new ResizeObserver(measure);
+      ob = new ResizeObserver(measure);
       ob.observe(el);
-      return () => ob.disconnect();
     }
+    // ResizeObserver on the area catches width changes; window resize catches viewport-height
+    // changes that do not alter the area width.
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    return () => {
+      ob?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
   }, []);
 
   // ---- Data effects ----
@@ -370,8 +472,8 @@ export function KnowledgeGraphPanel(): JSX.Element {
 
   // ---- Event handlers ----
 
-  function handleFocus(entity: KgEntity): void {
-    const id = entity.id;
+  function loadNeighborhood(id: string): void {
+    if (!id) return;
     setFocusId(id);
     setFocusLoading(true);
     setFocusError(null);
@@ -385,20 +487,48 @@ export function KnowledgeGraphPanel(): JSX.Element {
       });
   }
 
+  function handleFocus(entity: KgEntity): void {
+    loadNeighborhood(entity.id);
+  }
+
   function handleNodeClick(node: NodeObject): void {
     const id = String(node.id ?? "");
     if (!id) return;
-    setFocusId(id);
-    setFocusLoading(true);
-    setFocusError(null);
-    const req = ++reqRef.current;
-    fetchKgNeighborhood(id)
-      .then(nb => applyMerge(nb, id, req))
-      .catch(err => {
-        if (reqRef.current !== req) return;
-        setFocusError(err instanceof Error ? err.message : "Could not load graph.");
-        setFocusLoading(false);
-      });
+
+    // Double-click a node -> center on it and zoom to the Read/Inspect range (k~2.5).
+    // (This react-force-graph version has no dblclick prop, so we time consecutive clicks.)
+    const now = Date.now();
+    const last = lastNodeClickRef.current;
+    if (last.id === id && now - last.t < DOUBLE_CLICK_MS) {
+      lastNodeClickRef.current = { id: "", t: 0 };
+      const nn = node as unknown as { x?: number; y?: number };
+      const dur = reduced ? 0 : 400;
+      if (typeof nn.x === "number" && typeof nn.y === "number") {
+        graphRef.current?.centerAt(nn.x, nn.y, dur);
+      }
+      graphRef.current?.zoom(2.5, dur);
+      return;
+    }
+    lastNodeClickRef.current = { id, t: now };
+
+    loadNeighborhood(id);
+  }
+
+  function handleBackgroundClick(): void {
+    // Double-click empty space -> fit the whole graph to the viewport.
+    const now = Date.now();
+    if (now - lastBgClickRef.current < DOUBLE_CLICK_MS) {
+      lastBgClickRef.current = 0;
+      graphRef.current?.zoomToFit(reduced ? 0 : 400, 40);
+      return;
+    }
+    lastBgClickRef.current = now;
+  }
+
+  function handleZoom(transform: { k: number; x: number; y: number }): void {
+    // Never store this in React state — it fires on every zoom/pan frame. The draw loop reads it.
+    transformRef.current = transform;
+    tierRef.current = tierFor(transform.k, tierRef.current);
   }
 
   function handleReset(): void {
@@ -467,6 +597,64 @@ export function KnowledgeGraphPanel(): JSX.Element {
 
   // ---- Canvas callbacks ----
 
+  /**
+   * Compute the graph-space viewport rectangle from the latest onZoom transform + canvas size.
+   * react-force-graph centers graph (0,0) at the canvas center; screen = center + (graph)*k + pan.
+   * Inverting: graph = (screen - center - pan) / k. Returns null before the first zoom event.
+   */
+  function viewportRect(globalScale: number): { minX: number; maxX: number; minY: number; maxY: number } {
+    const { x: panX, y: panY } = transformRef.current;
+    const k = globalScale || transformRef.current.k || 1;
+    const halfW = canvasWidth / 2;
+    const halfH = canvasHeight / 2;
+    // A margin so labels for nodes just off-screen still appear as you pan toward them.
+    const margin = 60 / k;
+    const cx = (0 - panX) / k; // graph-x at screen center
+    const cy = (0 - panY) / k;
+    return {
+      minX: cx - halfW / k - margin,
+      maxX: cx + halfW / k + margin,
+      minY: cy - halfH / k - margin,
+      maxY: cy + halfH / k + margin,
+    };
+  }
+
+  /**
+   * Resolve the set of node ids to label for the CURRENT LOD tier, viewport-culled for the
+   * Read/Inspect tiers and cached so we do not re-rank on every animation frame.
+   */
+  function labeledIdsForDraw(globalScale: number): Set<string> {
+    const tier = tierRef.current;
+    const budget = labelBudgetForTier(tier);
+    if (budget === 0) return new Set();
+
+    // Orient tier: global top-8 (no viewport dependence) -> cache key is just the tier + counts.
+    if (tier === "orient") {
+      const key = `orient:${graphNodes.length}:${graphEdges.length}`;
+      const cache = labelCacheRef.current;
+      if (cache.tier === tier && cache.key === key) return cache.ids;
+      const ids = pickLabeledNodeIds(graphNodes, graphEdges, budget);
+      labelCacheRef.current = { tier, key, ids };
+      return ids;
+    }
+
+    // Read/Inspect: viewport-culled budget. Quantize the viewport into a coarse key so panning a
+    // few pixels reuses the cache but a real pan/zoom recomputes.
+    const vr = viewportRect(globalScale);
+    const q = (v: number) => Math.round(v / 40);
+    const key = `${tier}:${q(vr.minX)}:${q(vr.maxX)}:${q(vr.minY)}:${q(vr.maxY)}:${graphNodes.length}`;
+    const cache = labelCacheRef.current;
+    if (cache.tier === tier && cache.key === key) return cache.ids;
+    const inView = (nn: GraphNode): boolean => {
+      const p = nn as unknown as { x?: number; y?: number };
+      if (typeof p.x !== "number" || typeof p.y !== "number") return true; // pre-sim: don't cull
+      return p.x >= vr.minX && p.x <= vr.maxX && p.y >= vr.minY && p.y <= vr.maxY;
+    };
+    const ids = pickLabeledNodeIds(graphNodes, graphEdges, budget, inView);
+    labelCacheRef.current = { tier, key, ids };
+    return ids;
+  }
+
   function nodeCanvasObject(
     node: NodeObject,
     ctx: CanvasRenderingContext2D,
@@ -475,6 +663,7 @@ export function KnowledgeGraphPanel(): JSX.Element {
     const n = node as unknown as GraphNode & { x: number; y: number };
     const { ink, haloBg } = canvasColors();
     const r = Math.sqrt(Math.max(0, n.val ?? 5)) * 2;
+    const tier = tierRef.current;
 
     // Focus halo
     if (n.focus) {
@@ -498,10 +687,23 @@ export function KnowledgeGraphPanel(): JSX.Element {
     ctx.lineWidth = 1 / globalScale;
     ctx.stroke();
 
-    // Label (only for the labeled set)
-    if (labeledIds.has(n.id)) {
+    // Inspect tier: draw the type badge letter inside the node.
+    if (tier === "inspect") {
+      const badge = typeMeta(n.entityType).badge;
+      const badgeSize = r * 1.1;
+      ctx.font = `700 ${badgeSize}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      ctx.fillText(badge, n.x, n.y);
+    }
+
+    // Label: only for the tier's labeled set, at a CONSTANT on-screen size (12/globalScale so it
+    // does not inflate when you zoom). Overview tier draws no labels.
+    const labeled = labeledIdsForDraw(globalScale);
+    if (labeled.has(n.id)) {
       const lbl = n.label;
-      const fontSize = Math.max(9, 10 / globalScale);
+      const fontSize = LABEL_SCREEN_PX / globalScale;
       ctx.font = `${fontSize}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
@@ -525,23 +727,33 @@ export function KnowledgeGraphPanel(): JSX.Element {
     ctx: CanvasRenderingContext2D,
     globalScale: number,
   ): void {
-    if (globalScale < 1.5) return; // skip predicate labels when zoomed out
+    const tier = tierRef.current;
+    // Predicates appear from the Read tier onward. In Read we only annotate edges touching the
+    // focus node; in Inspect we annotate every visible edge.
+    if (tier !== "read" && tier !== "inspect") return;
 
     // After the force tick, source/target are node objects with x/y
     const l = link as unknown as {
-      source: { x?: number; y?: number } | string;
-      target: { x?: number; y?: number } | string;
+      source: ({ x?: number; y?: number; id?: string; focus?: boolean }) | string;
+      target: ({ x?: number; y?: number; id?: string; focus?: boolean }) | string;
       predicate: string;
     };
 
     if (typeof l.source !== "object" || typeof l.target !== "object") return;
+
+    if (tier === "read") {
+      const touchesFocus = l.source.focus === true || l.target.focus === true;
+      if (!touchesFocus) return;
+    }
+
     const sx = l.source.x ?? 0;
     const sy = l.source.y ?? 0;
     const tx = l.target.x ?? 0;
     const ty = l.target.y ?? 0;
 
     const { predicate: predColor } = canvasColors();
-    const fontSize = Math.max(7, 8 / globalScale);
+    // Constant on-screen size (matches the node-label treatment).
+    const fontSize = (LABEL_SCREEN_PX - 2) / globalScale;
     ctx.font = `${fontSize}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -723,7 +935,7 @@ export function KnowledgeGraphPanel(): JSX.Element {
                 nodeLabel="label"
                 nodeColor="color"
                 width={canvasWidth}
-                height={CANVAS_HEIGHT}
+                height={canvasHeight}
                 cooldownTicks={reduced ? 0 : undefined}
                 warmupTicks={reduced ? 0 : undefined}
                 enableNodeDrag={!reduced}
@@ -731,8 +943,10 @@ export function KnowledgeGraphPanel(): JSX.Element {
                 linkLabel={(link) => (link as unknown as GraphLink).predicate}
                 linkDirectionalArrowLength={3.5}
                 linkDirectionalArrowRelPos={1}
-                onEngineStop={() => graphRef.current?.zoomToFit(400, 40)}
+                onEngineStop={() => graphRef.current?.zoomToFit(reduced ? 0 : 400, 40)}
                 onNodeClick={handleNodeClick}
+                onBackgroundClick={handleBackgroundClick}
+                onZoom={handleZoom}
                 nodeCanvasObjectMode={() => "replace"}
                 nodeCanvasObject={nodeCanvasObject}
                 linkCanvasObjectMode={() => "after"}

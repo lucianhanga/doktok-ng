@@ -1312,6 +1312,8 @@ tr.row-selected {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  /* Animate the rail width when collapsing/expanding (honored-off under reduced motion below). */
+  transition: flex-basis 0.15s ease;
 }
 .settings-submenu button {
   text-align: left;
@@ -1339,6 +1341,44 @@ tr.row-selected {
   color: var(--accent, #6ea8fe);
   background: rgba(110, 168, 254, 0.12);
 }
+
+/* Collapse toggle (chevron). Sits at the top of the rail; right-aligned when expanded. */
+.settings-submenu-toggle {
+  align-self: flex-end;
+  padding: 0.2rem 0.45rem;
+  line-height: 1;
+  color: var(--muted, #8b97a8);
+}
+.settings-submenu.collapsed .settings-submenu-toggle {
+  align-self: center;
+}
+.settings-submenu-chevron {
+  font-size: 1rem;
+}
+/* Tab labels: show full text expanded, initials collapsed. */
+.settings-submenu-short {
+  display: none;
+}
+.settings-submenu.collapsed {
+  flex-basis: 36px;
+  align-items: stretch;
+}
+.settings-submenu.collapsed button[role="tab"] {
+  text-align: center;
+  padding: 0.4rem 0.2rem;
+  font-weight: 600;
+}
+.settings-submenu.collapsed .settings-submenu-full {
+  display: none;
+}
+.settings-submenu.collapsed .settings-submenu-short {
+  display: inline;
+}
+/* Collapsed active item keeps its accent (color + fill), same as expanded. */
+.settings-submenu.collapsed button.active {
+  color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, 0.12);
+}
 .settings-pane {
   flex: 1;
   min-width: 0;
@@ -1353,6 +1393,42 @@ tr.row-selected {
 /* Left-align the Settings sub-menu with the app title (drop the panel's left padding here). */
 .settings-page {
   padding-left: 0;
+}
+
+/* Under the stacked breakpoint the rail runs horizontally across the top and is not collapsible,
+   so the collapse toggle is hidden and the .collapsed variant is neutralized. */
+@media (max-width: 920px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-submenu,
+  .settings-submenu.collapsed {
+    flex: none;
+    flex-basis: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .settings-submenu-toggle {
+    display: none;
+  }
+  .settings-submenu.collapsed .settings-submenu-full {
+    display: inline;
+  }
+  .settings-submenu.collapsed .settings-submenu-short {
+    display: none;
+  }
+  .settings-submenu.collapsed button[role="tab"] {
+    text-align: left;
+    padding: 0.4rem 0.65rem;
+  }
+}
+
+/* Reduced motion: no rail width animation. */
+@media (prefers-reduced-motion: reduce) {
+  .settings-submenu {
+    transition: none;
+  }
 }
 
 .settings-section {

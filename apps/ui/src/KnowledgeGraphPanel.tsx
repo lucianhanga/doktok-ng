@@ -58,6 +58,15 @@ const LOD_LABEL_BUDGET = 40;
 // zoom). This is the fix for "zoom just makes text bigger".
 const LABEL_SCREEN_PX = 12;
 
+// ---- "Spread" (hub declutter) ----
+// A 1..6 slider scales node repulsion + link length so a dense hub fans out on demand.
+const SPREAD_DEFAULT = 1;
+const SPREAD_MIN = 1;
+const SPREAD_MAX = 6;
+const SPREAD_BASE_CHARGE = -30; // charge strength = base * spread (more negative = more repulsion)
+const SPREAD_BASE_DISTANCE = 30; // link distance = base + step * spread
+const SPREAD_DISTANCE_STEP = 15;
+
 /**
  * Map a globalScale (k) to a LOD tier, applying a ±0.05 hysteresis dead zone around each boundary
  * so the tier only changes once k moves decisively past a threshold. `prev` is the current tier;
@@ -288,6 +297,23 @@ export function KnowledgeGraphPanel(): JSX.Element {
   const reqRef = useRef(0);
 
   const reduced = useMemo(prefersReducedMotion, []);
+
+  // "Spread" declutters a dense hub: higher = stronger node repulsion + longer links, so a
+  // high-degree node's neighbors fan out instead of overlapping (the Obsidian pattern).
+  const [spread, setSpread] = useState(SPREAD_DEFAULT);
+  useEffect(() => {
+    const g = graphRef.current;
+    if (!g || graphNodes.length === 0) return;
+    const charge = g.d3Force("charge") as { strength?: (s: number) => unknown } | undefined;
+    const link = g.d3Force("link") as { distance?: (d: number) => unknown } | undefined;
+    charge?.strength?.(SPREAD_BASE_CHARGE * spread);
+    link?.distance?.(SPREAD_BASE_DISTANCE + SPREAD_DISTANCE_STEP * spread);
+    if (reduced) {
+      g.d3Force("center"); // no-op read; forces already applied, skip the animated reheat
+    } else {
+      g.d3ReheatSimulation();
+    }
+  }, [spread, graphNodes, reduced]);
 
   // Suggestions with client-side rejected aliases filtered out
   const visibleSuggestions = useMemo(
@@ -541,6 +567,7 @@ export function KnowledgeGraphPanel(): JSX.Element {
     setFocusId(null);
     setSelectedNode(null);
     setFocusError(null);
+    setSpread(SPREAD_DEFAULT); // also releases any drag-pinned nodes (graph is rebuilt fresh)
   }
 
   // ---- Merge / split handlers ----
@@ -913,6 +940,18 @@ export function KnowledgeGraphPanel(): JSX.Element {
               <button type="button" className="kg-ctrl-btn" onClick={handleReset}>
                 Reset graph
               </button>
+              <label className="kg-spread">
+                <span>Spread</span>
+                <input
+                  type="range"
+                  min={SPREAD_MIN}
+                  max={SPREAD_MAX}
+                  step={1}
+                  value={spread}
+                  aria-label={`Spread nodes (${spread} of ${SPREAD_MAX})`}
+                  onChange={e => setSpread(Number(e.target.value))}
+                />
+              </label>
             </div>
           )}
 
@@ -943,6 +982,12 @@ export function KnowledgeGraphPanel(): JSX.Element {
                 cooldownTicks={reduced ? 0 : undefined}
                 warmupTicks={reduced ? 0 : undefined}
                 enableNodeDrag={!reduced}
+                onNodeDragEnd={(node) => {
+                  // Pin where the user dropped it, so a hub's neighbors pulled apart stay apart
+                  // instead of the simulation snapping them back. Cleared by Reset graph.
+                  node.fx = node.x;
+                  node.fy = node.y;
+                }}
                 linkColor={linkColor}
                 linkLabel={(link) => (link as unknown as GraphLink).predicate}
                 linkDirectionalArrowLength={3.5}

@@ -5516,6 +5516,39 @@ tr.row-selected {
   align-items: center;
   gap: 0.3rem;
 }
+.kg-legend-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  padding: 0.1rem 0.2rem;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.kg-legend-toggle:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.12));
+}
+.kg-legend-toggle:focus-visible {
+  outline: 2px solid var(--accent, #1d6fa8);
+  outline-offset: 1px;
+}
+/* Off state must not be color-only: dim + strike-through the label. */
+.kg-legend-toggle.off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+.kg-legend-reset {
+  background: none;
+  border: none;
+  padding: 0.1rem 0.2rem;
+  color: var(--accent, #1d6fa8);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
 
 /* Suggested merges review section (#508 Wave 2b) */
 .kg-merge-section {

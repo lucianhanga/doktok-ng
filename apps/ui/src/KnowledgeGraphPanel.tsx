@@ -246,6 +246,8 @@ export function KnowledgeGraphPanel({
   const [entityDocs, setEntityDocs] = useState<DokDocument[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
+  // Legend type filter: entity types toggled OFF are hidden from the canvas (nodes + their edges).
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
 
   // Left entity rail state
   const [entityRail, setEntityRail] = useState<KgEntity[]>([]);
@@ -324,6 +326,36 @@ export function KnowledgeGraphPanel({
       g.d3ReheatSimulation();
     }
   }, [spread, graphNodes, reduced]);
+
+  // id -> entityType, so linkVisibility can hide an edge whose endpoint type is filtered off.
+  const nodeTypeById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const n of graphNodes) map.set(n.id, n.entityType);
+    return map;
+  }, [graphNodes]);
+
+  function toggleTypeFilter(type: string): void {
+    setHiddenTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }
+
+  function nodeVisible(node: NodeObject): boolean {
+    return !hiddenTypes.has((node as unknown as GraphNode).entityType);
+  }
+
+  function linkVisible(link: LinkObject): boolean {
+    if (hiddenTypes.size === 0) return true;
+    const resolve = (v: unknown): string =>
+      typeof v === "string" ? v : String((v as { id?: string })?.id ?? "");
+    const l = link as unknown as { source: unknown; target: unknown };
+    const st = nodeTypeById.get(resolve(l.source));
+    const tt = nodeTypeById.get(resolve(l.target));
+    return !(st && hiddenTypes.has(st)) && !(tt && hiddenTypes.has(tt));
+  }
 
   // Documents containing the selected entity: fetched whenever the selection changes (#kg-docs).
   const selectedType = selectedNode?.entity.entity_type ?? null;
@@ -1030,6 +1062,8 @@ export function KnowledgeGraphPanel({
                 linkDirectionalArrowLength={3.5}
                 linkDirectionalArrowRelPos={1}
                 onEngineStop={() => graphRef.current?.zoomToFit(reduced ? 0 : 400, 40)}
+                nodeVisibility={nodeVisible}
+                linkVisibility={linkVisible}
                 onNodeClick={handleNodeClick}
                 onBackgroundClick={handleBackgroundClick}
                 onZoom={handleZoom}
@@ -1255,21 +1289,37 @@ export function KnowledgeGraphPanel({
 
       {/* Type legend (only when there are graph nodes) */}
       {graphNodes.length > 0 && (
-        <ul className="kg-legend" aria-label="Entity type legend">
+        <ul className="kg-legend" aria-label="Entity type legend — toggle to filter">
           {KG_TYPE_ORDER.map(type => {
             const m = typeMeta(type);
             if (!graphNodes.some(n => n.entityType === type)) return null;
+            const on = !hiddenTypes.has(type);
             return (
               <li key={type} className="kg-legend-item">
-                <span
-                  className="kg-type-dot"
-                  aria-hidden="true"
-                  style={{ background: m.color }}
-                />
-                {m.label}
+                <button
+                  type="button"
+                  className={`kg-legend-toggle${on ? "" : " off"}`}
+                  aria-pressed={on}
+                  aria-label={`${on ? "Hide" : "Show"} ${m.label} nodes`}
+                  onClick={() => toggleTypeFilter(type)}
+                >
+                  <span className="kg-type-dot" aria-hidden="true" style={{ background: m.color }} />
+                  {m.label}
+                </button>
               </li>
             );
           })}
+          {hiddenTypes.size > 0 && (
+            <li className="kg-legend-item">
+              <button
+                type="button"
+                className="kg-legend-reset"
+                onClick={() => setHiddenTypes(new Set())}
+              >
+                Show all ({hiddenTypes.size} hidden)
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>

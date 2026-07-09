@@ -28,7 +28,11 @@ from doktok_contracts.schemas import (
     TokenSuggestion,
 )
 from doktok_core.config import Settings
-from doktok_core.knowledge_graph.adjudication import adjudicate_suggestions, build_entity_profile
+from doktok_core.knowledge_graph.adjudication import (
+    _cache_key,
+    adjudicate_suggestions,
+    build_entity_profile,
+)
 from doktok_core.knowledge_graph.entity_resolution import (
     METHOD_FUZZY_TRGM,
     METHOD_TOKEN_SET,
@@ -89,6 +93,26 @@ class FakeRaisingAdjudicator:
 
     def adjudicate(self, a: EntityProfile, b: EntityProfile) -> MergeVerdict:
         raise RuntimeError("fake model error")
+
+
+class CountingAdjudicator:
+    """Records how many times ``adjudicate`` was called (the LLM-call counter for cache tests).
+
+    ``same`` picks the verdict so a cached 'different' can also be asserted to drop on repeat.
+    """
+
+    def __init__(self, *, same: bool = True) -> None:
+        self.calls = 0
+        self._same = same
+
+    def adjudicate(self, a: EntityProfile, b: EntityProfile) -> MergeVerdict:
+        self.calls += 1
+        return MergeVerdict(
+            same=self._same,
+            canonical=a.normalized_value,
+            confidence=0.9,
+            reason="fake: counted verdict",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +402,127 @@ class TestBuildEntityProfile:
 
 
 # ---------------------------------------------------------------------------
+# Verdict cache (#535): adjudicate each pair ONCE, reuse the cached verdict on
+# repeat calls so an unchanged candidate list makes ZERO LLM calls.
+# ---------------------------------------------------------------------------
+
+
+class TestAdjudicationCache:
+    def test_repeat_call_makes_zero_llm_calls(self) -> None:
+        """Two consecutive calls over the SAME candidates adjudicate ONLY on the first pass."""
+        kg = _kg_with_persons()
+        adj = CountingAdjudicator(same=True)
+        s = _fuzzy_suggestion()
+
+        first = adjudicate_suggestions([s], kg, adj)
+        assert len(first) == 1 and first[0].llm_same is True
+        assert adj.calls == 1  # one unique non-token_set pair adjudicated on the first pass
+
+        second = adjudicate_suggestions([s], kg, adj)
+        assert len(second) == 1 and second[0].llm_same is True
+        assert adj.calls == 1  # ZERO new LLM calls on the repeat: verdict served from cache
+
+    def test_only_new_candidates_hit_the_llm(self) -> None:
+        """Adding a new pair on the 2nd pass makes exactly one MORE adjudicate call."""
+        kg = _kg_with_persons()
+        adj = CountingAdjudicator(same=True)
+        s1 = _fuzzy_suggestion()
+
+        adjudicate_suggestions([s1], kg, adj)
+        assert adj.calls == 1
+
+        s2 = _fuzzy_suggestion(
+            canonical_id="e-bob",
+            canonical_value="bob miller",
+            alias_id="e-bob2",
+            alias_value="bob millar",
+        )
+        result = adjudicate_suggestions([s1, s2], kg, adj)
+        assert len(result) == 2
+        assert adj.calls == 2  # s1 cached (no call), s2 new (exactly one more call)
+
+    def test_cache_survives_rebuild_same_normalized_pair(self) -> None:
+        """Re-derivation that re-mints node ids reuses the verdict via the normalized pair_key."""
+        kg = _kg_with_persons()
+        adj = CountingAdjudicator(same=True)
+
+        adjudicate_suggestions([_fuzzy_suggestion()], kg, adj)
+        assert adj.calls == 1
+
+        # Same real-world pair after a rebuild: identical normalized values, DIFFERENT node ids
+        # (and the canonical/alias order swapped). The pair_key is order-independent + normalized,
+        # so it hits the same cache row.
+        rebuilt = _fuzzy_suggestion(
+            canonical_id="e-alice2-new",
+            canonical_value="alice jonson",
+            alias_id="e-alice-new",
+            alias_value="alice johnson",
+        )
+        result = adjudicate_suggestions([rebuilt], kg, adj)
+        assert len(result) == 1 and result[0].llm_same is True
+        assert adj.calls == 1  # rebuild reused the cached verdict: no new LLM call
+
+    def test_cached_different_verdict_still_drops_on_repeat(self) -> None:
+        """A cached 'different' verdict drops the pair on the repeat call with no LLM call."""
+        kg = _kg_with_persons()
+        adj = CountingAdjudicator(same=False)
+        s = _fuzzy_suggestion()
+
+        assert adjudicate_suggestions([s], kg, adj) == []
+        assert adj.calls == 1
+
+        assert adjudicate_suggestions([s], kg, adj) == []
+        assert adj.calls == 1  # still dropped, still zero new LLM calls
+
+    def test_token_set_never_calls_adjudicator_or_caches(self) -> None:
+        """token_set is certain: never adjudicated, never cached (no cache key minted for it)."""
+        kg = _kg_with_persons()
+        adj = CountingAdjudicator(same=True)
+        ts = _token_set_suggestion()
+
+        adjudicate_suggestions([ts], kg, adj)
+        adjudicate_suggestions([ts], kg, adj)
+        assert adj.calls == 0
+        assert kg.get_cached_verdicts(TENANT, [_cache_key(ts)]) == {}
+
+    def test_cache_is_tenant_isolated(self) -> None:
+        """A verdict cached for one tenant is never served to another tenant's identical pair."""
+        kg = _kg_with_persons()
+        adj = CountingAdjudicator(same=True)
+
+        adjudicate_suggestions([_fuzzy_suggestion()], kg, adj)
+        assert adj.calls == 1
+
+        other_tenant = KgMergeSuggestion(
+            tenant_id="tenant-b",
+            entity_type=EntityType.PERSON,
+            canonical_id="e-alice",
+            canonical_value="alice johnson",
+            alias_id="e-alice2",
+            alias_value="alice jonson",
+            method=METHOD_FUZZY_TRGM,
+            score=0.69,
+        )
+        adjudicate_suggestions([other_tenant], kg, adj)
+        # tenant-b is a cache MISS despite identical values: adjudicated fresh.
+        assert adj.calls == 2
+
+    def test_graceful_fallback_preserved_and_error_not_cached(self) -> None:
+        """A raising adjudicator keeps the pair unchanged AND caches nothing (retried next time)."""
+        kg = _kg_with_persons()
+        raising = FakeRaisingAdjudicator()
+        s = _fuzzy_suggestion()
+
+        result = adjudicate_suggestions([s], kg, raising)
+        assert len(result) == 1 and result[0].llm_same is None  # unchanged fallback
+        # Nothing cached: a transient error must be retried, so a later good adjudicator runs.
+        good = CountingAdjudicator(same=True)
+        again = adjudicate_suggestions([s], kg, good)
+        assert len(again) == 1 and again[0].llm_same is True
+        assert good.calls == 1  # the error was not cached: the good adjudicator was consulted
+
+
+# ---------------------------------------------------------------------------
 # HTTP integration tests: adjudicator injected into the registry
 # ---------------------------------------------------------------------------
 
@@ -539,3 +684,18 @@ class TestMergeSuggestionsEndpointWithAdjudicator:
         # Suggestions are present (not dropped) and not enriched
         assert len(body) >= 1
         assert body[0]["llm_same"] is None
+
+    def test_repeat_get_makes_zero_llm_calls(self) -> None:
+        """Two GETs over unchanged candidates adjudicate once, then serve from cache (#535)."""
+        adj = CountingAdjudicator(same=True)
+        client = _adjudication_client(_seeded_kg(), adjudicator=adj)
+
+        first = client.get("/api/v1/entities/merge-suggestions", headers=_auth())
+        assert first.status_code == 200
+        assert adj.calls == 1  # one non-token_set pair adjudicated on the first GET
+
+        second = client.get("/api/v1/entities/merge-suggestions", headers=_auth())
+        assert second.status_code == 200
+        assert adj.calls == 1  # ZERO new LLM calls on the second GET (Insights re-open)
+        # Response shape is unchanged between the two GETs.
+        assert second.json() == first.json()

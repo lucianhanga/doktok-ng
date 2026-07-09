@@ -41,6 +41,7 @@ from doktok_contracts.schemas import (
     FeatureStatus,
     IngestionJob,
     JobStatus,
+    KgAdjudicationVerdict,
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
@@ -1727,6 +1728,67 @@ class PostgresKnowledgeGraphRepository:
         # Re-sort: the SQL ordered by trigram score, but relabeled stages carry their own scores.
         suggestions.sort(key=lambda s: (-s.score, s.canonical_id, s.alias_id))
         return suggestions
+
+    # ------------------------------------------------------------------ adjudication cache (#535)
+
+    def get_cached_verdicts(
+        self, tenant_id: str, keys: Sequence[tuple[str, str, str]]
+    ) -> dict[tuple[str, str, str], KgAdjudicationVerdict]:
+        if not keys:
+            return {}
+        # Batch lookup: one query with the requested (pair_key, method, score_bucket) tuples,
+        # tenant-scoped. WHERE (pair_key, method, score_bucket) IN ((%s,%s,%s), ...).
+        placeholders = ", ".join(["(%s, %s, %s)"] * len(keys))
+        params: list[Any] = [tenant_id]
+        for pair_key, method, score_bucket in keys:
+            params.extend((pair_key, method, score_bucket))
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT pair_key, method, score_bucket, same, confidence, reason, canonical "
+                "FROM kg_merge_adjudication WHERE tenant_id=%s "
+                f"AND (pair_key, method, score_bucket) IN ({placeholders})",
+                params,
+            ).fetchall()
+        return {
+            (row["pair_key"], row["method"], row["score_bucket"]): KgAdjudicationVerdict(
+                same=row["same"],
+                canonical=row["canonical"],
+                confidence=row["confidence"],
+                reason=row["reason"],
+            )
+            for row in rows
+        }
+
+    def put_cached_verdict(
+        self,
+        tenant_id: str,
+        *,
+        pair_key: str,
+        method: str,
+        score_bucket: str,
+        verdict: KgAdjudicationVerdict,
+    ) -> None:
+        # Idempotent upsert: a re-adjudication of the same bucket overwrites the stored verdict.
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO kg_merge_adjudication "
+                "(tenant_id, pair_key, method, score_bucket, same, confidence, reason, canonical) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (tenant_id, pair_key, method, score_bucket) DO UPDATE SET "
+                "same=EXCLUDED.same, confidence=EXCLUDED.confidence, reason=EXCLUDED.reason, "
+                "canonical=EXCLUDED.canonical, created_at=now()",
+                (
+                    tenant_id,
+                    pair_key,
+                    method,
+                    score_bucket,
+                    verdict.same,
+                    verdict.confidence,
+                    verdict.reason,
+                    verdict.canonical,
+                ),
+            )
 
     def _node_row(self, cur: Any, tenant_id: str, entity_id: str) -> dict[str, Any] | None:
         row = cur.execute(

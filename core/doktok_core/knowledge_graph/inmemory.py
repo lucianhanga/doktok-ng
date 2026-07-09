@@ -16,6 +16,7 @@ from doktok_contracts.schemas import (
     AliasFold,
     EntityType,
     EntityTypeCount,
+    KgAdjudicationVerdict,
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
@@ -50,6 +51,9 @@ class InMemoryKnowledgeGraphRepository:
         self._aliases: dict[tuple[str, str, str], str] = {}
         # merge/split audit rows (mirrors kg_entity_merge_log)
         self._merge_log: list[dict[str, Any]] = []
+        # adjudication verdict cache (mirrors kg_merge_adjudication, #535):
+        # (tenant_id, pair_key, method, score_bucket) -> KgAdjudicationVerdict
+        self._adjudication: dict[tuple[str, str, str, str], KgAdjudicationVerdict] = {}
 
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         for entity in entities:
@@ -434,6 +438,32 @@ class InMemoryKnowledgeGraphRepository:
             )
         )
         return cascade.propose(self.list_entities(tenant_id), limit=limit)
+
+    # ------------------------------------------------------------------ adjudication cache (#535)
+
+    def get_cached_verdicts(
+        self, tenant_id: str, keys: Sequence[tuple[str, str, str]]
+    ) -> dict[tuple[str, str, str], KgAdjudicationVerdict]:
+        result: dict[tuple[str, str, str], KgAdjudicationVerdict] = {}
+        for pair_key, method, score_bucket in keys:
+            verdict = self._adjudication.get((tenant_id, pair_key, method, score_bucket))
+            if verdict is not None:
+                # Tenant isolation: the store key includes tenant_id, so a hit is this tenant's.
+                result[(pair_key, method, score_bucket)] = verdict.model_copy(deep=True)
+        return result
+
+    def put_cached_verdict(
+        self,
+        tenant_id: str,
+        *,
+        pair_key: str,
+        method: str,
+        score_bucket: str,
+        verdict: KgAdjudicationVerdict,
+    ) -> None:
+        self._adjudication[(tenant_id, pair_key, method, score_bucket)] = verdict.model_copy(
+            deep=True
+        )
 
     def _canonical_root(self, tenant_id: str, entity: KgEntity) -> KgEntity:
         """Follow the canonical chain to its root (cycle-guarded) so merges never build chains."""

@@ -69,6 +69,33 @@ _TYPO_MIN_TOKEN_LEN = 4
 # them. `find_similar_entities` keeps a stricter 0.7 default for point lookups.
 SUGGESTION_THRESHOLD = 0.6
 
+# Separator used when composing the adjudication-cache pair key. A NUL byte can never appear inside
+# a normalized entity value, so it can never collide two distinct entities into one key.
+_PAIR_KEY_SEP = "\x1f"
+
+
+def merge_adjudication_pair_key(value_a: str, value_b: str) -> str:
+    """Stable, order-independent cache key for an adjudicated entity pair (#535).
+
+    Normalizes each value with the same token-sort normalization the KG node ids derive from
+    (``normalize_entity_name``), then sorts the two normalized values so ``(a, b)`` and ``(b, a)``
+    key identically. Because the normalization collapses word-order/punctuation variants and the
+    node ids are re-minted from it on every KG rebuild, the key survives re-derivation: the same
+    real-world pair re-adjudicates to the SAME row rather than a fresh LLM call.
+    """
+    na, nb = normalize_entity_name(value_a), normalize_entity_name(value_b)
+    lo, hi = sorted((na, nb))
+    return f"{lo}{_PAIR_KEY_SEP}{hi}"
+
+
+def merge_adjudication_score_bucket(score: float) -> str:
+    """Round a suggestion score to 2 decimals as a stable text bucket for the cache key (#535).
+
+    Bucketing keeps tiny trigram-score drift (e.g. 0.691 vs 0.692) on the same cached verdict while
+    a genuine tier change still re-adjudicates (the deterministic stages carry fixed scores).
+    """
+    return f"{score:.2f}"
+
 
 def trigram_set(text: str) -> frozenset[str]:
     """The pg_trgm-compatible trigram set of a string.

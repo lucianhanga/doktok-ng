@@ -20,9 +20,18 @@ from __future__ import annotations
 import logging
 
 from doktok_contracts.ports import EntityMergeAdjudicator, KnowledgeGraphRepository
-from doktok_contracts.schemas import EntityProfile, KgMergeSuggestion
+from doktok_contracts.schemas import (
+    EntityProfile,
+    KgAdjudicationVerdict,
+    KgMergeSuggestion,
+    MergeVerdict,
+)
 
-from doktok_core.knowledge_graph.entity_resolution import METHOD_TOKEN_SET
+from doktok_core.knowledge_graph.entity_resolution import (
+    METHOD_TOKEN_SET,
+    merge_adjudication_pair_key,
+    merge_adjudication_score_bucket,
+)
 
 logger = logging.getLogger("doktok.kg.adjudication")
 
@@ -76,6 +85,55 @@ def build_entity_profile(
     )
 
 
+def _cache_key(s: KgMergeSuggestion) -> tuple[str, str, str]:
+    """The ``(pair_key, method, score_bucket)`` cache key for a suggestion (#535).
+
+    ``pair_key`` is order-independent and normalized, so it survives a KG rebuild that re-mints the
+    suggestion rows with fresh node ids (the same real-world pair keys the same cache row).
+    """
+    return (
+        merge_adjudication_pair_key(s.canonical_value, s.alias_value),
+        s.method,
+        merge_adjudication_score_bucket(s.score),
+    )
+
+
+def _apply_verdict(
+    s: KgMergeSuggestion, *, same: bool, confidence: float, reason: str, canonical: str | None
+) -> KgMergeSuggestion | None:
+    """Apply an adjudication verdict to a suggestion.
+
+    Returns ``None`` when the verdict says the pair is DIFFERENT (the suggestion is dropped), or the
+    enriched suggestion (``llm_*`` fields populated, canonical direction possibly flipped) when the
+    verdict says SAME. Shared by the cache-hit and freshly-adjudicated paths so both apply identical
+    logic.
+    """
+    if not same:
+        logger.debug(
+            "adjudicator dropped %s / %s (confidence=%.2f): %s",
+            s.canonical_id,
+            s.alias_id,
+            confidence,
+            reason,
+        )
+        return None
+
+    update: dict[str, object] = {
+        "llm_same": True,
+        "llm_confidence": confidence,
+        "llm_reason": reason,
+        "llm_canonical": canonical or None,
+    }
+    # If the LLM prefers the alias value as the canonical name, flip the direction so the human
+    # reviewer sees the LLM-preferred entity on the canonical side.
+    if canonical and canonical.strip().lower() == s.alias_value.strip().lower():
+        update["canonical_id"] = s.alias_id
+        update["canonical_value"] = s.alias_value
+        update["alias_id"] = s.canonical_id
+        update["alias_value"] = s.canonical_value
+    return s.model_copy(update=update)
+
+
 def adjudicate_suggestions(
     suggestions: list[KgMergeSuggestion],
     kg: KnowledgeGraphRepository,
@@ -83,7 +141,7 @@ def adjudicate_suggestions(
     *,
     limit: int = 50,
 ) -> list[KgMergeSuggestion]:
-    """Apply the LLM adjudication layer to a deterministic suggestion list.
+    """Apply the LLM adjudication layer to a deterministic suggestion list, with a verdict cache.
 
     Returns a new list that:
     - preserves ``token_set`` suggestions unchanged (no LLM call, they are certain),
@@ -93,17 +151,54 @@ def adjudicate_suggestions(
     - possibly overrides canonical direction when the LLM prefers the alias as canonical,
     - falls back to the original suggestion (unchanged) on any adjudicator error.
 
+    Each non-``token_set`` pair is adjudicated ONCE and the verdict is CACHED (#535): a cache hit
+    applies the stored verdict WITHOUT an LLM call, so a repeat call over unchanged candidates makes
+    ZERO model calls. Cache misses call the adjudicator as before, then persist the verdict. The
+    cache key is the normalized, order-independent entity pair (see ``merge_adjudication_pair_key``)
+    plus method + rounded score, so the verdict survives a KG rebuild.
+
     Only the first ``limit`` suggestions are processed; the human still approves all merges.
+
+    (#530, not built here: a future per-pair REJECTION store would be consulted before the cache
+    lookup - it keys on the same normalized pair, so it composes cleanly on top of this path.)
     """
+    batch = suggestions[:limit]
+
+    # Batch-read cached verdicts for every non-token_set pair up front (one repository round-trip),
+    # so a fully-cached repeat call issues no per-pair reads and no LLM calls at all.
+    cache_keys = [_cache_key(s) for s in batch if s.method != METHOD_TOKEN_SET]
+    try:
+        cached = kg.get_cached_verdicts(batch[0].tenant_id, cache_keys) if cache_keys else {}
+    except Exception:
+        # A cache read failure must never break the queue: fall back to adjudicating every pair.
+        logger.warning("adjudication cache read failed; adjudicating all pairs", exc_info=True)
+        cached = {}
+
     result: list[KgMergeSuggestion] = []
 
-    for s in suggestions[:limit]:
+    for s in batch:
         if s.method == METHOD_TOKEN_SET:
-            # Certain match (identical token-sort keys) - skip LLM, pass through unchanged.
+            # Certain match (identical token-sort keys) - skip LLM + cache, pass through unchanged.
             result.append(s)
             continue
 
-        # Any non-token_set method (fuzzy_trgm / token_subset / token_typo): adjudicate.
+        key = _cache_key(s)
+        hit = cached.get(key)
+        if hit is not None:
+            # Cache hit: apply the stored verdict with NO LLM call (drop if different, enrich if
+            # same). This is the zero-LLM path for repeat requests over unchanged candidates.
+            applied = _apply_verdict(
+                s,
+                same=hit.same,
+                confidence=hit.confidence,
+                reason=hit.reason,
+                canonical=hit.canonical,
+            )
+            if applied is not None:
+                result.append(applied)
+            continue
+
+        # Cache miss: adjudicate via the LLM, then persist the verdict for next time.
         try:
             profile_a = build_entity_profile(
                 s.tenant_id, s.canonical_id, s.canonical_value, s.entity_type, kg
@@ -111,8 +206,10 @@ def adjudicate_suggestions(
             profile_b = build_entity_profile(
                 s.tenant_id, s.alias_id, s.alias_value, s.entity_type, kg
             )
-            verdict = adjudicator.adjudicate(profile_a, profile_b)
+            verdict: MergeVerdict = adjudicator.adjudicate(profile_a, profile_b)
         except Exception:
+            # A single pair's adjudicator error must not abort the batch: keep it unchanged and do
+            # NOT cache (so a transient model error is retried on the next request).
             logger.warning(
                 "adjudicator error for %s / %s; keeping suggestion unchanged",
                 s.canonical_id,
@@ -122,33 +219,37 @@ def adjudicate_suggestions(
             result.append(s)
             continue
 
-        if not verdict.same:
-            # LLM says different real-world entities - drop the suggestion from the queue.
-            logger.debug(
-                "adjudicator dropped %s / %s (confidence=%.2f): %s",
+        # Persist the verdict (best-effort: a cache write failure must not break the queue).
+        pair_key, method, score_bucket = key
+        try:
+            kg.put_cached_verdict(
+                s.tenant_id,
+                pair_key=pair_key,
+                method=method,
+                score_bucket=score_bucket,
+                verdict=KgAdjudicationVerdict(
+                    same=verdict.same,
+                    canonical=verdict.canonical or None,
+                    confidence=verdict.confidence,
+                    reason=verdict.reason,
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "adjudication cache write failed for %s / %s",
                 s.canonical_id,
                 s.alias_id,
-                verdict.confidence,
-                verdict.reason,
+                exc_info=True,
             )
-            continue
 
-        # LLM confirms same entity: enrich with verdict fields.
-        update: dict[str, object] = {
-            "llm_same": True,
-            "llm_confidence": verdict.confidence,
-            "llm_reason": verdict.reason,
-            "llm_canonical": verdict.canonical or None,
-        }
-
-        # If the LLM prefers the alias value as the canonical name, flip the direction so the
-        # human reviewer sees the LLM-preferred entity on the canonical side.
-        if verdict.canonical and verdict.canonical.strip().lower() == s.alias_value.strip().lower():
-            update["canonical_id"] = s.alias_id
-            update["canonical_value"] = s.alias_value
-            update["alias_id"] = s.canonical_id
-            update["alias_value"] = s.canonical_value
-
-        result.append(s.model_copy(update=update))
+        applied = _apply_verdict(
+            s,
+            same=verdict.same,
+            confidence=verdict.confidence,
+            reason=verdict.reason,
+            canonical=verdict.canonical,
+        )
+        if applied is not None:
+            result.append(applied)
 
     return result

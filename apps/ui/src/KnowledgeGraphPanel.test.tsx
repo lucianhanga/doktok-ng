@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { KnowledgeGraphPanel, pickLabeledNodeIds } from "./KnowledgeGraphPanel";
+import { KnowledgeGraphPanel, pickLabeledNodeIds, tierFor } from "./KnowledgeGraphPanel";
 import type { KgEntity, KgMergeSuggestion, KgNeighborhood, KgStats } from "./api";
 
 // ---- Stub react-force-graph-2d (canvas/WebGL does not work in jsdom) ----
@@ -236,6 +236,70 @@ describe("pickLabeledNodeIds", () => {
     const ids = pickLabeledNodeIds(nodes, links as never, 5);
     // "b" has degree 1 and should be labeled
     expect(ids.has("b")).toBe(true);
+  });
+
+  it("restricts candidates to the visible predicate (viewport culling)", () => {
+    const nodes = [
+      makeNode("focus", "Focus", true),
+      makeNode("inview", "InView"),
+      makeNode("offscreen", "OffScreen"),
+    ];
+    const ids = pickLabeledNodeIds(nodes, [], 40, (n) => n.id !== "offscreen");
+    expect(ids.has("focus")).toBe(true); // focus always labeled, even if the predicate excludes it
+    expect(ids.has("inview")).toBe(true);
+    expect(ids.has("offscreen")).toBe(false);
+  });
+});
+
+// ---- Unit tests: LOD tier boundaries + hysteresis ----
+
+describe("tierFor", () => {
+  it("maps globalScale to the four tiers with no previous tier", () => {
+    expect(tierFor(0.5)).toBe("overview");
+    expect(tierFor(1)).toBe("orient");
+    expect(tierFor(2)).toBe("read");
+    expect(tierFor(4)).toBe("inspect");
+  });
+
+  // Tier transitions at the boundary probe points from the spec. Passing prev=null (no hysteresis)
+  // exercises the raw threshold mapping; the < comparisons put the boundary value itself in the
+  // upper tier's neighbor.
+  it.each([
+    [0.74, "overview"],
+    [0.76, "orient"],
+    [1.49, "orient"],
+    [1.51, "read"],
+    [2.99, "read"],
+    [3.01, "inspect"],
+  ] as const)("k=%s -> %s (fresh, no hysteresis)", (k, expected) => {
+    expect(tierFor(k)).toBe(expected);
+  });
+
+  it("holds the previous tier inside the ±0.05 hysteresis dead zone", () => {
+    // Currently "overview"; nudging just past 0.75 (within 0.05) should NOT flip to orient.
+    expect(tierFor(0.76, "overview")).toBe("overview");
+    // Currently "orient"; nudging just below 0.75 should NOT flip back to overview.
+    expect(tierFor(0.74, "orient")).toBe("orient");
+    // Same at the orient/read boundary.
+    expect(tierFor(1.51, "orient")).toBe("orient");
+    expect(tierFor(1.49, "read")).toBe("read");
+    // And at the read/inspect boundary.
+    expect(tierFor(3.01, "read")).toBe("read");
+    expect(tierFor(2.99, "inspect")).toBe("inspect");
+  });
+
+  it("flips tiers once k moves decisively past the dead zone", () => {
+    expect(tierFor(0.85, "overview")).toBe("orient"); // 0.85 is > 0.75 + 0.05
+    expect(tierFor(0.65, "orient")).toBe("overview"); // 0.65 is < 0.75 - 0.05
+    expect(tierFor(1.6, "orient")).toBe("read");
+    expect(tierFor(3.2, "read")).toBe("inspect");
+  });
+
+  it("does not apply hysteresis when jumping across multiple tiers", () => {
+    // A big jump (e.g. double-click zoom) from overview straight to inspect should land on inspect,
+    // not be trapped by an adjacent-boundary dead zone.
+    expect(tierFor(4, "overview")).toBe("inspect");
+    expect(tierFor(0.4, "inspect")).toBe("overview");
   });
 });
 

@@ -184,6 +184,73 @@ test("an unknown sub in the hash falls back to Memory", async () => {
   );
 });
 
+test("collapse toggle collapses the sub-nav rail and updates aria-expanded", async () => {
+  mockFetch();
+  const user = userEvent.setup();
+  render(<InsightsPanel onFilterByCategory={vi.fn()} />);
+
+  const toggle = screen.getByRole("button", { name: /Collapse Insights sections/ });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  const rail = document.querySelector(".settings-submenu");
+  expect(rail).not.toHaveClass("collapsed");
+
+  await user.click(toggle);
+
+  // Rail is now collapsed and the toggle flips label + aria-expanded.
+  expect(document.querySelector(".settings-submenu")).toHaveClass("collapsed");
+  expect(
+    screen.getByRole("button", { name: /Expand Insights sections/ }),
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
+test("collapsed state persists to localStorage and is restored on remount (rail stays narrow)", async () => {
+  mockFetch();
+  const user = userEvent.setup();
+  const { unmount } = render(<InsightsPanel onFilterByCategory={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: /Collapse Insights sections/ }));
+  expect(localStorage.getItem("insights-subnav-collapsed")).toBe("true");
+  unmount();
+
+  // Re-mount: the collapsed rail is restored, which is what widens the canvas via the CSS
+  // .collapsed variant (36px vs 150px).
+  render(<InsightsPanel onFilterByCategory={vi.fn()} />);
+  expect(document.querySelector(".settings-submenu")).toHaveClass("collapsed");
+  expect(
+    screen.getByRole("button", { name: /Expand Insights sections/ }),
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
+test("clicking a tab while collapsed navigates without expanding the rail", async () => {
+  mockFetch();
+  const user = userEvent.setup();
+  render(<InsightsPanel onFilterByCategory={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: /Collapse Insights sections/ }));
+  expect(document.querySelector(".settings-submenu")).toHaveClass("collapsed");
+
+  // Navigate to Categories; the rail must remain collapsed.
+  await user.click(screen.getByRole("tab", { name: "Categories" }));
+  expect(screen.getByRole("tab", { name: "Categories" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(document.querySelector(".settings-submenu")).toHaveClass("collapsed");
+});
+
+test("collapsed tabs expose full names via accessible name for screen readers", async () => {
+  mockFetch();
+  const user = userEvent.setup();
+  render(<InsightsPanel onFilterByCategory={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: /Collapse Insights sections/ }));
+
+  // Even though only initials are visible, the accessible name is the full label.
+  expect(screen.getByRole("tab", { name: "Knowledge Graph" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Embedding Map" })).toBeInTheDocument();
+});
+
 test("sub-tab choice is persisted to localStorage and restored on next render", async () => {
   mockFetch();
   const user = userEvent.setup();

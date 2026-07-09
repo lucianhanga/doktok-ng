@@ -33,6 +33,7 @@ from doktok_contracts.schemas import (
     AggregationResult,
     AiSettings,
     AliasFold,
+    ApiToken,
     AuditEvent,
     Category,
     CategoryCoOccurrence,
@@ -79,10 +80,13 @@ from doktok_contracts.schemas import (
     SecurityDecision,
     SortDir,
     StatsSummary,
+    Tenant,
     TokenMatch,
+    TokenResolution,
     TokenSuggestion,
     TraceStep,
     TurnMetrics,
+    User,
 )
 
 # --- Repositories ---------------------------------------------------------------------------
@@ -680,6 +684,25 @@ class LexicalTermExtractor(Protocol):
     def extract_terms(
         self, text: str, *, config: str = "simple", limit: int = 200
     ) -> list[ExtractedTerm]: ...
+
+
+@runtime_checkable
+class TenantRegistry(Protocol):
+    """DB-backed tenant/user/api-token registry (#554, ADR-0008).
+
+    ``resolve_token`` is the hot path on every authenticated request: it takes the sha256 of the
+    presented bearer token and returns the tenant (+ optional user) it belongs to, or ``None`` when
+    no live token matches. The remaining methods provision the registry (tenant admin lands in
+    #559; these are the minimal seams the resolver and future auth flows need).
+    """
+
+    def resolve_token(self, token_sha256: str) -> TokenResolution | None: ...
+    def create_tenant(self, tenant: Tenant) -> None: ...
+    def get_tenant(self, tenant_id: str) -> Tenant | None: ...
+    def create_user(self, user: User) -> None: ...
+    def get_user(self, tenant_id: str, user_id: str) -> User | None: ...
+    def create_api_token(self, token: ApiToken) -> None: ...
+    def revoke_api_token(self, tenant_id: str, token_id: str) -> None: ...
 
 
 @runtime_checkable

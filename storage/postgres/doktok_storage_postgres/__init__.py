@@ -18,6 +18,7 @@ from doktok_storage_postgres.repositories import (
     PostgresProjectionRequestRepository,
     PostgresRecordRepository,
     PostgresStatsRepository,
+    PostgresTenantRegistry,
 )
 
 __version__ = "0.2.0"
@@ -40,5 +41,6 @@ __all__ = [
     "PostgresProjectionRequestRepository",
     "PostgresRecordRepository",
     "PostgresStatsRepository",
+    "PostgresTenantRegistry",
     "migrate",
 ]

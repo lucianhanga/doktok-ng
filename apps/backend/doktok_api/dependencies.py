@@ -34,9 +34,10 @@ from doktok_contracts.ports import (
     Reranker,
     Retriever,
     StatsRepository,
+    TenantRegistry,
 )
 from doktok_contracts.schemas import TenantContext
-from doktok_core.security.auth import resolve_tenant
+from doktok_core.security.auth import resolve_token
 from doktok_core.security.egress import (
     EgressBlocked,
     effective_no_egress,
@@ -59,9 +60,16 @@ def require_tenant(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
 ) -> TenantContext:
-    """Authenticate the request and return its tenant. Fail-closed if no tokens are configured."""
+    """Authenticate the request and return its tenant. Fail-closed if no auth is configured.
+
+    Resolution tries the DB-backed registry first (hashed ``api_tokens`` lookup, #554) and falls
+    back to the static ``DOKTOK_TENANT_TOKENS`` map (ADR-0008). The registry is opt-in: only used
+    when one has been registered (e.g. a DB-backed deployment), so static-only deployments keep
+    their exact prior behavior.
+    """
     tokens = request.app.state.settings.tenant_tokens
-    if not tokens:
+    registry = _maybe_tenant_registry(request)
+    if not tokens and registry is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="authentication is not configured (set DOKTOK_TENANT_TOKENS)",
@@ -73,8 +81,8 @@ def require_tenant(
             headers={"WWW-Authenticate": "Bearer"},
         )
     presented = authorization[len(_BEARER_PREFIX) :]
-    tenant_id = resolve_tenant(tokens, presented)
-    if tenant_id is None:
+    resolution = resolve_token(presented, registry=registry, static_tokens=tokens)
+    if resolution is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid token",
@@ -82,8 +90,34 @@ def require_tenant(
         )
     from doktok_core.logging_setup import tenant_id_var
 
-    tenant_id_var.set(tenant_id)  # correlate log lines by tenant (APP-12)
-    return TenantContext(tenant_id=tenant_id)
+    tenant_id_var.set(resolution.tenant_id)  # correlate log lines by tenant (APP-12)
+    return TenantContext(tenant_id=resolution.tenant_id, user_id=resolution.user_id)
+
+
+def _maybe_tenant_registry(request: Request) -> TenantRegistry | None:
+    """The registered ``TenantRegistry``, or ``None`` if none is wired (static-only deployment).
+
+    Deliberately does NOT build one on demand: the auth path must not require a database for
+    static-token deployments. A DB-backed deployment registers the registry at startup (or via
+    :func:`get_tenant_registry`) to activate the ``api_tokens`` resolution path.
+    """
+    registry = request.app.state.registry
+    if registry.is_registered(TenantRegistry):
+        return cast(TenantRegistry, registry.resolve(TenantRegistry))
+    return None
+
+
+def get_tenant_registry(request: Request) -> TenantRegistry:
+    """DB-backed ``TenantRegistry`` (lazy build + register) for admin/auth routes (#554)."""
+    registry = request.app.state.registry
+    if registry.is_registered(TenantRegistry):
+        return cast(TenantRegistry, registry.resolve(TenantRegistry))
+
+    from doktok_storage_postgres import PostgresTenantRegistry
+
+    tenant_registry = PostgresTenantRegistry(_get_database(request))
+    registry.register(TenantRegistry, tenant_registry)
+    return tenant_registry
 
 
 _DB_LOCK = threading.Lock()

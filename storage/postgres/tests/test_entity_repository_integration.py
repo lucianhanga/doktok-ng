@@ -21,7 +21,14 @@ def _document(doc_id: str) -> Document:
     )
 
 
-def _entity(eid: str, doc_id: str, etype: EntityType, value: str, freq: int) -> DocumentEntity:
+def _entity(
+    eid: str,
+    doc_id: str,
+    etype: EntityType,
+    value: str,
+    freq: int,
+    metadata: dict[str, object] | None = None,
+) -> DocumentEntity:
     return DocumentEntity(
         id=eid,
         tenant_id=TENANT,
@@ -31,6 +38,7 @@ def _entity(eid: str, doc_id: str, etype: EntityType, value: str, freq: int) -> 
         entity_type=etype,
         normalized_value=value,
         frequency=freq,
+        metadata=dict(metadata or {}),
     )
 
 
@@ -59,3 +67,50 @@ def test_list_distinct_and_documents_for_entity(db: Database) -> None:
 
     docs_with_email = repo.documents_for_entity(TENANT, EntityType.EMAIL, "a@b.com")
     assert {d.id for d in docs_with_email} == {"d1", "d2"}
+
+
+def test_delete_for_document_types_source_filters_keep_producers_disjoint(db: Database) -> None:
+    """The two POSTAL_CODE producers (#528) must not clobber each other on re-run.
+
+    The rule-based feature owns libpostal postal rows (no ``source``); the NER feature owns the
+    PLZ-place-split rows (``source="ner"``). ``keep_source`` protects the NER rows when the
+    rule-based feature re-runs; ``source`` scopes the NER feature's own delete to just its rows.
+    """
+    docs = PostgresDocumentRepository(db)
+    docs.add(_document("dp"))
+
+    repo = PostgresEntityRepository(db)
+    repo.add_entities(
+        [
+            _entity("p_lib", "dp", EntityType.POSTAL_CODE, "80331", 1),  # libpostal, no source
+            _entity(
+                "p_ner", "dp", EntityType.POSTAL_CODE, "80287", 1, {"source": "ner"}
+            ),  # NER PLZ-place split
+            _entity("email", "dp", EntityType.EMAIL, "x@y.com", 1),
+        ]
+    )
+
+    def postal_ids() -> set[str]:
+        return {
+            e.id
+            for e in repo.list_for_document(TENANT, "dp")
+            if e.entity_type is EntityType.POSTAL_CODE
+        }
+
+    # keep_source="ner": the rule-based re-run deletes its own libpostal row but leaves the
+    # NER-owned row (and rows carrying the key but a different value would also be deleted).
+    repo.delete_for_document_types(
+        TENANT, "dp", [EntityType.POSTAL_CODE.value], keep_source="ner"
+    )
+    assert postal_ids() == {"p_ner"}
+
+    # Re-add the libpostal row; now the NER feature re-runs and deletes ONLY its own source rows.
+    repo.add_entities([_entity("p_lib", "dp", EntityType.POSTAL_CODE, "80331", 1)])
+    repo.delete_for_document_types(
+        TENANT, "dp", [EntityType.POSTAL_CODE.value], source="ner"
+    )
+    assert postal_ids() == {"p_lib"}
+
+    # The unrelated EMAIL row was never in scope.
+    remaining = repo.list_for_document(TENANT, "dp")
+    assert any(e.entity_type is EntityType.EMAIL for e in remaining)

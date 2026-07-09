@@ -25,9 +25,20 @@ PREDICATE_TYPE_PAIRS: dict[str, list[tuple[str, str]]] = {
     "RESIDES_IN": [("PERSON", "GPE"), ("PERSON", "LOCATION")],
     "LOCATED_IN": [("ORG", "GPE"), ("ORG", "LOCATION")],
     "RELATED_TO": [("PERSON", "PERSON")],
+    # #528: links a place to its postal code(s). Direction: the PLACE is the subject -
+    # "München HAS_POSTAL_CODE 80287" - so a city fans out to its many codes the same way an
+    # ORG fans out over LOCATED_IN targets. Emitted ONLY deterministically from the NER
+    # PLZ-place split (see DETERMINISTIC_PREDICATES below), never by the model extractors.
+    "HAS_POSTAL_CODE": [("GPE", "POSTAL_CODE"), ("LOCATION", "POSTAL_CODE")],
 }
 
 ALLOWED_PREDICATES: frozenset[str] = frozenset(PREDICATE_TYPE_PAIRS)
+
+# Predicates produced only by deterministic code paths with exact provenance (#528), kept at
+# 100% precision by construction. Provider extractors must NOT offer these to the model
+# (their prompt builders skip them), and the relation circuit-breaker drops any model-produced
+# triple that claims one.
+DETERMINISTIC_PREDICATES: frozenset[str] = frozenset({"HAS_POSTAL_CODE"})
 
 
 def canonical_edge_id(

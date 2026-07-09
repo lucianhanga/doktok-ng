@@ -531,7 +531,13 @@ class FakeEntityRepository:
     def add_entities(self, entities: object) -> None: ...
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
     def delete_for_document_types(
-        self, tenant_id: str, document_id: str, entity_types: list[str]
+        self,
+        tenant_id: str,
+        document_id: str,
+        entity_types: list[str],
+        *,
+        source: str | None = None,
+        keep_source: str | None = None,
     ) -> None: ...
     def list_for_document(self, tenant_id: str, document_id: str) -> list[object]:
         return []

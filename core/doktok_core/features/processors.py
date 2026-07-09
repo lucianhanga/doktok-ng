@@ -55,9 +55,19 @@ from doktok_core.enrichment import (
 )
 from doktok_core.entities.language import detect_language, pg_config_for
 from doktok_core.entities.lexical import meaningful_terms
-from doktok_core.entities.ner import NER_ENTITY_TYPES, normalize_ner_name
+from doktok_core.entities.ner import (
+    NER_ENTITY_TYPES,
+    POSTAL_EVIDENCE_KEY,
+    POSTAL_PLACE_KEY,
+    POSTAL_PLACE_TYPE_KEY,
+    POSTAL_SOURCE_KEY,
+    POSTAL_SOURCE_NER,
+    normalize_ner_name,
+    split_postal_place,
+)
 from doktok_core.knowledge_graph.predicates import (
     ALLOWED_PREDICATES,
+    DETERMINISTIC_PREDICATES,
     PREDICATE_TYPE_PAIRS,
     canonical_edge_id,
 )
@@ -242,7 +252,11 @@ class EntitiesFeature:
         content = _read_text(self._files, document.storage_path, "content.md")
         # Own every type EXCEPT the NER types (PERSON/ORG/GPE) - those belong to NerFeature, which
         # writes to the same table; scoping the delete lets the two features re-run independently.
-        self._repo.delete_for_document_types(tenant_id, document_id, _NON_NER_TYPES)
+        # keep_source: the NER feature also derives POSTAL_CODE rows from PLZ-fused place
+        # mentions (#528, marked source="ner") - those are NER-owned and must survive this run.
+        self._repo.delete_for_document_types(
+            tenant_id, document_id, _NON_NER_TYPES, keep_source=POSTAL_SOURCE_NER
+        )
         entities = self._structured(tenant_id, document_id, content)
         entities.extend(self._terms(tenant_id, document_id, content))
         if entities:
@@ -328,7 +342,16 @@ class NerFeature:
         if document is None or not document.storage_path:
             return
         # Replace only the NER-owned types so the rule-based entities/keywords are left intact.
+        # Plus this feature's OWN postal rows (#528): POSTAL_CODE rows derived from PLZ-fused
+        # place mentions carry source="ner"; the rule-based feature's libpostal postal rows do
+        # not, so they are never touched here.
         self._repo.delete_for_document_types(tenant_id, document_id, _NER_TYPES)
+        self._repo.delete_for_document_types(
+            tenant_id,
+            document_id,
+            [EntityType.POSTAL_CODE.value],
+            source=POSTAL_SOURCE_NER,
+        )
         content = _read_text(self._files, document.storage_path, "content.md")
         if not content.strip():
             return
@@ -340,22 +363,58 @@ class NerFeature:
         # One row per (type, normalized name); frequency = how often the name occurs in the text so
         # the word cloud can size people/orgs by prominence.
         aggregated: dict[tuple[str, str], DocumentEntity] = {}
-        for occ in self._ner.extract(text):
-            normalized = normalize_ner_name(occ.normalized_value)
-            if not normalized:
-                continue
-            key = (occ.entity_type.value, normalized)
-            if key in aggregated:
-                continue
+
+        def add(
+            entity_type: EntityType,
+            entity_text: str,
+            normalized: str,
+            metadata: dict[str, str] | None = None,
+        ) -> None:
+            key = (entity_type.value, normalized)
+            if not normalized or key in aggregated:
+                return
             aggregated[key] = DocumentEntity(
                 id=uuid.uuid4().hex,
                 tenant_id=tenant_id,
                 document_id=document_id,
                 version_id="",
-                entity_text=occ.entity_text,
-                entity_type=occ.entity_type,
+                entity_text=entity_text,
+                entity_type=entity_type,
                 normalized_value=normalized,
-                frequency=max(1, text.count(occ.entity_text)),
+                frequency=max(1, text.count(entity_text)),
+                metadata=dict(metadata or {}),
+            )
+
+        for occ in self._ner.extract(text):
+            # PLZ-place split (#528): a German address line "80287 München" arrives as ONE place
+            # mention, so every distinct postal code minted its own city node. Peel the code off:
+            # the place row keeps just the city (all variants collapse to one node) and the code
+            # becomes its own POSTAL_CODE row whose metadata records the pairing - the relation
+            # feature turns that into a HAS_POSTAL_CODE edge. Only GPE/LOCATION values split;
+            # person/org names are never touched.
+            split = (
+                split_postal_place(occ.normalized_value)
+                if occ.entity_type in (EntityType.GPE, EntityType.LOCATION)
+                else None
+            )
+            if split is None:
+                add(occ.entity_type, occ.entity_text, normalize_ner_name(occ.normalized_value))
+                continue
+            code, place = split
+            text_split = split_postal_place(occ.entity_text)
+            place_text = text_split[1] if text_split else place
+            place_normalized = normalize_ner_name(place)
+            add(occ.entity_type, place_text, place_normalized)
+            add(
+                EntityType.POSTAL_CODE,
+                code,
+                code,  # digits: casefold/whitespace normalization is a no-op, keep exact
+                {
+                    POSTAL_SOURCE_KEY: POSTAL_SOURCE_NER,
+                    POSTAL_PLACE_KEY: place_normalized,
+                    POSTAL_PLACE_TYPE_KEY: occ.entity_type.value,
+                    POSTAL_EVIDENCE_KEY: occ.entity_text.strip(),
+                },
             )
         return list(aggregated.values())
 
@@ -513,8 +572,13 @@ class RelationExtractFeature:
             if obj_norm not in entity_set:
                 dropped += 1
                 continue
-            # Predicate must be in the allowed vocabulary
-            if triple.predicate not in ALLOWED_PREDICATES:
+            # Predicate must be in the allowed vocabulary - and NOT deterministic-only: those
+            # (e.g. HAS_POSTAL_CODE, #528) are emitted below by code with exact provenance;
+            # a model-claimed one is by definition unverified and is dropped.
+            if (
+                triple.predicate not in ALLOWED_PREDICATES
+                or triple.predicate in DETERMINISTIC_PREDICATES
+            ):
                 dropped += 1
                 continue
             # Type pair must match the predicate's allowed pairs
@@ -571,6 +635,14 @@ class RelationExtractFeature:
                 )
             )
 
+        # 6b. Deterministic HAS_POSTAL_CODE edges (#528): the NER feature split "80287 München"
+        # into a place row + a POSTAL_CODE row whose metadata records the pairing and the fused
+        # source span; re-link them here as place -> code edges with that span as provenance.
+        # Both endpoint nodes exist (entity_graph is a dependency and mints a node per mention).
+        self._postal_edges(
+            tenant_id, document_id, all_entities, aliases, edges_map, provenance_rows
+        )
+
         logger.info(
             "relations %s/%s: %d raw -> %d valid triples -> %d distinct edges",
             tenant_id,
@@ -584,6 +656,65 @@ class RelationExtractFeature:
         self._kg.replace_edges_for_document(
             tenant_id, document_id, list(edges_map.values()), provenance_rows
         )
+
+    def _postal_edges(
+        self,
+        tenant_id: str,
+        document_id: str,
+        all_entities: list[DocumentEntity],
+        aliases: dict[tuple[str, str], str],
+        edges_map: dict[str, KgEdge],
+        provenance_rows: list[KgEdgeProvenance],
+    ) -> None:
+        """Append the document's deterministic place -> POSTAL_CODE edges (#528).
+
+        Precision by construction: only POSTAL_CODE rows minted by the NER PLZ-place split
+        (source="ner" with a recorded place pairing) qualify, and the code shape is re-checked
+        defensively. Alias-aware like the model-extracted edges, so a merged city node keeps
+        collecting its codes.
+        """
+        for entity in all_entities:
+            if entity.entity_type is not EntityType.POSTAL_CODE:
+                continue
+            meta = entity.metadata or {}
+            place = meta.get(POSTAL_PLACE_KEY)
+            place_type = meta.get(POSTAL_PLACE_TYPE_KEY)
+            code = entity.normalized_value or ""
+            if (
+                meta.get(POSTAL_SOURCE_KEY) != POSTAL_SOURCE_NER
+                or not isinstance(place, str)
+                or not place
+                or place_type not in ("GPE", "LOCATION")
+                or not (code.isdigit() and 4 <= len(code) <= 5)  # the PLZ shape, re-checked
+            ):
+                continue
+            src_id = aliases.get(
+                (place_type, place), canonical_entity_id(tenant_id, place_type, place)
+            )
+            dst_id = aliases.get(
+                (EntityType.POSTAL_CODE.value, code),
+                canonical_entity_id(tenant_id, EntityType.POSTAL_CODE.value, code),
+            )
+            edge_id = canonical_edge_id(tenant_id, src_id, "HAS_POSTAL_CODE", dst_id)
+            if edge_id not in edges_map:
+                edges_map[edge_id] = KgEdge(
+                    id=edge_id,
+                    tenant_id=tenant_id,
+                    src_entity_id=src_id,
+                    predicate="HAS_POSTAL_CODE",
+                    dst_entity_id=dst_id,
+                )
+            evidence = str(meta.get(POSTAL_EVIDENCE_KEY) or f"{code} {place}")
+            provenance_rows.append(
+                KgEdgeProvenance(
+                    id=uuid.uuid4().hex,
+                    tenant_id=tenant_id,
+                    edge_id=edge_id,
+                    document_id=document_id,
+                    chunk_id=None,
+                    evidence=evidence[:250],
+                )
+            )
 
 
 class DocMetadataFeature:

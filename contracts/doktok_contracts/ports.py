@@ -687,8 +687,26 @@ class EntityRepository(Protocol):
     def add_entities(self, entities: list[DocumentEntity]) -> None: ...
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
     def delete_for_document_types(
-        self, tenant_id: str, document_id: str, entity_types: list[str]
-    ) -> None: ...
+        self,
+        tenant_id: str,
+        document_id: str,
+        entity_types: list[str],
+        *,
+        source: str | None = None,
+        keep_source: str | None = None,
+    ) -> None:
+        """Delete a document's entity rows of the given types.
+
+        POSTAL_CODE rows have TWO producers (#528): the rule-based feature (libpostal address
+        components) and the NER feature (PLZ-place split, marked ``metadata["source"]="ner"``).
+        The optional filters keep those delete scopes disjoint so each feature re-runs without
+        clobbering or duplicating the other's rows:
+        - ``source``: delete ONLY rows whose ``metadata['source']`` equals this value;
+        - ``keep_source``: delete rows EXCEPT those whose ``metadata['source']`` equals this
+          value (rows without the key are deleted).
+        """
+        ...
+
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentEntity]: ...
     def list_distinct(
         self,

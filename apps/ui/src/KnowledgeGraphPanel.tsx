@@ -29,6 +29,7 @@ const KG_TYPE_META: Record<string, { color: string; badge: string; label: string
   ORG:          { color: "#7c3aed", badge: "O", label: "Organization" },
   GPE:          { color: "#0d7d7d", badge: "G", label: "Place" },
   LOCATION:     { color: "#0f766e", badge: "L", label: "Location" },
+  POSTAL_CODE:  { color: "#0891b2", badge: "Z", label: "Postal code" },
   EMAIL:        { color: "#c2410c", badge: "E", label: "Email" },
   URL:          { color: "#9333ea", badge: "U", label: "Link" },
   DATE:         { color: "#a16207", badge: "D", label: "Date" },
@@ -41,7 +42,7 @@ const KG_TYPE_META: Record<string, { color: string; badge: string; label: string
 const KG_TYPE_OTHER = { color: "#555e6d", badge: "?", label: "Other" };
 
 const KG_TYPE_ORDER = [
-  "PERSON", "ORG", "GPE", "LOCATION", "EMAIL", "URL",
+  "PERSON", "ORG", "GPE", "LOCATION", "POSTAL_CODE", "EMAIL", "URL",
   "DATE", "MONEY", "CUSTOM_TOKEN", "DOCUMENT_ID", "INVOICE_ID", "CONTRACT_ID",
 ];
 

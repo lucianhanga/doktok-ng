@@ -804,16 +804,32 @@ class PostgresEntityRepository:
             )
 
     def delete_for_document_types(
-        self, tenant_id: str, document_id: str, entity_types: list[str]
+        self,
+        tenant_id: str,
+        document_id: str,
+        entity_types: list[str],
+        *,
+        source: str | None = None,
+        keep_source: str | None = None,
     ) -> None:
+        # Source filters keep the two POSTAL_CODE producers' delete scopes disjoint (#528);
+        # see the EntityRepository port docstring. Rows without a source key count as "not that
+        # source", which IS DISTINCT FROM gives us for free (NULL-safe inequality).
         if not entity_types:
             return
+        query = (
+            "DELETE FROM document_entities WHERE tenant_id=%s AND document_id=%s "
+            "AND entity_type = ANY(%s)"
+        )
+        params: list[object] = [tenant_id, document_id, entity_types]
+        if source is not None:
+            query += " AND metadata->>'source' = %s"
+            params.append(source)
+        if keep_source is not None:
+            query += " AND metadata->>'source' IS DISTINCT FROM %s"
+            params.append(keep_source)
         with self._db.connection() as conn:
-            conn.execute(
-                "DELETE FROM document_entities WHERE tenant_id=%s AND document_id=%s "
-                "AND entity_type = ANY(%s)",
-                (tenant_id, document_id, entity_types),
-            )
+            conn.execute(query, tuple(params))
 
     def list_distinct(
         self,

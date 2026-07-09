@@ -1,24 +1,35 @@
-"""Deterministic entity-resolution matching cascade (#508, Wave 1 / P0).
+"""Deterministic entity-resolution matching cascade (#508 Wave 1 / P0, #533 + #534 P1).
 
 Decides which same-type canonical nodes look like surface variants of one real-world entity
-("lucian hanga" / "lucianhanga" / "hanja lucian"). Two stages, both deterministic - no
+("lucian hanga" / "lucianhanga" / "hanja lucian"). Four stages, all deterministic - no
 embeddings, no LLM:
 
-  1. ``token_set``  - identical token-sort keys (``normalize_entity_name``). At write time this
-                      stage is FREE: the node id derives from the sort key, so word-order and
-                      punctuation variants collapse into one node before matching ever runs. It
-                      still fires here for nodes minted before #508 (pre-sort-key ids).
-  2. ``fuzzy_trgm`` - trigram similarity at/above ``SUGGESTION_THRESHOLD``. The pure-Python
-                      implementation mirrors pg_trgm semantics (per-word padded trigram sets, so
-                      similarity is word-order-insensitive) - the in-memory repository and the
-                      evaluation harness score exactly like the Postgres ``similarity()`` tier.
+  1. ``token_set``    - identical token-sort keys (``normalize_entity_name``). At write time this
+                        stage is FREE: the node id derives from the sort key, so word-order and
+                        punctuation variants collapse into one node before matching ever runs. It
+                        still fires here for nodes minted before #508 (pre-sort-key ids).
+  2. ``token_subset`` - one name's token set is a PROPER subset of the other's, all shared tokens
+                        exact, and the smaller name has >= 2 tokens ("lucian hanga" is a variant
+                        of "lucian cosmin hanga"; a bare "hanga" matches nothing). #533.
+  3. ``token_typo``   - token sets align 1:1 with exactly ONE non-exact pair, and that pair is a
+                        single-character typo (both tokens len >= 4, Damerau-Levenshtein <= 1,
+                        SAME first character - the guard that keeps "gruber"/"huber" apart while
+                        catching the OCR-ish "hanja"/"hanga"). #534.
+  4. ``fuzzy_trgm``   - trigram similarity at/above ``SUGGESTION_THRESHOLD``. The pure-Python
+                        implementation mirrors pg_trgm semantics (per-word padded trigram sets, so
+                        similarity is word-order-insensitive) - the in-memory repository and the
+                        evaluation harness score exactly like the Postgres ``similarity()`` tier.
+
+Only ``token_set`` is a CERTAIN match: the adjudication layer (#510) passes it through without an
+LLM call and routes every other method - including ``token_subset`` and ``token_typo`` - to the
+LLM adjudicator. Nothing here auto-merges.
 
 Structured as an ordered stage cascade (first stage to fire labels the pair) so P1+ signals -
-dmetaphone, token subset/superset, embedding cosine, LLM adjudication - slot in as extra stages
-without reworking callers. The cascade only PROPOSES merges (``KgMergeSuggestion``); applying one
-is a separate, logged, reversible step (``KnowledgeGraphRepository.merge_entities``). Blocking is
-by ``entity_type`` plus a shared-trigram inverted index (the in-memory analogue of the GIN
-``gin_trgm_ops`` index), never a full O(n^2) pair scan.
+embedding cosine, context disambiguation - slot in as extra stages without reworking callers. The
+cascade only PROPOSES merges (``KgMergeSuggestion``); applying one is a separate, logged,
+reversible step (``KnowledgeGraphRepository.merge_entities``). Blocking is by ``entity_type``
+plus a shared-trigram inverted index (the in-memory analogue of the GIN ``gin_trgm_ops`` index),
+never a full O(n^2) pair scan.
 
 Known P0 limitation (by design): two DIFFERENT real-world entities with the same or near-identical
 name cannot be separated by any name-only signal; disambiguation by context/embeddings is P1+.
@@ -34,9 +45,23 @@ from doktok_contracts.schemas import KgEntity, KgMergeSuggestion
 
 from doktok_core.entities.ner import normalize_entity_name
 
-# Cascade method labels (also the `source` values persisted in kg_entity_aliases / merge log).
+# Cascade method labels (also the `source` values persisted in kg_entity_aliases / merge log;
+# both columns are free text since 0041, so new labels need no migration).
 METHOD_TOKEN_SET = "token_set"
+METHOD_TOKEN_SUBSET = "token_subset"
+METHOD_TOKEN_TYPO = "token_typo"
 METHOD_FUZZY_TRGM = "fuzzy_trgm"
+
+# Fixed suggestion scores for the deterministic name-structure stages. Chosen to slot between
+# token_set certainty (1.0) and the fuzzy tier (<= ~0.67 on the golden set) so the review queue
+# sorts subset > typo > trigram; neither is 1.0 because neither is certain - both are
+# LLM-adjudicated suggestions, never auto-merges.
+TOKEN_SUBSET_SCORE = 0.85
+TOKEN_TYPO_SCORE = 0.75
+
+# A typo-pair token must be at least this long: short tokens ("jo"/"ja", initials) are one edit
+# away from too many unrelated tokens for a DL<=1 signal to mean anything.
+_TYPO_MIN_TOKEN_LEN = 4
 
 # The fuzzy suggestion threshold, tuned on the golden set: the true-variant pairs
 # ('lucianhanga' 0.667, 'hanja lucian' 0.625, 'cosmin hanga lucian' 0.65) sit between 0.6 and 0.7,
@@ -75,6 +100,55 @@ def trigram_similarity(a: str, b: str) -> float:
     return shared / union if union else 0.0
 
 
+def _name_tokens(value: str) -> frozenset[str]:
+    """The name's token set under the same normalization as the sort key (``casefold``,
+    punctuation stripped, deduped) - the shared vocabulary of the token-structure stages."""
+    return frozenset(normalize_entity_name(value).split())
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """Damerau-Levenshtein distance <= 1, computed directly (no DP table needed at cap 1):
+    equal strings, one substitution, one ADJACENT transposition, or one insertion/deletion."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:
+        diffs = [i for i, (ca, cb) in enumerate(zip(a, b, strict=True)) if ca != cb]
+        if len(diffs) == 1:
+            return True  # one substitution
+        return (  # one adjacent transposition ("lucain" ~ "lucian")
+            len(diffs) == 2
+            and diffs[1] == diffs[0] + 1
+            and a[diffs[0]] == b[diffs[1]]
+            and a[diffs[1]] == b[diffs[0]]
+        )
+    shorter, longer = (a, b) if la < lb else (b, a)
+    prefix = 0
+    while prefix < len(shorter) and shorter[prefix] == longer[prefix]:
+        prefix += 1
+    return shorter[prefix:] == longer[prefix + 1 :]  # one insertion/deletion
+
+
+def is_typo_token_pair(a: str, b: str) -> bool:
+    """True when two DIFFERENT tokens look like a single-character typo of one name token.
+
+    Guards (#534, precision-first):
+    - both tokens ``len >= 4`` - short tokens are one edit from too many unrelated tokens;
+    - SAME FIRST CHARACTER - load-bearing: "gruber"/"huber" differ in the leading char and must
+      stay apart, while OCR errors ("hanja" ~ "hanga") rarely corrupt the leading char;
+    - Damerau-Levenshtein distance <= 1.
+    """
+    if a == b:
+        return False
+    if min(len(a), len(b)) < _TYPO_MIN_TOKEN_LEN:
+        return False
+    if a[0] != b[0]:
+        return False
+    return _within_one_edit(a, b)
+
+
 class MatchStage(Protocol):
     """One signal in the cascade: score a pair of normalized values, or pass (None)."""
 
@@ -97,8 +171,57 @@ class TokenSetStage:
 
 
 @dataclass(frozen=True)
+class TokenSubsetStage:
+    """Stage 2 (#533): one token set is a PROPER subset of the other, all shared tokens EXACT.
+
+    "lucian hanga" is proposed as a variant of "lucian cosmin hanga" (the shorter name folds
+    into the longer via ``canonical_preference``). Guardrail: the SMALLER name must have >= 2
+    tokens - a bare "hanga" carries too little identity and matches nothing here. Different
+    given names are excluded by construction ({lucian, hanga} is not a subset of
+    {daniel, hanga}). NOT a certain match: the suggestion is LLM-adjudicated, never auto-merged
+    ("lucian hanga" could still be a different person than "lucian cosmin hanga").
+    """
+
+    name: str = METHOD_TOKEN_SUBSET
+
+    def score(self, a_value: str, b_value: str) -> float | None:
+        ta, tb = _name_tokens(a_value), _name_tokens(b_value)
+        smaller, larger = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+        if len(smaller) >= 2 and smaller < larger:  # proper subset, no fuzz in this stage
+            return TOKEN_SUBSET_SCORE
+        return None
+
+
+@dataclass(frozen=True)
+class TokenTypoStage:
+    """Stage 3 (#534): token sets align 1:1 with exactly ONE single-character-typo pair.
+
+    Exact tokens pair off first; the leftovers must be exactly one token per side, and that pair
+    must satisfy ``is_typo_token_pair`` (len >= 4, DL <= 1, same first character). Catches the
+    OCR-ish "hanja lucian" ~ "lucian hanga" (token-sorted: hanja~hanga, exact lucian) while
+    "hans gruber" ~ "hans huber" stays apart (leading char differs). Guardrail: both names need
+    >= 2 tokens - single-token names ("meier"/"meyer") are too ambiguous for a typo-only signal.
+    LLM-adjudicated, never auto-merged. Initial-vs-full-token matching ("l. hanga") is
+    deliberately NOT attempted - too over-merge-prone for a deterministic stage.
+    """
+
+    name: str = METHOD_TOKEN_TYPO
+
+    def score(self, a_value: str, b_value: str) -> float | None:
+        ta, tb = _name_tokens(a_value), _name_tokens(b_value)
+        if len(ta) != len(tb) or len(ta) < 2:
+            return None
+        rest_a, rest_b = ta - tb, tb - ta  # equal sizes: the leftovers are the same count
+        if len(rest_a) != 1:
+            return None  # 0 leftovers is token_set's certain tier; >1 exceeds the typo budget
+        if is_typo_token_pair(next(iter(rest_a)), next(iter(rest_b))):
+            return TOKEN_TYPO_SCORE
+        return None
+
+
+@dataclass(frozen=True)
 class TrigramStage:
-    """Stage 2: word-order-insensitive trigram similarity at/above the threshold."""
+    """Stage 4: word-order-insensitive trigram similarity at/above the threshold."""
 
     threshold: float = SUGGESTION_THRESHOLD
     name: str = METHOD_FUZZY_TRGM
@@ -137,7 +260,12 @@ class MatchCascade:
     """The ordered stage cascade; the FIRST stage to fire labels the pair."""
 
     stages: tuple[MatchStage, ...] = field(
-        default_factory=lambda: (TokenSetStage(), TrigramStage())
+        default_factory=lambda: (
+            TokenSetStage(),
+            TokenSubsetStage(),
+            TokenTypoStage(),
+            TrigramStage(),
+        )
     )
 
     def score_pair(self, a: KgEntity, b: KgEntity) -> tuple[str, float] | None:

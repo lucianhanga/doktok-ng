@@ -962,8 +962,10 @@ class KnowledgeGraphRepository(Protocol):
 
         Blocking is by ``(tenant_id, entity_type)`` and trigram-index-backed (the ``%`` operator
         against the GIN index), NOT an O(n^2) tenant scan. Pairs at or above ``threshold`` are
-        labeled ``token_set`` (identical token-sort keys, score 1.0) or ``fuzzy_trgm``. Proposals
-        only - applying one is ``merge_entities``.
+        labeled by the first cascade stage that fires: ``token_set`` (identical token-sort keys,
+        score 1.0), ``token_subset`` (proper token subset, 0.85), ``token_typo`` (one
+        single-character-typo token pair, 0.75) or ``fuzzy_trgm``. Proposals only - applying one
+        is ``merge_entities``; only ``token_set`` is certain, everything else is LLM-adjudicated.
         """
         ...
 

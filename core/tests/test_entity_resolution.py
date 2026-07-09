@@ -1,9 +1,10 @@
 """Unit tests for the deterministic entity-resolution cascade (#508, Wave 1).
 
 Covers the pieces individually: the token-sort normalization, the pg_trgm-compatible trigram
-implementation, both cascade stages, the comparability guards in ``score_pair``, canonical
-preference, and ``propose`` (blocking, canonical-only, ordering, limit). The end-to-end
-precision/recall numbers live in ``test_entity_resolution_eval``.
+implementation, all four cascade stages (token_set, token_subset #533, token_typo #534,
+fuzzy_trgm), the comparability guards in ``score_pair``, canonical preference, and ``propose``
+(blocking, canonical-only, ordering, limit). The end-to-end precision/recall numbers live in
+``test_entity_resolution_eval``.
 """
 
 from __future__ import annotations
@@ -14,12 +15,19 @@ from doktok_core.entities.ner import normalize_entity_name
 from doktok_core.knowledge_graph.entity_resolution import (
     METHOD_FUZZY_TRGM,
     METHOD_TOKEN_SET,
+    METHOD_TOKEN_SUBSET,
+    METHOD_TOKEN_TYPO,
     SUGGESTION_THRESHOLD,
+    TOKEN_SUBSET_SCORE,
+    TOKEN_TYPO_SCORE,
     MatchCascade,
     TokenSetStage,
+    TokenSubsetStage,
+    TokenTypoStage,
     TrigramStage,
     canonical_preference,
     is_canonical,
+    is_typo_token_pair,
     trigram_set,
     trigram_similarity,
 )
@@ -98,6 +106,77 @@ def test_token_set_stage_fires_on_order_and_punctuation_variants() -> None:
     assert stage.score("lucian hanga", "lucianhanga") is None  # concatenation is the fuzzy tier
 
 
+def test_token_subset_stage_fires_on_proper_subset_names() -> None:
+    stage = TokenSubsetStage()
+    assert stage.score("lucian hanga", "lucian cosmin hanga") == TOKEN_SUBSET_SCORE
+    assert stage.score("lucian cosmin hanga", "lucian hanga") == TOKEN_SUBSET_SCORE  # symmetric
+    # Word order and punctuation are already normalized away by the token vocabulary.
+    assert stage.score("hanga,lucian", "hanga lucian cosmin") == TOKEN_SUBSET_SCORE
+
+
+def test_token_subset_stage_requires_two_tokens_on_the_smaller_side() -> None:
+    # A bare single-token surname is a proper subset of far too many names: must match nothing.
+    stage = TokenSubsetStage()
+    assert stage.score("hanga", "lucian hanga") is None
+    assert stage.score("lucian hanga", "hanga") is None
+    assert stage.score("hanga", "daniel dennis hanga") is None
+
+
+def test_token_subset_stage_rejects_equal_and_non_subset_sets() -> None:
+    stage = TokenSubsetStage()
+    # Equal token sets are stage 1's certain tier, not a subset.
+    assert stage.score("lucian hanga", "hanga lucian") is None
+    # Shared surname with different given names is NOT a subset - excluded by construction.
+    assert stage.score("lucian hanga", "daniel hanga") is None
+    # All shared tokens must be EXACT: the typo'd variant is not a subset of the full name.
+    assert stage.score("hanja lucian", "lucian cosmin hanga") is None
+    # Concatenations are a different token, not a subset (the fuzzy tier's job).
+    assert stage.score("lucianhanga", "lucian hanga") is None
+
+
+def test_is_typo_token_pair_guards() -> None:
+    assert is_typo_token_pair("hanja", "hanga")  # one substitution, same first char
+    assert is_typo_token_pair("lucain", "lucian")  # one adjacent transposition
+    assert is_typo_token_pair("hangaa", "hanga")  # one insertion
+    assert not is_typo_token_pair("hanga", "hanga")  # identical is not a typo
+    assert not is_typo_token_pair("gruber", "huber")  # different FIRST character (load-bearing)
+    assert not is_typo_token_pair("hanga", "janga")  # DL=1 but the leading char differs
+    assert not is_typo_token_pair("jo", "ja")  # too short to carry a typo signal
+    assert not is_typo_token_pair("hanja", "lucian")  # more than one edit apart
+
+
+def test_token_typo_stage_fires_on_exactly_one_typo_token_pair() -> None:
+    stage = TokenTypoStage()
+    # The OCR-ish golden pair: exact 'lucian', typo pair hanja~hanga (same first char).
+    assert stage.score("hanja lucian", "lucian hanga") == TOKEN_TYPO_SCORE
+    assert stage.score("lucian hanga", "hanja lucian") == TOKEN_TYPO_SCORE  # symmetric
+    assert stage.score("hanja lucian", "hanga,lucian") == TOKEN_TYPO_SCORE  # punctuation variant
+
+
+def test_token_typo_stage_first_char_guard_keeps_gruber_and_huber_apart() -> None:
+    # 'hans' pairs exactly; 'gruber'~'huber' differs in the LEADING character - the guard that
+    # separates different-surname people from OCR errors, which rarely corrupt the first char.
+    stage = TokenTypoStage()
+    assert stage.score("hans gruber", "hans huber") is None
+    # Same shape with a true DL=1 first-char substitution: still rejected.
+    assert stage.score("hans gruber", "hans kruber") is None
+
+
+def test_token_typo_stage_rejects_everything_outside_the_one_typo_budget() -> None:
+    stage = TokenTypoStage()
+    # Zero non-exact pairs = identical token sets: stage 1's job, not a typo.
+    assert stage.score("lucian hanga", "hanga lucian") is None
+    # Two typo pairs exceed the AT MOST ONE non-exact budget.
+    assert stage.score("hanja lucia", "hanga lucian") is None
+    # Different token counts cannot align 1:1.
+    assert stage.score("hanja", "lucian hanga") is None
+    assert stage.score("hanja lucian", "lucian cosmin hanga") is None
+    # Single-token names are too ambiguous for a typo-only signal.
+    assert stage.score("hanga", "hanja") is None
+    # The one non-exact pair must be a typo pair, not an arbitrary token swap.
+    assert stage.score("daniel hanga", "lucian hanga") is None
+
+
 def test_trigram_stage_fires_at_or_above_threshold_only() -> None:
     stage = TrigramStage()
     assert stage.score("lucian hanga", "lucianhanga") == pytest.approx(10 / 15)
@@ -121,6 +200,15 @@ def test_score_pair_first_firing_stage_labels_the_pair() -> None:
     assert cascade.score_pair(_entity("a", "lucian hanga"), _entity("b", "hanga,lucian")) == (
         METHOD_TOKEN_SET,
         1.0,
+    )
+    # The subset stage outranks the fuzzy tier for the middle-name variant...
+    assert cascade.score_pair(
+        _entity("a", "lucian hanga"), _entity("b", "lucian cosmin hanga")
+    ) == (METHOD_TOKEN_SUBSET, TOKEN_SUBSET_SCORE)
+    # ...and the typo stage outranks it for the single-typo variant.
+    assert cascade.score_pair(_entity("a", "hanja lucian"), _entity("b", "lucian hanga")) == (
+        METHOD_TOKEN_TYPO,
+        TOKEN_TYPO_SCORE,
     )
     decision = cascade.score_pair(_entity("a", "lucian hanga"), _entity("b", "lucianhanga"))
     assert decision is not None

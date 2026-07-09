@@ -27,6 +27,8 @@ from doktok_contracts.schemas import (
 from doktok_core.knowledge_graph.entity_resolution import (
     MatchCascade,
     TokenSetStage,
+    TokenSubsetStage,
+    TokenTypoStage,
     TrigramStage,
     is_canonical,
     trigram_similarity,
@@ -421,7 +423,16 @@ class InMemoryKnowledgeGraphRepository:
         threshold: float = 0.6,
         limit: int = 50,
     ) -> list[KgMergeSuggestion]:
-        cascade = MatchCascade(stages=(TokenSetStage(), TrigramStage(threshold=threshold)))
+        # The full deterministic cascade; `threshold` gates only the fuzzy trigram tier - the
+        # token-structure stages (subset/typo) carry fixed scores and their own guardrails.
+        cascade = MatchCascade(
+            stages=(
+                TokenSetStage(),
+                TokenSubsetStage(),
+                TokenTypoStage(),
+                TrigramStage(threshold=threshold),
+            )
+        )
         return cascade.propose(self.list_entities(tenant_id), limit=limit)
 
     def _canonical_root(self, tenant_id: str, entity: KgEntity) -> KgEntity:

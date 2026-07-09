@@ -349,7 +349,8 @@ def test_merge_suggestions_returns_candidates() -> None:
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body, list)
-    # "alice johnson" / "alice jonson" have trigram similarity 0.69 (above the 0.6 threshold)
+    # "alice johnson" / "alice jonson": exact 'alice' + johnson~jonson one-deletion pair, so
+    # the cascade proposes the pair (token_typo, #534; trigram 0.69 would also clear 0.6).
     assert len(body) >= 1
     first = body[0]
     assert "canonical_id" in first and "alias_id" in first

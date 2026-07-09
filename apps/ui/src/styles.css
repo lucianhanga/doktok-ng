@@ -5423,20 +5423,20 @@ tr.row-selected {
 }
 
 .kg-merge-direction {
+  /* Give the entity values the full card width and let them wrap, so the whole value is shown
+     (e.g. "sapporobogen 6 muenchen") instead of being clipped. The meta/actions wrap below. */
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.3rem;
-  flex: 1 1 auto;
+  gap: 0.2rem 0.3rem;
+  flex: 1 1 100%;
   min-width: 0;
 }
 
 .kg-merge-alias {
   font-weight: 500;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 10rem;
+  overflow-wrap: anywhere;
 }
 
 .kg-merge-arrow {
@@ -5446,10 +5446,7 @@ tr.row-selected {
 
 .kg-merge-canonical {
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 10rem;
+  overflow-wrap: anywhere;
 }
 
 .kg-merge-meta {

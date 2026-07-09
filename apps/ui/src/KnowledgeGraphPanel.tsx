@@ -274,6 +274,14 @@ export function KnowledgeGraphPanel({
   const [splitPending, setSplitPending] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
 
+  // Manual-merge state: pick another same-type entity to fold into the selected node (#kg-manual).
+  const [mergePickerOpen, setMergePickerOpen] = useState(false);
+  const [mergeQuery, setMergeQuery] = useState("");
+  const [mergeCandidates, setMergeCandidates] = useState<KgEntity[]>([]);
+  const [mergeSearching, setMergeSearching] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState<KgEntity | null>(null); // confirm step
+  const [mergePending, setMergePending] = useState(false);
+
   // Canvas sizing
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(600);
@@ -383,6 +391,32 @@ export function KnowledgeGraphPanel({
       });
     return () => controller.abort();
   }, [selectedType, selectedValue]);
+
+  // Manual-merge candidate search: same-type entities matching the query, excluding the selection.
+  const selectedId = selectedNode?.entity.id ?? null;
+  useEffect(() => {
+    if (!mergePickerOpen || !selectedType || !selectedId) return;
+    const controller = new AbortController();
+    setMergeSearching(true);
+    const timer = setTimeout(() => {
+      fetchKgNodes({ type: selectedType, q: mergeQuery, limit: 20 }, controller.signal)
+        .then(nodes => {
+          if (!controller.signal.aborted) {
+            setMergeCandidates(nodes.filter(n => n.id !== selectedId));
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setMergeCandidates([]);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setMergeSearching(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [mergePickerOpen, mergeQuery, selectedType, selectedId]);
 
   // Suggestions with client-side rejected aliases filtered out
   const visibleSuggestions = useMemo(
@@ -692,6 +726,43 @@ export function KnowledgeGraphPanel({
       setSplitError(err instanceof Error ? err.message : "Split failed.");
     } finally {
       setSplitPending(false);
+    }
+  }
+
+  function openMergePicker(): void {
+    setMergePickerOpen(true);
+    setMergeQuery("");
+    setMergeCandidates([]);
+    setMergeTarget(null);
+  }
+
+  function closeMergePicker(): void {
+    setMergePickerOpen(false);
+    setMergeTarget(null);
+  }
+
+  async function handleManualMerge(): Promise<void> {
+    if (!selectedNode || !mergeTarget) return;
+    setMergePending(true);
+    try {
+      // Fold the SELECTED (wrong) entity INTO the picked (correct) one: picked = canonical.
+      // Reversible via Split.
+      await mergeEntities(mergeTarget.id, selectedNode.entity.id, "manual");
+      setMergeMsg({
+        text: `Merged "${selectedNode.entity.normalized_value}" into "${mergeTarget.normalized_value}".`,
+        isError: false,
+      });
+      setTimeout(() => setMergeMsg(null), 3000);
+      closeMergePicker();
+      loadNeighborhood(mergeTarget.id); // focus the surviving (correct) canonical
+    } catch (err) {
+      setMergeMsg({
+        text: err instanceof Error ? err.message : "Merge failed.",
+        isError: true,
+      });
+      setTimeout(() => setMergeMsg(null), 4000);
+    } finally {
+      setMergePending(false);
     }
   }
 
@@ -1209,6 +1280,76 @@ export function KnowledgeGraphPanel({
                   <p role="alert" className="kg-status status-error">
                     {splitError}
                   </p>
+                )}
+
+                {/* Manual merge: fold another same-type entity into this one (not auto-suggested). */}
+                {!mergePickerOpen ? (
+                  <button type="button" className="kg-split-btn" onClick={openMergePicker}>
+                    Merge into...
+                  </button>
+                ) : mergeTarget ? (
+                  <div className="kg-split-confirm">
+                    <span className="kg-split-warn">
+                      Merge &quot;{selectedNode.entity.normalized_value}&quot; into &quot;
+                      {mergeTarget.normalized_value}&quot;?
+                    </span>
+                    <button
+                      type="button"
+                      className="kg-split-btn confirm"
+                      disabled={mergePending}
+                      onClick={() => void handleManualMerge()}
+                    >
+                      {mergePending ? "Merging..." : "Merge"}
+                    </button>
+                    <button
+                      type="button"
+                      className="kg-split-btn cancel"
+                      disabled={mergePending}
+                      onClick={() => setMergeTarget(null)}
+                    >
+                      Back
+                    </button>
+                  </div>
+                ) : (
+                  <div className="kg-merge-picker">
+                    <input
+                      type="search"
+                      className="kg-merge-search"
+                      placeholder={`Find the correct ${typeMeta(selectedNode.entity.entity_type).label} to merge into...`}
+                      aria-label="Search for the correct entity to merge this one into"
+                      value={mergeQuery}
+                      onChange={e => setMergeQuery(e.target.value)}
+                    />
+                    {mergeSearching ? (
+                      <p className="kg-status muted">Searching...</p>
+                    ) : mergeCandidates.length === 0 ? (
+                      <p className="kg-status muted">
+                        {mergeQuery ? "No matches." : "Type to search."}
+                      </p>
+                    ) : (
+                      <ul className="kg-merge-candidates">
+                        {mergeCandidates.map(c => (
+                          <li key={c.id}>
+                            <button
+                              type="button"
+                              className="kg-merge-cand"
+                              title={c.normalized_value}
+                              onClick={() => setMergeTarget(c)}
+                            >
+                              {c.normalized_value}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <button
+                      type="button"
+                      className="kg-split-btn cancel"
+                      onClick={closeMergePicker}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

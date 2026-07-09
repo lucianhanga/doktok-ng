@@ -10,7 +10,7 @@ fuzzy_trgm), the comparability guards in ``score_pair``, canonical preference, a
 from __future__ import annotations
 
 import pytest
-from doktok_contracts.schemas import EntityType, KgEntity
+from doktok_contracts.schemas import EntityType, KgEntity, KgMergeSuggestion
 from doktok_core.entities.ner import normalize_entity_name
 from doktok_core.knowledge_graph.entity_resolution import (
     METHOD_FUZZY_TRGM,
@@ -29,6 +29,7 @@ from doktok_core.knowledge_graph.entity_resolution import (
     differs_only_by_ordinal,
     is_canonical,
     is_typo_token_pair,
+    retarget_to_cluster_root,
     trigram_set,
     trigram_similarity,
 )
@@ -314,3 +315,66 @@ def test_propose_direction_follows_canonical_preference() -> None:
     assert len(suggestions) == 1
     assert suggestions[0].canonical_value == "lucian cosmin hanga"
     assert suggestions[0].alias_value == "lucian hanga"
+
+
+# ------------------------------------------------------------------ retarget_to_cluster_root
+
+
+def _sugg(
+    canonical_id: str,
+    canonical_value: str,
+    alias_id: str,
+    alias_value: str,
+    method: str,
+    score: float,
+) -> KgMergeSuggestion:
+    return KgMergeSuggestion(
+        tenant_id="t1",
+        entity_type=EntityType.PERSON,
+        canonical_id=canonical_id,
+        canonical_value=canonical_value,
+        alias_id=alias_id,
+        alias_value=alias_value,
+        method=method,
+        score=score,
+    )
+
+
+def test_retarget_points_chain_at_terminal_canonical() -> None:
+    # hanja lucian -> lucian hanga (typo) and lucian hanga -> lucian cosmin hanga (subset):
+    # the OCR variant must end up pointing at terminal "lucian cosmin hanga", not "lucian hanga".
+    suggestions = [
+        _sugg("lch", "lucian cosmin hanga", "lh", "lucian hanga", "token_subset", 0.85),
+        _sugg("lch", "lucian cosmin hanga", "ch", "cosmin hanga", "token_subset", 0.85),
+        _sugg("lh", "lucian hanga", "hj", "hanja lucian", "token_typo", 0.75),
+    ]
+    out = retarget_to_cluster_root(suggestions)
+    # Every alias now points at the most-complete name.
+    assert {s.canonical_value for s in out} == {"lucian cosmin hanga"}
+    targets = {s.alias_value: s.method for s in out}
+    assert targets == {
+        "lucian hanga": "token_subset",
+        "cosmin hanga": "token_subset",
+        "hanja lucian": "token_typo",  # re-pointed from 'lucian hanga', keeps its own method
+    }
+
+
+def test_retarget_leaves_a_simple_pair_unchanged() -> None:
+    pair = [_sugg("lch", "lucian cosmin hanga", "lh", "lucian hanga", "token_subset", 0.85)]
+    out = retarget_to_cluster_root(pair)
+    assert len(out) == 1
+    assert out[0].canonical_value == "lucian cosmin hanga"
+    assert out[0].alias_value == "lucian hanga"
+
+
+def test_retarget_keeps_disjoint_clusters_separate() -> None:
+    suggestions = [
+        _sugg("lch", "lucian cosmin hanga", "lh", "lucian hanga", "token_subset", 0.85),
+        _sugg("vcc", "viviana cornelia cotirlea", "vc", "viviana cornelia", "token_subset", 0.85),
+    ]
+    out = retarget_to_cluster_root(suggestions)
+    assert {s.canonical_value for s in out} == {
+        "lucian cosmin hanga",
+        "viviana cornelia cotirlea",
+    }
+    assert len(out) == 2

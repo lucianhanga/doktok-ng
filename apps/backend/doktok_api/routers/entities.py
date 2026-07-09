@@ -22,6 +22,7 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.knowledge_graph.adjudication import adjudicate_suggestions
+from doktok_core.knowledge_graph.entity_resolution import retarget_to_cluster_root
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -99,7 +100,10 @@ def list_merge_suggestions(
     suggestions = kg.list_merge_suggestions(tenant.tenant_id, limit=limit)
     if adjudicator is not None:
         suggestions = adjudicate_suggestions(suggestions, kg, adjudicator, limit=limit)
-    return suggestions
+    # Re-point one-hop chains at the terminal canonical AFTER adjudication (so a dropped fuzzy link
+    # can't bridge a cluster): "hanja lucian" -> "lucian cosmin hanga", not "-> lucian hanga" (#566
+    # follow-up).
+    return retarget_to_cluster_root(suggestions)
 
 
 @router.get("/nodes", response_model=list[KgEntity])

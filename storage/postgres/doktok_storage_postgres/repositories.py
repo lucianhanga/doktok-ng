@@ -17,6 +17,7 @@ from doktok_contracts.schemas import (
     AggregationResult,
     AiSettings,
     AliasFold,
+    ApiToken,
     AuditEvent,
     Category,
     CategoryCoOccurrence,
@@ -59,10 +60,13 @@ from doktok_contracts.schemas import (
     RecordTypeCount,
     SortDir,
     StatsSummary,
+    Tenant,
     TokenMatch,
+    TokenResolution,
     TokenSuggestion,
     TraceStep,
     TurnMetrics,
+    User,
 )
 from doktok_core.knowledge_graph.entity_resolution import (
     METHOD_FUZZY_TRGM,
@@ -3245,3 +3249,87 @@ class PostgresMemoryRepository:
         with self._db.connection() as conn:
             cur = conn.execute("DELETE FROM chat_memories WHERE tenant_id=%s", (tenant_id,))
             return cur.rowcount
+
+
+class PostgresTenantRegistry:
+    """DB-backed tenant/user/api-token registry (#554, ADR-0008).
+
+    ``resolve_token`` is the request hot path: an indexed lookup on ``token_sha256`` filtered to
+    live (non-revoked) tokens, touching ``last_used_at`` as a side effect. Provisioning methods are
+    the minimal seams the resolver and future auth/admin flows (#555/#559) need.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def resolve_token(self, token_sha256: str) -> TokenResolution | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "UPDATE api_tokens SET last_used_at=now() "
+                "WHERE token_sha256=%s AND revoked_at IS NULL "
+                "RETURNING tenant_id, user_id",
+                (token_sha256,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TokenResolution(tenant_id=row["tenant_id"], user_id=row["user_id"])
+
+    def create_tenant(self, tenant: Tenant) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO tenants (id, name, status) VALUES (%s, %s, %s) "
+                "ON CONFLICT (id) DO NOTHING",
+                (tenant.id, tenant.name, tenant.status),
+            )
+
+    def get_tenant(self, tenant_id: str) -> Tenant | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id, name, status, created_at FROM tenants WHERE id=%s",
+                (tenant_id,),
+            ).fetchone()
+        return Tenant(**row) if row else None
+
+    def create_user(self, user: User) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO users (id, tenant_id, email, display_name, status) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (user.id, user.tenant_id, user.email, user.display_name, user.status),
+            )
+
+    def get_user(self, tenant_id: str, user_id: str) -> User | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id, tenant_id, email, display_name, status, created_at "
+                "FROM users WHERE tenant_id=%s AND id=%s",
+                (tenant_id, user_id),
+            ).fetchone()
+        return User(**row) if row else None
+
+    def create_api_token(self, token: ApiToken) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO api_tokens "
+                "(id, tenant_id, user_id, token_sha256, token_prefix, name) "
+                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (
+                    token.id,
+                    token.tenant_id,
+                    token.user_id,
+                    token.token_sha256,
+                    token.token_prefix,
+                    token.name,
+                ),
+            )
+
+    def revoke_api_token(self, tenant_id: str, token_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE api_tokens SET revoked_at=now() "
+                "WHERE tenant_id=%s AND id=%s AND revoked_at IS NULL",
+                (tenant_id, token_id),
+            )

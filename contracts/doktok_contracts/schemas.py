@@ -129,9 +129,59 @@ class EntityType(StrEnum):
 
 
 class TenantContext(BaseModel):
-    """The authenticated caller's tenant (ADR-0008)."""
+    """The authenticated caller's tenant (ADR-0008).
+
+    ``user_id`` is populated when the request authenticated via a user-scoped DB token (#554);
+    it is ``None`` for the static env-map fallback and for tenant-scoped tokens without a user.
+    """
 
     tenant_id: str
+    user_id: str | None = None
+
+
+class Tenant(BaseModel):
+    """A tenant - the unit of data isolation (ADR-0007). Registry row (#554)."""
+
+    id: str
+    name: str
+    status: str = "active"  # active | suspended
+    created_at: datetime | None = None
+
+
+class User(BaseModel):
+    """A user within a tenant (#554 registry). Credentials/sessions are wired in #555."""
+
+    id: str
+    tenant_id: str
+    email: str
+    display_name: str = ""
+    status: str = "active"  # active | deactivated
+    created_at: datetime | None = None
+
+
+class ApiToken(BaseModel):
+    """A hashed, revocable bearer token resolving to a tenant (+ optional user), ADR-0008 (#554).
+
+    The plaintext token is never persisted; ``token_sha256`` is the lookup key and ``token_prefix``
+    is a short display fragment only. A token is valid when ``revoked_at`` is ``None``.
+    """
+
+    id: str
+    tenant_id: str
+    user_id: str | None = None
+    token_sha256: str
+    token_prefix: str = ""
+    name: str = ""
+    created_at: datetime | None = None
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class TokenResolution(BaseModel):
+    """The tenant (and optional user) a presented bearer token resolves to (#554)."""
+
+    tenant_id: str
+    user_id: str | None = None
 
 
 class Document(BaseModel):

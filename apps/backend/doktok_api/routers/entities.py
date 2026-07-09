@@ -222,11 +222,13 @@ def merge_entity(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="cannot merge an entity into itself",
         )
-    if kg.get_entity(tenant.tenant_id, canonical_id) is None:
+    canonical = kg.get_entity(tenant.tenant_id, canonical_id)
+    if canonical is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="canonical entity not found"
         )
-    if kg.get_entity(tenant.tenant_id, body.alias_id) is None:
+    alias = kg.get_entity(tenant.tenant_id, body.alias_id)
+    if alias is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alias entity not found")
     kg.merge_entities(
         tenant.tenant_id,
@@ -244,7 +246,8 @@ def merge_entity(
         actor_kind="user",
         record_kind="entity",
         record_id=canonical_id,
-        description=f"entity {body.alias_id} merged into {canonical_id}",
+        # Human-readable: entity NAMES in the description; the ids live in details (row detail).
+        description=f'"{alias.normalized_value}" merged into "{canonical.normalized_value}"',
         details={"canonical_id": canonical_id, "alias_id": body.alias_id, "method": body.method},
     )
     result = kg.get_entity(tenant.tenant_id, canonical_id)
@@ -269,12 +272,14 @@ def split_entity(
     Returns 404 when ``alias_id`` is unknown or is not currently a merged alias.
     One ``entity.split`` audit event is written on success.
     """
+    node = kg.get_entity(tenant.tenant_id, alias_id)  # capture the name before it changes
     ok = kg.split_entity(tenant.tenant_id, alias_id, actor="user")
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="entity is not a merged alias or does not exist",
         )
+    name = node.normalized_value if node else alias_id
     record_activity(
         audit,
         tenant.tenant_id,
@@ -283,7 +288,7 @@ def split_entity(
         actor_kind="user",
         record_kind="entity",
         record_id=alias_id,
-        description=f"entity {alias_id} split from its canonical",
+        description=f'"{name}" split from its canonical',
         details={"alias_id": alias_id},
     )
     return SplitEntityResponse(status="split")

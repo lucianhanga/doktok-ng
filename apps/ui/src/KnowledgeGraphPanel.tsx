@@ -3,6 +3,7 @@ import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
 
 import {
+  fetchEntityDocuments,
   fetchKgNeighborhood,
   fetchKgNodes,
   fetchKgStats,
@@ -10,6 +11,7 @@ import {
   mergeEntities,
   rejectMergeSuggestion,
   splitEntity,
+  type DokDocument,
   type KgEdge,
   type KgEntity,
   type KgMergeSuggestion,
@@ -225,7 +227,11 @@ function canvasColors() {
 
 // ---- Component ----
 
-export function KnowledgeGraphPanel(): JSX.Element {
+export function KnowledgeGraphPanel({
+  onOpenDocument,
+}: {
+  onOpenDocument?: (documentId: string) => void;
+} = {}): JSX.Element {
   // Graph state -- rebuilt from refs on each neighborhood merge
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphLink[]>([]);
@@ -236,6 +242,10 @@ export function KnowledgeGraphPanel(): JSX.Element {
   const [selectedNode, setSelectedNode] = useState<{ entity: KgEntity; edges: KgEdge[] } | null>(
     null,
   );
+  // Documents containing the selected entity (fetched on selection).
+  const [entityDocs, setEntityDocs] = useState<DokDocument[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [docsError, setDocsError] = useState<string | null>(null);
 
   // Left entity rail state
   const [entityRail, setEntityRail] = useState<KgEntity[]>([]);
@@ -314,6 +324,33 @@ export function KnowledgeGraphPanel(): JSX.Element {
       g.d3ReheatSimulation();
     }
   }, [spread, graphNodes, reduced]);
+
+  // Documents containing the selected entity: fetched whenever the selection changes (#kg-docs).
+  const selectedType = selectedNode?.entity.entity_type ?? null;
+  const selectedValue = selectedNode?.entity.normalized_value ?? null;
+  useEffect(() => {
+    if (!selectedType || !selectedValue) {
+      setEntityDocs([]);
+      setDocsError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setDocsLoading(true);
+    setDocsError(null);
+    fetchEntityDocuments(selectedType, selectedValue, controller.signal)
+      .then(docs => {
+        if (!controller.signal.aborted) setEntityDocs(docs);
+      })
+      .catch(err => {
+        if (!controller.signal.aborted) {
+          setDocsError(err instanceof Error ? err.message : "Could not load documents.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDocsLoading(false);
+      });
+    return () => controller.abort();
+  }, [selectedType, selectedValue]);
 
   // Suggestions with client-side rejected aliases filtered out
   const visibleSuggestions = useMemo(
@@ -1063,6 +1100,38 @@ export function KnowledgeGraphPanel(): JSX.Element {
                             {"×"}
                             {edge.evidence_count}
                           </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              {/* Documents containing this entity */}
+              <h4 className="kg-detail-section-label">Documents ({entityDocs.length})</h4>
+              {docsLoading ? (
+                <p className="kg-status muted">Loading documents...</p>
+              ) : docsError ? (
+                <p className="kg-status status-error">{docsError}</p>
+              ) : entityDocs.length === 0 ? (
+                <p className="kg-status muted">No documents.</p>
+              ) : (
+                <ul className="kg-doc-list">
+                  {entityDocs.map(doc => {
+                    const name = doc.title || doc.original_filename;
+                    return (
+                      <li key={doc.id} className="kg-doc-item">
+                        {onOpenDocument ? (
+                          <button
+                            type="button"
+                            className="kg-doc-link"
+                            title={doc.original_filename}
+                            onClick={() => onOpenDocument(doc.id)}
+                          >
+                            {name}
+                          </button>
+                        ) : (
+                          <span title={doc.original_filename}>{name}</span>
                         )}
                       </li>
                     );

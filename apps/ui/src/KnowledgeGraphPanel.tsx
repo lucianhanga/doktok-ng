@@ -165,6 +165,12 @@ interface GraphLink {
   predicate: string;
 }
 
+/** A link endpoint id, whether it is still a string id or already a resolved node object. */
+function resolveEndpointId(link: LinkObject, end: "source" | "target"): string {
+  const v = (link as unknown as Record<string, unknown>)[end];
+  return typeof v === "string" ? v : String((v as { id?: string })?.id ?? "");
+}
+
 // ---- Pure helper: label set ----
 
 /**
@@ -239,6 +245,8 @@ export function KnowledgeGraphPanel({
   const [graphEdges, setGraphEdges] = useState<GraphLink[]>([]);
   const [graphTotal, setGraphTotal] = useState(0); // node count BEFORE cap enforcement
   const [focusId, setFocusId] = useState<string | null>(null);
+  // Entities the user has explicitly added to the graph (shown as removable/focusable chips).
+  const [focusRoots, setFocusRoots] = useState<{ id: string; label: string }[]>([]);
   const [focusLoading, setFocusLoading] = useState(false);
   const [focusError, setFocusError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<{ entity: KgEntity; edges: KgEdge[] } | null>(
@@ -363,12 +371,48 @@ export function KnowledgeGraphPanel({
 
   function linkVisible(link: LinkObject): boolean {
     if (hiddenTypes.size === 0) return true;
-    const resolve = (v: unknown): string =>
-      typeof v === "string" ? v : String((v as { id?: string })?.id ?? "");
-    const l = link as unknown as { source: unknown; target: unknown };
-    const st = nodeTypeById.get(resolve(l.source));
-    const tt = nodeTypeById.get(resolve(l.target));
+    const st = nodeTypeById.get(resolveEndpointId(link, "source"));
+    const tt = nodeTypeById.get(resolveEndpointId(link, "target"));
     return !(st && hiddenTypes.has(st)) && !(tt && hiddenTypes.has(tt));
+  }
+
+  // Hover focus+context: hovering a node fades everything outside its 1-hop neighborhood. Kept in
+  // a ref (read by the canvas draw loop each frame) so it doesn't trigger a React re-render.
+  const hoverRef = useRef<{ active: boolean; id: string; ids: Set<string> }>({
+    active: false,
+    id: "",
+    ids: new Set(),
+  });
+  const adjacency = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    const link = (a: string, b: string) => {
+      if (!map.has(a)) map.set(a, new Set());
+      map.get(a)!.add(b);
+    };
+    for (const e of graphEdges) {
+      const s = typeof e.source === "string" ? e.source : String((e.source as { id?: string })?.id ?? "");
+      const t = typeof e.target === "string" ? e.target : String((e.target as { id?: string })?.id ?? "");
+      link(s, t);
+      link(t, s);
+    }
+    return map;
+  }, [graphEdges]);
+
+  function handleNodeHover(node: NodeObject | null): void {
+    if (!node) {
+      hoverRef.current = { active: false, id: "", ids: new Set() };
+      return;
+    }
+    const id = String(node.id ?? "");
+    hoverRef.current = {
+      active: true,
+      id,
+      ids: new Set<string>([id, ...(adjacency.get(id) ?? [])]),
+    };
+  }
+
+  function isFaded(id: string): boolean {
+    return hoverRef.current.active && !hoverRef.current.ids.has(id);
   }
 
   // Documents containing the selected entity: resolved by NODE ID via mentions, so a merged/folded
@@ -625,7 +669,64 @@ export function KnowledgeGraphPanel({
   }
 
   function handleFocus(entity: KgEntity): void {
+    const label = entityDisplayName(entity);
+    setFocusRoots(prev =>
+      prev.some(r => r.id === entity.id) ? prev : [...prev, { id: entity.id, label }],
+    );
     loadNeighborhood(entity.id);
+  }
+
+  /** Rebuild the graph arrays from the current refs, marking `focus` as the focused node. */
+  function rebuildFromRefs(focus: string | null): void {
+    setGraphNodes(
+      [...nodeDataRef.current.entries()].map(([nid, data]) => ({
+        id: nid,
+        entityType: data.entityType,
+        label: data.label,
+        val: nid === focus ? 8 : 5,
+        color: typeColor(data.entityType),
+        focus: nid === focus,
+        addedAt: data.addedAt,
+      })),
+    );
+    setGraphEdges(
+      [...edgeDataRef.current.entries()].map(([eid, data]) => ({
+        id: eid,
+        source: data.srcId,
+        target: data.dstId,
+        predicate: data.predicate,
+      })),
+    );
+  }
+
+  /** ○ chip: re-focus (and highlight) an already-added entity. */
+  function focusChip(id: string): void {
+    loadNeighborhood(id);
+  }
+
+  /** × chip: remove an added entity's node + its edges from the graph, pruning orphaned neighbors. */
+  function removeChip(id: string): void {
+    nodeDataRef.current.delete(id);
+    for (const [eid, ed] of [...edgeDataRef.current.entries()]) {
+      if (ed.srcId === id || ed.dstId === id) edgeDataRef.current.delete(eid);
+    }
+    // Prune neighbors left with no edges and not themselves an added root.
+    const rootIds = new Set(focusRoots.filter(r => r.id !== id).map(r => r.id));
+    const connected = new Set<string>();
+    for (const ed of edgeDataRef.current.values()) {
+      connected.add(ed.srcId);
+      connected.add(ed.dstId);
+    }
+    for (const nid of [...nodeDataRef.current.keys()]) {
+      if (!connected.has(nid) && !rootIds.has(nid)) nodeDataRef.current.delete(nid);
+    }
+    setFocusRoots(prev => prev.filter(r => r.id !== id));
+    setGraphTotal(nodeDataRef.current.size);
+    if (focusId === id) {
+      setFocusId(null);
+      setSelectedNode(null);
+    }
+    rebuildFromRefs(focusId === id ? null : focusId);
   }
 
   function handleNodeClick(node: NodeObject): void {
@@ -675,6 +776,7 @@ export function KnowledgeGraphPanel({
     setGraphEdges([]);
     setGraphTotal(0);
     setFocusId(null);
+    setFocusRoots([]);
     setSelectedNode(null);
     setFocusError(null);
     setSpread(SPREAD_DEFAULT); // also releases any drag-pinned nodes (graph is rebuilt fresh)
@@ -874,6 +976,10 @@ export function KnowledgeGraphPanel({
     const r = Math.sqrt(Math.max(0, n.val ?? 5)) * 2;
     const tier = tierRef.current;
 
+    // Hover focus+context: fade nodes outside the hovered node's neighborhood.
+    ctx.save();
+    if (isFaded(n.id)) ctx.globalAlpha = 0.15;
+
     // Focus halo
     if (n.focus) {
       ctx.beginPath();
@@ -929,6 +1035,7 @@ export function KnowledgeGraphPanel({
       ctx.fillStyle = ink;
       ctx.fillText(lbl, n.x, ly + pad);
     }
+    ctx.restore(); // end hover-fade globalAlpha
   }
 
   function linkCanvasObject(
@@ -970,8 +1077,13 @@ export function KnowledgeGraphPanel({
     ctx.fillText(l.predicate, (sx + tx) / 2, (sy + ty) / 2);
   }
 
-  function linkColor(): string {
-    return canvasColors().link;
+  function linkColor(link: LinkObject): string {
+    const base = canvasColors().link;
+    if (!hoverRef.current.active) return base;
+    const touchesHover =
+      resolveEndpointId(link, "source") === hoverRef.current.id ||
+      resolveEndpointId(link, "target") === hoverRef.current.id;
+    return touchesHover ? base : "rgba(140, 140, 140, 0.06)";
   }
 
   // ---- Detail rail helpers ----
@@ -1133,6 +1245,36 @@ export function KnowledgeGraphPanel({
             </div>
           )}
 
+          {focusRoots.length > 0 && (
+            <ul className="kg-chips" aria-label="Entities in the graph">
+              {focusRoots.map(root => (
+                <li key={root.id} className="kg-chip">
+                  <button
+                    type="button"
+                    className="kg-chip-focus"
+                    aria-label={`Focus ${root.label}`}
+                    title="Focus / highlight"
+                    onClick={() => focusChip(root.id)}
+                  >
+                    {"○"}
+                  </button>
+                  <span className="kg-chip-label" title={root.label}>
+                    {root.label}
+                  </span>
+                  <button
+                    type="button"
+                    className="kg-chip-remove"
+                    aria-label={`Remove ${root.label} from the graph`}
+                    title="Remove"
+                    onClick={() => removeChip(root.id)}
+                  >
+                    {"×"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {cappedMessage && (
             <p className="kg-cap-warning" aria-live="polite">
               {cappedMessage}
@@ -1173,6 +1315,7 @@ export function KnowledgeGraphPanel({
                 onEngineStop={() => graphRef.current?.zoomToFit(reduced ? 0 : 400, 40)}
                 nodeVisibility={nodeVisible}
                 linkVisibility={linkVisible}
+                onNodeHover={handleNodeHover}
                 onNodeClick={handleNodeClick}
                 onBackgroundClick={handleBackgroundClick}
                 onZoom={handleZoom}
@@ -1284,19 +1427,19 @@ export function KnowledgeGraphPanel({
                 </ul>
               )}
 
-              {/* Split action — allows undoing a prior merge on this entity */}
+              {/* Unmerge action — reverses a prior merge on this entity (was "Split") */}
               <div className="kg-split-section">
                 <h4 className="kg-detail-section-label">Identity</h4>
                 {splitConfirmId === selectedNode.entity.id ? (
                   <div className="kg-split-confirm">
-                    <span className="kg-split-warn">Undo merge on this entity?</span>
+                    <span className="kg-split-warn">Undo the merge on this entity?</span>
                     <button
                       type="button"
                       className="kg-split-btn confirm"
                       disabled={splitPending}
                       onClick={() => void handleSplitConfirm()}
                     >
-                      {splitPending ? "Splitting..." : "Yes, split"}
+                      {splitPending ? "Unmerging..." : "Yes, unmerge"}
                     </button>
                     <button
                       type="button"
@@ -1313,7 +1456,7 @@ export function KnowledgeGraphPanel({
                     className="kg-split-btn"
                     onClick={() => handleSplitRequest(selectedNode.entity.id)}
                   >
-                    Split
+                    Unmerge
                   </button>
                 )}
                 {splitError && (

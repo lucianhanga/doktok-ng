@@ -5343,6 +5343,52 @@ tr.row-selected {
   color: var(--text-muted, var(--text));
   margin-left: 0.2rem;
 }
+.kg-chips {
+  list-style: none;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.kg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 220px;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.76rem;
+}
+.kg-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kg-chip-focus,
+.kg-chip-remove {
+  border: none;
+  background: none;
+  padding: 0 0.1rem;
+  color: var(--text-muted, var(--text));
+  cursor: pointer;
+  line-height: 1;
+  font: inherit;
+}
+.kg-chip-remove {
+  font-weight: 700;
+}
+.kg-chip-focus:hover,
+.kg-chip-remove:hover {
+  color: var(--accent, #1d6fa8);
+}
+.kg-chip-focus:focus-visible,
+.kg-chip-remove:focus-visible {
+  outline: 2px solid var(--accent, #1d6fa8);
+  outline-offset: 1px;
+}
 .kg-spread input[type="range"] {
   width: 84px;
   accent-color: var(--accent, #1d6fa8);

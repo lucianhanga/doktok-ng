@@ -683,7 +683,7 @@ describe("KnowledgeGraphPanel - split action", () => {
     fireEvent.click(screen.getByText("Alice"));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Split" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Unmerge" })).toBeInTheDocument();
     });
   });
 
@@ -693,13 +693,13 @@ describe("KnowledgeGraphPanel - split action", () => {
     await waitFor(() => screen.getByText("Alice"));
 
     fireEvent.click(screen.getByText("Alice"));
-    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+    await waitFor(() => screen.getByRole("button", { name: "Unmerge" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Split" }));
+    fireEvent.click(screen.getByRole("button", { name: "Unmerge" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Undo merge on this entity/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Yes, split/i })).toBeInTheDocument();
+      expect(screen.getByText(/Undo the merge on this entity/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Yes, unmerge/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
   });
@@ -710,16 +710,16 @@ describe("KnowledgeGraphPanel - split action", () => {
     await waitFor(() => screen.getByText("Alice"));
 
     fireEvent.click(screen.getByText("Alice"));
-    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+    await waitFor(() => screen.getByRole("button", { name: "Unmerge" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Split" }));
-    await waitFor(() => screen.getByRole("button", { name: /Yes, split/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Unmerge" }));
+    await waitFor(() => screen.getByRole("button", { name: /Yes, unmerge/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     await waitFor(() => {
-      expect(screen.queryByText(/Undo merge on this entity/i)).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Split" })).toBeInTheDocument();
+      expect(screen.queryByText(/Undo the merge on this entity/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Unmerge" })).toBeInTheDocument();
     });
   });
 
@@ -729,12 +729,12 @@ describe("KnowledgeGraphPanel - split action", () => {
     await waitFor(() => screen.getByText("Alice"));
 
     fireEvent.click(screen.getByText("Alice"));
-    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+    await waitFor(() => screen.getByRole("button", { name: "Unmerge" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Split" }));
-    await waitFor(() => screen.getByRole("button", { name: /Yes, split/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Unmerge" }));
+    await waitFor(() => screen.getByRole("button", { name: /Yes, unmerge/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: /Yes, split/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Yes, unmerge/i }));
 
     await waitFor(() => {
       const splitCalls = (
@@ -746,7 +746,7 @@ describe("KnowledgeGraphPanel - split action", () => {
 
     // Confirm prompt disappears on success
     await waitFor(() => {
-      expect(screen.queryByText(/Undo merge on this entity/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Undo the merge on this entity/i)).not.toBeInTheDocument();
     });
   });
 
@@ -756,12 +756,12 @@ describe("KnowledgeGraphPanel - split action", () => {
     await waitFor(() => screen.getByText("Alice"));
 
     fireEvent.click(screen.getByText("Alice"));
-    await waitFor(() => screen.getByRole("button", { name: "Split" }));
+    await waitFor(() => screen.getByRole("button", { name: "Unmerge" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Split" }));
-    await waitFor(() => screen.getByRole("button", { name: /Yes, split/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Unmerge" }));
+    await waitFor(() => screen.getByRole("button", { name: /Yes, unmerge/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: /Yes, split/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Yes, unmerge/i }));
 
     await waitFor(() => {
       const alerts = screen.getAllByRole("alert");

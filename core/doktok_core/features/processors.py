@@ -485,6 +485,11 @@ class EntityGraphFeature:
         # Nodes first (the mentions FK-reference them), then replace this document's mention links.
         self._kg.upsert_entities(list(nodes.values()))
         self._kg.replace_mentions_for_document(tenant_id, document_id, links)
+        # Re-extraction can strip a node's last mention (e.g. the PLZ-split #528 replaces the fused
+        # "80287 München" mention with a city + postal-code pair), and upsert_entities never
+        # deletes. Prune tenant-wide orphans so reprocess self-heals instead of leaving stale nodes
+        # (#528 follow-up). Idempotent: a node another document still mentions is kept.
+        self._kg.prune_orphan_entities(tenant_id)
 
 
 # NER types that ground relation extraction — PERSON/ORG/GPE/LOCATION.

@@ -109,6 +109,9 @@ class InMemoryKnowledgeGraphRepository:
     def purge_document(self, tenant_id: str, document_id: str) -> int:
         # Clear the document's edge provenance + prune now-evidenceless edges (reuse the edge path).
         self.replace_edges_for_document(tenant_id, document_id, [], [])
+        return self.prune_orphan_entities(tenant_id)
+
+    def prune_orphan_entities(self, tenant_id: str) -> int:
         # Prune canonical entities with no remaining mentions; their edges + provenance cascade.
         # Alias nodes are intentional zero-mention state (their mentions were re-pointed at the
         # canonical on merge), NOT orphans - they are kept so the merge stays reversible.

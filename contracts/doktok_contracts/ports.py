@@ -831,6 +831,16 @@ class KnowledgeGraphRepository(Protocol):
         ``kg_entity_mentions`` rows are gone (they cascade from ``document_entities``)."""
         ...
 
+    def prune_orphan_entities(self, tenant_id: str) -> int:
+        """Delete canonical entities with no remaining mentions (tenant-wide); return the count.
+
+        A node loses its last mention when re-extraction changes what a document produces - e.g.
+        the PLZ-split (#528) turns "80287 München" into a separate city + postal-code node,
+        orphaning the old fused node. ``upsert_entities`` never deletes, so entity_graph reprocess
+        must call this to drop the leftovers. Alias nodes (``canonical_id`` set) are intentional
+        zero-mention state, kept so a merge stays reversible. Edges + provenance cascade via FK."""
+        ...
+
     def replace_edges_for_document(
         self,
         tenant_id: str,

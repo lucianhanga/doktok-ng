@@ -1151,6 +1151,10 @@ class PostgresKnowledgeGraphRepository:
         Idempotent; safe to call after the document's mention rows are already gone.
         """
         self.replace_edges_for_document(tenant_id, document_id, [], [])
+        return self.prune_orphan_entities(tenant_id)
+
+    def prune_orphan_entities(self, tenant_id: str) -> int:
+        """Delete canonical entities with no remaining mentions (tenant-wide); return the count."""
         # Alias nodes (canonical_id set elsewhere) are intentional zero-mention state - their
         # mentions were re-pointed on merge - NOT orphans; keep them so the merge stays reversible.
         with self._db.connection() as conn, conn.transaction():

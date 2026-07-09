@@ -54,6 +54,8 @@ class InMemoryKnowledgeGraphRepository:
         # adjudication verdict cache (mirrors kg_merge_adjudication, #535):
         # (tenant_id, pair_key, method, score_bucket) -> KgAdjudicationVerdict
         self._adjudication: dict[tuple[str, str, str, str], KgAdjudicationVerdict] = {}
+        # rejected merge pair keys (mirrors kg_merge_rejection, #530): tenant_id -> {pair_key}
+        self._rejections: dict[str, set[str]] = {}
 
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         for entity in entities:
@@ -467,6 +469,12 @@ class InMemoryKnowledgeGraphRepository:
         self._adjudication[(tenant_id, pair_key, method, score_bucket)] = verdict.model_copy(
             deep=True
         )
+
+    def reject_merge(self, tenant_id: str, pair_key: str, *, actor: str = "user") -> None:
+        self._rejections.setdefault(tenant_id, set()).add(pair_key)
+
+    def rejected_pair_keys(self, tenant_id: str) -> set[str]:
+        return set(self._rejections.get(tenant_id, set()))
 
     def _canonical_root(self, tenant_id: str, entity: KgEntity) -> KgEntity:
         """Follow the canonical chain to its root (cycle-guarded) so merges never build chains."""

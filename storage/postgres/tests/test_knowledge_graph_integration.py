@@ -247,3 +247,15 @@ def test_edge_tenant_isolation(db: Database) -> None:
     # Cannot see the other tenant's edges
     assert kg.edges_for_entity(TENANT, person_b) == []
     assert kg.edges_for_entity(TENANT_B, person_a) == []
+
+
+def test_reject_merge_persists_and_is_idempotent(db: Database) -> None:
+    """reject_merge stores a pair key; rejected_pair_keys reads it back, tenant-scoped (#530)."""
+    kg = PostgresKnowledgeGraphRepository(db)
+    assert kg.rejected_pair_keys(TENANT) == set()
+    kg.reject_merge(TENANT, "pair-a")
+    kg.reject_merge(TENANT, "pair-a")  # idempotent: no duplicate, no error
+    kg.reject_merge(TENANT, "pair-b")
+    kg.reject_merge(TENANT_B, "pair-c")  # other tenant, must not leak
+    assert kg.rejected_pair_keys(TENANT) == {"pair-a", "pair-b"}
+    assert kg.rejected_pair_keys(TENANT_B) == {"pair-c"}

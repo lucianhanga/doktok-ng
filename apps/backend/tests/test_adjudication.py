@@ -697,3 +697,44 @@ class TestMergeSuggestionsEndpointWithAdjudicator:
         assert adj.calls == 1  # ZERO new LLM calls on the second GET (Insights re-open)
         # Response shape is unchanged between the two GETs.
         assert second.json() == first.json()
+
+
+class TestRejectMergeSuggestion:
+    """A rejected merge suggestion must not be re-proposed on the next fetch (#530)."""
+
+    def test_reject_removes_pair_from_subsequent_fetches(self) -> None:
+        client = _adjudication_client(_seeded_kg(), adjudicator=None)
+        first = client.get("/api/v1/entities/merge-suggestions", headers=_auth())
+        assert first.status_code == 200
+        body = first.json()
+        assert len(body) == 1
+        pair = body[0]
+
+        rej = client.post(
+            "/api/v1/entities/merge-suggestions/reject",
+            headers=_auth(),
+            json={"canonical_value": pair["canonical_value"], "alias_value": pair["alias_value"]},
+        )
+        assert rej.status_code == 204
+
+        # The rejected pair is gone and stays gone (persisted, order-independent).
+        again = client.get("/api/v1/entities/merge-suggestions", headers=_auth())
+        assert again.status_code == 200
+        assert again.json() == []
+
+    def test_reject_is_direction_independent_and_idempotent(self) -> None:
+        client = _adjudication_client(_seeded_kg(), adjudicator=None)
+        body = client.get("/api/v1/entities/merge-suggestions", headers=_auth()).json()
+        pair = body[0]
+        # Reject with the values SWAPPED - the normalized pair key must match either direction.
+        for _ in range(2):  # idempotent: rejecting twice is fine
+            rej = client.post(
+                "/api/v1/entities/merge-suggestions/reject",
+                headers=_auth(),
+                json={
+                    "canonical_value": pair["alias_value"],
+                    "alias_value": pair["canonical_value"],
+                },
+            )
+            assert rej.status_code == 204
+        assert client.get("/api/v1/entities/merge-suggestions", headers=_auth()).json() == []

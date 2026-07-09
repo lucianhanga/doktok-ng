@@ -22,7 +22,10 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import record_activity
 from doktok_core.knowledge_graph.adjudication import adjudicate_suggestions
-from doktok_core.knowledge_graph.entity_resolution import retarget_to_cluster_root
+from doktok_core.knowledge_graph.entity_resolution import (
+    merge_adjudication_pair_key,
+    retarget_to_cluster_root,
+)
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -98,12 +101,53 @@ def list_merge_suggestions(
     settings, model error).
     """
     suggestions = kg.list_merge_suggestions(tenant.tenant_id, limit=limit)
+    # Drop pairs the user has already rejected so they are not re-proposed (#530). Keyed on the
+    # normalized, order-independent pair key, so a rejection survives a KG rebuild. Done before
+    # adjudication so a rejected fuzzy pair does not even hit the LLM.
+    rejected = kg.rejected_pair_keys(tenant.tenant_id)
+    if rejected:
+        suggestions = [
+            s
+            for s in suggestions
+            if merge_adjudication_pair_key(s.canonical_value, s.alias_value) not in rejected
+        ]
     if adjudicator is not None:
         suggestions = adjudicate_suggestions(suggestions, kg, adjudicator, limit=limit)
     # Re-point one-hop chains at the terminal canonical AFTER adjudication (so a dropped fuzzy link
     # can't bridge a cluster): "hanja lucian" -> "lucian cosmin hanga", not "-> lucian hanga" (#566
     # follow-up).
     return retarget_to_cluster_root(suggestions)
+
+
+class RejectMergeBody(BaseModel):
+    canonical_value: Annotated[str, Field(min_length=1)]
+    alias_value: Annotated[str, Field(min_length=1)]
+
+
+@router.post("/merge-suggestions/reject", status_code=status.HTTP_204_NO_CONTENT)
+def reject_merge_suggestion(
+    body: RejectMergeBody,
+    tenant: Tenant,
+    kg: KgRepo,
+    audit: Audit,
+) -> None:
+    """Persist a rejected merge suggestion so it is never re-proposed (#530).
+
+    Keyed on the normalized, order-independent pair of the two entity values, so the rejection
+    matches the pair regardless of direction and survives a KG rebuild. Idempotent.
+    """
+    pair_key = merge_adjudication_pair_key(body.canonical_value, body.alias_value)
+    kg.reject_merge(tenant.tenant_id, pair_key, actor="user")
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.ENTITY_MERGE_REJECTED,
+        actor="user",
+        actor_kind="user",
+        record_kind="entity",
+        description=f"merge rejected: {body.canonical_value} / {body.alias_value}",
+        details={"canonical_value": body.canonical_value, "alias_value": body.alias_value},
+    )
 
 
 @router.get("/nodes", response_model=list[KgEntity])

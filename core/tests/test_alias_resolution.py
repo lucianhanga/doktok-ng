@@ -13,7 +13,7 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.entities.inmemory import InMemoryEntityRepository
 from doktok_core.features.processors import EntityGraphFeature
-from doktok_core.knowledge_graph.alias import resolve_tenant_aliases
+from doktok_core.knowledge_graph.alias import compute_alias_folds, resolve_tenant_aliases
 from doktok_core.knowledge_graph.inmemory import InMemoryKnowledgeGraphRepository
 from doktok_core.knowledge_graph.predicates import canonical_edge_id
 from doktok_core.knowledge_graph.resolve import canonical_entity_id
@@ -146,6 +146,22 @@ def test_tenant_isolation() -> None:
 
 def _kg_entity(tenant: str, node_id: str, entity_type: EntityType, value: str) -> KgEntity:
     return KgEntity(id=node_id, tenant_id=tenant, entity_type=entity_type, normalized_value=value)
+
+
+def test_containment_fold_excludes_ordinal_distinguished_superset() -> None:
+    # "münchen" is a token-prefix of "münchen ii", but the extra token is an ordinal, so they are
+    # DISTINCT places and must NOT fold (#563). A non-ordinal extra token still folds.
+    nodes = [
+        _kg_entity("t1", "muc", EntityType.GPE, "münchen"),
+        _kg_entity("t1", "muc2", EntityType.GPE, "münchen ii"),
+        _kg_entity("t1", "fa", EntityType.ORG, "finanzamt"),
+        _kg_entity("t1", "fa_muc", EntityType.ORG, "finanzamt münchen"),
+    ]
+    folds = compute_alias_folds(nodes)
+    folded_alias_ids = {f.alias_id for f in folds}
+    assert "muc" not in folded_alias_ids, "München must not fold into München II"
+    # The genuine containment fold (non-ordinal extra token) still happens.
+    assert "fa" in folded_alias_ids
 
 
 def _add_edge(

@@ -31,6 +31,8 @@ import logging
 from doktok_contracts.ports import KnowledgeGraphRepository
 from doktok_contracts.schemas import AliasFold, KgEntity
 
+from doktok_core.knowledge_graph.entity_resolution import is_ordinal_token
+
 logger = logging.getLogger("doktok.kag.alias")
 
 # Guards against folding trivial/generic prefixes. An alias must have at least this many characters
@@ -70,12 +72,15 @@ def compute_alias_folds(entities: list[KgEntity]) -> list[AliasFold]:
             ):
                 continue
             # Supersets: same-type nodes whose tokens have A's tokens as a strict contiguous prefix.
+            # A superset whose first EXTRA token is an ordinal/numeral is a distinct entity, not a
+            # variant ("München" vs "München II", "Henry" vs "Henry VIII") - exclude it (#563).
             supersets = [
                 c
                 for c in nodes
                 if c.id != alias.id
                 and len(toks[c.id]) > len(a_tok)
                 and toks[c.id][: len(a_tok)] == a_tok
+                and not is_ordinal_token(toks[c.id][len(a_tok)])
             ]
             if not supersets:
                 continue

@@ -163,7 +163,11 @@ _ROMAN_NUMERALS: frozenset[str] = frozenset(
 )
 
 
-def _is_ordinal_token(token: str) -> bool:
+def is_ordinal_token(token: str) -> bool:
+    """A pure-digit or roman-numeral (i..xx) token - an ordinal that distinguishes entities (#563).
+
+    Shared by the merge cascade (:meth:`MatchCascade.score_pair`) and the containment alias-fold
+    (``alias.compute_alias_folds``) so both refuse to collapse "München" into "München II"."""
     return token.isdigit() or token in _ROMAN_NUMERALS
 
 
@@ -179,7 +183,7 @@ def differs_only_by_ordinal(a_value: str, b_value: str) -> bool:
     diff = ta ^ tb
     if not diff or not (ta & tb):
         return False
-    return all(_is_ordinal_token(token) for token in diff)
+    return all(is_ordinal_token(token) for token in diff)
 
 
 def _within_one_edit(a: str, b: str) -> bool:

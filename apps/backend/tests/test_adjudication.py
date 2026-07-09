@@ -293,8 +293,9 @@ class TestAdjudicateSuggestions:
 
 
 # ---------------------------------------------------------------------------
-# The new deterministic stages (#533 token_subset, #534 token_typo) must be
-# auto-routed to the LLM: only token_set bypasses adjudication.
+# The structural stages (#533 token_subset, #534 token_typo) BYPASS the LLM like token_set: the
+# neighbor-context guard misreads fragmented same-entity nodes as different (eval-confirmed), so
+# only fuzzy_trgm is adjudicated. They still pass through as human-reviewed suggestions.
 # ---------------------------------------------------------------------------
 
 
@@ -302,12 +303,13 @@ class TestAdjudicateSuggestions:
     ("method", "score"),
     [(METHOD_TOKEN_SUBSET, TOKEN_SUBSET_SCORE), (METHOD_TOKEN_TYPO, TOKEN_TYPO_SCORE)],
 )
-class TestNewStageMethodsAreAdjudicated:
-    """token_subset / token_typo suggestions are PROPOSALS: never certain, never auto-merged.
+class TestStructuralStagesBypassLlm:
+    """token_subset / token_typo are trusted structural matches: they SKIP the LLM adjudicator.
 
-    ``adjudicate_suggestions`` special-cases only ``METHOD_TOKEN_SET``; any other method label -
-    including these two - goes through the LLM. These tests pin that routing so a future
-    pass-through list cannot silently promote the new stages to certainty.
+    The neighbor-context over-merge guard is counterproductive for these - the two nodes are
+    fragments of one entity, so their neighbors are legitimately disjoint and the adjudicator
+    misreads that as "different entities". These tests pin the bypass so a future change cannot
+    silently re-route them through the context guard.
     """
 
     @staticmethod
@@ -323,8 +325,8 @@ class TestNewStageMethodsAreAdjudicated:
             score=score,
         )
 
-    def test_same_verdict_enriches(self, method: str, score: float) -> None:
-        """The LLM IS consulted: a 'same' verdict enriches the suggestion with llm_* fields."""
+    def test_passes_through_without_llm_enrichment(self, method: str, score: float) -> None:
+        """No LLM call: the suggestion passes through unchanged, llm_* left unset."""
         kg = _kg_with_persons()
         result = adjudicate_suggestions(
             [self._suggestion(method, score)], kg, FakeSameAdjudicator()
@@ -332,25 +334,16 @@ class TestNewStageMethodsAreAdjudicated:
         assert len(result) == 1
         assert result[0].method == method
         assert result[0].score == pytest.approx(score)
-        assert result[0].llm_same is True  # the adjudicator was called - no token_set bypass
+        assert result[0].llm_same is None  # bypassed - not enriched
 
-    def test_different_verdict_drops(self, method: str, score: float) -> None:
-        """A 'different' verdict removes the suggestion: the stage never forces a merge."""
+    def test_different_verdict_does_not_drop(self, method: str, score: float) -> None:
+        """A 'different' adjudicator is never consulted, so the structural match survives."""
         kg = _kg_with_persons()
         result = adjudicate_suggestions(
             [self._suggestion(method, score)], kg, FakeDifferentAdjudicator()
         )
-        assert result == []
-
-    def test_raising_adjudicator_keeps_suggestion_unadjudicated(
-        self, method: str, score: float
-    ) -> None:
-        """Adjudicator failure falls back to the plain suggestion (still human-reviewed)."""
-        kg = _kg_with_persons()
-        result = adjudicate_suggestions(
-            [self._suggestion(method, score)], kg, FakeRaisingAdjudicator()
-        )
         assert len(result) == 1
+        assert result[0].method == method
         assert result[0].llm_same is None
 
 
@@ -623,9 +616,9 @@ def _auth() -> dict[str, str]:
 
 
 def _seeded_kg() -> InMemoryKnowledgeGraphRepository:
-    """KG seeded with alice johnson / alice jonson: exact 'alice' plus the johnson~jonson
-    single-deletion pair, so the cascade labels the pair ``token_typo`` (#534) - a non-certain
-    method that the endpoint must route through the adjudicator."""
+    """KG seeded with 'lucian hanga' / 'lucianhanga': token counts differ and neither is a subset
+    or single-char typo of the other, so the cascade labels the pair ``fuzzy_trgm`` - the ONE tier
+    that still routes through the adjudicator (structural stages now bypass it)."""
     kg: InMemoryKnowledgeGraphRepository = InMemoryKnowledgeGraphRepository()
     kg.upsert_entities(
         [
@@ -633,13 +626,13 @@ def _seeded_kg() -> InMemoryKnowledgeGraphRepository:
                 id="e-alice",
                 tenant_id=TENANT,
                 entity_type=EntityType.PERSON,
-                normalized_value="alice johnson",
+                normalized_value="lucian hanga",
             ),
             KgEntity(
                 id="e-alice2",
                 tenant_id=TENANT,
                 entity_type=EntityType.PERSON,
-                normalized_value="alice jonson",
+                normalized_value="lucianhanga",
             ),
         ]
     )
@@ -664,22 +657,21 @@ class TestMergeSuggestionsEndpointWithAdjudicator:
         assert r.status_code == 200
         body = r.json()
         assert len(body) >= 1
-        # The seeded pair is a token_typo suggestion: non-certain, so it went through the LLM.
-        adjudicated = next((s for s in body if s["method"] == METHOD_TOKEN_TYPO), None)
+        # The seeded pair is a fuzzy_trgm suggestion: the tier that still goes through the LLM.
+        adjudicated = next((s for s in body if s["method"] == METHOD_FUZZY_TRGM), None)
         assert adjudicated is not None
         assert adjudicated["llm_same"] is True
         assert adjudicated["llm_confidence"] == pytest.approx(0.95)
         assert adjudicated["llm_reason"] is not None
 
-    def test_different_adjudicator_drops_non_certain_suggestions(self) -> None:
-        """When adjudicator says different, every non-token_set suggestion is removed."""
+    def test_different_adjudicator_drops_fuzzy_suggestions(self) -> None:
+        """When the adjudicator says different, adjudicated fuzzy_trgm suggestions are removed."""
         client = _adjudication_client(_seeded_kg(), adjudicator=FakeDifferentAdjudicator())
         r = client.get("/api/v1/entities/merge-suggestions", headers=_auth())
         assert r.status_code == 200
         body = r.json()
-        # All adjudicated (non-certain) suggestions should be gone.
-        dropped = [s for s in body if s["method"] != METHOD_TOKEN_SET]
-        assert dropped == []
+        # The adjudicated fuzzy_trgm suggestion should be gone.
+        assert [s for s in body if s["method"] == METHOD_FUZZY_TRGM] == []
 
     def test_raising_adjudicator_falls_back_to_deterministic(self) -> None:
         """When the adjudicator errors, the endpoint falls back to the deterministic list."""

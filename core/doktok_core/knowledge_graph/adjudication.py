@@ -3,12 +3,16 @@
 Takes the output of the deterministic cascade (``list_merge_suggestions``) and filters it through
 an LLM adjudicator that judges whether fuzzy-matched pairs are truly the same real-world entity:
 
-- ``token_set`` suggestions (score 1.0, word-order/punctuation variants) are SKIPPED - they are
-  certain matches and require no LLM call.
-- EVERY other method - ``fuzzy_trgm``, ``token_subset`` (#533), ``token_typo`` (#534), and any
-  future stage label - is adjudicated: if the LLM says the pair represents DIFFERENT real-world
-  entities, the suggestion is DROPPED; if SAME, it is kept and enriched with llm_* fields. The
-  LLM's neighborhood context (each entity's direct KG edges) is the over-merge guard.
+- ``token_set`` (certain), ``token_subset`` (#533) and ``token_typo`` (#534) are SKIPPED - these
+  structural matches pass through as suggestions with NO LLM call. The neighbor-context guard is
+  counterproductive for them: the two nodes are fragments of ONE entity, so their KG neighbors are
+  legitimately disjoint, which the adjudicator misreads as evidence of DIFFERENT entities and
+  wrongly blocks the merge (eval-confirmed). The deterministic stage guardrails (>=2 tokens,
+  same-first-char typo, etc.) already keep these precise; the human still approves each.
+- ``fuzzy_trgm`` - mere trigram similarity, where a similar name may genuinely be a different
+  real-world entity - IS adjudicated: if the LLM says DIFFERENT, the suggestion is DROPPED; if
+  SAME, it is kept and enriched with llm_* fields. The neighborhood context is the over-merge guard
+  exactly where it helps.
 - If the adjudicator raises or is unavailable, all suggestions are returned unchanged (graceful
   fallback - never let a model error break the human-review merge queue).
 - Only the first ``limit`` suggestions are adjudicated (bounding the LLM call count).
@@ -29,11 +33,23 @@ from doktok_contracts.schemas import (
 
 from doktok_core.knowledge_graph.entity_resolution import (
     METHOD_TOKEN_SET,
+    METHOD_TOKEN_SUBSET,
+    METHOD_TOKEN_TYPO,
     merge_adjudication_pair_key,
     merge_adjudication_score_bucket,
 )
 
 logger = logging.getLogger("doktok.kg.adjudication")
+
+# Methods that skip the LLM adjudicator and pass through as suggestions (the human still approves
+# each in the queue - no auto-merge). ``token_set`` is a certain match. ``token_subset`` and
+# ``token_typo`` are high-confidence STRUCTURAL matches (a name contained in another, or one OCR
+# character apart) for which the neighbor-context guard is actively counterproductive: the two
+# nodes are FRAGMENTS of one entity, so their KG neighbors are legitimately disjoint, and the
+# adjudicator misreads "different addresses/employers" as "different people" and wrongly blocks the
+# merge (eval-confirmed). The LLM guard is reserved for ``fuzzy_trgm``, where similar names may
+# genuinely be different real-world entities and context is the right discriminator.
+_TRUSTED_METHODS = frozenset({METHOD_TOKEN_SET, METHOD_TOKEN_SUBSET, METHOD_TOKEN_TYPO})
 
 # Number of direct KG edges to include per entity profile (disambiguation context).
 _NEIGHBOR_TOP_K = 5
@@ -166,7 +182,7 @@ def adjudicate_suggestions(
 
     # Batch-read cached verdicts for every non-token_set pair up front (one repository round-trip),
     # so a fully-cached repeat call issues no per-pair reads and no LLM calls at all.
-    cache_keys = [_cache_key(s) for s in batch if s.method != METHOD_TOKEN_SET]
+    cache_keys = [_cache_key(s) for s in batch if s.method not in _TRUSTED_METHODS]
     try:
         cached = kg.get_cached_verdicts(batch[0].tenant_id, cache_keys) if cache_keys else {}
     except Exception:
@@ -177,8 +193,9 @@ def adjudicate_suggestions(
     result: list[KgMergeSuggestion] = []
 
     for s in batch:
-        if s.method == METHOD_TOKEN_SET:
-            # Certain match (identical token-sort keys) - skip LLM + cache, pass through unchanged.
+        if s.method in _TRUSTED_METHODS:
+            # Certain (token_set) or high-confidence structural (token_subset/token_typo) match:
+            # skip LLM + cache, pass through unchanged for human approval (see _TRUSTED_METHODS).
             result.append(s)
             continue
 

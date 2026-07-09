@@ -51,8 +51,10 @@ function initialSub(): InsightsSub {
 
 export function InsightsPanel({
   onFilterByCategory,
+  onOpenDocument,
 }: {
   onFilterByCategory: (category: string) => void;
+  onOpenDocument?: (documentId: string) => void;
 }) {
   const [sub, setSub] = useState<InsightsSub>(initialSub);
   const [collapsed, setCollapsed] = useState<boolean>(() =>
@@ -127,7 +129,7 @@ export function InsightsPanel({
         </nav>
         <div className="settings-pane">
           {sub === "memory" && <MemoryPanel />}
-          {sub === "graph" && <KnowledgeGraphPanel />}
+          {sub === "graph" && <KnowledgeGraphPanel onOpenDocument={onOpenDocument} />}
           {sub === "map" && <EmbeddingMapPanel />}
           {sub === "cloud" && <WordCloudPanel />}
           {sub === "categories" && (

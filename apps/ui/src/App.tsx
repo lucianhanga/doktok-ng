@@ -197,7 +197,10 @@ export default function App() {
               />
             )}
             {view === "insights" && (
-              <InsightsPanel onFilterByCategory={showCategoryFilter} />
+              <InsightsPanel
+                onFilterByCategory={showCategoryFilter}
+                onOpenDocument={setOpenDoc}
+              />
             )}
             {/* Chat stays MOUNTED across tab switches (hidden when inactive) so a streamed answer
                 keeps running in the background and the transcript survives; an answer that finishes

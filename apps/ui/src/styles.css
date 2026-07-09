@@ -5440,6 +5440,42 @@ tr.row-selected {
   flex-direction: column;
   gap: 0.3rem;
 }
+.kg-doc-list {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.kg-doc-item {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kg-doc-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, #1d6fa8);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kg-doc-link:hover {
+  filter: brightness(1.15);
+}
+.kg-doc-link:focus-visible {
+  outline: 2px solid var(--accent, #1d6fa8);
+  outline-offset: 2px;
+}
 .kg-edge-item {
   display: flex;
   flex-wrap: wrap;

@@ -1890,9 +1890,32 @@ export interface KgEntity {
   tenant_id: string;
   entity_type: string;
   normalized_value: string;
+  /** Display-name override (rename); shown instead of normalized_value when set. */
+  display_name?: string | null;
   /** Present on alias entities that have been merged into a canonical. */
   canonical_id?: string | null;
   metadata: Record<string, unknown>;
+}
+
+/** The name to show for an entity: the rename override if set, else the normalized value. */
+export function entityDisplayName(e: {
+  display_name?: string | null;
+  normalized_value: string;
+}): string {
+  return e.display_name && e.display_name.trim() ? e.display_name : e.normalized_value;
+}
+
+/** Set (or clear, with an empty string) a display-name override on a KG entity. */
+export async function renameEntity(entityId: string, displayName: string): Promise<KgEntity> {
+  const response = await fetch(`/api/v1/entities/${encodeURIComponent(entityId)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ display_name: displayName }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as KgEntity;
 }
 
 export interface KgEdge {

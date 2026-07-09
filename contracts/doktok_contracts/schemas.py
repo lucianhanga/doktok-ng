@@ -94,6 +94,7 @@ class AuditEventType(StrEnum):
     ENTITY_MERGED = "entity.merged"
     ENTITY_SPLIT = "entity.split"
     ENTITY_MERGE_REJECTED = "entity.merge_rejected"  # #530: user rejected a suggested merge
+    ENTITY_RENAMED = "entity.renamed"  # display-name override
 
 
 class EntityType(StrEnum):
@@ -433,6 +434,9 @@ class KgEntity(BaseModel):
     tenant_id: str
     entity_type: EntityType
     normalized_value: str
+    # Optional display-name override (rename): shown instead of ``normalized_value`` when set; the
+    # id/edges/mentions are unaffected. NULL = show the normalized value.
+    display_name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     canonical_id: str | None = None
 

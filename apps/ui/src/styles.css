@@ -5707,6 +5707,15 @@ tr.row-selected {
   flex-direction: column;
   gap: 0.3rem;
 }
+.kg-rename {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+.kg-rename .kg-merge-search {
+  flex: 1 1 100%;
+}
 .kg-merge-search {
   width: 100%;
   box-sizing: border-box;

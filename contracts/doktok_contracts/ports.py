@@ -1003,6 +1003,13 @@ class KnowledgeGraphRepository(Protocol):
         """
         ...
 
+    def rename_entity(self, tenant_id: str, entity_id: str, display_name: str | None) -> bool:
+        """Set (or clear, with ``None``) a node's display-name override; True when the node exists.
+
+        Only the shown label changes - the node id, normalized value, mentions and edges are
+        untouched - so an OCR'd name can be corrected without rebuilding the graph."""
+        ...
+
     def list_merge_suggestions(
         self,
         tenant_id: str,

@@ -476,6 +476,14 @@ class InMemoryKnowledgeGraphRepository:
     def rejected_pair_keys(self, tenant_id: str) -> set[str]:
         return set(self._rejections.get(tenant_id, set()))
 
+    def rename_entity(self, tenant_id: str, entity_id: str, display_name: str | None) -> bool:
+        entity = self._entities.get(entity_id)
+        if entity is None or entity.tenant_id != tenant_id:
+            return False
+        clean = (display_name or "").strip() or None
+        self._entities[entity_id] = entity.model_copy(update={"display_name": clean})
+        return True
+
     def _canonical_root(self, tenant_id: str, entity: KgEntity) -> KgEntity:
         """Follow the canonical chain to its root (cycle-guarded) so merges never build chains."""
         seen = {entity.id}

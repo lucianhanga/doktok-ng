@@ -319,3 +319,42 @@ def split_entity(
         details={"alias_id": alias_id},
     )
     return SplitEntityResponse(status="split")
+
+
+class RenameEntityBody(BaseModel):
+    # Empty/blank clears the override (revert to the normalized value).
+    display_name: str = ""
+
+
+@router.post("/{entity_id}/rename", response_model=KgEntity)
+def rename_entity(
+    entity_id: str, body: RenameEntityBody, tenant: Tenant, kg: KgRepo, audit: Audit
+) -> KgEntity:
+    """Set a display-name override on an entity (fix an OCR'd name) - id and edges unchanged.
+
+    Blank ``display_name`` clears the override. 404 when the entity is unknown for the tenant.
+    """
+    before = kg.get_entity(tenant.tenant_id, entity_id)
+    if before is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
+    kg.rename_entity(tenant.tenant_id, entity_id, body.display_name)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.ENTITY_RENAMED,
+        actor="user",
+        actor_kind="user",
+        record_kind="entity",
+        record_id=entity_id,
+        description=f'"{before.normalized_value}" renamed to "{body.display_name.strip()}"'
+        if body.display_name.strip()
+        else f'"{before.normalized_value}" rename cleared',
+        details={"entity_id": entity_id, "display_name": body.display_name},
+    )
+    updated = kg.get_entity(tenant.tenant_id, entity_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="unexpected: entity missing after rename",
+        )
+    return updated

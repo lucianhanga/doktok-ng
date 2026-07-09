@@ -28,6 +28,41 @@ _WHITESPACE = re.compile(r"\s+")
 # character or whitespace becomes a separator, so 'hanga,lucian' tokenizes like 'hanga lucian'.
 _PUNCTUATION = re.compile(r"[^\w\s]")
 
+# German-style address lines fuse postal code and city ("80287 München"), and NER models return
+# that whole span as ONE place mention - so every distinct PLZ minted its own city node (#528).
+# The split below peels the code off so all variants collapse into one city node.
+#
+# Precision guardrails (prefer under-splitting to wrong-splitting):
+# - exactly 4-5 leading digits (the libpostal postcode shape from entities.address, DE/AT/CH),
+#   anchored at the very start and delimited by whitespace - a 6+ digit run or mid-string
+#   number never matches;
+# - the remainder must start with a Unicode LETTER ([^\W\d_]) and have >= 2 characters, so a
+#   bare digit run ("80287"), a digit-initial remainder ("80287 2nd") or an empty tail stay
+#   untouched;
+# - '.' does not cross newlines, so multi-line values never split.
+_POSTAL_PLACE = re.compile(r"^(\d{4,5})\s+([^\W\d_].+)$")
+
+# Metadata contract for the POSTAL_CODE rows the NER feature derives from that split. `source`
+# scopes row OWNERSHIP: the rule-based EntitiesFeature owns every other POSTAL_CODE row
+# (libpostal address components) and must not delete/duplicate these, and vice-versa.
+POSTAL_SOURCE_KEY = "source"
+POSTAL_SOURCE_NER = "ner"
+POSTAL_PLACE_KEY = "place"  # normalized place name the code was split from
+POSTAL_PLACE_TYPE_KEY = "place_type"  # the place mention's entity type (GPE/LOCATION)
+POSTAL_EVIDENCE_KEY = "evidence"  # the original fused span, e.g. "80287 München"
+
+
+def split_postal_place(value: str) -> tuple[str, str] | None:
+    """``("80287", "München")`` when ``value`` is a PLZ-fused place name, else ``None``.
+
+    Only a genuine leading postal-code shape splits (see ``_POSTAL_PLACE`` guardrails); when in
+    doubt the mention is left unchanged.
+    """
+    match = _POSTAL_PLACE.match(value.strip())
+    if match is None:
+        return None
+    return match.group(1), match.group(2).strip()
+
 
 def normalize_ner_name(name: str) -> str:
     """A whitespace-collapsed, casefolded key for de-duplicating a name across its mentions."""

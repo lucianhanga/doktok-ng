@@ -8,7 +8,7 @@ from typing import Any
 from doktok_contracts.media import ExtractedRelation
 from doktok_core.aggregation.windowing import window_text
 from doktok_core.entities.ner import normalize_ner_name
-from doktok_core.knowledge_graph.predicates import PREDICATE_TYPE_PAIRS
+from doktok_core.knowledge_graph.predicates import DETERMINISTIC_PREDICATES, PREDICATE_TYPE_PAIRS
 
 from doktok_provider_openai.client import openai_chat, repair_json
 
@@ -45,8 +45,12 @@ _SCHEMA: dict[str, Any] = {
 
 
 def _build_system(entity_list_str: str) -> str:
+    # Deterministic-only predicates (e.g. HAS_POSTAL_CODE, #528) are emitted by code, never
+    # requested from the model - the circuit-breaker would drop them anyway.
     predicate_lines = []
     for pred, pairs in PREDICATE_TYPE_PAIRS.items():
+        if pred in DETERMINISTIC_PREDICATES:
+            continue
         targets = " or ".join(f"{obj}" for _, obj in pairs)
         subj_type = pairs[0][0]
         predicate_lines.append(f"{pred}: {subj_type} -> {targets}")

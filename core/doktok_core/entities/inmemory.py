@@ -26,18 +26,29 @@ class InMemoryEntityRepository:
         ]
 
     def delete_for_document_types(
-        self, tenant_id: str, document_id: str, entity_types: list[str]
+        self,
+        tenant_id: str,
+        document_id: str,
+        entity_types: list[str],
+        *,
+        source: str | None = None,
+        keep_source: str | None = None,
     ) -> None:
+        # Source filters keep the two POSTAL_CODE producers' delete scopes disjoint (#528);
+        # see the EntityRepository port docstring.
         types = set(entity_types)
-        self.entities = [
-            e
-            for e in self.entities
-            if not (
-                e.tenant_id == tenant_id
-                and e.document_id == document_id
-                and e.entity_type.value in types
-            )
-        ]
+
+        def targeted(e: DocumentEntity) -> bool:
+            if e.tenant_id != tenant_id or e.document_id != document_id:
+                return False
+            if e.entity_type.value not in types:
+                return False
+            row_source = e.metadata.get("source")
+            if source is not None and row_source != source:
+                return False
+            return not (keep_source is not None and row_source == keep_source)
+
+        self.entities = [e for e in self.entities if not targeted(e)]
 
     def list_distinct(
         self,

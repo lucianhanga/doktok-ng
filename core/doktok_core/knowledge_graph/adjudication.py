@@ -5,9 +5,10 @@ an LLM adjudicator that judges whether fuzzy-matched pairs are truly the same re
 
 - ``token_set`` suggestions (score 1.0, word-order/punctuation variants) are SKIPPED - they are
   certain matches and require no LLM call.
-- ``fuzzy_trgm`` suggestions are adjudicated: if the LLM says the pair represents DIFFERENT
-  real-world entities, the suggestion is DROPPED; if SAME, it is kept and enriched with llm_*
-  fields. The LLM's neighborhood context (each entity's direct KG edges) is the over-merge guard.
+- EVERY other method - ``fuzzy_trgm``, ``token_subset`` (#533), ``token_typo`` (#534), and any
+  future stage label - is adjudicated: if the LLM says the pair represents DIFFERENT real-world
+  entities, the suggestion is DROPPED; if SAME, it is kept and enriched with llm_* fields. The
+  LLM's neighborhood context (each entity's direct KG edges) is the over-merge guard.
 - If the adjudicator raises or is unavailable, all suggestions are returned unchanged (graceful
   fallback - never let a model error break the human-review merge queue).
 - Only the first ``limit`` suggestions are adjudicated (bounding the LLM call count).
@@ -86,8 +87,9 @@ def adjudicate_suggestions(
 
     Returns a new list that:
     - preserves ``token_set`` suggestions unchanged (no LLM call, they are certain),
-    - drops ``fuzzy_trgm`` suggestions where the LLM says the entities differ,
-    - enriches surviving ``fuzzy_trgm`` suggestions with ``llm_*`` fields,
+    - adjudicates every OTHER method (``fuzzy_trgm``, ``token_subset``, ``token_typo``, ...):
+      drops suggestions where the LLM says the entities differ,
+    - enriches surviving adjudicated suggestions with ``llm_*`` fields,
     - possibly overrides canonical direction when the LLM prefers the alias as canonical,
     - falls back to the original suggestion (unchanged) on any adjudicator error.
 
@@ -101,7 +103,7 @@ def adjudicate_suggestions(
             result.append(s)
             continue
 
-        # fuzzy_trgm: adjudicate with the LLM.
+        # Any non-token_set method (fuzzy_trgm / token_subset / token_typo): adjudicate.
         try:
             profile_a = build_entity_profile(
                 s.tenant_id, s.canonical_id, s.canonical_value, s.entity_type, kg

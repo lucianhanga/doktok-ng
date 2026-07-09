@@ -63,10 +63,13 @@ from doktok_contracts.schemas import (
     TraceStep,
     TurnMetrics,
 )
-from doktok_core.entities.ner import normalize_entity_name
 from doktok_core.knowledge_graph.entity_resolution import (
     METHOD_FUZZY_TRGM,
-    METHOD_TOKEN_SET,
+    MatchCascade,
+    TokenSetStage,
+    TokenSubsetStage,
+    TokenTypoStage,
+    TrigramStage,
     canonical_preference,
 )
 from doktok_core.knowledge_graph.predicates import canonical_edge_id
@@ -1676,6 +1679,19 @@ class PostgresKnowledgeGraphRepository:
                 "ORDER BY score DESC, a.id, b.id LIMIT %s",
                 (tenant_id, threshold, limit),
             ).fetchall()
+        # Label each SQL candidate pair with the full deterministic cascade so the Postgres path
+        # carries the same methods/scores as the core one: token_set (certain, 1.0),
+        # token_subset (0.85, #533), token_typo (0.75, #534), else the fuzzy trigram tier.
+        # Note the SQL `%%` blocking is trigram-based: subset/typo pairs whose trigram similarity
+        # falls below `threshold` never reach this loop (a known recall bound of this path).
+        cascade = MatchCascade(
+            stages=(
+                TokenSetStage(),
+                TokenSubsetStage(),
+                TokenTypoStage(),
+                TrigramStage(threshold=threshold),
+            )
+        )
         suggestions: list[KgMergeSuggestion] = []
         for row in rows:
             entity_type = EntityType(row["entity_type"])
@@ -1692,11 +1708,10 @@ class PostgresKnowledgeGraphRepository:
                 normalized_value=row["b_value"],
             )
             canonical, alias = canonical_preference(a, b)
-            # Identical token-sort keys = the deterministic tier (pre-#508 nodes that the new
-            # write-time key would have collapsed); everything else is the fuzzy suggestion tier.
-            token_set_equal = normalize_entity_name(a.normalized_value) == normalize_entity_name(
-                b.normalized_value
-            )
+            decision = cascade.score_pair(a, b)
+            # Defensive fallback: pg_trgm and the pure-Python trigram should agree, but if they
+            # ever disagree at the threshold edge, trust the SQL row rather than dropping it.
+            method, score = decision if decision else (METHOD_FUZZY_TRGM, float(row["score"]))
             suggestions.append(
                 KgMergeSuggestion(
                     tenant_id=tenant_id,
@@ -1705,10 +1720,12 @@ class PostgresKnowledgeGraphRepository:
                     canonical_value=canonical.normalized_value,
                     alias_id=alias.id,
                     alias_value=alias.normalized_value,
-                    method=METHOD_TOKEN_SET if token_set_equal else METHOD_FUZZY_TRGM,
-                    score=1.0 if token_set_equal else float(row["score"]),
+                    method=method,
+                    score=score,
                 )
             )
+        # Re-sort: the SQL ordered by trigram score, but relabeled stages carry their own scores.
+        suggestions.sort(key=lambda s: (-s.score, s.canonical_id, s.alias_id))
         return suggestions
 
     def _node_row(self, cur: Any, tenant_id: str, entity_id: str) -> dict[str, Any] | None:

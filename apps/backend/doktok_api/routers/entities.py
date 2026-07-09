@@ -89,11 +89,12 @@ def list_merge_suggestions(
 ) -> list[KgMergeSuggestion]:
     """Return candidate entity merges, optionally enriched by the pipeline LLM adjudicator.
 
-    When the pipeline model is available the ``fuzzy_trgm`` suggestions are adjudicated:
-    pairs the LLM says are different real-world entities are dropped; surviving pairs are
-    enriched with ``llm_*`` fields. ``token_set`` suggestions (certain matches) always pass
-    through unchanged. Falls back to the plain deterministic list when the adjudicator is
-    unavailable (egress blocked, no settings, model error).
+    When the pipeline model is available every non-``token_set`` suggestion (``fuzzy_trgm``,
+    ``token_subset``, ``token_typo``) is adjudicated: pairs the LLM says are different
+    real-world entities are dropped; surviving pairs are enriched with ``llm_*`` fields.
+    ``token_set`` suggestions (certain matches) always pass through unchanged. Falls back to
+    the plain deterministic list when the adjudicator is unavailable (egress blocked, no
+    settings, model error).
     """
     suggestions = kg.list_merge_suggestions(tenant.tenant_id, limit=limit)
     if adjudicator is not None:

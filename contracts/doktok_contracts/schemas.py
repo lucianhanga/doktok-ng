@@ -461,13 +461,16 @@ class KgMergeSuggestion(BaseModel):
     """A proposed (not applied) merge of two same-type canonical nodes (#508).
 
     Produced by the deterministic matching cascade: ``method`` names the stage that fired
-    (``token_set`` = identical token-sort keys, score 1.0; ``fuzzy_trgm`` = trigram similarity at
-    or above the suggestion threshold). Direction is chosen by canonical preference (more tokens,
-    then longer value, then smaller id), matching the alias tier's fold-into-longest philosophy.
-    Applying is a separate, logged step: ``KnowledgeGraphRepository.merge_entities``.
+    (``token_set`` = identical token-sort keys, score 1.0; ``token_subset`` = proper token-subset
+    name, score 0.85; ``token_typo`` = one single-character-typo token pair, score 0.75;
+    ``fuzzy_trgm`` = trigram similarity at or above the suggestion threshold). Direction is
+    chosen by canonical preference (more tokens, then longer value, then smaller id), matching
+    the alias tier's fold-into-longest philosophy. Applying is a separate, logged step:
+    ``KnowledgeGraphRepository.merge_entities``.
 
-    LLM adjudication (#510): ``fuzzy_trgm`` suggestions may be enriched by the pipeline model.
-    The ``llm_*`` fields are ``None`` when the adjudicator was unavailable or skipped (token_set).
+    LLM adjudication (#510): every non-``token_set`` suggestion may be enriched by the pipeline
+    model. The ``llm_*`` fields are ``None`` when the adjudicator was unavailable or skipped
+    (token_set).
     """
 
     tenant_id: str

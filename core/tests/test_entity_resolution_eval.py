@@ -3,7 +3,9 @@
 This is the labeled fixture referenced by ``doktok_core.knowledge_graph.entity_resolution``:
 ``SUGGESTION_THRESHOLD`` is tuned so that every pair in it lands on the right side. The set
 contains one real person under six surface variants (word order, punctuation, no-space
-concatenation, a typo, an extra middle name) plus confusable NEGATIVE pairs that must NOT merge.
+concatenation, a typo, an extra middle name), a second person sharing the surname (with his own
+middle-name subset variant, #533/#534 coverage), a bare single-token surname that must match
+nothing, plus confusable NEGATIVE pairs that must NOT merge.
 
 Methodology: mint one pre-#508 canonical node per surface form (distinct ids, so the token_set
 stage has to do the collapsing that write-time keying would normally do), run
@@ -27,6 +29,9 @@ from itertools import combinations
 from doktok_contracts.schemas import EntityType, KgEntity
 from doktok_core.entities.ner import normalize_entity_name
 from doktok_core.knowledge_graph.entity_resolution import (
+    METHOD_TOKEN_SET,
+    METHOD_TOKEN_SUBSET,
+    METHOD_TOKEN_TYPO,
     SUGGESTION_THRESHOLD,
     MatchCascade,
     trigram_similarity,
@@ -48,7 +53,18 @@ GOLDEN_CLUSTERS: tuple[tuple[str, ...], ...] = (
         "lucianhanga",
         "hanja lucian",
     ),
-    # Confusable negative: same given name, near-identical surname - two DIFFERENT people.
+    # A SECOND person sharing lucian's surname: 'daniel hanga' must NOT link to any lucian
+    # variant (different given name - the token_subset stage excludes it by construction:
+    # {daniel, hanga} is not a subset of {hanga, lucian}). His middle-name variant IS the same
+    # person (token_subset positive, #533), making this cluster the shared-surname tripwire for
+    # both directions at once: link within, never across.
+    ("daniel hanga", "daniel dennis hanga"),
+    # A bare single-token surname must match NOTHING: it is a proper subset of half this fixture,
+    # which is exactly why the subset stage requires >= 2 tokens on the smaller side (#533).
+    ("hanga",),
+    # Confusable negative: same given name, near-identical surname - two DIFFERENT people. Also
+    # the token_typo tripwire (#534): 'gruber'/'huber' differ in the LEADING character, which the
+    # same-first-char guard treats as a different name, not an OCR typo.
     ("hans gruber",),
     ("hans huber",),
     # Two different people sharing a surname - must not link either.
@@ -146,6 +162,57 @@ def test_all_six_variants_form_one_cluster() -> None:
     variant_ids = [nid for nid, cluster in truth.items() if cluster == 0]
     assert len(variant_ids) == 6
     assert len({components[nid] for nid in variant_ids}) == 1
+
+
+def test_daniel_cluster_links_within_but_never_to_lucian() -> None:
+    """#533 in one assertion: 'daniel hanga' folds into 'daniel dennis hanga' via token_subset,
+    while the shared surname never links either daniel to any lucian variant."""
+    nodes, truth = _entities()
+    suggestions = MatchCascade().propose(nodes)
+    components = _connected_components(
+        [n.id for n in nodes], {(s.canonical_id, s.alias_id) for s in suggestions}
+    )
+    lucian_ids = {nid for nid, cluster in truth.items() if cluster == 0}
+    daniel_ids = {nid for nid, cluster in truth.items() if cluster == 1}
+    assert len({components[nid] for nid in daniel_ids}) == 1
+    assert {components[nid] for nid in daniel_ids}.isdisjoint(
+        {components[nid] for nid in lucian_ids}
+    )
+    # The link is labeled token_subset (a reviewable suggestion), directed into the longer name.
+    daniel_links = [s for s in suggestions if {s.canonical_id, s.alias_id} == daniel_ids]
+    assert [s.method for s in daniel_links] == [METHOD_TOKEN_SUBSET]
+    assert daniel_links[0].canonical_value == "daniel dennis hanga"
+    assert daniel_links[0].alias_value == "daniel hanga"
+
+
+def test_single_token_hanga_matches_nothing() -> None:
+    """The >= 2-token guard (#533): a bare surname appears in no suggestion at all."""
+    nodes, truth = _entities()
+    suggestions = MatchCascade().propose(nodes)
+    (hanga_id,) = [nid for nid, cluster in truth.items() if cluster == 2]
+    assert all(hanga_id not in (s.canonical_id, s.alias_id) for s in suggestions)
+
+
+def test_typo_variant_links_via_token_typo() -> None:
+    """#534: the OCR-ish 'hanja lucian' reaches its cluster through the token_typo stage."""
+    nodes, _ = _entities()
+    suggestions = MatchCascade().propose(nodes)
+    typo_links = [s for s in suggestions if "hanja lucian" in (s.canonical_value, s.alias_value)]
+    assert typo_links, "expected the typo variant to be linked"
+    assert {s.method for s in typo_links} == {METHOD_TOKEN_TYPO}
+
+
+def test_new_stage_methods_are_uncertain_suggestions() -> None:
+    """token_subset / token_typo fire on this set and NEVER claim certainty: only token_set
+    scores 1.0, so ``adjudicate_suggestions`` auto-routes every new-method pair to the LLM."""
+    nodes, _ = _entities()
+    suggestions = MatchCascade().propose(nodes)
+    methods = {s.method for s in suggestions}
+    assert METHOD_TOKEN_SUBSET in methods
+    assert METHOD_TOKEN_TYPO in methods
+    for s in suggestions:
+        if s.method != METHOD_TOKEN_SET:
+            assert s.score < 1.0, f"non-token_set method {s.method} must not claim certainty"
 
 
 def test_negative_pairs_are_not_proposed() -> None:

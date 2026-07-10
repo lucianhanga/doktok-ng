@@ -3,6 +3,7 @@ import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
 
 import {
+  decomposeEntity,
   entityDisplayName,
   fetchKgEntityDocuments,
   fetchKgNeighborhood,
@@ -295,6 +296,13 @@ export function KnowledgeGraphPanel({
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [renamePending, setRenamePending] = useState(false);
+  // Split (decompose) state: break a fused entity into two nodes + an edge.
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitA, setSplitA] = useState("");
+  const [splitB, setSplitB] = useState("");
+  const [splitBType, setSplitBType] = useState("POSTAL_CODE");
+  const [splitPredicate, setSplitPredicate] = useState("HAS_POSTAL_CODE");
+  const [splitDecomposePending, setSplitDecomposePending] = useState(false);
 
   // Canvas sizing
   const canvasAreaRef = useRef<HTMLDivElement>(null);
@@ -878,6 +886,53 @@ export function KnowledgeGraphPanel({
       setTimeout(() => setMergeMsg(null), 4000);
     } finally {
       setRenamePending(false);
+    }
+  }
+
+  function openSplit(): void {
+    if (!selectedNode) return;
+    // Pre-fill by peeling a trailing number off the source ("Muenchen 222" -> A=Muenchen, B=222).
+    const src = selectedNode.entity.normalized_value;
+    const m = src.match(/^(.*?)[\s,]+(\d[\d\s-]*)$/);
+    if (m) {
+      setSplitA(m[1].trim());
+      setSplitB(m[2].trim());
+      setSplitBType("POSTAL_CODE");
+      setSplitPredicate("HAS_POSTAL_CODE");
+    } else {
+      setSplitA(src);
+      setSplitB("");
+      setSplitBType(selectedNode.entity.entity_type);
+      setSplitPredicate("RELATED_TO");
+    }
+    setSplitOpen(true);
+  }
+
+  async function handleDecompose(): Promise<void> {
+    if (!selectedNode || !splitA.trim() || !splitB.trim()) return;
+    setSplitDecomposePending(true);
+    try {
+      const partA = await decomposeEntity(
+        selectedNode.entity.id,
+        { value: splitA.trim(), entity_type: selectedNode.entity.entity_type },
+        { value: splitB.trim(), entity_type: splitBType },
+        splitPredicate.trim() || "RELATED_TO",
+      );
+      setMergeMsg({
+        text: `Split into "${splitA.trim()}" + "${splitB.trim()}".`,
+        isError: false,
+      });
+      setTimeout(() => setMergeMsg(null), 3000);
+      setSplitOpen(false);
+      loadNeighborhood(partA.id); // focus part A (which absorbed the source's documents/edges)
+    } catch (err) {
+      setMergeMsg({
+        text: err instanceof Error ? err.message : "Split failed.",
+        isError: true,
+      });
+      setTimeout(() => setMergeMsg(null), 4000);
+    } finally {
+      setSplitDecomposePending(false);
     }
   }
 
@@ -1495,6 +1550,74 @@ export function KnowledgeGraphPanel({
                 ) : (
                   <button type="button" className="kg-split-btn" onClick={openRename}>
                     Rename...
+                  </button>
+                )}
+
+                {/* Split (decompose): break a fused entity into two nodes + an edge. */}
+                {splitOpen ? (
+                  <div className="kg-split-form">
+                    <span className="kg-split-warn">
+                      Split &quot;{selectedNode.entity.normalized_value}&quot; into two:
+                    </span>
+                    <input
+                      type="text"
+                      className="kg-merge-search"
+                      aria-label={`Part A (stays ${typeMeta(selectedNode.entity.entity_type).label})`}
+                      placeholder="Part A"
+                      value={splitA}
+                      onChange={e => setSplitA(e.target.value)}
+                    />
+                    <div className="kg-split-b">
+                      <input
+                        type="text"
+                        className="kg-merge-search"
+                        aria-label="Part B value"
+                        placeholder="Part B"
+                        value={splitB}
+                        onChange={e => setSplitB(e.target.value)}
+                      />
+                      <select
+                        aria-label="Part B type"
+                        value={splitBType}
+                        onChange={e => setSplitBType(e.target.value)}
+                      >
+                        {KG_TYPE_ORDER.map(t => (
+                          <option key={t} value={t}>
+                            {typeMeta(t).label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <input
+                      type="text"
+                      className="kg-merge-search"
+                      aria-label="Edge predicate linking the two parts"
+                      placeholder="Edge (e.g. HAS_POSTAL_CODE)"
+                      value={splitPredicate}
+                      onChange={e => setSplitPredicate(e.target.value)}
+                    />
+                    <div className="kg-split-actions">
+                      <button
+                        type="button"
+                        className="kg-split-btn confirm"
+                        disabled={splitDecomposePending || !splitA.trim() || !splitB.trim()}
+                        onClick={() => void handleDecompose()}
+                      >
+                        {splitDecomposePending ? "Splitting..." : "Split"}
+                      </button>
+                      <button
+                        type="button"
+                        className="kg-split-btn cancel"
+                        disabled={splitDecomposePending}
+                        onClick={() => setSplitOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" className="kg-split-btn" onClick={openSplit}>
+                    Split into two...
                   </button>
                 )}
 

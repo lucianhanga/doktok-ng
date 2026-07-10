@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import uuid4
 
 from doktok_contracts.ports import (
     AuditLogRepository,
@@ -16,6 +17,8 @@ from doktok_contracts.schemas import (
     Document,
     EntitySummary,
     EntityType,
+    KgEdge,
+    KgEdgeProvenance,
     KgEntity,
     KgMergeSuggestion,
     KgNeighborhood,
@@ -27,6 +30,8 @@ from doktok_core.knowledge_graph.entity_resolution import (
     merge_adjudication_pair_key,
     retarget_to_cluster_root,
 )
+from doktok_core.knowledge_graph.predicates import canonical_edge_id
+from doktok_core.knowledge_graph.resolve import canonical_entity_id
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -319,6 +324,107 @@ def split_entity(
         details={"alias_id": alias_id},
     )
     return SplitEntityResponse(status="split")
+
+
+class DecomposePart(BaseModel):
+    value: Annotated[str, Field(min_length=1)]
+    entity_type: EntityType
+
+
+class DecomposeBody(BaseModel):
+    part_a: DecomposePart  # keeps the fused node's documents + edges (same type as the source)
+    part_b: DecomposePart
+    predicate: Annotated[str, Field(min_length=1)] = "RELATED_TO"
+
+
+@router.post("/{entity_id}/decompose", response_model=KgEntity)
+def decompose_entity(
+    entity_id: str, body: DecomposeBody, tenant: Tenant, kg: KgRepo, audit: Audit
+) -> KgEntity:
+    """Split one fused entity into two nodes + an edge (e.g. "Muenchen 222" -> "Muenchen" + "222").
+
+    Option A: part A (same type as the source) absorbs the fused node's document mentions and edges;
+    the fused node is folded into part A; part B is created/reused; a directed edge part A ->
+    part B is added with the fused mention's documents as provenance. Reuses existing nodes.
+    """
+    fused = kg.get_entity(tenant.tenant_id, entity_id)
+    if fused is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
+    if body.part_a.entity_type != fused.entity_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="part A must keep the source entity type (it absorbs the documents/edges)",
+        )
+    tid = tenant.tenant_id
+    a_id = canonical_entity_id(tid, body.part_a.entity_type.value, body.part_a.value)
+    b_id = canonical_entity_id(tid, body.part_b.entity_type.value, body.part_b.value)
+    if a_id == b_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="the two parts must differ"
+        )
+    # Create-or-reuse the two parts.
+    kg.upsert_entities(
+        [
+            KgEntity(
+                id=a_id,
+                tenant_id=tid,
+                entity_type=body.part_a.entity_type,
+                normalized_value=body.part_a.value,
+            ),
+            KgEntity(
+                id=b_id,
+                tenant_id=tid,
+                entity_type=body.part_b.entity_type,
+                normalized_value=body.part_b.value,
+            ),
+        ]
+    )
+    # Fold the fused node into part A (re-points its mentions + edges), unless A IS the fused node.
+    document_ids = list({m.document_id for m in kg.mentions_for_entity(tid, entity_id)})
+    if a_id != entity_id:
+        kg.merge_entities(tid, a_id, entity_id, method="split", actor="user")
+    # Link the two parts, using the fused mention's documents as edge provenance.
+    edge_id = canonical_edge_id(tid, a_id, body.predicate, b_id)
+    edge = KgEdge(
+        id=edge_id, tenant_id=tid, src_entity_id=a_id, predicate=body.predicate, dst_entity_id=b_id
+    )
+    provenance = [
+        KgEdgeProvenance(
+            id=uuid4().hex,
+            tenant_id=tid,
+            edge_id=edge_id,
+            document_id=document_id,
+            chunk_id=None,
+            evidence=fused.normalized_value[:250],
+        )
+        for document_id in document_ids
+    ]
+    kg.add_edges([edge], provenance)
+    record_activity(
+        audit,
+        tid,
+        AuditEventType.ENTITY_SPLIT,
+        actor="user",
+        actor_kind="user",
+        record_kind="entity",
+        record_id=a_id,
+        description=(
+            f'"{fused.normalized_value}" split into '
+            f'"{body.part_a.value}" + "{body.part_b.value}"'
+        ),
+        details={
+            "source": fused.normalized_value,
+            "part_a": body.part_a.value,
+            "part_b": body.part_b.value,
+            "predicate": body.predicate,
+        },
+    )
+    part_a = kg.get_entity(tid, a_id)
+    if part_a is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="part A missing after split"
+        )
+    return part_a
 
 
 class RenameEntityBody(BaseModel):

@@ -856,6 +856,15 @@ class KnowledgeGraphRepository(Protocol):
         """
         ...
 
+    def add_edges(self, edges: list[KgEdge], provenance: list[KgEdgeProvenance]) -> None:
+        """Add edges + provenance WITHOUT replacing any document's existing edges.
+
+        Upserts the edge rows, inserts the provenance rows, and recomputes ``evidence_count`` for
+        the affected edges. Unlike ``replace_edges_for_document`` this never deletes - used for a
+        manual edge (e.g. the ``Split`` decomposition linking the two parts) whose provenance is
+        the fused mention's documents."""
+        ...
+
     def edges_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEdge]:
         """All edges where ``entity_id`` is the source or destination (inbound + outbound)."""
         ...

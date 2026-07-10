@@ -1,8 +1,15 @@
 import hashlib
+from datetime import UTC, datetime
 
 from doktok_contracts.schemas import ApiToken, TokenResolution
-from doktok_core.security.auth import hash_token, resolve_tenant, resolve_token
+from doktok_core.security.auth import (
+    hash_token,
+    resolve_credential,
+    resolve_tenant,
+    resolve_token,
+)
 from doktok_core.security.inmemory import InMemoryTenantRegistry
+from doktok_core.security.sessions import issue_access_token
 
 TOKENS = {"tok-a": "tenant-a", "tok-b": "tenant-b"}
 
@@ -71,3 +78,46 @@ def test_resolve_token_works_without_registry() -> None:
     assert resolve_token("tok-b", static_tokens=TOKENS) == TokenResolution(
         tenant_id="tenant-b", user_id=None
     )
+
+
+JWT_SECRET = "credential-secret"  # pragma: allowlist secret
+
+
+def test_resolve_credential_accepts_session_jwt() -> None:
+    token = issue_access_token(
+        tenant_id="tenant-x",
+        user_id="user-9",
+        secret=JWT_SECRET,
+        ttl_seconds=3600,
+        now=datetime.now(UTC),
+    )
+    assert resolve_credential(
+        token, jwt_secret=JWT_SECRET, static_tokens=TOKENS
+    ) == TokenResolution(tenant_id="tenant-x", user_id="user-9")
+
+
+def test_resolve_credential_falls_through_to_opaque_token() -> None:
+    # A non-JWT opaque token still resolves via the static map even when a jwt_secret is configured.
+    assert resolve_credential(
+        "tok-a", jwt_secret=JWT_SECRET, static_tokens=TOKENS
+    ) == TokenResolution(tenant_id="tenant-a", user_id=None)
+
+
+def test_resolve_credential_bad_jwt_does_not_resolve() -> None:
+    # JWT-shaped but signed by a different secret -> not resolved, nor matched as an opaque token.
+    forged = issue_access_token(
+        tenant_id="tenant-x", user_id="u", secret="wrong", ttl_seconds=3600, now=datetime.now(UTC)
+    )
+    assert resolve_credential(forged, jwt_secret=JWT_SECRET, static_tokens=TOKENS) is None
+
+
+def test_resolve_credential_ignores_jwt_when_no_secret() -> None:
+    token = issue_access_token(
+        tenant_id="tenant-x",
+        user_id="u",
+        secret=JWT_SECRET,
+        ttl_seconds=3600,
+        now=datetime.now(UTC),
+    )
+    # No jwt_secret configured: the JWT is treated as an opaque token and matches nothing.
+    assert resolve_credential(token, static_tokens=TOKENS) is None

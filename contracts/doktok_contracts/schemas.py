@@ -151,13 +151,20 @@ class Tenant(BaseModel):
 
 
 class User(BaseModel):
-    """A user within a tenant (#554 registry). Credentials/sessions are wired in #555."""
+    """A user within a tenant (#554 registry; credentials/sessions #555).
+
+    ``password_hash`` is a self-describing scrypt digest (never the plaintext) and is populated only
+    by the registry's credential lookup (``get_user_by_email``); it is ``None`` on the read paths
+    (``get_user``) that must not surface it. API responses must never serialize this field - the
+    auth router returns a dedicated public shape instead.
+    """
 
     id: str
     tenant_id: str
     email: str
     display_name: str = ""
     status: str = "active"  # active | deactivated
+    password_hash: str | None = None
     created_at: datetime | None = None
 
 

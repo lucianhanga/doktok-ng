@@ -37,7 +37,7 @@ from doktok_contracts.ports import (
     TenantRegistry,
 )
 from doktok_contracts.schemas import TenantContext
-from doktok_core.security.auth import resolve_token
+from doktok_core.security.auth import resolve_credential
 from doktok_core.security.egress import (
     EgressBlocked,
     effective_no_egress,
@@ -81,7 +81,12 @@ def require_tenant(
             headers={"WWW-Authenticate": "Bearer"},
         )
     presented = authorization[len(_BEARER_PREFIX) :]
-    resolution = resolve_token(presented, registry=registry, static_tokens=tokens)
+    resolution = resolve_credential(
+        presented,
+        registry=registry,
+        static_tokens=tokens,
+        jwt_secret=effective_jwt_secret(request.app.state.settings),
+    )
     if resolution is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -92,6 +97,28 @@ def require_tenant(
 
     tenant_id_var.set(resolution.tenant_id)  # correlate log lines by tenant (APP-12)
     return TenantContext(tenant_id=resolution.tenant_id, user_id=resolution.user_id)
+
+
+def effective_jwt_secret(settings: object) -> str:
+    """The secret used to sign/verify login session JWTs (#555): the dedicated
+    ``DOKTOK_AUTH_JWT_SECRET`` if set, else ``DOKTOK_SECRETS_KEY``, else empty (login disabled)."""
+    return getattr(settings, "auth_jwt_secret", "") or getattr(settings, "secrets_key", "")
+
+
+def require_user(tenant: Annotated[TenantContext, Depends(require_tenant)]) -> TenantContext:
+    """Like :func:`require_tenant`, but requires an authenticated *user* identity (#555).
+
+    A user-scoped session JWT or a user-bound API token carries ``user_id``; a tenant-scoped static
+    token (``DOKTOK_TENANT_TOKENS``) does not. Routes that must attribute an action to a person
+    (per-user preferences #558, audit actor #560) depend on this and reject the tenant-only case
+    with 403 rather than silently acting without a user.
+    """
+    if tenant.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="user authentication required (log in via /api/v1/auth/login)",
+        )
+    return tenant
 
 
 def _maybe_tenant_registry(request: Request) -> TenantRegistry | None:
@@ -648,3 +675,4 @@ def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator 
 
 
 Tenant = Annotated[TenantContext, Depends(require_tenant)]
+AuthenticatedUser = Annotated[TenantContext, Depends(require_user)]

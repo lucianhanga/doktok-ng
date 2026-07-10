@@ -69,3 +69,34 @@ def resolve_token(
         if tenant_id is not None:
             return TokenResolution(tenant_id=tenant_id, user_id=None)
     return None
+
+
+def _looks_like_jwt(presented: str) -> bool:
+    """A JWT is three base64url segments joined by dots. Opaque API tokens never contain two dots,
+    so this cheap structural check routes each credential to the right verifier without a wasted DB
+    lookup (and without feeding a random token to the signature verifier)."""
+    return presented.count(".") == 2
+
+
+def resolve_credential(
+    presented: str | None,
+    *,
+    registry: TenantRegistry | None = None,
+    static_tokens: dict[str, str] | None = None,
+    jwt_secret: str | None = None,
+) -> TokenResolution | None:
+    """Resolve any bearer credential - a login session JWT (#555) or an opaque API token (#554).
+
+    When a ``jwt_secret`` is configured and the credential is JWT-shaped, it is verified as a
+    session token first; anything else (or a bad JWT) falls through to :func:`resolve_token` (DB
+    registry then the static env map). Returns ``None`` if nothing resolves it.
+    """
+    if not presented:
+        return None
+    if jwt_secret and _looks_like_jwt(presented):
+        from doktok_core.security.sessions import decode_access_token
+
+        resolution = decode_access_token(presented, secret=jwt_secret)
+        if resolution is not None:
+            return resolution
+    return resolve_token(presented, registry=registry, static_tokens=static_tokens)

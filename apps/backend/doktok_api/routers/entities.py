@@ -409,8 +409,7 @@ def decompose_entity(
         record_kind="entity",
         record_id=a_id,
         description=(
-            f'"{fused.normalized_value}" split into '
-            f'"{body.part_a.value}" + "{body.part_b.value}"'
+            f'"{fused.normalized_value}" split into "{body.part_a.value}" + "{body.part_b.value}"'
         ),
         details={
             "source": fused.normalized_value,

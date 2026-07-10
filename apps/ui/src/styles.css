@@ -5601,6 +5601,35 @@ tr.row-selected {
   cursor: pointer;
   text-decoration: underline;
 }
+/* Non-interactive node-state markers echoing the canvas rings. */
+.kg-legend-state {
+  cursor: default;
+}
+.kg-state-swatch {
+  position: relative;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  margin-right: 0.2rem;
+}
+.kg-state-swatch::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid var(--text);
+}
+/* Added = thin, offset ring. */
+.kg-state-swatch.added::after {
+  inset: -3px;
+  opacity: 0.85;
+}
+/* Selected = thick, hugging ring. */
+.kg-state-swatch.selected::after {
+  inset: -1px;
+  border-width: 2px;
+}
 
 /* Suggested merges review section (#508 Wave 2b) */
 .kg-merge-section {

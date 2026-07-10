@@ -391,6 +391,16 @@ export function KnowledgeGraphPanel({
     id: "",
     ids: new Set(),
   });
+  // Node-state refs read by the canvas draw loop (no per-frame React reads): which nodes the user
+  // added (roots) and which is selected, so each gets a distinct ring (kg-node-state-visuals).
+  const rootIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    rootIdsRef.current = new Set(focusRoots.map(r => r.id));
+  }, [focusRoots]);
+  const selectedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIdRef.current = selectedNode?.entity.id ?? null;
+  }, [selectedNode]);
   const adjacency = useMemo(() => {
     const map = new Map<string, Set<string>>();
     const link = (a: string, b: string) => {
@@ -611,7 +621,8 @@ export function KnowledgeGraphPanel({
       }
 
       const prunable = [...nodeDataRef.current.entries()]
-        .filter(([nid]) => nid !== newFocusId)
+        // Never evict the new focus or a user-added root (would silently drop their anchor).
+        .filter(([nid]) => nid !== newFocusId && !rootIdsRef.current.has(nid))
         .sort(([aId, aData], [bId, bData]) => {
           const da = degree.get(aId) ?? 0;
           const db = degree.get(bId) ?? 0;
@@ -1057,12 +1068,15 @@ export function KnowledgeGraphPanel({
     const { ink, haloBg } = canvasColors();
     const r = Math.sqrt(Math.max(0, n.val ?? 5)) * 2;
     const tier = tierRef.current;
+    const isRoot = rootIdsRef.current.has(n.id);
+    const isSel = n.id === selectedIdRef.current;
 
-    // Hover focus+context: fade nodes outside the hovered node's neighborhood.
+    // Hover focus+context: fade nodes outside the hovered node's neighborhood. Root/selected nodes
+    // never fully vanish (0.4 floor) so the user keeps track of their anchors.
     ctx.save();
-    if (isFaded(n.id)) ctx.globalAlpha = 0.15;
+    if (isFaded(n.id)) ctx.globalAlpha = isRoot || isSel ? 0.4 : 0.15;
 
-    // Focus halo
+    // Focus halo (soft blue glow = centre of the loaded neighborhood)
     if (n.focus) {
       ctx.beginPath();
       ctx.arc(n.x, n.y, r + 7, 0, 2 * Math.PI);
@@ -1084,6 +1098,31 @@ export function KnowledgeGraphPanel({
     ctx.lineWidth = 1 / globalScale;
     ctx.stroke();
 
+    // Root ring (thin, offset) = "an entity you added". Ink so it flips per theme, not hue.
+    if (isRoot) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 3, 0, 2 * Math.PI);
+      ctx.strokeStyle = ink;
+      ctx.globalAlpha *= 0.85;
+      ctx.lineWidth = 1.5 / globalScale;
+      ctx.stroke();
+      ctx.globalAlpha = isFaded(n.id) ? (isRoot || isSel ? 0.4 : 0.15) : 1;
+    }
+
+    // Selection ring (thick, hugging, with a knockout gap) = "editing this one".
+    if (isSel) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 1.6, 0, 2 * Math.PI);
+      ctx.strokeStyle = haloBg; // knockout underlay guarantees separation on any fill
+      ctx.lineWidth = 4 / globalScale;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 1.6, 0, 2 * Math.PI);
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 2 / globalScale;
+      ctx.stroke();
+    }
+
     // Inspect tier: draw the type badge letter inside the node.
     if (tier === "inspect") {
       const badge = typeMeta(n.entityType).badge;
@@ -1098,10 +1137,10 @@ export function KnowledgeGraphPanel({
     // Label: only for the tier's labeled set, at a CONSTANT on-screen size (12/globalScale so it
     // does not inflate when you zoom). Overview tier draws no labels.
     const labeled = labeledIdsForDraw(globalScale);
-    if (labeled.has(n.id)) {
+    if (labeled.has(n.id) || isRoot || isSel) {
       const lbl = n.label;
       const fontSize = LABEL_SCREEN_PX / globalScale;
-      ctx.font = `${fontSize}px sans-serif`;
+      ctx.font = `${isRoot ? "600 " : ""}${fontSize}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       const tw = ctx.measureText(lbl).width;
@@ -1816,6 +1855,14 @@ export function KnowledgeGraphPanel({
               </li>
             );
           })}
+          <li className="kg-legend-item kg-legend-state">
+            <span className="kg-state-swatch added" aria-hidden="true" />
+            Added
+          </li>
+          <li className="kg-legend-item kg-legend-state">
+            <span className="kg-state-swatch selected" aria-hidden="true" />
+            Selected
+          </li>
           {hiddenTypes.size > 0 && (
             <li className="kg-legend-item">
               <button

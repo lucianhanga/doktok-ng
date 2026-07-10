@@ -721,3 +721,18 @@ def make_write_guard(minimum: Role) -> Callable[[Request, TenantContext], None]:
             )
 
     return _guard
+
+
+def require_admin(request: Request, tenant: Tenant) -> TenantContext:
+    """Require an admin caller for ANY method (#559). Unlike :func:`make_write_guard`, this also
+    gates reads - administration endpoints (member/token listings) must not be readable by
+    non-admins. Applied at the admin router's include so it covers every route there."""
+    if not role_at_least(resolve_caller_role(request, tenant), Role.ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="administrator role required",
+        )
+    return tenant
+
+
+AdminUser = Annotated[TenantContext, Depends(require_admin)]

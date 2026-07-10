@@ -27,6 +27,9 @@ class InMemoryTenantRegistry:
     def get_tenant(self, tenant_id: str) -> Tenant | None:
         return self.tenants.get(tenant_id)
 
+    def list_tenants(self) -> list[Tenant]:
+        return sorted(self.tenants.values(), key=lambda t: t.id)
+
     def create_user(self, user: User) -> None:
         self.users.setdefault(user.id, user)
 
@@ -44,6 +47,14 @@ class InMemoryTenantRegistry:
                 return user
         return None
 
+    def list_users(self, tenant_id: str) -> list[User]:
+        users = [u for u in self.users.values() if u.tenant_id == tenant_id]
+        # Mirror the DB read path: listing never surfaces the credential digest.
+        return sorted(
+            (u.model_copy(update={"password_hash": None}) for u in users),
+            key=lambda u: u.email.lower(),
+        )
+
     def set_user_password(self, tenant_id: str, user_id: str, password_hash: str) -> None:
         user = self.users.get(user_id)
         if user and user.tenant_id == tenant_id:
@@ -56,6 +67,10 @@ class InMemoryTenantRegistry:
 
     def create_api_token(self, token: ApiToken) -> None:
         self.tokens.setdefault(token.id, token)
+
+    def list_api_tokens(self, tenant_id: str) -> list[ApiToken]:
+        toks = [t for t in self.tokens.values() if t.tenant_id == tenant_id]
+        return sorted(toks, key=lambda t: (t.created_at is None, t.created_at), reverse=True)
 
     def revoke_api_token(self, tenant_id: str, token_id: str) -> None:
         from datetime import UTC, datetime

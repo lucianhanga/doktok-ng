@@ -95,6 +95,14 @@ class AuditEventType(StrEnum):
     ENTITY_SPLIT = "entity.split"
     ENTITY_MERGE_REJECTED = "entity.merge_rejected"  # #530: user rejected a suggested merge
     ENTITY_RENAMED = "entity.renamed"  # display-name override
+    # Tenant / user administration (#559). Security-sensitive: creating members, changing roles,
+    # resetting passwords, and issuing/revoking API tokens are all audited with the admin as actor.
+    TENANT_CREATED = "tenant.created"
+    USER_CREATED = "user.created"
+    USER_ROLE_CHANGED = "user.role_changed"
+    USER_PASSWORD_RESET = "user.password_reset"  # pragma: allowlist secret
+    API_TOKEN_ISSUED = "api_token.issued"
+    API_TOKEN_REVOKED = "api_token.revoked"
 
 
 class EntityType(StrEnum):

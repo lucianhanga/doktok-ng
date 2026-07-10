@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, cast
 
 from doktok_contracts.ports import (
@@ -44,6 +45,7 @@ from doktok_core.security.egress import (
     openai_egress_allowed,
     purpose_requires_egress,
 )
+from doktok_core.security.roles import Role, parse_role, role_at_least
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
@@ -676,3 +678,46 @@ def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator 
 
 Tenant = Annotated[TenantContext, Depends(require_tenant)]
 AuthenticatedUser = Annotated[TenantContext, Depends(require_user)]
+
+
+def resolve_caller_role(request: Request, tenant: TenantContext) -> Role:
+    """The RBAC role of the authenticated caller (#556).
+
+    A tenant-scoped credential with no user identity (static ``DOKTOK_TENANT_TOKENS`` / a
+    user-less api_token) is the local-first single operator: it resolves to ``admin`` so existing
+    single-tenant deployments keep full access with no configuration. A user-scoped caller's role
+    comes from the registry (authoritative + revocable); if it cannot be resolved, we fail closed to
+    ``viewer`` (least privilege).
+    """
+    if tenant.user_id is None:
+        return Role.ADMIN
+    registry = _maybe_tenant_registry(request)
+    if registry is None:
+        return Role.VIEWER
+    user = registry.get_user(tenant.tenant_id, tenant.user_id)
+    return parse_role(user.role) if user else Role.VIEWER
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def make_write_guard(minimum: Role) -> Callable[[Request, TenantContext], None]:
+    """A router-level dependency that requires ``minimum`` role for unsafe (write) methods (#556).
+
+    Safe methods (GET/HEAD/OPTIONS) pass for any authenticated caller - every authenticated caller
+    is at least a viewer - so read endpoints are unaffected. Unsafe methods (POST/PUT/PATCH/DELETE)
+    are rejected with 403 unless the caller's role meets ``minimum``. Applied at ``include_router``
+    so it gates every write in a router without touching individual handlers.
+    """
+
+    def _guard(request: Request, tenant: Tenant) -> None:
+        if request.method in _SAFE_METHODS:
+            return
+        role = resolve_caller_role(request, tenant)
+        if not role_at_least(role, minimum):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"this action requires the '{minimum.value}' role",
+            )
+
+    return _guard

@@ -3371,14 +3371,16 @@ class PostgresTenantRegistry:
     def create_user(self, user: User) -> None:
         with self._db.connection() as conn:
             conn.execute(
-                "INSERT INTO users (id, tenant_id, email, display_name, status, password_hash) "
-                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                "INSERT INTO users "
+                "(id, tenant_id, email, display_name, status, role, password_hash) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
                 (
                     user.id,
                     user.tenant_id,
                     user.email,
                     user.display_name,
                     user.status,
+                    user.role,
                     user.password_hash,
                 ),
             )
@@ -3388,7 +3390,7 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
-                "SELECT id, tenant_id, email, display_name, status, created_at "
+                "SELECT id, tenant_id, email, display_name, status, role, created_at "
                 "FROM users WHERE tenant_id=%s AND id=%s",
                 (tenant_id, user_id),
             ).fetchone()
@@ -3399,8 +3401,8 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
-                "SELECT id, tenant_id, email, display_name, status, password_hash, created_at "
-                "FROM users WHERE tenant_id=%s AND lower(email)=lower(%s)",
+                "SELECT id, tenant_id, email, display_name, status, role, password_hash, "
+                "created_at FROM users WHERE tenant_id=%s AND lower(email)=lower(%s)",
                 (tenant_id, email.strip()),
             ).fetchone()
         return User(**row) if row else None
@@ -3410,6 +3412,13 @@ class PostgresTenantRegistry:
             conn.execute(
                 "UPDATE users SET password_hash=%s WHERE tenant_id=%s AND id=%s",
                 (password_hash, tenant_id, user_id),
+            )
+
+    def set_user_role(self, tenant_id: str, user_id: str, role: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE users SET role=%s WHERE tenant_id=%s AND id=%s",
+                (role, tenant_id, user_id),
             )
 
     def create_api_token(self, token: ApiToken) -> None:

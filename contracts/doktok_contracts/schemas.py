@@ -164,6 +164,7 @@ class User(BaseModel):
     email: str
     display_name: str = ""
     status: str = "active"  # active | deactivated
+    role: str = "viewer"  # viewer | editor | admin (RBAC, #556)
     password_hash: str | None = None
     created_at: datetime | None = None
 

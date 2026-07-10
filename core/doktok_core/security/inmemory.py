@@ -49,6 +49,11 @@ class InMemoryTenantRegistry:
         if user and user.tenant_id == tenant_id:
             self.users[user_id] = user.model_copy(update={"password_hash": password_hash})
 
+    def set_user_role(self, tenant_id: str, user_id: str, role: str) -> None:
+        user = self.users.get(user_id)
+        if user and user.tenant_id == tenant_id:
+            self.users[user_id] = user.model_copy(update={"role": role})
+
     def create_api_token(self, token: ApiToken) -> None:
         self.tokens.setdefault(token.id, token)
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from doktok_contracts.ports import TenantRegistry
+from doktok_contracts.schemas import User
 from doktok_core.security.passwords import hash_password, verify_password
 from doktok_core.security.sessions import issue_access_token
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -54,6 +55,7 @@ class PublicUser(BaseModel):
     tenant_id: str
     email: str
     display_name: str = ""
+    role: str = "viewer"
 
 
 class LoginResponse(BaseModel):
@@ -61,6 +63,17 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: PublicUser
+
+
+def _public_user(user: User) -> PublicUser:
+    """Project a registry ``User`` to its client-safe shape (drops the credential digest)."""
+    return PublicUser(
+        id=user.id,
+        tenant_id=user.tenant_id,
+        email=user.email,
+        display_name=user.display_name,
+        role=user.role,
+    )
 
 
 def _require_login_secret(request: Request) -> str:
@@ -93,16 +106,7 @@ def login(request: Request, body: LoginRequest, registry: Registry) -> LoginResp
     token = issue_access_token(
         tenant_id=user.tenant_id, user_id=user.id, secret=secret, ttl_seconds=ttl
     )
-    return LoginResponse(
-        access_token=token,
-        expires_in=ttl,
-        user=PublicUser(
-            id=user.id,
-            tenant_id=user.tenant_id,
-            email=user.email,
-            display_name=user.display_name,
-        ),
-    )
+    return LoginResponse(access_token=token, expires_in=ttl, user=_public_user(user))
 
 
 @router.get("/me", response_model=PublicUser)
@@ -117,9 +121,4 @@ def me(request: Request, caller: AuthenticatedUser, registry: Registry) -> Publi
             detail="user no longer exists",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return PublicUser(
-        id=user.id,
-        tenant_id=user.tenant_id,
-        email=user.email,
-        display_name=user.display_name,
-    )
+    return _public_user(user)

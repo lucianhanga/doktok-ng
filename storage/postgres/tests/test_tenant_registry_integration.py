@@ -82,6 +82,19 @@ def test_password_lookup_and_read_path_hides_hash(db: Database) -> None:
     assert reg.get_user_by_email(TENANT, "nobody@example.com") is None
 
 
+def test_role_defaults_and_assignment(db: Database) -> None:
+    reg = PostgresTenantRegistry(db)
+    reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))
+    # A user created without an explicit role defaults to least privilege (viewer).
+    reg.create_user(User(id="ur", tenant_id=TENANT, email="role@example.com"))
+    created = reg.get_user(TENANT, "ur")
+    assert created is not None
+    assert created.role == "viewer"
+
+    reg.set_user_role(TENANT, "ur", "admin")
+    assert reg.get_user(TENANT, "ur").role == "admin"  # type: ignore[union-attr]
+
+
 def test_tenant_scoped_token_has_no_user(db: Database) -> None:
     reg = PostgresTenantRegistry(db)
     reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))

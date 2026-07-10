@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from doktok_contracts.schemas import HealthStatus
 from doktok_core.config import Settings, get_settings
 from doktok_core.registry import Registry, build_registry
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -366,20 +366,32 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             pass
         return Response(content=m.render(gauges), media_type="text/plain; version=0.0.4")
 
+    # RBAC (#556): a method-aware guard applied per router. Reads (GET/HEAD) pass for any
+    # authenticated caller; writes require the role below. Content routers require 'editor';
+    # settings/administration require 'admin'. The auth router is intentionally unguarded - login is
+    # public and /auth/me is already user-gated. A tenant-scoped token (no user) resolves to admin,
+    # so local-first single-operator deployments are unaffected (see resolve_caller_role).
+    from doktok_core.security.roles import Role
+
+    from doktok_api.dependencies import make_write_guard
+
+    editor_writes = [Depends(make_write_guard(Role.EDITOR))]
+    admin_writes = [Depends(make_write_guard(Role.ADMIN))]
+
     app.include_router(auth.router)
-    app.include_router(ingestion.router)
-    app.include_router(documents.router)
-    app.include_router(audit.router)
-    app.include_router(search.router)
-    app.include_router(entities.router)
-    app.include_router(stats.router)
-    app.include_router(chat.router)
-    app.include_router(tokens.router)
-    app.include_router(features.router)
-    app.include_router(categories.router)
-    app.include_router(aggregate.router)
-    app.include_router(visualizations.router)
-    app.include_router(settings_router.router)
+    app.include_router(ingestion.router, dependencies=editor_writes)
+    app.include_router(documents.router, dependencies=editor_writes)
+    app.include_router(audit.router, dependencies=editor_writes)
+    app.include_router(search.router, dependencies=editor_writes)
+    app.include_router(entities.router, dependencies=editor_writes)
+    app.include_router(stats.router, dependencies=editor_writes)
+    app.include_router(chat.router, dependencies=editor_writes)
+    app.include_router(tokens.router, dependencies=editor_writes)
+    app.include_router(features.router, dependencies=editor_writes)
+    app.include_router(categories.router, dependencies=editor_writes)
+    app.include_router(aggregate.router, dependencies=editor_writes)
+    app.include_router(visualizations.router, dependencies=editor_writes)
+    app.include_router(settings_router.router, dependencies=admin_writes)
 
     return app
 

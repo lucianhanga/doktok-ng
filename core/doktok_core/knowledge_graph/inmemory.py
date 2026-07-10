@@ -295,7 +295,12 @@ class InMemoryKnowledgeGraphRepository:
             rows = [e for e in rows if e.entity_type == entity_type]
         if query is not None:
             needle = query.lower()
-            rows = [e for e in rows if needle in e.normalized_value.lower()]
+            rows = [
+                e
+                for e in rows
+                if needle in e.normalized_value.lower()
+                or (e.display_name or "").lower().find(needle) >= 0
+            ]
         rows.sort(key=lambda e: e.normalized_value)
         return [e.model_copy(deep=True) for e in rows[offset : offset + limit]]
 

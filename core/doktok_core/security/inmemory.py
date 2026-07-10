@@ -32,7 +32,22 @@ class InMemoryTenantRegistry:
 
     def get_user(self, tenant_id: str, user_id: str) -> User | None:
         user = self.users.get(user_id)
-        return user if user and user.tenant_id == tenant_id else None
+        if not user or user.tenant_id != tenant_id:
+            return None
+        # Mirror the DB read path: the plain read does NOT surface the credential digest.
+        return user.model_copy(update={"password_hash": None})
+
+    def get_user_by_email(self, tenant_id: str, email: str) -> User | None:
+        needle = email.strip().lower()
+        for user in self.users.values():
+            if user.tenant_id == tenant_id and user.email.lower() == needle:
+                return user
+        return None
+
+    def set_user_password(self, tenant_id: str, user_id: str, password_hash: str) -> None:
+        user = self.users.get(user_id)
+        if user and user.tenant_id == tenant_id:
+            self.users[user_id] = user.model_copy(update={"password_hash": password_hash})
 
     def create_api_token(self, token: ApiToken) -> None:
         self.tokens.setdefault(token.id, token)

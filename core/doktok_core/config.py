@@ -211,6 +211,15 @@ class Settings(BaseSettings):
     # and DB connection for the full ingestion budget.
     rag_timeout_seconds: float = 120.0
 
+    # User-login session signing (#555). HS256 secret for the JWT minted at /auth/login. Empty falls
+    # back to secrets_key; if BOTH are empty, password login is disabled (503) - the static
+    # DOKTOK_TENANT_TOKENS / api_tokens paths still work, preserving the local-first single-tenant
+    # posture. Rotating this secret invalidates all outstanding sessions (the revoke-all lever).
+    auth_jwt_secret: str = ""
+    # Access-token lifetime in seconds (default 1h). Sessions are stateless, so this is the only
+    # bound on a leaked token short of rotating the secret; keep it modest.
+    auth_access_ttl_seconds: int = 3600
+
     # API server bind host (loopback by default; ADR-0008).
     bind_host: str = "127.0.0.1"
     # Bearer token -> tenant_id map (JSON in env; static now, DB-backed later; ADR-0008).

@@ -3371,12 +3371,20 @@ class PostgresTenantRegistry:
     def create_user(self, user: User) -> None:
         with self._db.connection() as conn:
             conn.execute(
-                "INSERT INTO users (id, tenant_id, email, display_name, status) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                (user.id, user.tenant_id, user.email, user.display_name, user.status),
+                "INSERT INTO users (id, tenant_id, email, display_name, status, password_hash) "
+                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (
+                    user.id,
+                    user.tenant_id,
+                    user.email,
+                    user.display_name,
+                    user.status,
+                    user.password_hash,
+                ),
             )
 
     def get_user(self, tenant_id: str, user_id: str) -> User | None:
+        # Deliberately omits password_hash: the plain read path must not surface the credential.
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
@@ -3385,6 +3393,24 @@ class PostgresTenantRegistry:
                 (tenant_id, user_id),
             ).fetchone()
         return User(**row) if row else None
+
+    def get_user_by_email(self, tenant_id: str, email: str) -> User | None:
+        # The ONE method that returns password_hash - login only. Case-insensitive on email.
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id, tenant_id, email, display_name, status, password_hash, created_at "
+                "FROM users WHERE tenant_id=%s AND lower(email)=lower(%s)",
+                (tenant_id, email.strip()),
+            ).fetchone()
+        return User(**row) if row else None
+
+    def set_user_password(self, tenant_id: str, user_id: str, password_hash: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE users SET password_hash=%s WHERE tenant_id=%s AND id=%s",
+                (password_hash, tenant_id, user_id),
+            )
 
     def create_api_token(self, token: ApiToken) -> None:
         with self._db.connection() as conn:

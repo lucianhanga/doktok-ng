@@ -23,6 +23,7 @@ from doktok_api.dependencies import Tenant, get_app_settings_repository
 from doktok_api.routers import (
     aggregate,
     audit,
+    auth,
     categories,
     chat,
     documents,
@@ -365,6 +366,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             pass
         return Response(content=m.render(gauges), media_type="text/plain; version=0.0.4")
 
+    app.include_router(auth.router)
     app.include_router(ingestion.router)
     app.include_router(documents.router)
     app.include_router(audit.router)

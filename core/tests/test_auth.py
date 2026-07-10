@@ -80,7 +80,7 @@ def test_resolve_token_works_without_registry() -> None:
     )
 
 
-JWT_SECRET = "credential-secret"
+JWT_SECRET = "credential-secret"  # pragma: allowlist secret
 
 
 def test_resolve_credential_accepts_session_jwt() -> None:

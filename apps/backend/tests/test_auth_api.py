@@ -10,7 +10,7 @@ from doktok_core.security.inmemory import InMemoryTenantRegistry
 from doktok_core.security.passwords import hash_password
 from fastapi.testclient import TestClient
 
-JWT_SECRET = "test-jwt-secret"
+JWT_SECRET = "test-jwt-secret"  # pragma: allowlist secret
 STATIC_TOKENS = {"tok-a": "tenant-a"}  # tenant-scoped, no user
 
 

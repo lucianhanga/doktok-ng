@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from doktok_contracts.schemas import TokenResolution
 from doktok_core.security.sessions import decode_access_token, issue_access_token
 
-SECRET = "test-signing-secret"
+SECRET = "test-signing-secret"  # pragma: allowlist secret
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
@@ -26,7 +26,8 @@ def test_wrong_secret_resolves_none() -> None:
     token = issue_access_token(
         tenant_id="tenant-a", user_id="user-1", secret=SECRET, ttl_seconds=3600, now=NOW
     )
-    assert decode_access_token(token, secret="other-secret", now=NOW) is None
+    wrong_secret = "other-secret"  # pragma: allowlist secret
+    assert decode_access_token(token, secret=wrong_secret, now=NOW) is None
 
 
 def test_tampered_token_resolves_none() -> None:

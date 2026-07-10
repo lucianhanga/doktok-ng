@@ -61,6 +61,7 @@ from doktok_contracts.schemas import (
     FeatureMetrics,
     GraphRetrieval,
     IngestionJob,
+    Invitation,
     KgAdjudicationVerdict,
     KgEdge,
     KgEdgeProvenance,
@@ -724,6 +725,25 @@ class TenantRegistry(Protocol):
 
     def set_user_role(self, tenant_id: str, user_id: str, role: str) -> None:
         """Assign a user's RBAC role - ``viewer`` | ``editor`` | ``admin`` (#556)."""
+        ...
+
+    def set_user_status(self, tenant_id: str, user_id: str, status: str) -> None:
+        """Set a user's lifecycle status - ``active`` | ``deactivated`` | ``invited`` (#557).
+
+        A non-active user is refused at authentication (``require_tenant``) and at login, so
+        deactivation is an immediate, authoritative revocation of all their credentials."""
+        ...
+
+    def create_invitation(self, invitation: Invitation) -> None:
+        """Persist a pending invitation (its ``token_sha256`` + expiry), #557."""
+        ...
+
+    def get_invitation_by_token(self, token_sha256: str) -> Invitation | None:
+        """The invitation for a presented acceptance token's sha256, or ``None`` (#557)."""
+        ...
+
+    def mark_invitation_accepted(self, invitation_id: str) -> None:
+        """Stamp ``accepted_at`` so the one-time invite token cannot be reused (#557)."""
         ...
 
     def create_api_token(self, token: ApiToken) -> None: ...

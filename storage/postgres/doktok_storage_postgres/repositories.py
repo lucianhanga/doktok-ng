@@ -41,6 +41,7 @@ from doktok_contracts.schemas import (
     FeatureMetrics,
     FeatureStatus,
     IngestionJob,
+    Invitation,
     JobStatus,
     KgAdjudicationVerdict,
     KgEdge,
@@ -3438,6 +3439,47 @@ class PostgresTenantRegistry:
             conn.execute(
                 "UPDATE users SET role=%s WHERE tenant_id=%s AND id=%s",
                 (role, tenant_id, user_id),
+            )
+
+    def set_user_status(self, tenant_id: str, user_id: str, status: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE users SET status=%s WHERE tenant_id=%s AND id=%s",
+                (status, tenant_id, user_id),
+            )
+
+    def create_invitation(self, invitation: Invitation) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO invitations "
+                "(id, tenant_id, user_id, email, role, token_sha256, expires_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (
+                    invitation.id,
+                    invitation.tenant_id,
+                    invitation.user_id,
+                    invitation.email,
+                    invitation.role,
+                    invitation.token_sha256,
+                    invitation.expires_at,
+                ),
+            )
+
+    def get_invitation_by_token(self, token_sha256: str) -> Invitation | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id, tenant_id, user_id, email, role, token_sha256, expires_at, "
+                "created_at, accepted_at FROM invitations WHERE token_sha256=%s",
+                (token_sha256,),
+            ).fetchone()
+        return Invitation(**row) if row else None
+
+    def mark_invitation_accepted(self, invitation_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE invitations SET accepted_at=now() WHERE id=%s AND accepted_at IS NULL",
+                (invitation_id,),
             )
 
     def create_api_token(self, token: ApiToken) -> None:

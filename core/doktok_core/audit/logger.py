@@ -64,6 +64,10 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.USER_PASSWORD_RESET.value: ("admin", "warning", "User password reset"),
     AuditEventType.API_TOKEN_ISSUED.value: ("admin", "warning", "API token issued"),
     AuditEventType.API_TOKEN_REVOKED.value: ("admin", "info", "API token revoked"),
+    AuditEventType.USER_INVITED.value: ("admin", "info", "User invited"),
+    AuditEventType.USER_DEACTIVATED.value: ("admin", "warning", "User deactivated"),
+    AuditEventType.USER_REACTIVATED.value: ("admin", "info", "User reactivated"),
+    AuditEventType.USER_INVITE_ACCEPTED.value: ("user", "info", "Invitation accepted"),
 }
 
 

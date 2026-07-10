@@ -219,6 +219,8 @@ class Settings(BaseSettings):
     # Access-token lifetime in seconds (default 1h). Sessions are stateless, so this is the only
     # bound on a leaked token short of rotating the secret; keep it modest.
     auth_access_ttl_seconds: int = 3600
+    # Invitation validity window in hours (#557). An unaccepted invite token expires after this.
+    auth_invite_ttl_hours: int = 168  # 7 days
 
     # API server bind host (loopback by default; ADR-0008).
     bind_host: str = "127.0.0.1"

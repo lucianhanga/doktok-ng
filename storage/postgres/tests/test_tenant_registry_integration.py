@@ -95,6 +95,35 @@ def test_role_defaults_and_assignment(db: Database) -> None:
     assert reg.get_user(TENANT, "ur").role == "admin"  # type: ignore[union-attr]
 
 
+def test_admin_listings(db: Database) -> None:
+    reg = PostgresTenantRegistry(db)
+    reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))
+    reg.create_user(
+        User(
+            id="ul1", tenant_id=TENANT, email="bob@example.com", password_hash="scrypt$x"
+        )  # pragma: allowlist secret
+    )
+    reg.create_user(User(id="ul2", tenant_id=TENANT, email="ann@example.com"))
+    reg.create_api_token(
+        ApiToken(
+            id="lt1", tenant_id=TENANT, token_sha256=hash_token("list-tok"), token_prefix="list"
+        )
+    )
+
+    # list_tenants includes ours.
+    assert TENANT in {t.id for t in reg.list_tenants()}
+
+    # list_users is ordered by email and never surfaces the password hash.
+    users = reg.list_users(TENANT)
+    assert [u.email for u in users] == ["ann@example.com", "bob@example.com"]
+    assert all(u.password_hash is None for u in users)
+
+    # list_api_tokens returns the tenant's tokens (prefix for display; secret never leaves here).
+    tokens = reg.list_api_tokens(TENANT)
+    assert [t.id for t in tokens] == ["lt1"]
+    assert tokens[0].token_prefix == "list"
+
+
 def test_tenant_scoped_token_has_no_user(db: Database) -> None:
     reg = PostgresTenantRegistry(db)
     reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))

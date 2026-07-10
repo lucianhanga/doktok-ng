@@ -58,6 +58,12 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.RESTORE_FAILED.value: ("system", "error", "Portable restore failed"),
     AuditEventType.ENTITY_MERGED.value: ("user", "info", "Entity merged"),
     AuditEventType.ENTITY_SPLIT.value: ("user", "info", "Entity split"),
+    AuditEventType.TENANT_CREATED.value: ("admin", "info", "Tenant created"),
+    AuditEventType.USER_CREATED.value: ("admin", "info", "User created"),
+    AuditEventType.USER_ROLE_CHANGED.value: ("admin", "warning", "User role changed"),
+    AuditEventType.USER_PASSWORD_RESET.value: ("admin", "warning", "User password reset"),
+    AuditEventType.API_TOKEN_ISSUED.value: ("admin", "warning", "API token issued"),
+    AuditEventType.API_TOKEN_REVOKED.value: ("admin", "info", "API token revoked"),
 }
 
 

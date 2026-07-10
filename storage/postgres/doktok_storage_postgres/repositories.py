@@ -3368,6 +3368,14 @@ class PostgresTenantRegistry:
             ).fetchone()
         return Tenant(**row) if row else None
 
+    def list_tenants(self) -> list[Tenant]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, name, status, created_at FROM tenants ORDER BY id"
+            ).fetchall()
+        return [Tenant(**row) for row in rows]
+
     def create_user(self, user: User) -> None:
         with self._db.connection() as conn:
             conn.execute(
@@ -3407,6 +3415,17 @@ class PostgresTenantRegistry:
             ).fetchone()
         return User(**row) if row else None
 
+    def list_users(self, tenant_id: str) -> list[User]:
+        # Omits password_hash: listing must not surface credentials.
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, tenant_id, email, display_name, status, role, created_at "
+                "FROM users WHERE tenant_id=%s ORDER BY lower(email)",
+                (tenant_id,),
+            ).fetchall()
+        return [User(**row) for row in rows]
+
     def set_user_password(self, tenant_id: str, user_id: str, password_hash: str) -> None:
         with self._db.connection() as conn:
             conn.execute(
@@ -3444,3 +3463,14 @@ class PostgresTenantRegistry:
                 "WHERE tenant_id=%s AND id=%s AND revoked_at IS NULL",
                 (tenant_id, token_id),
             )
+
+    def list_api_tokens(self, tenant_id: str) -> list[ApiToken]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, tenant_id, user_id, token_sha256, token_prefix, name, created_at, "
+                "last_used_at, revoked_at FROM api_tokens WHERE tenant_id=%s "
+                "ORDER BY created_at DESC",
+                (tenant_id,),
+            ).fetchall()
+        return [ApiToken(**row) for row in rows]

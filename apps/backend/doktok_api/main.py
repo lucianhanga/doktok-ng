@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from doktok_api import __version__
 from doktok_api.dependencies import Tenant, get_app_settings_repository
 from doktok_api.routers import (
+    admin,
     aggregate,
     audit,
     auth,
@@ -373,12 +374,14 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     # so local-first single-operator deployments are unaffected (see resolve_caller_role).
     from doktok_core.security.roles import Role
 
-    from doktok_api.dependencies import make_write_guard
+    from doktok_api.dependencies import make_write_guard, require_admin
 
     editor_writes = [Depends(make_write_guard(Role.EDITOR))]
     admin_writes = [Depends(make_write_guard(Role.ADMIN))]
 
     app.include_router(auth.router)
+    # Administration (#559): admin-only for EVERY method (listings included), not just writes.
+    app.include_router(admin.router, dependencies=[Depends(require_admin)])
     app.include_router(ingestion.router, dependencies=editor_writes)
     app.include_router(documents.router, dependencies=editor_writes)
     app.include_router(audit.router, dependencies=editor_writes)

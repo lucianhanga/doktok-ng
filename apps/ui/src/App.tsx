@@ -1,6 +1,7 @@
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useState } from "react";
 
 import { ActivityPanel } from "./ActivityPanel";
+import { AdminPanel } from "./AdminPanel";
 import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
@@ -47,7 +48,7 @@ function BackendDot() {
   );
 }
 
-type View = "overview" | "documents" | "insights" | "chat" | "activity" | "settings";
+type View = "overview" | "documents" | "insights" | "chat" | "activity" | "settings" | "admin";
 
 const TABS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -56,6 +57,7 @@ const TABS: { id: View; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
+  { id: "admin", label: "Admin" },
 ];
 
 const TAB_IDS = new Set<string>(TABS.map((t) => t.id));
@@ -216,6 +218,7 @@ export default function App() {
               <ActivityPanel onOpenDocument={setOpenDoc} focusId={activityFocusId} />
             )}
             {view === "settings" && <SettingsPanel />}
+            {view === "admin" && <AdminPanel />}
           </div>
         </div>
       </main>

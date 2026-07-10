@@ -6318,3 +6318,99 @@ tr.row-selected {
 .cats-cooc-cell-diag {
   background: var(--surface-3, #2a303b);
 }
+
+/* Administration panel (#559, #557) --------------------------------------------------------- */
+.admin-panel .admin-subhead {
+  margin: 1.4rem 0 0.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.9rem;
+  font-size: 0.95rem;
+}
+.admin-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.admin-form input,
+.admin-form select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.admin-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.admin-row-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+.admin-status {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  border: 1px solid var(--border-strong);
+}
+.admin-status-active {
+  color: #2da44e;
+  border-color: #2da44e;
+}
+.admin-status-deactivated {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.admin-status-invited {
+  color: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.admin-secret {
+  border: 1px solid var(--accent-strong);
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  margin: 0.5rem 0 1rem;
+  background: var(--surface);
+}
+.admin-secret-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.admin-secret-value {
+  display: block;
+  word-break: break-all;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.admin-secret-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+.admin-tenant-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.25rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}

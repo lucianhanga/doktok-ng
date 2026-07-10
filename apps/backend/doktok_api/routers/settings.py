@@ -51,7 +51,7 @@ from doktok_contracts.schemas import (
     RestoreResult,
     RestoreStatus,
 )
-from doktok_core.audit.logger import record_activity
+from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.backup.export import ExportPaths
 from doktok_core.security.egress import effective_no_egress, purpose_requires_egress
 from doktok_core.settings.catalog import MODEL_CATALOG
@@ -327,7 +327,7 @@ def put_ai_settings(
         audit,
         tenant.tenant_id,
         AuditEventType.SETTINGS_CHANGED,
-        actor=tenant.tenant_id,
+        actor=actor_identity(tenant),
         actor_kind="user",
         description=summary,
         details={"setting": "ai"},
@@ -340,7 +340,7 @@ def put_ai_settings(
             audit,
             tenant.tenant_id,
             AuditEventType.EGRESS_ENABLED,
-            actor=tenant.tenant_id,
+            actor=actor_identity(tenant),
             actor_kind="user",
             severity="warning",
             description=f"Remote egress enabled for: {', '.join(sorted(leaving))}",
@@ -537,7 +537,7 @@ def put_ocr_settings(update: OcrSettings, tenant: Tenant, repo: Repo, audit: Aud
         audit,
         tenant.tenant_id,
         AuditEventType.SETTINGS_CHANGED,
-        actor=tenant.tenant_id,
+        actor=actor_identity(tenant),
         actor_kind="user",
         description=desc,
         details={
@@ -778,7 +778,7 @@ def trigger_drp_drill(
         audit,
         tenant.tenant_id,
         AuditEventType.SETTINGS_CHANGED,
-        actor=tenant.tenant_id,
+        actor=actor_identity(tenant),
         actor_kind="user",
         description="On-demand restore drill requested",
         details={"setting": "drp", "action": "drill_requested"},
@@ -844,19 +844,26 @@ def _export_paths(request: Request, export_dir: Path) -> ExportPaths:
 
 
 def _record_portable(
-    audit: AuditLogRepository, tenant_id: str, *, ok: bool, description: str, export_id: str
+    audit: AuditLogRepository,
+    tenant_id: str,
+    *,
+    actor: str,
+    ok: bool,
+    description: str,
+    export_id: str,
 ) -> None:
     """Mirror a portable-export lifecycle event into the activity log (M12 portable backup Phase 1).
 
     The authoritative DRP history.jsonl is host-written and the backend mounts it read-only, so the
     backend cannot append there; instead portable events are recorded into the activity log using
     the existing BackupEvent vocabulary with a ``portable`` leg marker. Never carries a secret.
+    ``actor`` is the authenticated caller's identity (#560).
     """
     record_activity(
         audit,
         tenant_id,
         AuditEventType.BACKUP_COMPLETED if ok else AuditEventType.BACKUP_FAILED,
-        actor=tenant_id,
+        actor=actor,
         actor_kind="user",
         description=description,
         details={"setting": "backup", "leg": "portable", "export_id": export_id},
@@ -905,12 +912,16 @@ def start_backup_export(
             if ok
             else f"Portable backup export failed: {result.error}"
         )
-        _record_portable(audit, tenant.tenant_id, ok=ok, description=desc, export_id=export_id)
+        _record_portable(
+            audit, tenant.tenant_id, actor=caller, ok=ok, description=desc, export_id=export_id
+        )
 
+    caller = actor_identity(tenant)
     background.add_task(_run)
     _record_portable(
         audit,
         tenant.tenant_id,
+        actor=caller,
         ok=True,
         description="Portable backup export started",
         export_id=export_id,
@@ -972,6 +983,7 @@ def download_backup_export(
     _record_portable(
         audit,
         tenant.tenant_id,
+        actor=actor_identity(tenant),
         ok=True,
         description="Portable backup export downloaded",
         export_id=export_id,
@@ -1070,17 +1082,19 @@ def _record_restore(
     tenant_id: str,
     event_type: AuditEventType,
     *,
+    actor: str,
     description: str,
     restore_id: str = "",
     staged_id: str = "",
 ) -> None:
     """Audit a restore lifecycle event into the activity log (M12 portable restore Phase 2). Never
-    carries the passphrase, a secret, a DSN, or a host path - only ids + a short description."""
+    carries the passphrase, a secret, a DSN, or a host path - only ids + a short description.
+    ``actor`` is the authenticated caller's identity (#560)."""
     record_activity(
         audit,
         tenant_id,
         event_type,
-        actor=tenant_id,
+        actor=actor,
         actor_kind="user",
         description=description,
         details={
@@ -1165,6 +1179,7 @@ async def preview_backup_restore(
         audit,
         tenant.tenant_id,
         AuditEventType.RESTORE_PREVIEWED,
+        actor=actor_identity(tenant),
         description=(
             f"Portable restore previewed: {'valid' if result.ok else 'rejected'} "
             f"({result.member_count} members)"
@@ -1254,6 +1269,7 @@ def apply_backup_restore(
         audit,
         tenant.tenant_id,
         AuditEventType.RESTORE_REQUESTED,
+        actor=actor_identity(tenant),
         description="Portable restore requested (destructive apply queued)",
         restore_id=restore_id,
         staged_id=staged_id,

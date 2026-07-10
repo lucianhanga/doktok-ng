@@ -24,7 +24,7 @@ from doktok_contracts.schemas import (
     KgNeighborhood,
     KgStats,
 )
-from doktok_core.audit.logger import record_activity
+from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.knowledge_graph.adjudication import adjudicate_suggestions
 from doktok_core.knowledge_graph.entity_resolution import (
     merge_adjudication_pair_key,
@@ -145,12 +145,12 @@ def reject_merge_suggestion(
     matches the pair regardless of direction and survives a KG rebuild. Idempotent.
     """
     pair_key = merge_adjudication_pair_key(body.canonical_value, body.alias_value)
-    kg.reject_merge(tenant.tenant_id, pair_key, actor="user")
+    kg.reject_merge(tenant.tenant_id, pair_key, actor=actor_identity(tenant))
     record_activity(
         audit,
         tenant.tenant_id,
         AuditEventType.ENTITY_MERGE_REJECTED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         record_kind="entity",
         description=f"merge rejected: {body.canonical_value} / {body.alias_value}",
@@ -268,13 +268,13 @@ def merge_entity(
         body.alias_id,
         method=body.method,
         score=body.score,
-        actor="user",
+        actor=actor_identity(tenant),
     )
     record_activity(
         audit,
         tenant.tenant_id,
         AuditEventType.ENTITY_MERGED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         record_kind="entity",
         record_id=canonical_id,
@@ -305,7 +305,7 @@ def split_entity(
     One ``entity.split`` audit event is written on success.
     """
     node = kg.get_entity(tenant.tenant_id, alias_id)  # capture the name before it changes
-    ok = kg.split_entity(tenant.tenant_id, alias_id, actor="user")
+    ok = kg.split_entity(tenant.tenant_id, alias_id, actor=actor_identity(tenant))
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -316,7 +316,7 @@ def split_entity(
         audit,
         tenant.tenant_id,
         AuditEventType.ENTITY_SPLIT,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         record_kind="entity",
         record_id=alias_id,
@@ -382,7 +382,7 @@ def decompose_entity(
     # Fold the fused node into part A (re-points its mentions + edges), unless A IS the fused node.
     document_ids = list({m.document_id for m in kg.mentions_for_entity(tid, entity_id)})
     if a_id != entity_id:
-        kg.merge_entities(tid, a_id, entity_id, method="split", actor="user")
+        kg.merge_entities(tid, a_id, entity_id, method="split", actor=actor_identity(tenant))
     # Link the two parts, using the fused mention's documents as edge provenance.
     edge_id = canonical_edge_id(tid, a_id, body.predicate, b_id)
     edge = KgEdge(
@@ -404,7 +404,7 @@ def decompose_entity(
         audit,
         tid,
         AuditEventType.ENTITY_SPLIT,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         record_kind="entity",
         record_id=a_id,
@@ -447,7 +447,7 @@ def rename_entity(
         audit,
         tenant.tenant_id,
         AuditEventType.ENTITY_RENAMED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         record_kind="entity",
         record_id=entity_id,

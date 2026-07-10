@@ -12,9 +12,19 @@ from datetime import UTC, datetime
 from typing import Any
 
 from doktok_contracts.ports import AuditLogRepository
-from doktok_contracts.schemas import AuditEvent, AuditEventType
+from doktok_contracts.schemas import AuditEvent, AuditEventType, TenantContext
 
 logger = logging.getLogger("doktok.audit")
+
+
+def actor_identity(tenant: TenantContext) -> str:
+    """The audit actor id for an authenticated request (#560): the authenticated user's id when the
+    caller logged in (session JWT / user-bound token), else the tenant id - a tenant-scoped operator
+    token has no user identity. Pair with ``actor_kind="user"``; worker/system actors are recorded
+    with their own literal actor + kind and are never routed through here, so they stay
+    distinguishable in the trail."""
+    return tenant.user_id or tenant.tenant_id
+
 
 # Lifecycle phase + default severity + human description for the legacy six event types, so the
 # enhanced activity table (document_activity) is populated meaningfully even before the full

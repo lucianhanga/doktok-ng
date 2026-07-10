@@ -180,13 +180,30 @@ def test_issue_token_for_unknown_user_is_404() -> None:
 # --- tenants ---
 
 
-def test_create_and_list_tenants() -> None:
+def test_create_tenant_generates_a_guid_id() -> None:
+    import uuid
+
     client, _ = _client()
-    assert (
-        client.post(
-            "/api/v1/admin/tenants", json={"id": "t2", "name": "Second"}, headers=_admin()
-        ).status_code
-        == 201
+    created = client.post("/api/v1/admin/tenants", json={"name": "Second"}, headers=_admin())
+    assert created.status_code == 201, created.text
+    new_id = created.json()["id"]
+    assert created.json()["name"] == "Second"
+    # The id is a server-generated UUID, not client-supplied.
+    assert uuid.UUID(new_id)  # raises if not a valid UUID
+
+    tenants = client.get("/api/v1/admin/tenants", headers=_admin()).json()
+    ids = {t["id"] for t in tenants}
+    assert {"tenant-a", new_id} <= ids
+
+
+def test_create_tenant_ignores_client_supplied_id() -> None:
+    import uuid
+
+    client, _ = _client()
+    # A client that tries to set the id is ignored (extra field); the server still generates one.
+    created = client.post(
+        "/api/v1/admin/tenants", json={"id": "hacked", "name": "Third"}, headers=_admin()
     )
-    ids = {t["id"] for t in client.get("/api/v1/admin/tenants", headers=_admin()).json()}
-    assert {"tenant-a", "t2"} <= ids
+    assert created.status_code == 201
+    assert created.json()["id"] != "hacked"
+    assert uuid.UUID(created.json()["id"])

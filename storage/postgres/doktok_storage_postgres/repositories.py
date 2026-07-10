@@ -1432,8 +1432,10 @@ class PostgresKnowledgeGraphRepository:
             where.append("entity_type=%s")
             params.append(entity_type.value)
         if query is not None:
-            where.append("normalized_value ILIKE %s")
-            params.append(f"%{query}%")
+            # Match the display-name override too, so a renamed entity is found by its NEW name
+            # (not only the underlying normalized value).
+            where.append("(normalized_value ILIKE %s OR display_name ILIKE %s)")
+            params.extend([f"%{query}%", f"%{query}%"])
         params.extend([limit, offset])
         sql = (
             f"SELECT {_KG_ENTITY_COLUMNS} "

@@ -714,27 +714,54 @@ export function KnowledgeGraphPanel({
 
   /** × chip: remove an added entity's node + its edges from the graph, pruning orphaned neighbors. */
   function removeChip(id: string): void {
+    const remainingRoots = focusRoots.filter(r => r.id !== id);
+    // Drop the removed node + its edges.
     nodeDataRef.current.delete(id);
     for (const [eid, ed] of [...edgeDataRef.current.entries()]) {
       if (ed.srcId === id || ed.dstId === id) edgeDataRef.current.delete(eid);
     }
-    // Prune neighbors left with no edges and not themselves an added root.
-    const rootIds = new Set(focusRoots.filter(r => r.id !== id).map(r => r.id));
-    const connected = new Set<string>();
-    for (const ed of edgeDataRef.current.values()) {
-      connected.add(ed.srcId);
-      connected.add(ed.dstId);
+    // Keep only what is still REACHABLE from a remaining root (BFS). A plain "no-edges" prune
+    // leaves floating clusters of the removed node's neighbors that link to each other; reachability
+    // removes them. With no roots left, the canvas clears entirely.
+    const keep = new Set<string>();
+    if (remainingRoots.length > 0) {
+      const adjacent = new Map<string, string[]>();
+      const push = (a: string, b: string) => {
+        if (!adjacent.has(a)) adjacent.set(a, []);
+        adjacent.get(a)!.push(b);
+      };
+      for (const ed of edgeDataRef.current.values()) {
+        push(ed.srcId, ed.dstId);
+        push(ed.dstId, ed.srcId);
+      }
+      const queue = remainingRoots.map(r => r.id).filter(rid => nodeDataRef.current.has(rid));
+      for (const rid of queue) keep.add(rid);
+      while (queue.length) {
+        const current = queue.shift()!;
+        for (const nb of adjacent.get(current) ?? []) {
+          if (!keep.has(nb) && nodeDataRef.current.has(nb)) {
+            keep.add(nb);
+            queue.push(nb);
+          }
+        }
+      }
     }
     for (const nid of [...nodeDataRef.current.keys()]) {
-      if (!connected.has(nid) && !rootIds.has(nid)) nodeDataRef.current.delete(nid);
+      if (!keep.has(nid)) nodeDataRef.current.delete(nid);
     }
-    setFocusRoots(prev => prev.filter(r => r.id !== id));
+    for (const [eid, ed] of [...edgeDataRef.current.entries()]) {
+      if (!nodeDataRef.current.has(ed.srcId) || !nodeDataRef.current.has(ed.dstId)) {
+        edgeDataRef.current.delete(eid);
+      }
+    }
+    setFocusRoots(remainingRoots);
     setGraphTotal(nodeDataRef.current.size);
-    if (focusId === id) {
+    const keepFocus = focusId !== id && focusId !== null && nodeDataRef.current.has(focusId);
+    if (!keepFocus) {
       setFocusId(null);
       setSelectedNode(null);
     }
-    rebuildFromRefs(focusId === id ? null : focusId);
+    rebuildFromRefs(keepFocus ? focusId : null);
   }
 
   function handleNodeClick(node: NodeObject): void {
@@ -1259,7 +1286,7 @@ export function KnowledgeGraphPanel({
                         aria-hidden="true"
                         style={{ background: typeColor(entity.entity_type) }}
                       />
-                      <span className="kg-entity-label">{entity.normalized_value}</span>
+                      <span className="kg-entity-label">{entityDisplayName(entity)}</span>
                       <span className="kg-entity-type muted" aria-hidden="true">
                         {typeMeta(entity.entity_type).badge}
                       </span>

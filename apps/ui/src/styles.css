@@ -6369,8 +6369,8 @@ tr.row-selected {
   border: 1px solid var(--border-strong);
 }
 .admin-status-active {
-  color: #2da44e;
-  border-color: #2da44e;
+  color: var(--success);
+  border-color: var(--success);
 }
 .admin-status-deactivated {
   color: var(--danger);
@@ -6413,4 +6413,116 @@ tr.row-selected {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+}
+
+/* Admin console reorg (#559 Model A) --------------------------------------------------------- */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.admin-context-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 2px solid var(--border-strong);
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+.admin-context-head h3 {
+  margin: 0;
+}
+.admin-context-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
+}
+.admin-id-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.admin-id-chip > span:first-child {
+  font-family: var(--mono, monospace);
+  font-size: 0.8rem;
+}
+.admin-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.admin-invite-panel,
+.admin-instance-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.8rem 0.9rem;
+  margin: 0.5rem 0 0.9rem;
+  background: var(--surface);
+}
+.admin-instance-card {
+  margin-top: 1.6rem;
+}
+.admin-invite-mode {
+  border: 0;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.admin-invite-mode label {
+  font-size: 0.88rem;
+}
+.admin-table-wrap {
+  overflow-x: auto;
+}
+.admin-row-self > td:first-child {
+  font-weight: 600;
+}
+.admin-danger {
+  color: var(--danger);
+}
+.status-success {
+  color: var(--success);
+  font-size: 0.9rem;
+}
+.admin-secret-note {
+  font-size: 0.82rem;
+  margin-top: 0.35rem;
+}
+.admin-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.admin-dialog {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  width: min(460px, 92vw);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+.admin-dialog h4 {
+  margin: 0 0 0.6rem;
+}
+.admin-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 0.8rem;
 }

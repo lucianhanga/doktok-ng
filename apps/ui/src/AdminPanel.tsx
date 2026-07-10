@@ -60,8 +60,7 @@ export function AdminPanel() {
   // Issue-token form
   const [tokenName, setTokenName] = useState("");
   const [tokenUser, setTokenUser] = useState<string>("");
-  // New-tenant form
-  const [tenantId, setTenantId] = useState("");
+  // New-tenant form (the id is server-generated; the operator only names it)
   const [tenantName, setTenantName] = useState("");
 
   function loadAll() {
@@ -147,9 +146,8 @@ export function AdminPanel() {
 
   const addTenant = () =>
     run(async () => {
-      const t = await createAdminTenant({ id: tenantId.trim(), name: tenantName.trim() });
+      const t = await createAdminTenant({ name: tenantName.trim() });
       setTenants((prev) => [...(prev ?? []), t]);
-      setTenantId("");
       setTenantName("");
     }, "could not create tenant");
 
@@ -298,13 +296,6 @@ export function AdminPanel() {
       <div className="admin-form">
         <input
           type="text"
-          placeholder="tenant id"
-          aria-label="Tenant id"
-          value={tenantId}
-          onChange={(e) => setTenantId(e.target.value)}
-        />
-        <input
-          type="text"
           placeholder="tenant name"
           aria-label="Tenant name"
           value={tenantName}
@@ -314,7 +305,7 @@ export function AdminPanel() {
           type="button"
           className="link-button"
           onClick={addTenant}
-          disabled={busy || !tenantId.trim() || !tenantName.trim()}
+          disabled={busy || !tenantName.trim()}
         >
           Create tenant
         </button>

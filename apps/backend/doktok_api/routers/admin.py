@@ -73,7 +73,9 @@ def _user_view(user: User) -> AdminUserView:
 
 
 class CreateTenantRequest(BaseModel):
-    id: str = Field(min_length=1, max_length=64)
+    # The tenant id is server-generated (an opaque, immutable UUID) - clients supply only a
+    # human-readable display name. This avoids id collisions/squatting/enumeration and keeps the id
+    # stable and independent of the (renameable) name (multi-tenant best practice).
     name: str = Field(min_length=1)
 
 
@@ -129,19 +131,18 @@ def list_tenants(caller: AdminUser, registry: Registry) -> list[Tenant]:
 def create_tenant(
     body: CreateTenantRequest, caller: AdminUser, registry: Registry, audit: Audit
 ) -> Tenant:
-    if registry.get_tenant(body.id) is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tenant already exists")
-    registry.create_tenant(Tenant(id=body.id, name=body.name))
+    tenant_id = str(uuid.uuid4())  # server-generated opaque GUID
+    registry.create_tenant(Tenant(id=tenant_id, name=body.name))
     record_activity(
         audit,
         caller.tenant_id,
         AuditEventType.TENANT_CREATED,
         actor=actor_identity(caller),
         actor_kind="user",
-        description=f'Tenant "{body.name}" ({body.id}) created',
-        details={"tenant": body.id},
+        description=f'Tenant "{body.name}" ({tenant_id}) created',
+        details={"tenant": tenant_id},
     )
-    created = registry.get_tenant(body.id)
+    created = registry.get_tenant(tenant_id)
     assert created is not None
     return created
 

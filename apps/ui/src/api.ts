@@ -2205,7 +2205,8 @@ export function fetchAdminTenants(signal?: AbortSignal): Promise<AdminTenant[]> 
   return getJson<AdminTenant[]>("/api/v1/admin/tenants", signal);
 }
 
-export function createAdminTenant(body: { id: string; name: string }): Promise<AdminTenant> {
+export function createAdminTenant(body: { name: string }): Promise<AdminTenant> {
+  // The tenant id is server-generated (a GUID); the client supplies only the display name.
   return sendJson<AdminTenant>("/api/v1/admin/tenants", "POST", body);
 }
 

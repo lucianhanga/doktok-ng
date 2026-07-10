@@ -5762,6 +5762,33 @@ tr.row-selected {
 .kg-rename .kg-merge-search {
   flex: 1 1 100%;
 }
+.kg-split-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.kg-split-b {
+  display: flex;
+  gap: 0.3rem;
+}
+.kg-split-b .kg-merge-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.kg-split-b select {
+  flex: 0 0 auto;
+  max-width: 46%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  padding: 0.2rem;
+}
+.kg-split-actions {
+  display: flex;
+  gap: 0.3rem;
+}
 .kg-merge-search {
   width: 100%;
   box-sizing: border-box;

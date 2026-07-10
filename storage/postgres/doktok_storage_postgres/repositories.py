@@ -1243,6 +1243,48 @@ class PostgresKnowledgeGraphRepository:
                 (tenant_id,),
             )
 
+    def add_edges(self, edges: list[KgEdge], provenance: list[KgEdgeProvenance]) -> None:
+        if not edges and not provenance:
+            return
+        with self._db.connection() as conn, conn.transaction():
+            for edge in edges:
+                conn.execute(
+                    "INSERT INTO kg_edges "
+                    "(id, tenant_id, src_entity_id, predicate, dst_entity_id, evidence_count, "
+                    "metadata) VALUES (%s,%s,%s,%s,%s,0,%s) "
+                    "ON CONFLICT (id) DO UPDATE SET updated_at=now()",
+                    (
+                        edge.id,
+                        edge.tenant_id,
+                        edge.src_entity_id,
+                        edge.predicate,
+                        edge.dst_entity_id,
+                        Json(edge.metadata),
+                    ),
+                )
+            for prov in provenance:
+                conn.execute(
+                    "INSERT INTO kg_edge_provenance "
+                    "(id, tenant_id, edge_id, document_id, chunk_id, evidence) "
+                    "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
+                    (
+                        prov.id,
+                        prov.tenant_id,
+                        prov.edge_id,
+                        prov.document_id,
+                        prov.chunk_id,
+                        prov.evidence,
+                    ),
+                )
+            edge_ids = list({e.id for e in edges} | {p.edge_id for p in provenance})
+            if edge_ids:
+                conn.execute(
+                    "UPDATE kg_edges SET evidence_count = ("
+                    "  SELECT count(*) FROM kg_edge_provenance WHERE edge_id=kg_edges.id"
+                    ") WHERE id = ANY(%s)",
+                    (edge_ids,),
+                )
+
     def edges_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEdge]:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)

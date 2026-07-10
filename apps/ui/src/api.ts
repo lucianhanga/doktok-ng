@@ -1905,6 +1905,27 @@ export function entityDisplayName(e: {
   return e.display_name && e.display_name.trim() ? e.display_name : e.normalized_value;
 }
 
+/**
+ * Split a fused entity into two nodes + a directed edge (e.g. "Muenchen 222" -> "Muenchen" + "222").
+ * Part A (same type as the source) keeps the source's documents/edges; part B is created/reused.
+ */
+export async function decomposeEntity(
+  entityId: string,
+  partA: { value: string; entity_type: string },
+  partB: { value: string; entity_type: string },
+  predicate: string,
+): Promise<KgEntity> {
+  const response = await fetch(`/api/v1/entities/${encodeURIComponent(entityId)}/decompose`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ part_a: partA, part_b: partB, predicate }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as KgEntity;
+}
+
 /** Set (or clear, with an empty string) a display-name override on a KG entity. */
 export async function renameEntity(entityId: string, displayName: string): Promise<KgEntity> {
   const response = await fetch(`/api/v1/entities/${encodeURIComponent(entityId)}/rename`, {

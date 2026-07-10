@@ -177,6 +177,17 @@ class InMemoryKnowledgeGraphRepository:
         # Step 5: prune edges with zero evidence_count
         self._edges = {eid: e for eid, e in self._edges.items() if e.evidence_count > 0}
 
+    def add_edges(self, edges: list[KgEdge], provenance: list[KgEdgeProvenance]) -> None:
+        for edge in edges:
+            if edge.id not in self._edges:
+                self._edges[edge.id] = edge.model_copy(deep=True)
+        for prov in provenance:
+            self._provenance.setdefault(prov.id, prov.model_copy(deep=True))
+        for eid in {e.id for e in edges} | {p.edge_id for p in provenance}:
+            if eid in self._edges:
+                count = sum(1 for p in self._provenance.values() if p.edge_id == eid)
+                self._edges[eid] = self._edges[eid].model_copy(update={"evidence_count": count})
+
     def edges_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEdge]:
         return [
             e.model_copy(deep=True)

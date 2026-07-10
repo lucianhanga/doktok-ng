@@ -226,19 +226,44 @@ then ship updates with the one command `make deploy-box`. For the hardware ratio
 trade-off, and N95 tuning see
 [docs/operations/deployment-trigkey-n95.md](docs/operations/deployment-trigkey-n95.md).
 
-## Authentication and multi-tenancy
+## Authentication, users, and multi-tenancy
 
-DokTok NG is multi-tenant and the API is token-protected (ADR-0007, ADR-0008). HTTP routes are
-versioned under `/api/v1` (`/health` is unversioned and public):
+DokTok NG is multi-tenant and the API is token-protected (ADR-0007, ADR-0008), with a full
+tenant/user management stack on top (ADR-0024). HTTP routes are versioned under `/api/v1`
+(`/health` is unversioned and public):
 
-- Send `Authorization: Bearer <token>`; `/health` is public, `/api/v1/*` requires a token.
-- Each token maps to a tenant (`DOKTOK_TENANT_TOKENS` is a JSON `{"<token>": "<tenant_id>"}` map).
-  The default `.env` ships two: `dev-token-default` -> tenant `default` (used by the UI dev proxy)
-  and `dev-token-developer` -> tenant `developer` (for your manual API testing). Example:
+- Send `Authorization: Bearer <token>`; `/health` is public, `/api/v1/*` requires a credential.
+- **Tenant tokens (local-first default).** Each static token maps to a tenant
+  (`DOKTOK_TENANT_TOKENS` is a JSON `{"<token>": "<tenant_id>"}` map). The default `.env` ships
+  two: `dev-token-default` -> tenant `default` (used by the UI dev proxy) and
+  `dev-token-developer` -> tenant `developer` (for your manual API testing). Example:
   `curl -H "Authorization: Bearer dev-token-developer" http://localhost:8000/api/v1/ingestion/jobs`
+  A tenant-scoped token with no user identity acts as **admin**, so a single-operator deployment
+  keeps full access with zero configuration.
+- **DB-backed tokens and users.** Tenants, users, and hashed revocable API tokens live in the
+  database (only a token's sha256 is stored); the static map is the fallback tier. Manage them via
+  the **Admin** tab or `/api/v1/admin/*` (admin role required for every call).
+- **Login (opt-in).** Set `DOKTOK_AUTH_JWT_SECRET` (falls back to `DOKTOK_SECRETS_KEY`; with
+  neither set, login answers 503 and tokens work unchanged) to enable
+  `POST /api/v1/auth/login` (email + password -> short-lived session JWT,
+  `DOKTOK_AUTH_ACCESS_TTL_SECONDS`, default 3600) and `GET /api/v1/auth/me`. Passwords are hashed
+  with stdlib scrypt; login failures are a single generic message.
+- **Roles.** `viewer` < `editor` < `admin`: reads pass for any authenticated caller; content writes
+  (ingest, entities, chat, ...) need editor; settings writes and all administration need admin.
+- **Invitations and deactivation.** Admins invite an email (one-time token, expiry
+  `DOKTOK_AUTH_INVITE_TTL_HOURS`, default 168); the invitee accepts via
+  `POST /api/v1/auth/accept-invite` to set a password. Deactivating a user blocks their session
+  JWTs and API tokens on the next request - immediate revocation.
+- **Per-user preferences.** UI preferences sync automatically to a server-side per-user store
+  (`/api/v1/preferences`); the login-less operator gets a per-tenant bucket. No setup needed.
 - All data is scoped to the caller's tenant: `tenant_id` on every table, and per-tenant filesystem
-  folders. The backend binds loopback by default and fails closed if no tokens are configured.
-- Static `.env` tokens now; DB-backed, hashed, revocable tokens later.
+  folders. The backend binds loopback by default and fails closed if no credentials are configured.
+- The SPA itself stays token-free: the dev proxy (`make run-ui`) or the production edge injects the
+  bearer token. There is deliberately no in-browser login screen yet (ADR-0024).
+
+Design and security rationale:
+[ADR-0024](docs/adr/ADR-0024-tenant-user-management-and-rbac.md). Hands-on dev walkthrough (curl
+flows for login, invites, tokens): [docs/operations/running.md](docs/operations/running.md#tenant-and-user-management-in-your-dev-environment).
 
 ### Ingesting documents (M1)
 

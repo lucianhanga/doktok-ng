@@ -35,6 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reprocessing is visible instead of reading 0.
 
 ### Added
+- **Tenant and user management** (EPIC #523, #554-#560; ADR-0024): a DB-backed tenant/user/API-token
+  registry (hashed, revocable tokens; migrations 0043-0049, static `DOKTOK_TENANT_TOKENS` stays the
+  local-first fallback); opt-in password login (`POST /api/v1/auth/login` -> short-lived HS256
+  session JWT, stdlib-scrypt password hashes; enabled by `DOKTOK_AUTH_JWT_SECRET`, else 503 and
+  tokens work unchanged); RBAC (`viewer` < `editor` < `admin`, method-aware router guards; a
+  tenant-scoped token with no user resolves to admin so single-operator deployments keep full
+  access with zero config); audit actor attribution (#560: events name the logged-in user, else the
+  tenant); an admin API + **Admin** UI tab (`/api/v1/admin`: tenants, members, roles, passwords,
+  invitations, tokens - one-time secrets shown once, never stored); invitations with expiring
+  one-time tokens (`POST /api/v1/auth/accept-invite`) and **immediate** deactivation (enforced
+  per-request in `require_tenant`, blocking session JWTs and API tokens regardless of TTL); and
+  per-user server-side UI preferences (`/api/v1/preferences`) synced transparently by the SPA,
+  per-tenant for the login-less operator. The SPA stays token-free (proxy-injected bearer); an
+  in-browser login screen is deliberately deferred.
 - **Documents list: "select all matching" across pages** for bulk actions. After the header
   checkbox selects the loaded page, a banner offers "Select all N matching" the current filter (via
   the existing `GET /documents/ids`, capped at 10,000 with honest "first 10,000 of N" copy when more

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. Extended by [ADR-0024](ADR-0024-tenant-user-management-and-rbac.md) (EPIC #523), which
+delivered the "Later (DB-backed)" token store below plus user login, RBAC, and tenant/member
+administration; the static map described here remains the local-first fallback tier.
 
 ## Context
 

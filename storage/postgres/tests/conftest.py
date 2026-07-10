@@ -46,6 +46,7 @@ def _clean_test_tenants(database: Database) -> None:
         conn.execute("DELETE FROM ingestion_jobs WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM documents WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM kg_merge_rejection WHERE tenant_id LIKE 'test%'")
+        conn.execute("DELETE FROM user_preferences WHERE tenant_id LIKE 'test%'")
         # Tenant/user registry (#554/#557); FK-safe: invitations + tokens -> users -> tenants.
         conn.execute("DELETE FROM invitations WHERE tenant_id LIKE 'test%'")
         conn.execute("DELETE FROM api_tokens WHERE tenant_id LIKE 'test%'")

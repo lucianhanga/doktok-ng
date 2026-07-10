@@ -3516,3 +3516,38 @@ class PostgresTenantRegistry:
                 (tenant_id,),
             ).fetchall()
         return [ApiToken(**row) for row in rows]
+
+
+class PostgresUserPreferenceRepository:
+    """DB-backed per-user UI preference store (#558), keyed by ``(tenant_id, subject, key)``."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def get_all(self, tenant_id: str, subject: str) -> dict[str, Any]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT key, value FROM user_preferences WHERE tenant_id=%s AND subject=%s",
+                (tenant_id, subject),
+            ).fetchall()
+        return {row["key"]: row["value"] for row in rows}
+
+    def set_many(self, tenant_id: str, subject: str, values: dict[str, Any]) -> None:
+        if not values:
+            return
+        with self._db.connection() as conn, conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO user_preferences (tenant_id, subject, key, value, updated_at) "
+                "VALUES (%s, %s, %s, %s, now()) "
+                "ON CONFLICT (tenant_id, subject, key) "
+                "DO UPDATE SET value=EXCLUDED.value, updated_at=now()",
+                [(tenant_id, subject, key, Json(value)) for key, value in values.items()],
+            )
+
+    def delete(self, tenant_id: str, subject: str, key: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM user_preferences WHERE tenant_id=%s AND subject=%s AND key=%s",
+                (tenant_id, subject, key),
+            )

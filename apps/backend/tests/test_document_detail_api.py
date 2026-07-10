@@ -382,9 +382,24 @@ def test_detail_logs_a_view(tmp_path: Path) -> None:
     assert viewed and viewed[0]["actor_kind"] == "user"
 
 
-def test_detail_view_is_deduped_within_window(tmp_path: Path) -> None:
+def test_detail_view_is_deduped_within_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # React StrictMode fires the detail GET twice on mount; the deterministic bucketed id collapses
-    # rapid repeat opens to a single view row.
+    # rapid repeat opens to a single view row. Freeze the clock so the two GETs always land in the
+    # SAME dedup bucket - otherwise a real bucket-boundary crossing between them flakes CI (the id
+    # is `int(now.timestamp()) // _VIEW_DEDUP_SECONDS`).
+    import doktok_api.routers.documents as documents_mod
+
+    frozen = datetime(2026, 1, 1, 12, 0, 3, tzinfo=UTC)  # mid-bucket, not a boundary
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:  # type: ignore[override]
+            return frozen
+
+    monkeypatch.setattr(documents_mod, "datetime", _FrozenDatetime)
+
     client = _detail_client(tmp_path)
     client.get("/api/v1/documents/d1/detail", headers=_auth())
     body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()

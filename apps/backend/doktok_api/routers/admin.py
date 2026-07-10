@@ -119,6 +119,38 @@ class IssuedToken(BaseModel):
     name: str = ""
 
 
+# --- context ---
+
+
+class AdminContext(BaseModel):
+    """The admin caller's own tenant + identity, for the admin console header (#559).
+
+    Resolves what ``/auth/me`` cannot: the caller may present a tenant-scoped token (no user), which
+    still administers its tenant. ``role`` is the user's role, or ``admin`` for a tenant-scoped
+    token (it already passed ``require_admin``). ``tenant_name`` falls back to the id for a
+    config-defined static tenant that has no ``tenants`` row.
+    """
+
+    tenant_id: str
+    tenant_name: str
+    user_id: str | None = None
+    email: str | None = None
+    role: str
+
+
+@router.get("/context", response_model=AdminContext)
+def admin_context(caller: AdminUser, registry: Registry) -> AdminContext:
+    tenant = registry.get_tenant(caller.tenant_id)
+    user = registry.get_user(caller.tenant_id, caller.user_id) if caller.user_id else None
+    return AdminContext(
+        tenant_id=caller.tenant_id,
+        tenant_name=tenant.name if tenant else caller.tenant_id,
+        user_id=caller.user_id,
+        email=user.email if user else None,
+        role=user.role if user else "admin",
+    )
+
+
 # --- tenants ---
 
 

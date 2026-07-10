@@ -12,3 +12,4 @@
 - [Processing telemetry](processing-telemetry.md) — per-doc timestamps/durations/tokens/step outcomes in card Processing section + list chip tooltip; additive, degrade gracefully, OCR not-needed=grey
 - [No-egress UX (AI models)](no-egress-ux.md) — gate forbidden remote models when no_egress ON (grey-out + 422), quiet awareness when OFF, posture badge, egress=any non-loopback; backend must expose no_egress + requires_egress
 - [Document tagging](document-tagging.md) — manual tenant-global colored tags: pill+dot+tint chip language, Insights Tags sub-tab, detail Tags row, bulk popover, 3-ticket split
+- [Admin console IA](admin-console-ia.md) — single-tenant workspace-settings model, tenant name-first + copyable GUID, instance tenant card, secret-reveal + self-guard rules

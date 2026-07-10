@@ -2119,6 +2119,18 @@ export interface AdminIssuedInvitation {
   expires_at: string;
 }
 
+export interface AdminContext {
+  tenant_id: string;
+  tenant_name: string;
+  user_id: string | null;
+  email: string | null;
+  role: string;
+}
+
+export function fetchAdminContext(signal?: AbortSignal): Promise<AdminContext> {
+  return getJson<AdminContext>("/api/v1/admin/context", signal);
+}
+
 /** POST/PUT/DELETE JSON with a shared error path; returns the parsed body (or undefined for 204). */
 async function sendJson<T>(
   url: string,

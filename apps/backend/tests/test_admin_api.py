@@ -58,6 +58,31 @@ def _bearer(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+# --- context ---
+
+
+def test_context_for_static_admin_token() -> None:
+    client, _ = _client()
+    body = client.get("/api/v1/admin/context", headers=_admin()).json()
+    assert body["tenant_id"] == "tenant-a"
+    assert body["tenant_name"] == "Tenant A"
+    assert body["user_id"] is None  # tenant-scoped token has no user
+    assert body["role"] == "admin"
+
+
+def test_context_for_logged_in_admin() -> None:
+    client, _ = _client()
+    body = client.get("/api/v1/admin/context", headers=_bearer("u_admin")).json()
+    assert body["user_id"] == "u_admin"
+    assert body["email"] == "admin@x.com"
+    assert body["role"] == "admin"
+
+
+def test_context_requires_admin() -> None:
+    client, _ = _client()
+    assert client.get("/api/v1/admin/context", headers=_bearer("u_view")).status_code == 403
+
+
 # --- authorization ---
 
 

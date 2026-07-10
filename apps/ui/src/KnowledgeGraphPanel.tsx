@@ -63,6 +63,9 @@ const LOD_LABEL_BUDGET = 40;
 // zoom). This is the fix for "zoom just makes text bigger".
 const LABEL_SCREEN_PX = 12;
 
+// One-shot selection ripple: an expanding ink ring that plays once (450ms) when a node is selected.
+const SELECT_RIPPLE_MS = 450;
+
 // ---- "Spread" (hub declutter) ----
 // A 1..6 slider scales node repulsion + link length so a dense hub fans out on demand.
 const SPREAD_DEFAULT = 1;
@@ -231,6 +234,8 @@ function canvasColors() {
     haloBg: isDark ? "rgba(13, 17, 23, 0.88)" : "rgba(255, 255, 255, 0.88)",
     link: isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.12)",
     predicate: isDark ? "rgba(139, 151, 168, 0.85)" : "rgba(91, 102, 117, 0.85)",
+    // "Added" (root) highlight: red, tuned per background. Only meaning of red on the canvas.
+    rootRing: isDark ? "#f85149" : "#cf222e",
   };
 }
 
@@ -306,8 +311,13 @@ export function KnowledgeGraphPanel({
 
   // Canvas sizing
   const canvasAreaRef = useRef<HTMLDivElement>(null);
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const kgLayoutRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(600);
   const [canvasHeight, setCanvasHeight] = useState<number>(measuredCanvasHeight);
+  // The three-column layout fills from its top edge to the bottom of the viewport (measured), so it
+  // never overflows the page regardless of the stats header / app chrome above it.
+  const [layoutHeight, setLayoutHeight] = useState<number | undefined>(undefined);
 
   // Latest onZoom transform, kept in a ref so viewport culling / LOD reads it during the canvas
   // draw loop WITHOUT triggering a React re-render on every zoom/pan frame.
@@ -398,9 +408,32 @@ export function KnowledgeGraphPanel({
     rootIdsRef.current = new Set(focusRoots.map(r => r.id));
   }, [focusRoots]);
   const selectedIdRef = useRef<string | null>(null);
+  // Selection ripple: one-shot animation driven by resuming the canvas redraw for its window.
+  const [selectAnimating, setSelectAnimating] = useState(false);
+  const selectAnimRef = useRef<{ id: string; start: number } | null>(null);
+  const selectAnimTimer = useRef<number | null>(null);
   useEffect(() => {
-    selectedIdRef.current = selectedNode?.entity.id ?? null;
+    const newId = selectedNode?.entity.id ?? null;
+    const prevId = selectedIdRef.current;
+    selectedIdRef.current = newId;
+    // Play a ripple only when the selection MOVES to a new node (not on deselect / re-click).
+    if (newId && newId !== prevId && !prefersReducedMotion()) {
+      selectAnimRef.current = { id: newId, start: performance.now() };
+      setSelectAnimating(true);
+      if (selectAnimTimer.current) window.clearTimeout(selectAnimTimer.current);
+      selectAnimTimer.current = window.setTimeout(() => {
+        selectAnimRef.current = null;
+        setSelectAnimating(false);
+        selectAnimTimer.current = null;
+      }, SELECT_RIPPLE_MS);
+    }
   }, [selectedNode]);
+  useEffect(
+    () => () => {
+      if (selectAnimTimer.current) window.clearTimeout(selectAnimTimer.current);
+    },
+    [],
+  );
   const adjacency = useMemo(() => {
     const map = new Map<string, Set<string>>();
     const link = (a: string, b: string) => {
@@ -498,17 +531,25 @@ export function KnowledgeGraphPanel({
   useEffect(() => {
     const el = canvasAreaRef.current;
     if (!el) return;
-    // Width tracks the canvas area (so collapsing the Insights sub-nav widens the graph);
-    // height is derived from the viewport height, clamped.
+    // Width tracks the canvas area (so collapsing the Insights sub-nav widens the graph); height
+    // fills the canvas WRAP - the space left in the column below the controls/chips - so the graph
+    // uses the full column height (falls back to the viewport clamp before the wrap is measured).
     const measure = () => {
       setCanvasWidth(el.offsetWidth || 600);
-      setCanvasHeight(measuredCanvasHeight());
+      const layoutEl = kgLayoutRef.current;
+      if (layoutEl) {
+        const top = layoutEl.getBoundingClientRect().top;
+        setLayoutHeight(Math.max(360, Math.round(window.innerHeight - top - 12)));
+      }
+      const wrapH = canvasWrapRef.current?.offsetHeight ?? 0;
+      setCanvasHeight(wrapH > 200 ? wrapH : measuredCanvasHeight());
     };
     measure();
     let ob: ResizeObserver | undefined;
     if (typeof ResizeObserver !== "undefined") {
       ob = new ResizeObserver(measure);
       ob.observe(el);
+      if (canvasWrapRef.current) ob.observe(canvasWrapRef.current);
     }
     // ResizeObserver on the area catches width changes; window resize catches viewport-height
     // changes that do not alter the area width.
@@ -1073,7 +1114,7 @@ export function KnowledgeGraphPanel({
     globalScale: number,
   ): void {
     const n = node as unknown as GraphNode & { x: number; y: number };
-    const { ink, haloBg } = canvasColors();
+    const { ink, haloBg, rootRing } = canvasColors();
     const r = Math.sqrt(Math.max(0, n.val ?? 5)) * 2;
     const tier = tierRef.current;
     const isRoot = rootIdsRef.current.has(n.id);
@@ -1106,15 +1147,19 @@ export function KnowledgeGraphPanel({
     ctx.lineWidth = 1 / globalScale;
     ctx.stroke();
 
-    // Root ring (thin, offset) = "an entity you added". Ink so it flips per theme, not hue.
+    // Root ring (offset RED) = "an entity you added". A haloBg knockout band under the red keeps it
+    // readable even on a reddish type fill (EMAIL/DATE). Red only means "added" on this canvas.
     if (isRoot) {
       ctx.beginPath();
       ctx.arc(n.x, n.y, r + 3, 0, 2 * Math.PI);
-      ctx.strokeStyle = ink;
-      ctx.globalAlpha *= 0.85;
-      ctx.lineWidth = 1.5 / globalScale;
+      ctx.strokeStyle = haloBg;
+      ctx.lineWidth = 3.5 / globalScale;
       ctx.stroke();
-      ctx.globalAlpha = isFaded(n.id) ? (isRoot || isSel ? 0.4 : 0.15) : 1;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 3, 0, 2 * Math.PI);
+      ctx.strokeStyle = rootRing;
+      ctx.lineWidth = 2 / globalScale;
+      ctx.stroke();
     }
 
     // Selection ring (thick, hugging, with a knockout gap) = "editing this one".
@@ -1163,6 +1208,20 @@ export function KnowledgeGraphPanel({
       // Label text
       ctx.fillStyle = ink;
       ctx.fillText(lbl, n.x, ly + pad);
+    }
+
+    // Selection ripple (topmost, transient): one expanding, fading ink ring on the just-selected
+    // node. Drives its own redraw window via autoPauseRedraw; nothing runs once it ends.
+    const anim = selectAnimRef.current;
+    if (anim && anim.id === n.id) {
+      const p = Math.min(1, (performance.now() - anim.start) / SELECT_RIPPLE_MS);
+      const eased = 1 - (1 - p) ** 3;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 1.6 + eased * (10 - 1.6), 0, 2 * Math.PI);
+      ctx.globalAlpha = 0.9 * (1 - p);
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 2 / globalScale;
+      ctx.stroke();
     }
     ctx.restore(); // end hover-fade globalAlpha
   }
@@ -1268,7 +1327,11 @@ export function KnowledgeGraphPanel({
       </div>
 
       {/* Three-column layout: entity rail | canvas | detail rail */}
-      <div className="kg-layout">
+      <div
+        className="kg-layout"
+        ref={kgLayoutRef}
+        style={layoutHeight ? { height: `${layoutHeight}px` } : undefined}
+      >
         {/* Left: entity browser rail */}
         <aside className="kg-entity-rail" aria-label="Entity browser">
           <div className="kg-type-chips" role="group" aria-label="Filter by entity type">
@@ -1415,7 +1478,7 @@ export function KnowledgeGraphPanel({
               <p>Select an entity from the list to explore its connections.</p>
             </div>
           ) : (
-            <div className="kg-canvas-wrap">
+            <div className="kg-canvas-wrap" ref={canvasWrapRef}>
               <ForceGraph2D
                 ref={graphRef}
                 graphData={{
@@ -1430,6 +1493,8 @@ export function KnowledgeGraphPanel({
                 height={canvasHeight}
                 cooldownTicks={reduced ? 0 : undefined}
                 warmupTicks={reduced ? 0 : undefined}
+                // Keep redrawing while the selection ripple plays; otherwise the canvas may sleep.
+                autoPauseRedraw={!selectAnimating}
                 enableNodeDrag={!reduced}
                 onNodeDragEnd={(node) => {
                   // Pin where the user dropped it, so a hub's neighbors pulled apart stay apart

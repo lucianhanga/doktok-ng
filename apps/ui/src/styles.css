@@ -5152,8 +5152,10 @@ tr.row-selected {
   display: flex;
   gap: 0.85rem;
   align-items: stretch;
-  height: clamp(500px, 82vh, 1100px);
-  min-height: 0;
+  /* Fallback for the first frame; JS then sets an exact px height (layout top -> viewport bottom)
+     so the columns fill the page WITHOUT overflowing it. */
+  height: 68vh;
+  min-height: 420px;
 }
 
 /* Left entity browser rail */
@@ -5172,6 +5174,9 @@ tr.row-selected {
   flex: 1 1 300px;
   min-width: 0;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Right detail rail: fills the column; its inner sections scroll, not the rail itself. */
@@ -5353,6 +5358,14 @@ tr.row-selected {
   flex-wrap: wrap;
   gap: 0.3rem;
 }
+.kg-chip::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--kg-root-red); /* ties the chip to its red root ring on the canvas */
+}
 .kg-chip {
   display: inline-flex;
   align-items: center;
@@ -5422,12 +5435,15 @@ tr.row-selected {
   margin: 0 0 0.3rem;
 }
 .kg-canvas-wrap {
+  flex: 1 1 0;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface-2);
   overflow: hidden;
 }
 .kg-empty {
+  flex: 1 1 0;
   border: 1px dashed var(--border);
   border-radius: 8px;
   padding: 1.5rem 1rem;
@@ -5478,6 +5494,23 @@ tr.row-selected {
 .kg-detail-panel .kg-doc-list {
   max-height: none;
   overflow: visible;
+}
+/* Keep the RELATIONS / DOCUMENTS titles pinned while their list scrolls under them. */
+.kg-detail-panel .kg-detail-section-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 0.15rem 0 0.25rem;
+  background: var(--bg, var(--surface));
+}
+
+/* "Added" (root) red, tuned per theme; shared by the canvas ring, chip dot, and legend swatch. */
+:root {
+  --kg-root-red: #f85149;
+}
+[data-theme="light"] {
+  --kg-root-red: #cf222e;
 }
 .kg-type-badge {
   display: inline-flex;
@@ -5651,10 +5684,11 @@ tr.row-selected {
   border-radius: 50%;
   border: 1px solid var(--text);
 }
-/* Added = thin, offset ring. */
+/* Added = red offset ring (matches the canvas root ring). */
 .kg-state-swatch.added::after {
   inset: -3px;
-  opacity: 0.85;
+  border-color: var(--kg-root-red);
+  border-width: 2px;
 }
 /* Selected = thick, hugging ring. */
 .kg-state-swatch.selected::after {

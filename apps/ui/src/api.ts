@@ -2208,3 +2208,15 @@ export function fetchAdminTenants(signal?: AbortSignal): Promise<AdminTenant[]> 
 export function createAdminTenant(body: { id: string; name: string }): Promise<AdminTenant> {
   return sendJson<AdminTenant>("/api/v1/admin/tenants", "POST", body);
 }
+
+// --- Per-user preferences (#558) -----------------------------------------------------------------
+// Server-side UI preference store so settings sync across devices. persist.ts uses these to mirror
+// its localStorage cache to the server (subject = the proxy-injected identity).
+
+export function fetchPreferences(signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return getJson<Record<string, unknown>>("/api/v1/preferences", signal);
+}
+
+export function putPreferences(values: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return sendJson<Record<string, unknown>>("/api/v1/preferences", "PUT", values);
+}

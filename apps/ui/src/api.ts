@@ -2075,3 +2075,136 @@ export async function splitEntity(aliasId: string): Promise<void> {
     throw friendlyHttpError(response.status);
   }
 }
+
+// --- Tenant / member administration (#559, #557) -------------------------------------------------
+// Admin-only endpoints. The dev proxy / deploy proxy injects a tenant-scoped bearer token which
+// resolves to admin, so the single operator reaches these without an in-browser login.
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string; // viewer | editor | admin
+  status: string; // active | deactivated | invited
+}
+
+export interface AdminTokenView {
+  id: string;
+  user_id: string | null;
+  name: string;
+  token_prefix: string;
+  active: boolean;
+}
+
+export interface AdminIssuedToken {
+  id: string;
+  token: string; // shown ONCE
+  token_prefix: string;
+  user_id: string | null;
+  name: string;
+}
+
+export interface AdminTenant {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string | null;
+}
+
+export interface AdminIssuedInvitation {
+  user_id: string;
+  email: string;
+  role: string;
+  token: string; // the one-time acceptance token
+  expires_at: string;
+}
+
+/** POST/PUT/DELETE JSON with a shared error path; returns the parsed body (or undefined for 204). */
+async function sendJson<T>(
+  url: string,
+  method: "POST" | "PUT" | "DELETE",
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export function fetchAdminUsers(signal?: AbortSignal): Promise<AdminUser[]> {
+  return getJson<AdminUser[]>("/api/v1/admin/users", signal);
+}
+
+export function createAdminUser(body: {
+  email: string;
+  display_name?: string;
+  role?: string;
+  password?: string;
+}): Promise<AdminUser> {
+  return sendJson<AdminUser>("/api/v1/admin/users", "POST", body);
+}
+
+export function setAdminUserRole(userId: string, role: string): Promise<AdminUser> {
+  return sendJson<AdminUser>(`/api/v1/admin/users/${encodeURIComponent(userId)}/role`, "POST", {
+    role,
+  });
+}
+
+export function resetAdminUserPassword(userId: string, password: string): Promise<void> {
+  return sendJson<void>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/password`,
+    "POST",
+    { password },
+  );
+}
+
+export function deactivateAdminUser(userId: string): Promise<AdminUser> {
+  return sendJson<AdminUser>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/deactivate`,
+    "POST",
+  );
+}
+
+export function reactivateAdminUser(userId: string): Promise<AdminUser> {
+  return sendJson<AdminUser>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/reactivate`,
+    "POST",
+  );
+}
+
+export function inviteAdminUser(body: {
+  email: string;
+  role?: string;
+  display_name?: string;
+}): Promise<AdminIssuedInvitation> {
+  return sendJson<AdminIssuedInvitation>("/api/v1/admin/invitations", "POST", body);
+}
+
+export function fetchAdminTokens(signal?: AbortSignal): Promise<AdminTokenView[]> {
+  return getJson<AdminTokenView[]>("/api/v1/admin/tokens", signal);
+}
+
+export function createAdminToken(body: {
+  name?: string;
+  user_id?: string | null;
+}): Promise<AdminIssuedToken> {
+  return sendJson<AdminIssuedToken>("/api/v1/admin/tokens", "POST", body);
+}
+
+export function revokeAdminToken(tokenId: string): Promise<void> {
+  return sendJson<void>(`/api/v1/admin/tokens/${encodeURIComponent(tokenId)}`, "DELETE");
+}
+
+export function fetchAdminTenants(signal?: AbortSignal): Promise<AdminTenant[]> {
+  return getJson<AdminTenant[]>("/api/v1/admin/tenants", signal);
+}
+
+export function createAdminTenant(body: { id: string; name: string }): Promise<AdminTenant> {
+  return sendJson<AdminTenant>("/api/v1/admin/tenants", "POST", body);
+}

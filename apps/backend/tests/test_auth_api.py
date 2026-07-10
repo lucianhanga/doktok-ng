@@ -2,8 +2,9 @@ import os
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import TenantRegistry
+from doktok_contracts.ports import AuditLogRepository, TenantRegistry
 from doktok_contracts.schemas import Tenant, User
+from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
 from doktok_core.registry import build_registry
 from doktok_core.security.inmemory import InMemoryTenantRegistry
@@ -48,6 +49,7 @@ def _registry() -> InMemoryTenantRegistry:
 def _client(*, jwt_secret: str = JWT_SECRET) -> TestClient:
     registry = build_registry()
     registry.register(TenantRegistry, _registry())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     settings = Settings(
         env="test",
         auth_jwt_secret=jwt_secret,

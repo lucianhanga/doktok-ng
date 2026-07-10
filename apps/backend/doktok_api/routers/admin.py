@@ -23,7 +23,7 @@ from doktok_contracts.ports import AuditLogRepository, TenantRegistry
 from doktok_contracts.schemas import ApiToken, AuditEventType, Invitation, Tenant, User
 from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.security.auth import hash_token
-from doktok_core.security.passwords import hash_password
+from doktok_core.security.passwords import hash_password, validate_password
 from doktok_core.security.roles import Role
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -47,6 +47,16 @@ def _valid_role(value: str) -> str:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="role must be one of: viewer, editor, admin",
         ) from None
+
+
+def _valid_password(value: str) -> str:
+    try:
+        validate_password(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return value
 
 
 # --- views / requests ---
@@ -202,7 +212,7 @@ def create_user(
         email=body.email.strip(),
         display_name=body.display_name,
         role=role,
-        password_hash=hash_password(body.password) if body.password else None,
+        password_hash=hash_password(_valid_password(body.password)) if body.password else None,
     )
     registry.create_user(user)
     record_activity(
@@ -251,7 +261,9 @@ def set_user_password(
     user = registry.get_user(caller.tenant_id, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such user")
-    registry.set_user_password(caller.tenant_id, user_id, hash_password(body.password))
+    registry.set_user_password(
+        caller.tenant_id, user_id, hash_password(_valid_password(body.password))
+    )
     record_activity(
         audit,
         caller.tenant_id,

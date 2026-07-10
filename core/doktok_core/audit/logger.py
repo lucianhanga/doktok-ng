@@ -68,6 +68,8 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.USER_DEACTIVATED.value: ("admin", "warning", "User deactivated"),
     AuditEventType.USER_REACTIVATED.value: ("admin", "info", "User reactivated"),
     AuditEventType.USER_INVITE_ACCEPTED.value: ("user", "info", "Invitation accepted"),
+    AuditEventType.AUTH_LOGIN_SUCCEEDED.value: ("auth", "info", "Login succeeded"),
+    AuditEventType.AUTH_LOGIN_FAILED.value: ("auth", "warning", "Login failed"),
 }
 
 

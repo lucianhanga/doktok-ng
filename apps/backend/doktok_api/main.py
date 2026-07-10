@@ -49,6 +49,29 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _WORKER_STALE_SECONDS = 120
 
 
+_MIN_JWT_SECRET_BYTES = 32
+
+
+def _check_login_secret(settings: Settings) -> None:
+    """Warn (loudly) about a weak or cross-purpose JWT signing secret when login is enabled (CISO
+    M5). HS256 is only as strong as its secret; a short one is offline-crackable from any captured
+    token. We warn rather than refuse so a local-first dev box is never wedged, but the operator
+    should mint a dedicated ``DOKTOK_AUTH_JWT_SECRET`` (openssl rand -base64 48)."""
+    if settings.auth_jwt_secret:
+        if len(settings.auth_jwt_secret.encode()) < _MIN_JWT_SECRET_BYTES:
+            logger.warning(
+                "DOKTOK_AUTH_JWT_SECRET is shorter than %d bytes; use a longer random secret "
+                "(openssl rand -base64 48) - short HS256 secrets are offline-crackable",
+                _MIN_JWT_SECRET_BYTES,
+            )
+    elif settings.secrets_key:
+        logger.warning(
+            "login is signing JWTs with DOKTOK_SECRETS_KEY (no dedicated DOKTOK_AUTH_JWT_SECRET); "
+            "reusing the envelope-encryption key for signing widens the blast radius of a leak - "
+            "set a dedicated DOKTOK_AUTH_JWT_SECRET"
+        )
+
+
 def _maintenance_active(settings: Settings) -> bool:
     """True iff the host-written maintenance sentinel exists (M12 portable restore Phase 2).
 
@@ -145,12 +168,29 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     )
 
     # Per-token rate limiter (APP-9); only active when configured (>0).
+    import threading
+
     from doktok_api.metrics import Metrics
     from doktok_api.ratelimit import RateLimiter
 
     app.state.rate_limiter = (
         RateLimiter(settings.rate_limit_per_minute) if settings.rate_limit_per_minute > 0 else None
     )
+    # Pre-auth login throttle (CISO M2): per-IP and per-(tenant, email) buckets + a semaphore that
+    # caps concurrent scrypt verifications. Independent of the per-token limiter (login has no token
+    # yet), so it protects the unauthenticated endpoint the API limiter never sees.
+    app.state.login_ip_limiter = (
+        RateLimiter(settings.login_ip_rate_per_minute)
+        if settings.login_ip_rate_per_minute > 0
+        else None
+    )
+    app.state.login_acct_limiter = (
+        RateLimiter(settings.login_rate_per_minute) if settings.login_rate_per_minute > 0 else None
+    )
+    app.state.login_verify_semaphore = threading.Semaphore(
+        max(1, settings.login_max_concurrent_verifies)
+    )
+    _check_login_secret(settings)
     app.state.metrics = Metrics()  # APP-13
     _max_body_bytes = settings.max_request_mb * 1024 * 1024
     _max_upload_bytes = settings.max_upload_mb * 1024 * 1024

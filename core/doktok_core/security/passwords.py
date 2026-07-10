@@ -28,6 +28,22 @@ _SALT_BYTES = 16
 _MAXMEM = 64 * 1024 * 1024  # scrypt's default 32 MiB cap is too low for these params; lift it.
 
 
+# Password length policy (NIST SP 800-63B): a meaningful minimum, a generous maximum, and NO
+# composition rules (they push users to predictable patterns). The maximum caps the scrypt work an
+# attacker-supplied password can force. Applied at every human set-password path (invite accept,
+# admin create/reset). Login only VERIFIES, so it never rejects a pre-existing short password.
+MIN_PASSWORD_LENGTH = 12
+MAX_PASSWORD_LENGTH = 128
+
+
+def validate_password(password: str) -> None:
+    """Raise ``ValueError`` if ``password`` violates the length policy (#555 hardening)."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+    if len(password) > MAX_PASSWORD_LENGTH:
+        raise ValueError(f"password must be at most {MAX_PASSWORD_LENGTH} characters")
+
+
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii")
 

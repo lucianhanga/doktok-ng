@@ -108,6 +108,10 @@ class AuditEventType(StrEnum):
     USER_DEACTIVATED = "user.deactivated"
     USER_REACTIVATED = "user.reactivated"
     USER_INVITE_ACCEPTED = "user.invite_accepted"
+    # Login attempts (auth hardening): observability for credential-stuffing / brute force. Never
+    # carries the password; records the attempted email + tenant + source IP.
+    AUTH_LOGIN_SUCCEEDED = "auth.login_succeeded"
+    AUTH_LOGIN_FAILED = "auth.login_failed"
 
 
 class EntityType(StrEnum):

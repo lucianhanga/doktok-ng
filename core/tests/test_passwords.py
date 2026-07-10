@@ -1,4 +1,26 @@
-from doktok_core.security.passwords import hash_password, verify_password
+import pytest
+from doktok_core.security.passwords import (
+    MAX_PASSWORD_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    hash_password,
+    validate_password,
+    verify_password,
+)
+
+
+def test_validate_password_accepts_policy_compliant() -> None:
+    validate_password("a" * MIN_PASSWORD_LENGTH)  # no raise
+    validate_password("a" * MAX_PASSWORD_LENGTH)
+
+
+def test_validate_password_rejects_too_short() -> None:
+    with pytest.raises(ValueError, match="at least"):
+        validate_password("a" * (MIN_PASSWORD_LENGTH - 1))
+
+
+def test_validate_password_rejects_too_long() -> None:
+    with pytest.raises(ValueError, match="at most"):
+        validate_password("a" * (MAX_PASSWORD_LENGTH + 1))
 
 
 def test_hash_is_self_describing_scrypt() -> None:

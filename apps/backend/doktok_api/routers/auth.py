@@ -20,7 +20,7 @@ from doktok_contracts.ports import AuditLogRepository, TenantRegistry
 from doktok_contracts.schemas import AuditEventType, User
 from doktok_core.audit.logger import record_activity
 from doktok_core.security.auth import hash_token
-from doktok_core.security.passwords import hash_password, verify_password
+from doktok_core.security.passwords import hash_password, validate_password, verify_password
 from doktok_core.security.sessions import issue_access_token
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -91,16 +91,85 @@ def _require_login_secret(request: Request) -> str:
     return secret
 
 
+def _client_ip(request: Request) -> str:
+    """The client IP for the login throttle. Honors ``X-Forwarded-For`` ONLY behind a trusted proxy
+    (``DOKTOK_TRUSTED_PROXY``); otherwise a client could spoof the header to dodge the per-IP limit.
+    """
+    if getattr(request.app.state.settings, "trusted_proxy", False):
+        xff = request.headers.get("X-Forwarded-For")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _throttle_login(request: Request, tenant_id: str, email: str) -> None:
+    """Pre-auth brute-force throttle (CISO M2): per-IP and per-(tenant, email) token buckets, run
+    BEFORE any credential work so a throttled attacker gets no timing/enumeration signal."""
+    checks = (
+        (getattr(request.app.state, "login_ip_limiter", None), f"ip:{_client_ip(request)}"),
+        (
+            getattr(request.app.state, "login_acct_limiter", None),
+            f"acct:{tenant_id}:{email.strip().lower()}",
+        ),
+    )
+    for limiter, key in checks:
+        if limiter is None:
+            continue
+        allowed, retry_after = limiter.allow(key)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="too many login attempts; please wait and try again",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+
+def _audit_login(
+    audit: AuditLogRepository,
+    request: Request,
+    tenant_id: str,
+    email: str,
+    *,
+    ok: bool,
+    user_id: str | None = None,
+) -> None:
+    normalized = email.strip().lower()
+    record_activity(
+        audit,
+        tenant_id,
+        AuditEventType.AUTH_LOGIN_SUCCEEDED if ok else AuditEventType.AUTH_LOGIN_FAILED,
+        actor=user_id or normalized,
+        actor_kind="user",
+        description=f'Login {"succeeded" if ok else "failed"} for "{normalized}"',
+        details={"email": normalized, "ip": _client_ip(request)},  # never the password
+    )
+
+
+class AuthConfig(BaseModel):
+    login_enabled: bool
+
+
+@router.get("/config", response_model=AuthConfig)
+def auth_config(request: Request) -> AuthConfig:
+    """Whether password login is available (a signing secret is configured). Unauthenticated, so the
+    SPA can decide up front to show the login screen vs. run in proxy-injected/token-free mode."""
+    return AuthConfig(login_enabled=bool(effective_jwt_secret(request.app.state.settings)))
+
+
 @router.post("/login", response_model=LoginResponse)
-def login(request: Request, body: LoginRequest, registry: Registry) -> LoginResponse:
+def login(request: Request, body: LoginRequest, registry: Registry, audit: Audit) -> LoginResponse:
     """Authenticate an email/password and return a session JWT for the tenant/user."""
     secret = _require_login_secret(request)
+    _throttle_login(request, body.tenant_id, body.email)  # 429 before any credential work
     user = registry.get_user_by_email(body.tenant_id, body.email)
     # Always run a verification (decoy when the user is unknown or has no password) so the response
-    # time does not reveal whether the account exists.
+    # time does not reveal whether the account exists. Cap concurrent memory-hard verifications so
+    # login cannot exhaust the sync worker pool.
     stored = user.password_hash if user else None
-    password_ok = verify_password(body.password, stored or _DECOY_HASH)
+    with request.app.state.login_verify_semaphore:
+        password_ok = verify_password(body.password, stored or _DECOY_HASH)
     if user is None or not password_ok or user.status != "active":
+        _audit_login(audit, request, body.tenant_id, body.email, ok=False)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=_INVALID_CREDENTIALS,
@@ -111,6 +180,7 @@ def login(request: Request, body: LoginRequest, registry: Registry) -> LoginResp
     token = issue_access_token(
         tenant_id=user.tenant_id, user_id=user.id, secret=secret, ttl_seconds=ttl
     )
+    _audit_login(audit, request, body.tenant_id, body.email, ok=True, user_id=user.id)
     return LoginResponse(access_token=token, expires_in=ttl, user=_public_user(user))
 
 
@@ -125,6 +195,12 @@ def accept_invite(body: AcceptInviteRequest, registry: Registry, audit: Audit) -
     """Accept a tenant invitation (#557): validate the one-time token, set the password, and
     activate the user. Public (no auth) - the invite token is the credential. A single generic
     error avoids disclosing whether a token exists."""
+    try:
+        validate_password(body.password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     invalid = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST, detail="invalid or expired invitation"
     )

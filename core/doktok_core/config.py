@@ -222,6 +222,19 @@ class Settings(BaseSettings):
     # Invitation validity window in hours (#557). An unaccepted invite token expires after this.
     auth_invite_ttl_hours: int = 168  # 7 days
 
+    # Brute-force throttling for the pre-auth login endpoint (CISO M2). Independent of the per-token
+    # API rate limiter (which only sees authenticated calls). Two token buckets bound each attempt:
+    # per source IP and per (tenant, email). Throttle (429 + Retry-After), never hard-lock an
+    # account (a hard lock is an account-DoS primitive). 0 disables that bucket.
+    login_rate_per_minute: int = 5  # per (tenant, email)
+    login_ip_rate_per_minute: int = 20  # per source IP
+    # Cap on concurrent password verifications (scrypt is memory-hard, ~tens of ms each) so login
+    # cannot be used to exhaust the sync worker pool / memory regardless of the rate limits.
+    login_max_concurrent_verifies: int = 4
+    # Honor X-Forwarded-For for the login IP key ONLY when the app sits behind a trusted proxy that
+    # sets it. Off by default: otherwise a client spoofs the header to dodge the per-IP limit.
+    trusted_proxy: bool = False
+
     # API server bind host (loopback by default; ADR-0008).
     bind_host: str = "127.0.0.1"
     # Bearer token -> tenant_id map (JSON in env; static now, DB-backed later; ADR-0008).

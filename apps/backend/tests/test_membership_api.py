@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 JWT_SECRET = "membership-secret"  # pragma: allowlist secret
 STATIC_TOKENS = {"tok-admin": "tenant-a"}
 _NEW_PW = "brand-new-pw-9"  # pragma: allowlist secret
-_PW = "pw-123456"  # pragma: allowlist secret
+_PW = "pw-1234567890"  # pragma: allowlist secret (>= 12 chars for the password policy)
 
 
 @pytest.fixture(autouse=True)

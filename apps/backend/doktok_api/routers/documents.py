@@ -47,7 +47,7 @@ from doktok_contracts.schemas import (
     SortDir,
     TokenMatch,
 )
-from doktok_core.audit.logger import record_activity
+from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
 from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS_BY_ID
 from doktok_core.features.telemetry import build_processing_summary, build_processing_telemetry
@@ -283,7 +283,7 @@ def get_document_detail(
         audit,
         tenant.tenant_id,
         AuditEventType.DOCUMENT_VIEWED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         document_id=document_id,
         event_id=f"view-{tenant.tenant_id}-{document_id}-{bucket}",
@@ -448,7 +448,7 @@ def retry_document_feature(
         audit,
         tenant.tenant_id,
         AuditEventType.FEATURE_RETRIED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         document_id=document_id,
         description=f"{feature} re-queued by user",
@@ -477,7 +477,7 @@ def reprocess_all_documents_feature(
         audit,
         tenant.tenant_id,
         AuditEventType.FEATURE_RETRIED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         description=f"{feature} re-queued for {count} documents",
         record_kind="feature",
@@ -527,7 +527,7 @@ def reprocess_all_documents_group(
         audit,
         tenant.tenant_id,
         AuditEventType.FEATURE_RETRIED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         description=f"reprocess group {feature_group.label} ({count} docs)",
         record_kind="feature",
@@ -613,7 +613,7 @@ def reingest_document(
         audit,
         tenant.tenant_id,
         AuditEventType.DOCUMENT_REINGESTED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         document_id=document_id,
         description=f"Re-ingested by user ({profile} profile)",
@@ -652,7 +652,7 @@ def rotate_document(
         audit,
         tenant.tenant_id,
         AuditEventType.DOCUMENT_ROTATED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         document_id=document_id,
         description=f"Rotated {degrees} clockwise and re-ingested",
@@ -692,7 +692,7 @@ def delete_document(
         audit,
         tenant.tenant_id,
         AuditEventType.DOCUMENT_DELETED,
-        actor="user",
+        actor=actor_identity(tenant),
         actor_kind="user",
         document_id=document_id,
         description="Deleted by user",

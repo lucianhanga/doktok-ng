@@ -5146,18 +5146,21 @@ tr.row-selected {
   color: var(--text);
 }
 
-/* Three-column layout */
+/* Three-column layout — columns STRETCH to fill a tall, viewport-based height so the graph and both
+   rails use the full page height instead of a short fixed cap. */
 .kg-layout {
   display: flex;
   gap: 0.85rem;
-  align-items: flex-start;
+  align-items: stretch;
+  height: clamp(500px, 82vh, 1100px);
+  min-height: 0;
 }
 
 /* Left entity browser rail */
 .kg-entity-rail {
   flex: 0 0 180px;
   min-width: 0;
-  max-height: 520px;
+  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   border-right: 1px solid var(--border);
@@ -5168,16 +5171,15 @@ tr.row-selected {
 .kg-canvas-area {
   flex: 1 1 300px;
   min-width: 0;
+  height: 100%;
 }
 
-/* Right detail rail */
+/* Right detail rail: fills the column; its inner sections scroll, not the rail itself. */
 .kg-detail-rail {
-  flex: 0 0 210px;
+  flex: 0 0 220px;
   min-width: 0;
-  /* Fill the section height (mirrors the viewport-based canvas) instead of a short fixed cap. */
-  max-height: clamp(420px, 74vh, 760px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  height: 100%;
+  overflow: hidden;
   border-left: 1px solid var(--border);
   padding-left: 0.65rem;
 }
@@ -5434,19 +5436,48 @@ tr.row-selected {
   font-size: 0.85rem;
 }
 
-/* Detail rail content */
+/* Detail rail content: name + Identity are FIXED (never scroll); Relations and Documents are two
+   independently-scrollable panels that share the remaining height. Visual order is set with `order`
+   so the JSX (head -> Relations -> Documents -> Identity) can stay put. */
 .kg-detail-content {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  height: 100%;
+  min-height: 0;
 }
 .kg-detail-head {
+  order: 0;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.35rem;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--border);
+}
+/* Identity (action buttons): fixed, sits right under the name, grows to fit its buttons. */
+.kg-split-section {
+  order: 1;
+  flex: 0 0 auto;
+}
+/* Relations + Documents: each fills half the leftover height and scrolls on its own. Both share
+   order 2 so they sit after Identity and keep their DOM order (Relations then Documents). */
+.kg-detail-panel {
+  order: 2;
+  flex: 1 1 0;
+  min-height: 3.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+/* The lists inside the scrolling panels no longer need their own caps. */
+.kg-detail-panel .kg-edge-list,
+.kg-detail-panel .kg-doc-list {
+  max-height: none;
+  overflow: visible;
 }
 .kg-type-badge {
   display: inline-flex;

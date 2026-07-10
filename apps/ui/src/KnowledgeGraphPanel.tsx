@@ -525,8 +525,16 @@ export function KnowledgeGraphPanel({
   useEffect(() => {
     const c = new AbortController();
     fetchKgStats(c.signal)
-      .then(s => setStats(s))
-      .catch(() => setStatsError("Could not load stats."));
+      .then(s => {
+        setStats(s);
+        setStatsError(null);
+      })
+      .catch(err => {
+        if (c.signal.aborted) return;
+        // Surface the real reason (status/message) - a bare "could not load stats" hid whether it
+        // was auth, a restarting backend, or a server error.
+        setStatsError(err instanceof Error ? `Could not load stats: ${err.message}` : "Could not load stats.");
+      });
     return () => c.abort();
   }, []);
 
@@ -1482,14 +1490,15 @@ export function KnowledgeGraphPanel({
                 </span>
               </div>
 
-              <h4 className="kg-detail-section-label">
-                Relations ({selectedNode.edges.length})
-              </h4>
+              <div className="kg-detail-panel">
+                <h4 className="kg-detail-section-label">
+                  Relations ({selectedNode.edges.length})
+                </h4>
 
-              {selectedNode.edges.length === 0 ? (
-                <p className="kg-status muted">No relations.</p>
-              ) : (
-                <ul className="kg-edge-list">
+                {selectedNode.edges.length === 0 ? (
+                  <p className="kg-status muted">No relations.</p>
+                ) : (
+                  <ul className="kg-edge-list">
                   {selectedNode.edges.map(edge => {
                     const otherId =
                       edge.dst_entity_id === selectedNode.entity.id
@@ -1514,11 +1523,13 @@ export function KnowledgeGraphPanel({
                     );
                   })}
                 </ul>
-              )}
+                )}
+              </div>
 
               {/* Documents containing this entity */}
-              <h4 className="kg-detail-section-label">Documents ({entityDocs.length})</h4>
-              {docsLoading ? (
+              <div className="kg-detail-panel">
+                <h4 className="kg-detail-section-label">Documents ({entityDocs.length})</h4>
+                {docsLoading ? (
                 <p className="kg-status muted">Loading documents...</p>
               ) : docsError ? (
                 <p className="kg-status status-error">{docsError}</p>
@@ -1546,7 +1557,8 @@ export function KnowledgeGraphPanel({
                     );
                   })}
                 </ul>
-              )}
+                )}
+              </div>
 
               {/* Unmerge action — reverses a prior merge on this entity (was "Split") */}
               <div className="kg-split-section">

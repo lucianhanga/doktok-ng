@@ -31,6 +31,7 @@ from doktok_api.routers import (
     entities,
     features,
     ingestion,
+    preferences,
     search,
     stats,
     tokens,
@@ -382,6 +383,9 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(auth.router)
     # Administration (#559): admin-only for EVERY method (listings included), not just writes.
     app.include_router(admin.router, dependencies=[Depends(require_admin)])
+    # Per-user preferences (#558): self-scoped read/write for ANY authenticated caller (a viewer
+    # sets their own UI prefs), so no role write-guard.
+    app.include_router(preferences.router)
     app.include_router(ingestion.router, dependencies=editor_writes)
     app.include_router(documents.router, dependencies=editor_writes)
     app.include_router(audit.router, dependencies=editor_writes)

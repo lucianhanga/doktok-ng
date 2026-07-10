@@ -289,6 +289,28 @@ class AppSettingsRepository(Protocol):
 
 
 @runtime_checkable
+class UserPreferenceRepository(Protocol):
+    """Per-user server-side UI preference store (#558), keyed by ``(tenant_id, subject, key)``.
+
+    ``subject`` is the authenticated user's id, or the tenant id for a tenant-scoped (login-less)
+    caller, so a local-first single-operator deployment keeps one persistent bucket with no login.
+    ``value`` is arbitrary JSON. The store is opaque to the backend - the UI owns the keys/shapes.
+    """
+
+    def get_all(self, tenant_id: str, subject: str) -> dict[str, Any]:
+        """All of this subject's preferences as a ``{key: value}`` map (empty if none)."""
+        ...
+
+    def set_many(self, tenant_id: str, subject: str, values: dict[str, Any]) -> None:
+        """Upsert each ``key -> value``. A partial map merges (untouched keys are preserved)."""
+        ...
+
+    def delete(self, tenant_id: str, subject: str, key: str) -> None:
+        """Remove one preference; a no-op if it is not set."""
+        ...
+
+
+@runtime_checkable
 class AuditLogRepository(Protocol):
     """Append-only activity/audit trail (record + read only; events are immutable)."""
 

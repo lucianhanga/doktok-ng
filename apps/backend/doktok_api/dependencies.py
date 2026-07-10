@@ -36,6 +36,7 @@ from doktok_contracts.ports import (
     Retriever,
     StatsRepository,
     TenantRegistry,
+    UserPreferenceRepository,
 )
 from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_credential
@@ -224,6 +225,18 @@ def get_audit_repository(request: Request) -> AuditLogRepository:
 
     repository = PostgresAuditLogRepository(_get_database(request))
     registry.register(AuditLogRepository, repository)
+    return repository
+
+
+def get_user_preference_repository(request: Request) -> UserPreferenceRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(UserPreferenceRepository):
+        return cast(UserPreferenceRepository, registry.resolve(UserPreferenceRepository))
+
+    from doktok_storage_postgres import PostgresUserPreferenceRepository
+
+    repository = PostgresUserPreferenceRepository(_get_database(request))
+    registry.register(UserPreferenceRepository, repository)
     return repository
 
 

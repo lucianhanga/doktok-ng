@@ -95,6 +95,18 @@ def require_tenant(
             detail="invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Deactivation enforcement (#557): a credential that resolves to a specific user is only valid
+    # while that user is active. This is the authoritative revocation lever - it blocks a
+    # deactivated (or not-yet-accepted 'invited') user's session JWT AND api-tokens immediately,
+    # regardless of token TTL. Tenant-scoped tokens (no user) and registry-less deployments skip it.
+    if resolution.user_id is not None and registry is not None:
+        user = registry.get_user(resolution.tenant_id, resolution.user_id)
+        if user is None or user.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="user is not active",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     from doktok_core.logging_setup import tenant_id_var
 
     tenant_id_var.set(resolution.tenant_id)  # correlate log lines by tenant (APP-12)

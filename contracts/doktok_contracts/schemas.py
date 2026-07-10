@@ -103,6 +103,11 @@ class AuditEventType(StrEnum):
     USER_PASSWORD_RESET = "user.password_reset"  # pragma: allowlist secret
     API_TOKEN_ISSUED = "api_token.issued"
     API_TOKEN_REVOKED = "api_token.revoked"
+    # Membership lifecycle (#557): invitations + user activation/deactivation.
+    USER_INVITED = "user.invited"
+    USER_DEACTIVATED = "user.deactivated"
+    USER_REACTIVATED = "user.reactivated"
+    USER_INVITE_ACCEPTED = "user.invite_accepted"
 
 
 class EntityType(StrEnum):
@@ -200,6 +205,22 @@ class TokenResolution(BaseModel):
 
     tenant_id: str
     user_id: str | None = None
+
+
+class Invitation(BaseModel):
+    """A pending invitation to join a tenant (#557). Created alongside an ``invited``-status user;
+    the invitee accepts with the one-time token (only its ``token_sha256`` is stored) to set a
+    password and activate. ``accepted_at`` is set on acceptance; ``expires_at`` bounds validity."""
+
+    id: str
+    tenant_id: str
+    user_id: str
+    email: str
+    role: str = "viewer"
+    token_sha256: str
+    expires_at: datetime
+    created_at: datetime | None = None
+    accepted_at: datetime | None = None
 
 
 class Document(BaseModel):

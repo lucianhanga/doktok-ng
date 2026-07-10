@@ -16,15 +16,16 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from doktok_contracts.ports import AuditLogRepository, TenantRegistry
-from doktok_contracts.schemas import ApiToken, AuditEventType, Tenant, User
+from doktok_contracts.schemas import ApiToken, AuditEventType, Invitation, Tenant, User
 from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.security.auth import hash_token
 from doktok_core.security.passwords import hash_password
 from doktok_core.security.roles import Role
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from doktok_api.dependencies import AdminUser, get_audit_repository, get_tenant_registry
@@ -228,6 +229,135 @@ def set_user_password(
         record_id=user_id,
         description=f'Password reset for "{user.email}"',
         details={"user_id": user_id},
+    )
+
+
+def _set_status(
+    user_id: str,
+    new_status: str,
+    event: AuditEventType,
+    verb: str,
+    caller: AdminUser,
+    registry: Registry,
+    audit: Audit,
+) -> AdminUserView:
+    user = registry.get_user(caller.tenant_id, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such user")
+    if user_id == caller.user_id and new_status != "active":
+        # Guard against an admin locking themselves out mid-session.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="you cannot deactivate yourself"
+        )
+    registry.set_user_status(caller.tenant_id, user_id, new_status)
+    record_activity(
+        audit,
+        caller.tenant_id,
+        event,
+        actor=actor_identity(caller),
+        actor_kind="user",
+        record_kind="user",
+        record_id=user_id,
+        description=f'User "{user.email}" {verb}',
+        details={"user_id": user_id, "status": new_status},
+    )
+    updated = registry.get_user(caller.tenant_id, user_id)
+    assert updated is not None
+    return _user_view(updated)
+
+
+@router.post("/users/{user_id}/deactivate", response_model=AdminUserView)
+def deactivate_user(
+    user_id: str, caller: AdminUser, registry: Registry, audit: Audit
+) -> AdminUserView:
+    """Deactivate a user - immediately blocks all their sessions/tokens (#557)."""
+    return _set_status(
+        user_id,
+        "deactivated",
+        AuditEventType.USER_DEACTIVATED,
+        "deactivated",
+        caller,
+        registry,
+        audit,
+    )
+
+
+@router.post("/users/{user_id}/reactivate", response_model=AdminUserView)
+def reactivate_user(
+    user_id: str, caller: AdminUser, registry: Registry, audit: Audit
+) -> AdminUserView:
+    """Reactivate a previously deactivated user (#557)."""
+    return _set_status(
+        user_id, "active", AuditEventType.USER_REACTIVATED, "reactivated", caller, registry, audit
+    )
+
+
+# --- invitations (#557) ---
+
+
+class InviteRequest(BaseModel):
+    email: str = Field(min_length=3)
+    display_name: str = ""
+    role: str = "viewer"
+
+
+class IssuedInvitation(BaseModel):
+    """One-time invitation response. ``token`` is shown ONCE - the admin shares the accept link."""
+
+    user_id: str
+    email: str
+    role: str
+    token: str
+    expires_at: datetime
+
+
+@router.post("/invitations", response_model=IssuedInvitation, status_code=status.HTTP_201_CREATED)
+def invite_user(
+    request: Request, body: InviteRequest, caller: AdminUser, registry: Registry, audit: Audit
+) -> IssuedInvitation:
+    """Invite an email to the tenant: creates an ``invited``-status user and a one-time acceptance
+    token (returned once). The invitee accepts via POST /auth/accept-invite to set a password."""
+    role = _valid_role(body.role)
+    if registry.get_user_by_email(caller.tenant_id, body.email) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="a user with this email already exists"
+        )
+    user = User(
+        id=uuid.uuid4().hex,
+        tenant_id=caller.tenant_id,
+        email=body.email.strip(),
+        display_name=body.display_name,
+        role=role,
+        status="invited",
+    )
+    registry.create_user(user)
+    plaintext = secrets.token_urlsafe(_TOKEN_BYTES)
+    ttl_hours = request.app.state.settings.auth_invite_ttl_hours
+    expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
+    registry.create_invitation(
+        Invitation(
+            id=uuid.uuid4().hex,
+            tenant_id=caller.tenant_id,
+            user_id=user.id,
+            email=user.email,
+            role=role,
+            token_sha256=hash_token(plaintext),
+            expires_at=expires_at,
+        )
+    )
+    record_activity(
+        audit,
+        caller.tenant_id,
+        AuditEventType.USER_INVITED,
+        actor=actor_identity(caller),
+        actor_kind="user",
+        record_kind="user",
+        record_id=user.id,
+        description=f'Invited "{user.email}" as {role}',
+        details={"user_id": user.id, "role": role},
+    )
+    return IssuedInvitation(
+        user_id=user.id, email=user.email, role=role, token=plaintext, expires_at=expires_at
     )
 
 

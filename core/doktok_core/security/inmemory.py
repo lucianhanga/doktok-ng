@@ -6,7 +6,7 @@ Mirrors :class:`PostgresTenantRegistry` semantics: hashed-token lookup filtered 
 
 from __future__ import annotations
 
-from doktok_contracts.schemas import ApiToken, Tenant, TokenResolution, User
+from doktok_contracts.schemas import ApiToken, Invitation, Tenant, TokenResolution, User
 
 
 class InMemoryTenantRegistry:
@@ -14,6 +14,7 @@ class InMemoryTenantRegistry:
         self.tenants: dict[str, Tenant] = {}
         self.users: dict[str, User] = {}
         self.tokens: dict[str, ApiToken] = {}
+        self.invitations: dict[str, Invitation] = {}
 
     def resolve_token(self, token_sha256: str) -> TokenResolution | None:
         for token in self.tokens.values():
@@ -64,6 +65,29 @@ class InMemoryTenantRegistry:
         user = self.users.get(user_id)
         if user and user.tenant_id == tenant_id:
             self.users[user_id] = user.model_copy(update={"role": role})
+
+    def set_user_status(self, tenant_id: str, user_id: str, status: str) -> None:
+        user = self.users.get(user_id)
+        if user and user.tenant_id == tenant_id:
+            self.users[user_id] = user.model_copy(update={"status": status})
+
+    def create_invitation(self, invitation: Invitation) -> None:
+        self.invitations.setdefault(invitation.id, invitation)
+
+    def get_invitation_by_token(self, token_sha256: str) -> Invitation | None:
+        for inv in self.invitations.values():
+            if inv.token_sha256 == token_sha256:
+                return inv
+        return None
+
+    def mark_invitation_accepted(self, invitation_id: str) -> None:
+        from datetime import UTC, datetime
+
+        inv = self.invitations.get(invitation_id)
+        if inv and inv.accepted_at is None:
+            self.invitations[invitation_id] = inv.model_copy(
+                update={"accepted_at": datetime.now(UTC)}
+            )
 
     def create_api_token(self, token: ApiToken) -> None:
         self.tokens.setdefault(token.id, token)

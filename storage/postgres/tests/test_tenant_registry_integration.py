@@ -2,11 +2,45 @@
 
 from __future__ import annotations
 
-from doktok_contracts.schemas import ApiToken, Tenant, TokenResolution, User
+from datetime import UTC, datetime, timedelta
+
+from doktok_contracts.schemas import ApiToken, Invitation, Tenant, TokenResolution, User
 from doktok_core.security.auth import hash_token
 from doktok_storage_postgres import Database, PostgresTenantRegistry
 
 TENANT = "test-reg"
+
+
+def test_status_and_invitation_lifecycle(db: Database) -> None:
+    reg = PostgresTenantRegistry(db)
+    reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))
+    reg.create_user(
+        User(id="uinv", tenant_id=TENANT, email="inv@example.com", role="editor", status="invited")
+    )
+
+    # set_user_status flips the lifecycle state.
+    reg.set_user_status(TENANT, "uinv", "active")
+    assert reg.get_user(TENANT, "uinv").status == "active"  # type: ignore[union-attr]
+    reg.set_user_status(TENANT, "uinv", "deactivated")
+    assert reg.get_user(TENANT, "uinv").status == "deactivated"  # type: ignore[union-attr]
+
+    # Invitation round-trips by token hash and marks accepted (single-use).
+    reg.create_invitation(
+        Invitation(
+            id="inv1",
+            tenant_id=TENANT,
+            user_id="uinv",
+            email="inv@example.com",
+            role="editor",
+            token_sha256=hash_token("invite-token"),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    found = reg.get_invitation_by_token(hash_token("invite-token"))
+    assert found is not None and found.user_id == "uinv" and found.accepted_at is None
+    reg.mark_invitation_accepted("inv1")
+    assert reg.get_invitation_by_token(hash_token("invite-token")).accepted_at is not None  # type: ignore[union-attr]
+    assert reg.get_invitation_by_token(hash_token("nope")) is None
 
 
 def test_create_and_resolve_token(db: Database) -> None:

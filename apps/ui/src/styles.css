@@ -6526,3 +6526,77 @@ tr.row-selected {
   gap: 1rem;
   margin-top: 0.8rem;
 }
+
+/* Login screen + session bar (Phase 3) ------------------------------------------------------- */
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--muted);
+}
+.login-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 1rem;
+  background: var(--bg);
+}
+.login-card {
+  width: min(380px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.6rem 1.6rem 1.8rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+}
+.login-card h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+.login-card > p.muted {
+  margin: 0 0 0.4rem;
+}
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.login-card input {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.login-submit {
+  margin-top: 0.4rem;
+  padding: 0.6rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.9rem;
+  padding: 0.25rem 0.9rem;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}

@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import App from "./App";
-import { enablePrefSync, hydratePreferences } from "./persist";
+import { AuthGate } from "./AuthGate";
+import { installAuthFetch, loadSession } from "./session";
 import "./styles.css";
 
 const rootElement = document.getElementById("root");
@@ -10,21 +11,16 @@ if (!rootElement) {
   throw new Error("Root element #root not found");
 }
 
-function renderApp(): void {
-  createRoot(rootElement!).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
-}
+// Restore any prior session and install the auth-aware fetch wrapper BEFORE the first API call, so
+// a logged-in SPA sends its bearer token (and a 401 routes back to login). AuthGate then decides
+// between the login screen and the app, and owns preference hydration once authenticated (#558).
+loadSession();
+installAuthFetch();
 
-// Seed the localStorage cache from the per-user server store (#558) before the first render so a
-// fresh device starts with the user's synced preferences. Never block the SPA on it: race against a
-// short timeout, then render and enable write-through regardless of the outcome (local-only if the
-// server is slow/unavailable).
-const HYDRATE_TIMEOUT_MS = 1500;
-const timeout = new Promise<void>((resolve) => setTimeout(resolve, HYDRATE_TIMEOUT_MS));
-void Promise.race([hydratePreferences(), timeout]).finally(() => {
-  renderApp();
-  enablePrefSync();
-});
+createRoot(rootElement).render(
+  <StrictMode>
+    <AuthGate>
+      <App />
+    </AuthGate>
+  </StrictMode>,
+);

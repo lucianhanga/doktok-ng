@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Tenant & user management with login and RBAC (EPIC #523 + login flow).** A DB-backed
+  tenant/user/api-token registry; opt-in password login issuing a short-lived session JWT
+  (`POST /api/v1/auth/login`, gated on `DOKTOK_AUTH_JWT_SECRET`, falling back to
+  `DOKTOK_SECRETS_KEY`; token-free/proxy mode when unset); role-based access control
+  (viewer/editor/admin) enforced per route; invitations + immediate deactivation; per-user
+  server-side preferences; an Admin tab (members, roles, invites, API tokens, tenants with
+  server-generated GUID ids); and audit attribution of actions to the authenticated user. Login is
+  brute-force throttled, passwords follow a length policy, and a real in-browser login screen keeps
+  the JWT in memory + sessionStorage. Dev seeding via `make seed-dev` (gated to local/dev). See
+  [ADR-0024](docs/adr/ADR-0024-tenant-user-management-and-rbac.md), the dev walkthrough in
+  [docs/operations/running.md](docs/operations/running.md), and
+  [docs/operations/testing.md](docs/operations/testing.md).
+
 ### Security
 - **No-egress is now configurable from the UI, with an operator hard-lock.** A toggle in Settings →
   AI sets the posture (persisted in-app, seeded from `DOKTOK_NO_EGRESS`); turning it off (allowing

@@ -33,6 +33,11 @@ once on the box per the [fresh-box runbook section 3](deploy-fresh-box-runbook.m
 - [ ] Tenant tokens rotated off the `dev-token-*` defaults; long and random. `DOKTOK_API_TOKEN`
       (the Caddy edge token) is one of `DOKTOK_TENANT_TOKENS`.
 - [ ] `DOKTOK_SECRETS_KEY` set so the OpenAI key is encrypted at rest (APP-8).
+- [ ] If password login is enabled: a dedicated `DOKTOK_AUTH_JWT_SECRET` set, at least 32 bytes
+      (the backend warns at startup otherwise - do not lean on the `DOKTOK_SECRETS_KEY` fallback in
+      production, rotating sessions should not re-key stored secrets); `DOKTOK_TRUSTED_PROXY=true`
+      only because Caddy fronts the API; admins minimized; unused invitations expired or their
+      users removed (ADR-0024).
 - [ ] Outbound firewall: default-deny, allow only 443 to `api.openai.com` + DNS
       (`deploy/firewall-openai-only.example.nft`).
 - [ ] Only Caddy publishes host ports (80/443); db, ollama, gotenberg, backend are internal-only.
@@ -40,6 +45,51 @@ once on the box per the [fresh-box runbook section 3](deploy-fresh-box-runbook.m
 - [ ] Backups run on a schedule, encrypted and off-box; restore tested against staging (DEVOPS-6).
 - [ ] No secrets in images or logs (the JSON logger redacts keys/bearer tokens; images are built
       from a `.dockerignore` that excludes `.env*`).
+
+## Identity and access management (EPIC #523)
+
+Full design in [ADR-0024](../adr/ADR-0024-tenant-user-management-and-rbac.md). The operational
+levers:
+
+- **Least privilege via roles.** `viewer` < `editor` < `admin`: reads pass for any authenticated
+  caller, content writes need editor, settings writes and all of `/api/v1/admin/*` need admin.
+  Keep members at viewer unless they ingest/edit; keep admins to a minimum. A tenant-scoped static
+  token (`DOKTOK_TENANT_TOKENS`, including the Caddy edge token) has **no user identity and acts as
+  admin** - treat every static token as an admin credential.
+- **Enabling password login (opt-in).** Set `DOKTOK_AUTH_JWT_SECRET` (at least 32 bytes, e.g.
+  `openssl rand -base64 48`; without it, `DOKTOK_SECRETS_KEY` is used as the fallback signing
+  secret, and with neither, login is disabled with a 503). The backend logs a loud startup warning
+  for a short or fallback secret. Session JWTs live `DOKTOK_AUTH_ACCESS_TTL_SECONDS` (default
+  3600) - keep the TTL modest, since a session cannot be individually revoked before expiry. The
+  SPA holds the JWT in memory + sessionStorage only (per-tab, gone on close).
+- **Brute-force posture.** Login attempts are throttled before any credential work:
+  `DOKTOK_LOGIN_RATE_PER_MINUTE` per (tenant, email) (default 5) and
+  `DOKTOK_LOGIN_IP_RATE_PER_MINUTE` per source IP (default 20), answered with 429 + `Retry-After`.
+  Throttling, never account lockout (lockout is a denial-of-service primitive). Set
+  `DOKTOK_TRUSTED_PROXY=true` behind Caddy so the per-IP key uses `X-Forwarded-For`; leave it false
+  when clients reach the API directly, or the header becomes spoofable. Concurrent scrypt
+  verifications are capped (`DOKTOK_LOGIN_MAX_CONCURRENT_VERIFIES`, default 4) so login cannot
+  exhaust the API workers.
+- **Revoke-all sessions**: rotate `DOKTOK_AUTH_JWT_SECRET` and restart the backend. Every
+  outstanding session JWT becomes invalid immediately.
+- **Revoke one person immediately**: deactivate the user
+  (`POST /api/v1/admin/users/{id}/deactivate`, or the Admin tab). Enforcement is in the request
+  path, not at login: the user's session JWTs **and** API tokens stop working on their next
+  request, regardless of TTL. Self-deactivation is blocked so an admin cannot lock themselves out.
+- **Revoke one DB API token**: `DELETE /api/v1/admin/tokens/{id}` (or the Admin tab) - effective
+  immediately, no restart. Only a token's sha256 is stored; the plaintext is shown exactly once at
+  issue time.
+- **Invitations** expire after `DOKTOK_AUTH_INVITE_TTL_HOURS` (default 168). The invite token is a
+  one-time credential - deliver it over a private channel; an unaccepted invited user cannot
+  authenticate.
+- **Dev seed hygiene.** `make seed-dev` refuses to run outside a local/dev environment with a
+  loopback database and never hardcodes passwords, so seeded demo accounts cannot reach
+  production. Do not carry the `dev` tenant onto an exposed box.
+- **Audit**: every login attempt (`auth.login.succeeded` / `auth.login.failed`, with normalized
+  email and client IP) plus all administration and membership events (role changes, password
+  resets, token issue/revoke, invites, deactivations) are recorded in the activity log with the
+  acting user (or tenant, for the login-less operator) as the actor. Review failed-login bursts -
+  the throttle slows an attacker but the trail is where you notice one.
 
 ## Incident response
 
@@ -50,9 +100,18 @@ once on the box per the [fresh-box runbook section 3](deploy-fresh-box-runbook.m
 3. Review OpenAI usage for anomalies.
 
 **Suspected tenant-token exposure**
-1. Replace the affected token in `DOKTOK_TENANT_TOKENS` (and `DOKTOK_API_TOKEN` if it was the edge
-   token); restart the backend and Caddy.
-2. Old tokens stop working immediately on restart (tokens are validated against the configured map).
+1. A **DB-issued API token**: revoke it via `DELETE /api/v1/admin/tokens/{id}` or the Admin tab -
+   effective immediately, no restart. If it was user-bound, consider also deactivating the user.
+2. A **static token**: replace it in `DOKTOK_TENANT_TOKENS` (and `DOKTOK_API_TOKEN` if it was the
+   edge token); restart the backend and Caddy. Old static tokens stop working on restart. Remember
+   a static token acts as admin.
+
+**Suspected session-JWT or signing-secret exposure**
+1. If one user's session leaked: deactivate that user (blocks the session on its next request),
+   then reactivate and reset their password.
+2. If the signing secret may have leaked: rotate `DOKTOK_AUTH_JWT_SECRET` and restart the backend -
+   all outstanding sessions are invalidated. If the fallback `DOKTOK_SECRETS_KEY` was the signing
+   secret, see its rotation note below (it also re-keys the stored OpenAI key).
 
 **Rotating `DOKTOK_SECRETS_KEY`**
 Changing it makes the stored (encrypted) OpenAI key undecryptable. After rotating, re-enter the

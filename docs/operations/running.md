@@ -172,6 +172,108 @@ For throughput tuning see [performance-and-ollama.md](performance-and-ollama.md)
 | Office (`.docx`/`.xlsx`/`.pptx`) ingestion fails with `needs_ocr` | Gotenberg container not running or unreachable | Run `make db` (starts `doktok-gotenberg`); confirm with `docker ps`. Check `DOKTOK_GOTENBERG_URL` / `DOKTOK_GOTENBERG_PORT`. |
 | UI loads but API calls are unauthorized | UI started without the dev proxy | Start the UI via `make run-ui` so the proxy injects the bearer token. |
 
+## Tenant and user management in your dev environment
+
+The tenant/user/login stack (EPIC #523,
+[ADR-0024](../adr/ADR-0024-tenant-user-management-and-rbac.md)) needs no setup to try locally:
+pull, then start the stack as above (`make db`, `make run-backend`, `make run-worker`,
+`make run-ui`). The registry migrations (`0043`-`0049`: tenants, users, api_tokens, credentials,
+roles, preferences, invitations) auto-apply the first time the backend or worker touches the
+database - there is no separate migration step.
+
+### Token-free mode (the default)
+
+With no signing secret configured, `/auth/login` answers 503, the UI shows **no login screen**, and
+everything works exactly as before:
+
+- **The Admin tab works immediately.** The UI dev proxy injects `DOKTOK_DEV_TOKEN`
+  (`dev-token-default` from `.env`), and a tenant-scoped token with no user identity resolves to
+  **admin**, so the Admin tab (members, roles, invitations, API tokens) is fully usable with no
+  login. One-time secrets (invite tokens, issued API tokens) are shown exactly once - copy them
+  when displayed.
+- **Preference sync is automatic.** UI preferences (table layouts, thumbnail size, chat mode, ...)
+  mirror transparently to the server per identity (`/api/v1/preferences`); with the dev token that
+  is one per-tenant bucket. Nothing to configure; offline it degrades to localStorage.
+
+### Enabling login and seeing RBAC in action
+
+1. Set a signing secret in `.env` and restart the backend (mint a dedicated one; do not lean on
+   the `DOKTOK_SECRETS_KEY` fallback - the backend warns about it at startup):
+
+   ```env
+   DOKTOK_AUTH_JWT_SECRET=<paste output of: openssl rand -base64 48>  # pragma: allowlist secret
+   ```
+
+2. Seed a `dev` tenant with one user per role (idempotent; refuses outside a local/dev environment
+   with a loopback database; see [ADR-0024](../adr/ADR-0024-tenant-user-management-and-rbac.md)):
+
+   ```bash
+   make seed-dev
+   ```
+
+   This creates `dev-admin@doktok.local` (admin), `dev-editor@doktok.local` (editor), and
+   `dev-viewer@doktok.local` (viewer). Passwords come from `DOKTOK_DEV_SEED_PASSWORD` in `.env`
+   (min 12 chars, reproducible logins) or are generated and printed **once** - save them.
+   `make seed-dev ARGS=--reset` rotates the passwords.
+
+3. `make run-ui`, open http://localhost:5173 - the SPA sees login enabled (`GET /auth/config`) and
+   shows the login screen. Sign in with tenant `dev` and one of the emails above. A signed-in bar
+   shows your identity and role. Try the viewer (read-only: content writes are 403, no Admin tab
+   access), the editor (can ingest/edit, still no admin), then the admin. Log out (or close the
+   tab - the session is per-tab) to switch users. The dev proxy still injects the dev token, but
+   **only for requests without an Authorization header**, so your logged-in session is never
+   silently overridden.
+
+Login attempts are throttled per account (default 5/min) and per IP (default 20/min) with
+429 + `Retry-After`, and every attempt lands in the Activity tab (`auth.login.succeeded` /
+`auth.login.failed`).
+
+### The same flows over curl
+
+Create a member with a password (admin API; the dev token acts as admin). Prompt for the password
+so no literal ends up in your shell history:
+
+```bash
+read -r -s -p "New member password (min 12 chars): " DOKTOK_PW && echo
+
+# 1. Create a member (role: viewer | editor | admin)
+curl -s -X POST http://localhost:8000/api/v1/admin/users \
+  -H "Authorization: Bearer <dev-token>" -H "Content-Type: application/json" \
+  -d "{\"email\": \"me@example.com\", \"display_name\": \"Me\", \"role\": \"editor\", \"password\": \"$DOKTOK_PW\"}"
+
+# 2. Log in -> a short-lived session JWT (default TTL 3600 s)
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"tenant_id\": \"default\", \"email\": \"me@example.com\", \"password\": \"$DOKTOK_PW\"}" \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')
+
+# 3. The JWT works everywhere a token does; /auth/me shows who you are
+curl -s http://localhost:8000/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
+```
+
+**Invite flow.** An admin invites an email; the invitee sets their own password via the public
+accept endpoint (the one-time token is the credential; default validity 168 h,
+`DOKTOK_AUTH_INVITE_TTL_HOURS`):
+
+```bash
+# Admin: invite (the response contains "token" - shown ONCE)
+curl -s -X POST http://localhost:8000/api/v1/admin/invitations \
+  -H "Authorization: Bearer <dev-token>" -H "Content-Type: application/json" \
+  -d '{"email": "friend@example.com", "role": "viewer"}'
+
+# Invitee: accept (no auth header - the invite token is the credential)
+read -r -s -p "Choose a password (min 12 chars): " DOKTOK_PW && echo
+curl -s -X POST http://localhost:8000/api/v1/auth/accept-invite \
+  -H "Content-Type: application/json" \
+  -d "{\"token\": \"<the-one-time-invite-token>\", \"password\": \"$DOKTOK_PW\"}"
+```
+
+(Replace `<dev-token>` with your `DOKTOK_DEV_TOKEN` value from `.env`.)
+
+Deactivating a member (`POST /api/v1/admin/users/{id}/deactivate`, or the Admin tab) blocks their
+session JWTs and API tokens on their next request. Role changes, invites, token issue/revoke,
+logins, and deactivations are all in the Activity tab, attributed to the acting identity.
+
 ## Deploying to a small server (hybrid)
 
 This page covers the local single-machine workflow. To deploy DokTok NG to small hardware (a TRIGKEY

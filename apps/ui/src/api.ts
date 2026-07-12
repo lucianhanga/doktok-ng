@@ -2233,3 +2233,54 @@ export function fetchPreferences(signal?: AbortSignal): Promise<Record<string, u
 export function putPreferences(values: Record<string, unknown>): Promise<Record<string, unknown>> {
   return sendJson<Record<string, unknown>>("/api/v1/preferences", "PUT", values);
 }
+
+// --- User login (Phase 3) ------------------------------------------------------------------------
+
+export interface AuthConfig {
+  login_enabled: boolean;
+}
+
+export interface LoginResult {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: { id: string; tenant_id: string; email: string; display_name: string; role: string };
+}
+
+/** Whether password login is available (a signing secret is configured). Unauthenticated. */
+export function fetchAuthConfig(signal?: AbortSignal): Promise<AuthConfig> {
+  return getJson<AuthConfig>("/api/v1/auth/config", signal);
+}
+
+/** Raised on a login rejection so the UI can show the right message (429 vs bad credentials). */
+export class LoginError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "LoginError";
+  }
+}
+
+export async function loginRequest(
+  tenantId: string,
+  email: string,
+  password: string,
+): Promise<LoginResult> {
+  const response = await fetch("/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenant_id: tenantId, email, password }),
+  });
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new LoginError("Too many login attempts. Please wait and try again.", 429);
+    }
+    if (response.status === 503) {
+      throw new LoginError("Login is not configured on this server.", 503);
+    }
+    throw new LoginError("Invalid tenant, email, or password.", response.status);
+  }
+  return (await response.json()) as LoginResult;
+}

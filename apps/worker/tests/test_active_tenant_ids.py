@@ -36,7 +36,7 @@ def test_suspended_db_tenant_is_excluded_even_if_in_env_map() -> None:
 
 def test_registry_failure_falls_back_to_env_map() -> None:
     class _Boom(InMemoryTenantRegistry):
-        def list_tenants(self):  # type: ignore[override]
+        def list_tenants(self) -> list[Tenant]:
             raise RuntimeError("db down")
 
     assert active_tenant_ids(_settings(tok="developer"), _Boom()) == ["developer"]

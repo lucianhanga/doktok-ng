@@ -15,6 +15,7 @@ dependencies = [
     # Pure-Python libphonenumber port for PHONE validation (#518). Lightweight -> normal lockfile
     # dep (unlike libpostal, which is a heavy engine extra; see `make address-libpostal`).
     "phonenumbers>=8.13",
+    "nameparser>=1.4.0",
 ]
 
 [tool.hatch.build.targets.wheel]

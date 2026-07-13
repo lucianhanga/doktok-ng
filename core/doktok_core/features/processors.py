@@ -11,6 +11,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
+from typing import Any
 
 from doktok_contracts.media import LlmUsage
 from doktok_contracts.ports import (
@@ -65,6 +66,7 @@ from doktok_core.entities.ner import (
     normalize_ner_name,
     split_postal_place,
 )
+from doktok_core.knowledge_graph.name_parts import parse_person_name
 from doktok_core.knowledge_graph.predicates import (
     ALLOWED_PREDICATES,
     DETERMINISTIC_PREDICATES,
@@ -463,13 +465,23 @@ class EntityGraphFeature:
             direct_id = canonical_entity_id(tenant_id, mention.entity_type.value, value)
             resolved_id = aliases.get((mention.entity_type.value, value), direct_id)
             # Only create a node for non-aliased mentions; an aliased mention's canonical node
-            # already exists (the alias-table FK guarantees it).
-            if resolved_id == direct_id:
+            # already exists (the alias-table FK guarantees it). First-seen surface wins, so a later
+            # mention's messier form never overwrites a clean name parse.
+            if resolved_id == direct_id and direct_id not in nodes:
+                # PERSON name parts as node metadata (#531): given/middle/family, so the shared-
+                # surname family hint (#532) can group on family_name. Never a token node, never
+                # into the MERGE cascade. Parses the surface form; low confidence -> nothing.
+                metadata: dict[str, Any] = {}
+                if mention.entity_type == EntityType.PERSON:
+                    parsed = parse_person_name(mention.entity_text)
+                    if parsed:
+                        metadata = parsed
                 nodes[direct_id] = KgEntity(
                     id=direct_id,
                     tenant_id=tenant_id,
                     entity_type=mention.entity_type,
                     normalized_value=value,
+                    metadata=metadata,
                 )
             links.append(
                 KgEntityMention(

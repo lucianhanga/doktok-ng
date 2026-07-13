@@ -1046,14 +1046,18 @@ class PostgresKnowledgeGraphRepository:
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         if not entities:
             return
-        # DO NOTHING: the node identity is a deterministic function of type+value, so an existing
-        # node is already correct - re-running must not mutate it (keeps the feature idempotent).
+        # The node identity (id) is a deterministic function of type+value, so identity never
+        # mutates. Metadata DOES: reprocess populates name parts (#531) onto nodes that predate the
+        # feature, so we merge (existing || new) instead of DO NOTHING - new keys win, other keys
+        # (and canonical_id / display_name / normalized_value) are preserved. An empty metadata
+        # payload (non-PERSON) merges to a no-op.
         with self._db.connection() as conn, conn.transaction():
             for entity in entities:
                 conn.execute(
                     "INSERT INTO kg_entities "
                     "(id, tenant_id, entity_type, normalized_value, metadata) "
-                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET "
+                    "metadata = kg_entities.metadata || EXCLUDED.metadata, updated_at = now()",
                     (
                         entity.id,
                         entity.tenant_id,

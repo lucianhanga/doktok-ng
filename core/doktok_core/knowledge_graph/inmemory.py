@@ -59,8 +59,18 @@ class InMemoryKnowledgeGraphRepository:
 
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         for entity in entities:
-            # DO NOTHING on conflict: the node identity is immutable under deterministic resolution.
-            self._entities.setdefault(entity.id, entity.model_copy(deep=True))
+            # Identity (id) is immutable, but metadata is merged so reprocess can populate name
+            # parts (#531) onto pre-existing nodes - new keys win, other keys and the node's
+            # canonical_id/display_name/normalized_value are preserved (mirrors the SQL upsert).
+            existing = self._entities.get(entity.id)
+            if existing is None:
+                self._entities[entity.id] = entity.model_copy(deep=True)
+            elif entity.metadata:
+                merged = {**existing.metadata, **entity.metadata}
+                if merged != existing.metadata:
+                    self._entities[entity.id] = existing.model_copy(
+                        update={"metadata": merged}, deep=True
+                    )
 
     def replace_mentions_for_document(
         self, tenant_id: str, document_id: str, mentions: list[KgEntityMention]

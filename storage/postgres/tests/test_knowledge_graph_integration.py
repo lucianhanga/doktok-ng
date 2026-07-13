@@ -20,7 +20,7 @@ from doktok_contracts.schemas import (
     KgEntityMention,
 )
 from doktok_core.features.processors import EntityGraphFeature
-from doktok_core.knowledge_graph.predicates import canonical_edge_id
+from doktok_core.knowledge_graph.predicates import canonical_edge_id, family_pair_key
 from doktok_core.knowledge_graph.resolve import canonical_entity_id
 from doktok_storage_postgres import (
     Database,
@@ -442,3 +442,82 @@ def test_shared_surname_groups_ignore_aliases_and_missing_family(db: Database) -
     # Only one Ionescu node remains canonical -> no longer a shared-surname group.
     assert "ionescu" not in groups
     assert "" not in groups
+
+
+TENANT_608 = "test-kg-608"
+
+
+def _link_related(db: Database, tenant: str, a: str, b: str) -> None:
+    kg = PostgresKnowledgeGraphRepository(db)
+    eid = canonical_edge_id(tenant, a, "RELATED_TO", b)
+    kg.add_edges(
+        [
+            KgEdge(
+                id=eid,
+                tenant_id=tenant,
+                src_entity_id=a,
+                predicate="RELATED_TO",
+                dst_entity_id=b,
+            )
+        ],
+        [
+            KgEdgeProvenance(
+                id=uuid.uuid4().hex,
+                tenant_id=tenant,
+                edge_id=eid,
+                document_id="manual",
+                chunk_id=None,
+                evidence="test",
+            )
+        ],
+    )
+
+
+def test_shared_surname_hidden_pairs_reflect_links_and_dismissals(db: Database) -> None:
+    """#608/#609: a pair already linked by a RELATED_TO edge, or dismissed, is reported as a
+    hidden pair; an unresolved pair is not."""
+    kg = PostgresKnowledgeGraphRepository(db)
+    a = _person_node(TENANT_608, "Ana Hanga", "Hanga")
+    b = _person_node(TENANT_608, "Bea Hanga", "Hanga")
+    c = _person_node(TENANT_608, "Cara Hanga", "Hanga")
+    kg.upsert_entities([a, b, c])
+    _link_related(db, TENANT_608, a.id, b.id)  # already related -> hidden (#608)
+    kg.dismiss_family_pair(TENANT_608, family_pair_key(a.id, c.id))  # dismissed -> hidden (#609)
+
+    groups = kg.list_shared_surname_groups(TENANT_608)
+
+    assert len(groups) == 1
+    hidden = {tuple(p) for p in groups[0].hidden_pairs}
+    assert tuple(sorted((a.id, b.id))) in hidden
+    assert tuple(sorted((a.id, c.id))) in hidden
+    assert tuple(sorted((b.id, c.id))) not in hidden  # the one pair left to review
+
+
+def test_shared_surname_group_dropped_when_all_pairs_resolved(db: Database) -> None:
+    """A two-person surname group disappears once its single pair is resolved."""
+    tenant = "test-kg-608b"
+    # Durable dismissals persist in the shared test DB; clear this tenant's so the run is
+    # deterministic (it starts with the pair unresolved).
+    with db.connection() as conn:
+        conn.execute("DELETE FROM kg_family_dismissal WHERE tenant_id=%s", (tenant,))
+    kg = PostgresKnowledgeGraphRepository(db)
+    a = _person_node(tenant, "solo-x Popescu", "Popescu")
+    b = _person_node(tenant, "solo-y Popescu", "Popescu")
+    kg.upsert_entities([a, b])
+    present = kg.list_shared_surname_groups(tenant)
+    assert any(g.family_name.lower() == "popescu" for g in present)
+
+    kg.dismiss_family_pair(tenant, family_pair_key(a.id, b.id))
+
+    assert not any(
+        g.family_name.lower() == "popescu" for g in kg.list_shared_surname_groups(tenant)
+    )
+
+
+def test_dismiss_family_pair_is_idempotent_and_tenant_scoped(db: Database) -> None:
+    kg = PostgresKnowledgeGraphRepository(db)
+    key = family_pair_key("x1", "x2")
+    kg.dismiss_family_pair(TENANT_608, key)
+    kg.dismiss_family_pair(TENANT_608, key)  # idempotent, no error
+    assert key in kg.dismissed_family_pairs(TENANT_608)
+    assert key not in kg.dismissed_family_pairs("test-kg-608-other")

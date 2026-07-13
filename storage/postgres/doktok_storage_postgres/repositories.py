@@ -79,7 +79,7 @@ from doktok_core.knowledge_graph.entity_resolution import (
     TrigramStage,
     canonical_preference,
 )
-from doktok_core.knowledge_graph.predicates import canonical_edge_id
+from doktok_core.knowledge_graph.predicates import canonical_edge_id, family_pair_key
 from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -1507,15 +1507,62 @@ class PostgresKnowledgeGraphRepository:
                 buckets[key] = []
                 order.append(key)
             buckets[key].append(_row_to_kg_entity(row))
+        # A pair is "resolved" - and hidden from the panel - when it is already linked by a
+        # RELATED_TO edge (#608) or was dismissed as "not family" (#609). Two bulk lookups, not
+        # per-pair. A group with every pair resolved is dropped so the panel converges to empty.
+        member_ids = [m.id for members in buckets.values() for m in members]
+        resolved = self._related_person_pairs(tenant_id, member_ids) | self.dismissed_family_pairs(
+            tenant_id
+        )
         groups: list[KgSurnameGroup] = []
-        for key in order[:limit]:
+        for key in order:
             members = buckets[key]
+            pairs = [
+                family_pair_key(members[i].id, members[j].id)
+                for i in range(len(members))
+                for j in range(i + 1, len(members))
+            ]
+            hidden = [pk for pk in pairs if pk in resolved]
+            if len(hidden) == len(pairs):
+                continue  # nothing left to review in this surname
             groups.append(
                 KgSurnameGroup(
-                    family_name=members[0].metadata.get("family_name") or key, members=members
+                    family_name=members[0].metadata.get("family_name") or key,
+                    members=members,
+                    hidden_pairs=[pk.split("|") for pk in hidden],
                 )
             )
+            if len(groups) >= limit:
+                break
         return groups
+
+    def _related_person_pairs(self, tenant_id: str, ids: list[str]) -> set[str]:
+        """Order-independent pair keys of the RELATED_TO edges among the given entity ids."""
+        if not ids:
+            return set()
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT src_entity_id, dst_entity_id FROM kg_edges "
+                "WHERE tenant_id=%s AND predicate='RELATED_TO' "
+                "AND src_entity_id = ANY(%s) AND dst_entity_id = ANY(%s)",
+                (tenant_id, ids, ids),
+            ).fetchall()
+        return {family_pair_key(row[0], row[1]) for row in rows}
+
+    def dismiss_family_pair(self, tenant_id: str, pair_key: str, *, actor: str = "user") -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO kg_family_dismissal (tenant_id, pair_key, actor) VALUES (%s, %s, %s) "
+                "ON CONFLICT (tenant_id, pair_key) DO NOTHING",
+                (tenant_id, pair_key, actor),
+            )
+
+    def dismissed_family_pairs(self, tenant_id: str) -> set[str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT pair_key FROM kg_family_dismissal WHERE tenant_id=%s", (tenant_id,)
+            ).fetchall()
+        return {row[0] for row in rows}
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
         with self._db.connection() as conn:

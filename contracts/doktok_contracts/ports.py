@@ -1019,7 +1019,22 @@ class KnowledgeGraphRepository(Protocol):
         (#532). Grouping is case-insensitive; only nodes whose metadata carries a non-empty
         ``family_name`` participate. A weak hint for the family-discovery panel - never a fact,
         never an input to entity MERGE. Returns at most ``limit`` groups, surname-ordered.
+
+        Each group's ``hidden_pairs`` lists member pairs already resolved - already linked by a
+        ``RELATED_TO`` edge (#608) or dismissed as "not family" (#609). A group whose every pair is
+        resolved is omitted, so the panel converges to empty.
         """
+        ...
+
+    def dismiss_family_pair(self, tenant_id: str, pair_key: str, *, actor: str = "user") -> None:
+        """Persist a "not family" dismissal for a shared-surname pair so it is never re-offered
+        (#609). ``pair_key`` is the two entity ids sorted and joined by ``|`` (order-independent).
+        Idempotent.
+        """
+        ...
+
+    def dismissed_family_pairs(self, tenant_id: str) -> set[str]:
+        """The set of dismissed shared-surname ``pair_key`` values for a tenant (#609)."""
         ...
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:

@@ -195,6 +195,13 @@ class FakeKnowledgeGraphRepository:
     ) -> list[KgSurnameGroup]:
         return []
 
+    def dismiss_family_pair(
+        self, tenant_id: str, pair_key: str, *, actor: str = "user"
+    ) -> None: ...
+
+    def dismissed_family_pairs(self, tenant_id: str) -> set[str]:
+        return set()
+
     def neighborhood(
         self,
         tenant_id: str,
@@ -636,6 +643,46 @@ def test_confirm_family_requires_editor() -> None:
     assert (
         client.post(
             "/api/v1/entities/family-suggestions/confirm",
+            json={"src_id": "p-lucian", "dst_id": "p-daniel"},
+        ).status_code
+        == 401
+    )
+
+
+def test_dismiss_family_removes_the_pair_from_suggestions() -> None:
+    client, _, audit = _family_setup()
+    # Before: the Hanga pair is offered.
+    before = client.get("/api/v1/entities/family-suggestions", headers=_auth()).json()
+    assert len(before) == 1
+
+    r = client.post(
+        "/api/v1/entities/family-suggestions/dismiss",
+        json={"src_id": "p-lucian", "dst_id": "p-daniel"},
+        headers=_auth(),
+    )
+    assert r.status_code == 204
+    assert any(ev.event_type == "entity.family_dismissed" for ev in audit.events)
+
+    # After: the only pair in the 2-person group is resolved, so the group disappears.
+    after = client.get("/api/v1/entities/family-suggestions", headers=_auth()).json()
+    assert after == []
+
+
+def test_dismiss_family_rejects_self_pair() -> None:
+    client, _, _ = _family_setup()
+    r = client.post(
+        "/api/v1/entities/family-suggestions/dismiss",
+        json={"src_id": "p-lucian", "dst_id": "p-lucian"},
+        headers=_auth(),
+    )
+    assert r.status_code == 400
+
+
+def test_dismiss_family_requires_token() -> None:
+    client, _, _ = _family_setup()
+    assert (
+        client.post(
+            "/api/v1/entities/family-suggestions/dismiss",
             json={"src_id": "p-lucian", "dst_id": "p-daniel"},
         ).status_code
         == 401

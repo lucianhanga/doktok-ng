@@ -50,3 +50,10 @@ def canonical_edge_id(
         f"{tenant_id}{KG_KEY_SEP}{src_entity_id}{KG_KEY_SEP}{predicate}{KG_KEY_SEP}{dst_entity_id}"
     )
     return uuid.uuid5(KG_ENTITY_NAMESPACE, key).hex
+
+
+def family_pair_key(a: str, b: str) -> str:
+    """Order-independent key for a shared-surname pair of entity ids (#532): a family link is
+    symmetric, so ``a|b`` and ``b|a`` collapse to one key. Shared by the confirm/dismiss endpoints,
+    both repositories, and the family-suggestion grouping so the format never diverges."""
+    return "|".join(sorted((a, b)))

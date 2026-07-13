@@ -35,7 +35,7 @@ from doktok_core.knowledge_graph.entity_resolution import (
     is_canonical,
     trigram_similarity,
 )
-from doktok_core.knowledge_graph.predicates import canonical_edge_id
+from doktok_core.knowledge_graph.predicates import canonical_edge_id, family_pair_key
 
 
 class InMemoryKnowledgeGraphRepository:
@@ -57,6 +57,8 @@ class InMemoryKnowledgeGraphRepository:
         self._adjudication: dict[tuple[str, str, str, str], KgAdjudicationVerdict] = {}
         # rejected merge pair keys (mirrors kg_merge_rejection, #530): tenant_id -> {pair_key}
         self._rejections: dict[str, set[str]] = {}
+        # dismissed shared-surname pair keys (mirrors kg_family_dismissal, #609): tenant -> {key}
+        self._family_dismissals: dict[str, set[str]] = {}
 
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         for entity in entities:
@@ -343,20 +345,43 @@ class InMemoryKnowledgeGraphRepository:
             if not fam:
                 continue
             buckets.setdefault(fam.lower(), []).append(e.model_copy(deep=True))
+        # Resolved (hidden) pairs: already RELATED_TO-linked (#608) or dismissed (#609).
+        related = {
+            family_pair_key(e.src_entity_id, e.dst_entity_id)
+            for e in self._edges.values()
+            if e.tenant_id == tenant_id and e.predicate == "RELATED_TO"
+        }
+        resolved = related | self.dismissed_family_pairs(tenant_id)
         groups: list[KgSurnameGroup] = []
         for key in sorted(buckets):
             members = buckets[key]
             if len(members) < 2:
                 continue
             members.sort(key=lambda m: m.normalized_value)
+            pairs = [
+                family_pair_key(members[i].id, members[j].id)
+                for i in range(len(members))
+                for j in range(i + 1, len(members))
+            ]
+            hidden = [pk for pk in pairs if pk in resolved]
+            if len(hidden) == len(pairs):
+                continue  # nothing left to review in this surname
             groups.append(
                 KgSurnameGroup(
-                    family_name=str(members[0].metadata.get("family_name") or key), members=members
+                    family_name=str(members[0].metadata.get("family_name") or key),
+                    members=members,
+                    hidden_pairs=[pk.split("|") for pk in hidden],
                 )
             )
             if len(groups) >= limit:
                 break
         return groups
+
+    def dismiss_family_pair(self, tenant_id: str, pair_key: str, *, actor: str = "user") -> None:
+        self._family_dismissals.setdefault(tenant_id, set()).add(pair_key)
+
+    def dismissed_family_pairs(self, tenant_id: str) -> set[str]:
+        return set(self._family_dismissals.get(tenant_id, set()))
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
         return {

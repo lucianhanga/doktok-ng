@@ -239,6 +239,12 @@ general `pipeline`, `rag`, and `embedding`); they need no egress. Benchmarks and
 decision: [ADR-0023](../adr/ADR-0023-pluggable-ner-and-relation-backends.md), reproducible with
 `make ner-bench` / `make kg-bench`.
 
+**Knowledge-graph entity model.** How mentions become cross-document nodes, and every special case
+(one-node-per-person with name parts as attributes, token-sorted identity, reversible merges,
+suggestions-never-auto-merge, postal-code/city split, the shared-surname *possible family* hint) is
+documented in [knowledge-graph-entities.md](knowledge-graph-entities.md). Read it before changing
+entity identity, merges, or relation edges.
+
 Later: domain dictionaries, richer normalization, a Settings-UI backend selector.
 
 ## 12. Security model

@@ -2076,6 +2076,41 @@ export async function splitEntity(aliasId: string): Promise<void> {
   }
 }
 
+// ---- Knowledge graph: possible-family shared-surname hints (issue #532) ----
+
+/** A set of canonical PERSON nodes that share a parsed surname. A WEAK hint, never a fact. */
+export interface KgSurnameGroup {
+  family_name: string;
+  members: KgEntity[];
+}
+
+/** Fetch shared-surname "possible family" hint groups (each has >= 2 members). */
+export function fetchFamilySuggestions(
+  limit = 100,
+  signal?: AbortSignal,
+): Promise<KgSurnameGroup[]> {
+  return getJson<KgSurnameGroup[]>(
+    `/api/v1/entities/family-suggestions?limit=${limit}`,
+    signal,
+  );
+}
+
+/**
+ * Confirm a shared-surname pair as family: asserts a manual RELATED_TO edge between the two PERSON
+ * nodes. Idempotent and direction-independent (the backend canonicalizes the pair).
+ */
+export async function confirmFamilyRelation(srcId: string, dstId: string): Promise<KgEdge> {
+  const response = await fetch("/api/v1/entities/family-suggestions/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ src_id: srcId, dst_id: dstId }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
+  return (await response.json()) as KgEdge;
+}
+
 // --- Tenant / member administration (#559, #557) -------------------------------------------------
 // Admin-only endpoints. The dev proxy / deploy proxy injects a tenant-scoped bearer token which
 // resolves to admin, so the single operator reaches these without an in-browser login.

@@ -5834,6 +5834,152 @@ tr.row-selected {
   cursor: not-allowed;
 }
 
+/* Possible-family (shared-surname) hints (#532). Deliberately weaker visual weight than the merge
+   queue: a dashed card, a muted (non-amber) hint pill, and a dotted symmetric tie encode "this is
+   an unscored guess, not a fact". The Confirm button keeps the standard green approve treatment
+   because confirming asserts a real relationship. */
+.kg-fam-section {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.kg-fam-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.kg-fam-hint-pill {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.kg-fam-caveat {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.kg-fam-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.kg-fam-card {
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 0.82rem;
+}
+
+.kg-fam-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.kg-fam-surname {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.kg-fam-count {
+  font-size: 0.72rem;
+}
+
+.kg-fam-pairs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.kg-fam-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+  padding-top: 0.4rem;
+  border-top: 1px dotted var(--border);
+}
+
+.kg-fam-pair:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.kg-fam-tie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.35rem;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.kg-fam-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.kg-fam-tie-glyph {
+  color: var(--muted);
+  letter-spacing: 1px;
+  flex: 0 0 auto;
+}
+
+.kg-fam-actions,
+.kg-fam-confirmed {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.kg-fam-check {
+  color: var(--success);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.kg-fam-pair-error {
+  font-size: 0.74rem;
+}
+
+.kg-fam-more {
+  margin-top: 0.45rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.kg-fam-more:hover {
+  text-decoration: underline;
+}
+
+.kg-fam-more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* Split action in detail rail */
 .kg-split-section {
   padding-top: 0.5rem;

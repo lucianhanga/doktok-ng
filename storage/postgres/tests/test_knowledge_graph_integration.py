@@ -329,3 +329,55 @@ def test_reprocess_over_legacy_unsorted_node_does_not_crash_and_converges(db: Da
     assert kg.get_entity(TENANT_514, sorted_id) is not None
     assert kg.get_entity(TENANT_514, legacy_id) is None
     assert _person_nodes_with_value(db, TENANT_514, raw) == [sorted_id]
+
+
+TENANT_531 = "test-kg-531"
+
+
+def test_reprocess_populates_person_name_parts_on_existing_node(db: Database) -> None:
+    """#531: reprocessing a PERSON must populate given/middle/family metadata, including onto a
+    node that predates the feature (metadata is merged, not left untouched)."""
+    _add_document(db, TENANT_531, "d531")
+    _add_mention(db, TENANT_531, "d531", EntityType.PERSON, "Lucian Cosmin Hanga")
+    entities = PostgresEntityRepository(db)
+    kg = PostgresKnowledgeGraphRepository(db)
+
+    sorted_id = canonical_entity_id(TENANT_531, "PERSON", "Lucian Cosmin Hanga")
+    # A node that already exists with unrelated metadata and NO name parts (the pre-#531 state).
+    kg.upsert_entities(
+        [
+            KgEntity(
+                id=sorted_id,
+                tenant_id=TENANT_531,
+                entity_type=EntityType.PERSON,
+                normalized_value="Lucian Cosmin Hanga",
+                metadata={"seen_before": True},
+            )
+        ]
+    )
+
+    EntityGraphFeature(entities, kg).process(TENANT_531, "d531")
+
+    node = kg.get_entity(TENANT_531, sorted_id)
+    assert node is not None
+    # Name parts populated by the reprocess...
+    assert node.metadata["family_name"] == "Hanga"
+    assert node.metadata["given_name"] == "Lucian"
+    assert node.metadata["middle_names"] == ["Cosmin"]
+    # ...while the pre-existing metadata key is preserved (merge, not overwrite).
+    assert node.metadata["seen_before"] is True
+
+
+def test_reprocess_leaves_non_person_metadata_empty(db: Database) -> None:
+    """An ORG node gets no name-part metadata - parsing is PERSON-only."""
+    _add_document(db, TENANT_531, "d531org")
+    _add_mention(db, TENANT_531, "d531org", EntityType.ORG, "Analytical Engine Co")
+    entities = PostgresEntityRepository(db)
+    kg = PostgresKnowledgeGraphRepository(db)
+
+    EntityGraphFeature(entities, kg).process(TENANT_531, "d531org")
+
+    org_id = canonical_entity_id(TENANT_531, "ORG", "Analytical Engine Co")
+    node = kg.get_entity(TENANT_531, org_id)
+    assert node is not None
+    assert "family_name" not in node.metadata

@@ -662,6 +662,7 @@ source = { editable = "core" }
 dependencies = [
     { name = "doktok-contracts" },
     { name = "langdetect" },
+    { name = "nameparser" },
     { name = "phonenumbers" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -671,6 +672,7 @@ dependencies = [
 requires-dist = [
     { name = "doktok-contracts", editable = "contracts" },
     { name = "langdetect", specifier = ">=1.0.9" },
+    { name = "nameparser", specifier = ">=1.4.0" },
     { name = "phonenumbers", specifier = ">=8.13" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
@@ -1808,6 +1810,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8dac321cda606860fa4548858c0cc45d9d1d4ca2628b/mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558", size = 6343, upload-time = "2025-04-22T14:54:24.164Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
+]
+
+[[package]]
+name = "nameparser"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/6b/c3b4bdf39cd427143939a6f4ad012575e76c78755ceb88c0587899c598df/nameparser-1.4.0.tar.gz", hash = "sha256:a5b9105de7b879909656b6954e7066f06bc7a743a6e6771b19465b0bbbe6a4cf", size = 103018, upload-time = "2026-07-12T19:33:56.835Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/54/4531fc2cdec0aed15c7b329c42ec66d57ecb1139fd6f205f42d9ce993808/nameparser-1.4.0-py3-none-any.whl", hash = "sha256:b6fef3c8e9cf35e6195bfe7e1387f192b808003dac254896bd593442cd1cf906", size = 49377, upload-time = "2026-07-12T19:33:55.317Z" },
 ]
 
 [[package]]

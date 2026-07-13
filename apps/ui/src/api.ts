@@ -2082,6 +2082,11 @@ export async function splitEntity(aliasId: string): Promise<void> {
 export interface KgSurnameGroup {
   family_name: string;
   members: KgEntity[];
+  /**
+   * Member pairs already resolved and hidden from the panel: already linked by a RELATED_TO edge
+   * (#608) or dismissed as "not family" (#609). Each is a sorted [id_a, id_b].
+   */
+  hidden_pairs: string[][];
 }
 
 /** Fetch shared-surname "possible family" hint groups (each has >= 2 members). */
@@ -2109,6 +2114,21 @@ export async function confirmFamilyRelation(srcId: string, dstId: string): Promi
     throw friendlyHttpError(response.status);
   }
   return (await response.json()) as KgEdge;
+}
+
+/**
+ * Dismiss a shared-surname pair as "not family" so it is never re-offered (#609). Persisted and
+ * direction-independent; asserts nothing in the graph.
+ */
+export async function dismissFamilyPair(srcId: string, dstId: string): Promise<void> {
+  const response = await fetch("/api/v1/entities/family-suggestions/dismiss", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ src_id: srcId, dst_id: dstId }),
+  });
+  if (!response.ok) {
+    throw friendlyHttpError(response.status);
+  }
 }
 
 // --- Tenant / member administration (#559, #557) -------------------------------------------------

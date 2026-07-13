@@ -104,7 +104,11 @@ const HANGA_B: KgEntity = {
   normalized_value: "Lucian Cosmin Hanga",
   metadata: { family_name: "Hanga" },
 };
-const HANGA_GROUP: KgSurnameGroup = { family_name: "Hanga", members: [HANGA_A, HANGA_B] };
+const HANGA_GROUP: KgSurnameGroup = {
+  family_name: "Hanga",
+  members: [HANGA_A, HANGA_B],
+  hidden_pairs: [],
+};
 const CONFIRM_EDGE: KgEdge = {
   id: "fam1",
   tenant_id: "t1",
@@ -217,6 +221,9 @@ function stubFetch(opts: {
         status: 201,
         headers: { "content-type": "application/json" },
       });
+    }
+    if (url.includes("/family-suggestions/dismiss")) {
+      return new Response(null, { status: 204 });
     }
     if (url.includes("/family-suggestions")) {
       if (familyErr) return new Response(null, { status: 500 });
@@ -885,5 +892,37 @@ describe("KnowledgeGraphPanel - possible family (shared surname)", () => {
     });
     // The row stays actionable (no false receipt).
     expect(screen.queryByText(/Related — confirmed/i)).not.toBeInTheDocument();
+  });
+
+  it("'Not family' dismisses the pair, hides it, and posts the dismissal", async () => {
+    const mockFetch = stubFetch({ family: [HANGA_GROUP] });
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Possible family"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Dismiss .* not family/i }));
+
+    await waitFor(() => {
+      const calls = (
+        mockFetch.mock.calls as Array<[RequestInfo | URL, RequestInit | undefined]>
+      ).filter(([url]) => String(url).includes("/family-suggestions/dismiss"));
+      expect(calls.length).toBe(1);
+    });
+    // The only pair of the 2-person group is gone, so the group leaves the panel entirely.
+    await waitFor(() => {
+      expect(screen.getByText(/no shared surnames/i)).toBeInTheDocument();
+    });
+  });
+
+  it("does not render pairs already resolved server-side (hidden_pairs)", async () => {
+    // The only pair is already resolved (linked/dismissed), so the group must not appear.
+    const resolved: KgSurnameGroup = {
+      ...HANGA_GROUP,
+      hidden_pairs: [["p1", "p2"]],
+    };
+    stubFetch({ family: [resolved] });
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Possible family"));
+    expect(screen.getByText(/no shared surnames/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Confirm .* are family/i })).not.toBeInTheDocument();
   });
 });

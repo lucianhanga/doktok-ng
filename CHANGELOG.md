@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Knowledge-graph "possible family (shared surname)" hint** (#532) with a converging review
+  queue. Two PERSON nodes sharing a parsed surname are surfaced as a *weak hint* (never a fact,
+  never a MERGE input): a distinct dashed panel in the graph view with per-pair **Confirm family**
+  (asserts a `manual` `RELATED_TO` edge) and **Not family** (persisted dismissal) actions. The
+  family GET now hides pairs already linked by an edge (#608) or dismissed (#609), and drops a
+  group once all its pairs are resolved, so the panel empties as you review it. Also fixed the
+  entity-graph reprocess crash on the stale `normalized_value` unique constraint (#514) and added
+  PERSON name-part parsing into node metadata via `nameparser` (#531). The full entity model and
+  its special cases are documented in
+  [docs/architecture/knowledge-graph-entities.md](docs/architecture/knowledge-graph-entities.md).
 - **Tenant & user management with login and RBAC (EPIC #523 + login flow).** A DB-backed
   tenant/user/api-token registry; opt-in password login issuing a short-lived session JWT
   (`POST /api/v1/auth/login`, gated on `DOKTOK_AUTH_JWT_SECRET`, falling back to

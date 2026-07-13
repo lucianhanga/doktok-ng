@@ -5,6 +5,7 @@ import type { ForceGraphMethods, LinkObject, NodeObject } from "react-force-grap
 import {
   confirmFamilyRelation,
   decomposeEntity,
+  dismissFamilyPair,
   entityDisplayName,
   fetchFamilySuggestions,
   fetchKgEntityDocuments,
@@ -316,6 +317,8 @@ export function KnowledgeGraphPanel({
   const [familyError, setFamilyError] = useState<string | null>(null);
   const [confirmingPairKey, setConfirmingPairKey] = useState<string | null>(null);
   const [confirmedPairKeys, setConfirmedPairKeys] = useState<Set<string>>(new Set());
+  // Pairs dismissed this session ("not family", #609) - optimistically removed from the panel.
+  const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(new Set());
   const [familyErrorKey, setFamilyErrorKey] = useState<{ key: string; text: string } | null>(null);
   const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(new Set());
   // The just-confirmed pair whose "View in graph" button should receive focus (a11y: focus must
@@ -562,6 +565,27 @@ export function KnowledgeGraphPanel({
     () => suggestions.filter(s => !dismissedAliasIds.has(s.alias_id)),
     [suggestions, dismissedAliasIds],
   );
+
+  // Family groups with their still-undecided pairs: drop pairs already resolved server-side
+  // (already related #608, or dismissed #609) and pairs dismissed this session, then drop any
+  // group left with nothing to review. This is what keeps the panel converging to empty.
+  const familyView = useMemo(() => {
+    const serverHidden = new Set<string>();
+    for (const g of familyGroups) {
+      for (const p of g.hidden_pairs ?? []) {
+        if (p.length === 2) serverHidden.add(familyPairKey(p[0], p[1]));
+      }
+    }
+    return familyGroups
+      .map(group => ({
+        group,
+        pairs: familyPairs(group.members).filter(([a, b]) => {
+          const key = familyPairKey(a.id, b.id);
+          return !serverHidden.has(key) && !dismissedPairKeys.has(key);
+        }),
+      }))
+      .filter(v => v.pairs.length > 0);
+  }, [familyGroups, dismissedPairKeys]);
 
   // ---- Canvas sizing effect ----
 
@@ -983,6 +1007,14 @@ export function KnowledgeGraphPanel({
     } finally {
       setConfirmingPairKey(null);
     }
+  }
+
+  function handleDismissFamily(a: KgEntity, b: KgEntity): void {
+    // Optimistically remove the pair, then persist so it is never re-offered (#609). On a
+    // persistence failure it simply reappears on the next load - no worse than before.
+    const key = familyPairKey(a.id, b.id);
+    setDismissedPairKeys(prev => new Set([...prev, key]));
+    void dismissFamilyPair(a.id, b.id).catch(() => {});
   }
 
   function toggleFamilyExpanded(key: string): void {
@@ -2015,13 +2047,12 @@ export function KnowledgeGraphPanel({
           <p role="alert" className="kg-status status-error">
             {familyError}
           </p>
-        ) : familyGroups.length === 0 ? (
+        ) : familyView.length === 0 ? (
           <p className="kg-status muted">No shared surnames — no family hints to review.</p>
         ) : (
           <ul className="kg-fam-list">
-            {familyGroups.map(group => {
+            {familyView.map(({ group, pairs }) => {
               const groupKey = group.family_name.toLowerCase();
-              const pairs = familyPairs(group.members);
               const expanded = expandedFamilies.has(groupKey);
               const shown =
                 expanded || pairs.length <= FAMILY_PAIRS_COLLAPSED
@@ -2090,6 +2121,15 @@ export function KnowledgeGraphPanel({
                                 onClick={() => void handleConfirmFamily(a, b)}
                               >
                                 {confirming ? "Confirming..." : "Confirm family"}
+                              </button>
+                              <button
+                                type="button"
+                                className="kg-merge-btn reject"
+                                disabled={confirming}
+                                aria-label={`Dismiss ${nameA} and ${nameB} - not family`}
+                                onClick={() => handleDismissFamily(a, b)}
+                              >
+                                Not family
                               </button>
                               {err && (
                                 <span role="alert" className="kg-fam-pair-error status-error">

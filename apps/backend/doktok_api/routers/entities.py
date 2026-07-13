@@ -31,7 +31,7 @@ from doktok_core.knowledge_graph.entity_resolution import (
     merge_adjudication_pair_key,
     retarget_to_cluster_root,
 )
-from doktok_core.knowledge_graph.predicates import canonical_edge_id
+from doktok_core.knowledge_graph.predicates import canonical_edge_id, family_pair_key
 from doktok_core.knowledge_graph.resolve import canonical_entity_id
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -272,6 +272,40 @@ def confirm_family(
         if candidate.id == edge_id:
             return candidate
     return edge
+
+
+class DismissFamilyBody(BaseModel):
+    src_id: Annotated[str, Field(min_length=1)]
+    dst_id: Annotated[str, Field(min_length=1)]
+
+
+@router.post("/family-suggestions/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_family(
+    body: DismissFamilyBody,
+    tenant: Tenant,
+    kg: KgRepo,
+    audit: Audit,
+) -> None:
+    """Dismiss a shared-surname pair as "not family" so it is never re-offered (#609). Keyed on the
+    order-independent id pair, so it matches regardless of direction and survives a KG rebuild.
+    Idempotent; asserts nothing in the graph (unlike confirm)."""
+    if body.src_id == body.dst_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cannot dismiss an entity against itself",
+        )
+    key = family_pair_key(body.src_id, body.dst_id)
+    kg.dismiss_family_pair(tenant.tenant_id, key, actor=actor_identity(tenant))
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.ENTITY_FAMILY_DISMISSED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        record_kind="entity",
+        description="dismissed shared-surname pair (not family)",
+        details={"pair_key": key},
+    )
 
 
 @router.get("/{entity_id}", response_model=KgEntity)

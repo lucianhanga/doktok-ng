@@ -96,6 +96,7 @@ class AuditEventType(StrEnum):
     ENTITY_MERGE_REJECTED = "entity.merge_rejected"  # #530: user rejected a suggested merge
     ENTITY_RENAMED = "entity.renamed"  # display-name override
     ENTITY_RELATED = "entity.related"  # #532: user confirmed a manual RELATED_TO edge
+    ENTITY_FAMILY_DISMISSED = "entity.family_dismissed"  # #609: dismissed a shared-surname pair
     # Tenant / user administration (#559). Security-sensitive: creating members, changing roles,
     # resetting passwords, and issuing/revoking API tokens are all audited with the admin as actor.
     TENANT_CREATED = "tenant.created"
@@ -666,6 +667,11 @@ class KgSurnameGroup(BaseModel):
 
     family_name: str
     members: list[KgEntity]
+    # Member pairs already resolved - either already linked by a RELATED_TO edge (#608) or dismissed
+    # as "not family" (#609). Each is a sorted [id_a, id_b]; the UI hides these so the panel only
+    # shows undecided pairs and converges to empty. A group is omitted entirely when every pair is
+    # resolved.
+    hidden_pairs: list[list[str]] = Field(default_factory=list)
 
 
 class SearchHit(BaseModel):

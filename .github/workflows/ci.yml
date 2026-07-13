@@ -14,8 +14,14 @@ concurrency:
 
 jobs:
   # Detect whether the change touches anything other than documentation. Docs-only changes
-  # (docs/**, any *.md, CHANGELOG, LICENSE) skip the heavy Python + Frontend jobs below; the secret
-  # scan still runs (docs can leak tokens in examples). Keeps docs PRs fast and cheap.
+  # (docs/**, any *.md including top-level CHANGELOG.md, LICENSE) skip the heavy Python + Frontend
+  # jobs below; the secret scan still runs (docs can leak tokens in examples). Keeps docs PRs fast.
+  #
+  # paths-filter ORs the patterns in a rule (a file matches the rule if ANY pattern matches), so the
+  # exclusion must be ONE negated brace pattern, not a list of `!`-lines (a `**` + `!...` list would
+  # always match via `**`). It must also be brace-expanded, not an extglob `!(a|b)`: `**` does not
+  # globstar inside `!(...)`, so `!(docs/**|**/*.md)` wrongly counted nested docs files as code.
+  # `**/*.md` needs a directory prefix, hence the extra top-level `*.md`.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -28,7 +34,7 @@ jobs:
         with:
           filters: |
             code:
-              - '!(docs/**|**/*.md|CHANGELOG.md|LICENSE)'
+              - '!{docs/**,**/*.md,*.md,LICENSE}'
 
   python:
     name: Python checks

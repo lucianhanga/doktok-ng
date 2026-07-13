@@ -381,3 +381,64 @@ def test_reprocess_leaves_non_person_metadata_empty(db: Database) -> None:
     node = kg.get_entity(TENANT_531, org_id)
     assert node is not None
     assert "family_name" not in node.metadata
+
+
+TENANT_532 = "test-kg-532"
+
+
+def _person_node(tenant: str, name: str, family: str) -> KgEntity:
+    return KgEntity(
+        id=canonical_entity_id(tenant, "PERSON", name),
+        tenant_id=tenant,
+        entity_type=EntityType.PERSON,
+        normalized_value=name,
+        metadata={"family_name": family},
+    )
+
+
+def test_shared_surname_groups_only_returns_shared_families(db: Database) -> None:
+    """#532: canonical PERSON nodes are grouped by family_name (case-insensitive), and a surname
+    held by only one node is not a group."""
+    kg = PostgresKnowledgeGraphRepository(db)
+    kg.upsert_entities(
+        [
+            _person_node(TENANT_532, "Lucian Cosmin Hanga", "Hanga"),
+            _person_node(TENANT_532, "Daniel Dennis Hanga", "Hanga"),
+            _person_node(TENANT_532, "Ana Maria Hanga", "hanga"),  # case-insensitive -> same bucket
+            _person_node(TENANT_532, "Angela Merkel", "Merkel"),  # singleton -> excluded
+        ]
+    )
+
+    groups = kg.list_shared_surname_groups(TENANT_532)
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert group.family_name.lower() == "hanga"
+    assert sorted(m.normalized_value for m in group.members) == [
+        "Ana Maria Hanga",
+        "Daniel Dennis Hanga",
+        "Lucian Cosmin Hanga",
+    ]
+
+
+def test_shared_surname_groups_ignore_aliases_and_missing_family(db: Database) -> None:
+    """A merged alias node and a node with no parsed family_name never appear in a group."""
+    kg = PostgresKnowledgeGraphRepository(db)
+    canonical = _person_node(TENANT_532, "Maria Ionescu", "Ionescu")
+    other = _person_node(TENANT_532, "Ion Ionescu", "Ionescu")
+    no_family = KgEntity(
+        id=canonical_entity_id(TENANT_532, "PERSON", "Madonna"),
+        tenant_id=TENANT_532,
+        entity_type=EntityType.PERSON,
+        normalized_value="Madonna",
+        metadata={},  # single-token, no surname parsed
+    )
+    kg.upsert_entities([canonical, other, no_family])
+    # Fold `other` into `canonical`: an alias node must drop out of the grouping.
+    kg.merge_entities(TENANT_532, canonical.id, other.id, method="manual", actor="test")
+
+    groups = {g.family_name.lower(): g for g in kg.list_shared_surname_groups(TENANT_532)}
+
+    # Only one Ionescu node remains canonical -> no longer a shared-surname group.
+    assert "ionescu" not in groups
+    assert "" not in groups

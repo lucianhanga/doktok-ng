@@ -23,6 +23,7 @@ from doktok_contracts.schemas import (
     KgEntityMatch,
     KgEntityMention,
     KgMergeSuggestion,
+    KgSurnameGroup,
 )
 
 from doktok_core.knowledge_graph.entity_resolution import (
@@ -328,6 +329,34 @@ class InMemoryKnowledgeGraphRepository:
             if e.tenant_id == tenant_id and is_canonical(e):
                 counts[e.entity_type.value] = counts.get(e.entity_type.value, 0) + 1
         return [EntityTypeCount(entity_type=t, count=c) for t, c in sorted(counts.items())]
+
+    def list_shared_surname_groups(
+        self, tenant_id: str, *, limit: int = 100
+    ) -> list[KgSurnameGroup]:
+        buckets: dict[str, list[KgEntity]] = {}
+        for e in self._entities.values():
+            if e.tenant_id != tenant_id or not is_canonical(e):
+                continue
+            if e.entity_type != EntityType.PERSON:
+                continue
+            fam = str(e.metadata.get("family_name") or "").strip()
+            if not fam:
+                continue
+            buckets.setdefault(fam.lower(), []).append(e.model_copy(deep=True))
+        groups: list[KgSurnameGroup] = []
+        for key in sorted(buckets):
+            members = buckets[key]
+            if len(members) < 2:
+                continue
+            members.sort(key=lambda m: m.normalized_value)
+            groups.append(
+                KgSurnameGroup(
+                    family_name=str(members[0].metadata.get("family_name") or key), members=members
+                )
+            )
+            if len(groups) >= limit:
+                break
+        return groups
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
         return {

@@ -23,6 +23,7 @@ from doktok_contracts.schemas import (
     KgMergeSuggestion,
     KgNeighborhood,
     KgStats,
+    KgSurnameGroup,
 )
 from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.knowledge_graph.adjudication import adjudicate_suggestions
@@ -179,6 +180,98 @@ def kg_stats(tenant: Tenant, kg: KgRepo) -> KgStats:
         edge_count=kg.edge_count(tenant.tenant_id),
         by_type=kg.entity_type_counts(tenant.tenant_id),
     )
+
+
+# Human-confirmed family link: a symmetric hint, so we store one edge in a canonical (sorted)
+# direction, making a re-confirm in either direction idempotent on the same edge id.
+_FAMILY_PREDICATE = "RELATED_TO"
+_MANUAL_PROVENANCE_DOC = "manual"
+
+
+@router.get("/family-suggestions", response_model=list[KgSurnameGroup])
+def list_family_suggestions(
+    tenant: Tenant,
+    kg: KgRepo,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[KgSurnameGroup]:
+    """Canonical PERSON nodes that share a parsed surname (#532) - a WEAK "possible family" hint,
+    not a fact. The UI must render it as distinct from evidence-backed edges; only an explicit
+    confirm asserts a relationship."""
+    return kg.list_shared_surname_groups(tenant.tenant_id, limit=limit)
+
+
+class ConfirmFamilyBody(BaseModel):
+    src_id: Annotated[str, Field(min_length=1)]
+    dst_id: Annotated[str, Field(min_length=1)]
+
+
+@router.post(
+    "/family-suggestions/confirm",
+    response_model=KgEdge,
+    status_code=status.HTTP_201_CREATED,
+)
+def confirm_family(
+    body: ConfirmFamilyBody,
+    tenant: Tenant,
+    kg: KgRepo,
+    audit: Audit,
+) -> KgEdge:
+    """Confirm a shared-surname pair as family: assert a manual-provenance ``RELATED_TO`` edge
+    between the two PERSON nodes (#532). Mirrors the merge-queue philosophy - the weak hint only
+    becomes a fact when a human confirms it. Never auto-created; never influences entity MERGE.
+    """
+    tid = tenant.tenant_id
+    if body.src_id == body.dst_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="cannot relate an entity to itself"
+        )
+    src = kg.get_entity(tid, body.src_id)
+    dst = kg.get_entity(tid, body.dst_id)
+    if src is None or dst is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
+    if src.entity_type != EntityType.PERSON or dst.entity_type != EntityType.PERSON:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="both entities must be PERSON"
+        )
+    # Canonicalize direction so (A,B) and (B,A) map to one edge (a family link is symmetric).
+    a_id, b_id = sorted((src.id, dst.id))
+    edge_id = canonical_edge_id(tid, a_id, _FAMILY_PREDICATE, b_id)
+    edge = KgEdge(
+        id=edge_id,
+        tenant_id=tid,
+        src_entity_id=a_id,
+        predicate=_FAMILY_PREDICATE,
+        dst_entity_id=b_id,
+        metadata={"source": "manual_family"},
+    )
+    provenance = [
+        KgEdgeProvenance(
+            id=uuid4().hex,
+            tenant_id=tid,
+            edge_id=edge_id,
+            document_id=_MANUAL_PROVENANCE_DOC,
+            chunk_id=None,
+            evidence=f"manual: confirmed possible family (shared surname) - "
+            f"{src.normalized_value} / {dst.normalized_value}",
+        )
+    ]
+    kg.add_edges([edge], provenance)
+    record_activity(
+        audit,
+        tid,
+        AuditEventType.ENTITY_RELATED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        record_kind="entity",
+        record_id=edge_id,
+        description=f'"{src.normalized_value}" related to "{dst.normalized_value}" (family)',
+        details={"src_id": a_id, "dst_id": b_id, "predicate": _FAMILY_PREDICATE},
+    )
+    stored = kg.edges_for_entity(tid, a_id)
+    for candidate in stored:
+        if candidate.id == edge_id:
+            return candidate
+    return edge
 
 
 @router.get("/{entity_id}", response_model=KgEntity)

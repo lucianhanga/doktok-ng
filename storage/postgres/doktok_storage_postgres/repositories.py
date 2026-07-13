@@ -50,6 +50,7 @@ from doktok_contracts.schemas import (
     KgEntityMatch,
     KgEntityMention,
     KgMergeSuggestion,
+    KgSurnameGroup,
     ListAnchor,
     Memory,
     MerchantRollup,
@@ -1476,6 +1477,45 @@ class PostgresKnowledgeGraphRepository:
                 (tenant_id,),
             ).fetchall()
         return [EntityTypeCount(entity_type=row["entity_type"], count=row["count"]) for row in rows]
+
+    def list_shared_surname_groups(
+        self, tenant_id: str, *, limit: int = 100
+    ) -> list[KgSurnameGroup]:
+        # Canonical PERSON nodes whose parsed family_name is shared by >=2 nodes (#532). The inner
+        # query finds the surnames worth showing (case-insensitive count > 1); the outer pulls
+        # their members, surname-ordered so buckets are contiguous. A weak hint - never a MERGE key.
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_KG_ENTITY_COLUMNS}, lower(metadata->>'family_name') AS _fam "
+                "FROM kg_entities "
+                f"WHERE tenant_id=%(t)s AND entity_type='PERSON' AND {_KG_CANONICAL_ONLY} "
+                "AND coalesce(metadata->>'family_name', '') <> '' "
+                "AND lower(metadata->>'family_name') IN ("
+                "    SELECT lower(metadata->>'family_name') FROM kg_entities "
+                f"    WHERE tenant_id=%(t)s AND entity_type='PERSON' AND {_KG_CANONICAL_ONLY} "
+                "    AND coalesce(metadata->>'family_name', '') <> '' "
+                "    GROUP BY lower(metadata->>'family_name') HAVING count(*) > 1) "
+                "ORDER BY _fam, normalized_value",
+                {"t": tenant_id},
+            ).fetchall()
+        buckets: dict[str, list[KgEntity]] = {}
+        order: list[str] = []
+        for row in rows:
+            key = row.pop("_fam")
+            if key not in buckets:
+                buckets[key] = []
+                order.append(key)
+            buckets[key].append(_row_to_kg_entity(row))
+        groups: list[KgSurnameGroup] = []
+        for key in order[:limit]:
+            members = buckets[key]
+            groups.append(
+                KgSurnameGroup(
+                    family_name=members[0].metadata.get("family_name") or key, members=members
+                )
+            )
+        return groups
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:
         with self._db.connection() as conn:

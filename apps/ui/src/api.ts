@@ -2217,9 +2217,17 @@ export function fetchAdminTenants(signal?: AbortSignal): Promise<AdminTenant[]> 
   return getJson<AdminTenant[]>("/api/v1/admin/tenants", signal);
 }
 
-export function createAdminTenant(body: { name: string }): Promise<AdminTenant> {
-  // The tenant id is server-generated (a GUID); the client supplies only the display name.
-  return sendJson<AdminTenant>("/api/v1/admin/tenants", "POST", body);
+export interface CreatedTenant {
+  id: string;
+  name: string;
+  status: string;
+  bootstrap_token: string; // shown once - the credential to administer the new tenant
+}
+
+export function createAdminTenant(body: { name: string }): Promise<CreatedTenant> {
+  // Provisions a usable tenant (row + folders + one-time bootstrap admin token). The id is
+  // server-generated (a GUID); the client supplies only the display name.
+  return sendJson<CreatedTenant>("/api/v1/admin/tenants", "POST", body);
 }
 
 // --- Per-user preferences (#558) -----------------------------------------------------------------

@@ -16,6 +16,7 @@ from doktok_contracts.schemas import (
     KgEdge,
     KgEdgeProvenance,
     KgEntity,
+    KgSurnameGroup,
     TokenSuggestion,
 )
 from doktok_core.config import Settings
@@ -188,6 +189,11 @@ class FakeKnowledgeGraphRepository:
         for node in self._nodes.values():
             counts[node.entity_type.value] = counts.get(node.entity_type.value, 0) + 1
         return [EntityTypeCount(entity_type=t, count=c) for t, c in sorted(counts.items())]
+
+    def list_shared_surname_groups(
+        self, tenant_id: str, *, limit: int = 100
+    ) -> list[KgSurnameGroup]:
+        return []
 
     def neighborhood(
         self,
@@ -513,3 +519,124 @@ def test_split_requires_token() -> None:
 def test_merge_suggestions_requires_token() -> None:
     client, _, _ = _merge_setup()
     assert client.get("/api/v1/entities/merge-suggestions").status_code == 401
+
+
+# --- shared-surname family discovery (#532) ---------------------------------------------------
+
+
+def _family_setup() -> tuple[TestClient, InMemoryKnowledgeGraphRepository, FakeAuditLogRepository]:
+    """A client backed by a real InMemory KG seeded with two PERSON nodes sharing surname 'Hanga',
+    one lone 'Merkel', and a non-person node."""
+    audit = FakeAuditLogRepository()
+    kg = InMemoryKnowledgeGraphRepository()
+    kg.upsert_entities(
+        [
+            KgEntity(
+                id="p-lucian",
+                tenant_id="tenant-a",
+                entity_type=EntityType.PERSON,
+                normalized_value="Lucian Cosmin Hanga",
+                metadata={"family_name": "Hanga", "given_name": "Lucian"},
+            ),
+            KgEntity(
+                id="p-daniel",
+                tenant_id="tenant-a",
+                entity_type=EntityType.PERSON,
+                normalized_value="Daniel Dennis Hanga",
+                metadata={"family_name": "Hanga", "given_name": "Daniel"},
+            ),
+            KgEntity(
+                id="p-angela",
+                tenant_id="tenant-a",
+                entity_type=EntityType.PERSON,
+                normalized_value="Angela Merkel",
+                metadata={"family_name": "Merkel"},
+            ),
+            KgEntity(
+                id="o-acme",
+                tenant_id="tenant-a",
+                entity_type=EntityType.ORG,
+                normalized_value="Acme GmbH",
+            ),
+        ]
+    )
+    registry = build_registry()
+    registry.register(EntityRepository, FakeEntityRepository())
+    registry.register(KnowledgeGraphRepository, kg)  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
+    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    return TestClient(create_app(settings=settings, registry=registry)), kg, audit
+
+
+def test_family_suggestions_groups_shared_surname() -> None:
+    client, _, _ = _family_setup()
+    body = client.get("/api/v1/entities/family-suggestions", headers=_auth()).json()
+    assert len(body) == 1  # only "Hanga" is shared; "Merkel" is a singleton
+    assert body[0]["family_name"] == "Hanga"
+    assert {m["id"] for m in body[0]["members"]} == {"p-lucian", "p-daniel"}
+
+
+def test_family_suggestions_requires_token() -> None:
+    client, _, _ = _family_setup()
+    assert client.get("/api/v1/entities/family-suggestions").status_code == 401
+
+
+def test_confirm_family_creates_manual_related_edge() -> None:
+    client, kg, audit = _family_setup()
+    r = client.post(
+        "/api/v1/entities/family-suggestions/confirm",
+        json={"src_id": "p-lucian", "dst_id": "p-daniel"},
+        headers=_auth(),
+    )
+    assert r.status_code == 201, r.text
+    edge = r.json()
+    assert edge["predicate"] == "RELATED_TO"
+    assert {edge["src_entity_id"], edge["dst_entity_id"]} == {"p-lucian", "p-daniel"}
+    # The edge is persisted and evidence-backed (manual provenance), and audited.
+    assert edge["evidence_count"] == 1
+    assert any(e.id == edge["id"] for e in kg.edges_for_entity("tenant-a", "p-lucian"))
+    assert any(ev.event_type == "entity.related" for ev in audit.events)
+
+
+def test_confirm_family_is_idempotent_in_either_direction() -> None:
+    client, kg, _ = _family_setup()
+    first = client.post(
+        "/api/v1/entities/family-suggestions/confirm",
+        json={"src_id": "p-lucian", "dst_id": "p-daniel"},
+        headers=_auth(),
+    ).json()
+    # Same pair, reversed: canonicalized direction -> the SAME edge id, no duplicate.
+    second = client.post(
+        "/api/v1/entities/family-suggestions/confirm",
+        json={"src_id": "p-daniel", "dst_id": "p-lucian"},
+        headers=_auth(),
+    ).json()
+    assert first["id"] == second["id"]
+    assert len(kg.edges_for_entity("tenant-a", "p-lucian")) == 1
+
+
+def test_confirm_family_rejects_self_and_non_person() -> None:
+    client, _, _ = _family_setup()
+    same = client.post(
+        "/api/v1/entities/family-suggestions/confirm",
+        json={"src_id": "p-lucian", "dst_id": "p-lucian"},
+        headers=_auth(),
+    )
+    assert same.status_code == 400
+    org = client.post(
+        "/api/v1/entities/family-suggestions/confirm",
+        json={"src_id": "p-lucian", "dst_id": "o-acme"},
+        headers=_auth(),
+    )
+    assert org.status_code == 400
+
+
+def test_confirm_family_requires_editor() -> None:
+    client, _, _ = _family_setup()
+    assert (
+        client.post(
+            "/api/v1/entities/family-suggestions/confirm",
+            json={"src_id": "p-lucian", "dst_id": "p-daniel"},
+        ).status_code
+        == 401
+    )

@@ -69,6 +69,7 @@ from doktok_contracts.schemas import (
     KgEntityMatch,
     KgEntityMention,
     KgMergeSuggestion,
+    KgSurnameGroup,
     ListAnchor,
     Memory,
     MergeVerdict,
@@ -1009,6 +1010,16 @@ class KnowledgeGraphRepository(Protocol):
 
     def entity_type_counts(self, tenant_id: str) -> list[EntityTypeCount]:
         """Count of canonical nodes per entity type for a tenant (for the KG stats endpoint)."""
+        ...
+
+    def list_shared_surname_groups(
+        self, tenant_id: str, *, limit: int = 100
+    ) -> list[KgSurnameGroup]:
+        """Canonical PERSON nodes grouped by parsed ``family_name`` where two or more share one
+        (#532). Grouping is case-insensitive; only nodes whose metadata carries a non-empty
+        ``family_name`` participate. A weak hint for the family-discovery panel - never a fact,
+        never an input to entity MERGE. Returns at most ``limit`` groups, surname-ordered.
+        """
         ...
 
     def alias_map(self, tenant_id: str) -> dict[tuple[str, str], str]:

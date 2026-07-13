@@ -95,6 +95,7 @@ class AuditEventType(StrEnum):
     ENTITY_SPLIT = "entity.split"
     ENTITY_MERGE_REJECTED = "entity.merge_rejected"  # #530: user rejected a suggested merge
     ENTITY_RENAMED = "entity.renamed"  # display-name override
+    ENTITY_RELATED = "entity.related"  # #532: user confirmed a manual RELATED_TO edge
     # Tenant / user administration (#559). Security-sensitive: creating members, changing roles,
     # resetting passwords, and issuing/revoking API tokens are all audited with the admin as actor.
     TENANT_CREATED = "tenant.created"
@@ -652,6 +653,19 @@ class KgNeighborhood(BaseModel):
     focus: KgEntity
     nodes: list[KgEntity]
     edges: list[KgEdge]
+
+
+class KgSurnameGroup(BaseModel):
+    """A set of canonical PERSON nodes that share a parsed ``family_name`` (#532).
+
+    A WEAK hint, never a fact: a shared surname is not a family (common surnames create false links;
+    real families often differ). The UI must render it as distinct from evidence-backed edges, and
+    only a user confirming a pair asserts a ``manual`` ``RELATED_TO`` edge. ``family_name`` is the
+    display form; grouping itself is case-insensitive.
+    """
+
+    family_name: str
+    members: list[KgEntity]
 
 
 class SearchHit(BaseModel):

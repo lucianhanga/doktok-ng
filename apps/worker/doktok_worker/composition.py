@@ -18,6 +18,7 @@ from doktok_contracts.ports import (
     OcrExtractor,
     RecordExtractor,
     RelationExtractor,
+    TenantRegistry,
 )
 from doktok_contracts.schemas import AiPurposeSettings
 from doktok_core.config import Settings
@@ -102,6 +103,7 @@ from doktok_storage_postgres import (
     PostgresLexicalTermExtractor,
     PostgresProjectionRequestRepository,
     PostgresRecordRepository,
+    PostgresTenantRegistry,
     migrate,
 )
 
@@ -244,11 +246,33 @@ def _resolve_relation_backend(
 
 
 def tenant_ids(settings: Settings) -> list[str]:
-    """Unique tenant ids the worker should watch, derived from the token map."""
+    """Unique tenant ids from the static token map (the bootstrap/fallback source)."""
     seen: dict[str, None] = {}
     for tenant in settings.tenant_tokens.values():
         seen.setdefault(tenant, None)
     return list(seen)
+
+
+def active_tenant_ids(settings: Settings, registry: TenantRegistry) -> list[str]:
+    """The tenant ids the worker should serve: the static token-map tenants UNIONED with the ACTIVE
+    tenants in the DB registry. The DB is the source of truth for existence + status, so a tenant
+    created via ``make create-tenant`` / the admin API is watched on the next worker start with no
+    env edit; a DB tenant marked ``suspended`` is dropped even if still in the env map (status is
+    the kill switch). Env-only deployments are unaffected. Never crashes the worker: if the registry
+    is unreachable, it falls back to the env map alone."""
+    env = set(settings.tenant_tokens.values())
+    active: set[str] = set()
+    suspended: set[str] = set()
+    try:
+        for tenant in registry.list_tenants():
+            (active if tenant.status == "active" else suspended).add(tenant.id)
+    except Exception:  # noqa: BLE001 - a registry hiccup must never stop the worker from starting
+        logger.warning(
+            "could not read the tenant registry; watching env-map tenants only", exc_info=True
+        )
+    # Union env + active DB tenants, then remove any the DB has suspended (the kill switch wins even
+    # over a static env-map entry).
+    return sorted((env | active) - suspended)
 
 
 @dataclass
@@ -301,6 +325,11 @@ def build_services(
         ),
     )
     migrate(db)
+
+    # Tenants the worker serves this run: the env token-map UNION the active DB registry tenants, so
+    # a tenant created via `make create-tenant` / the admin API is watched here with no env edit
+    # (picked up on the next start). Suspended DB tenants are excluded.
+    watched_tenants = active_tenant_ids(settings, PostgresTenantRegistry(db))
 
     # Effective AI model selection (Settings tab > AI section), persisted; applied at startup.
     app_settings = PostgresAppSettingsRepository(db, secrets_key=settings.secrets_key)
@@ -693,7 +722,7 @@ def build_services(
     reconciler = FeatureReconciler(
         feature_repo,
         processors,
-        tenant_ids(settings),
+        watched_tenants,
         concurrency=reconcile_concurrency,
         audit_log=audit_log,
     )
@@ -717,7 +746,7 @@ def build_services(
     # per-document features drain. It folds entity surface variants into one canonical node and is
     # idempotent, so re-running is a no-op once the graph is stable.
     def post_reconcile() -> None:
-        for tenant_id in tenant_ids(settings):
+        for tenant_id in watched_tenants:
             resolve_tenant_aliases(knowledge_graph_repo, tenant_id)
 
     # Insights embedding map (ADR-0016, M7.1): a tenant-aggregate projection job, drained from the
@@ -740,7 +769,7 @@ def build_services(
     )
 
     services: list[IngestionServices] = []
-    for tenant_id in tenant_ids(settings):
+    for tenant_id in watched_tenants:
         layout = FilesystemLayout(settings.files_root, tenant_id)
         layout.ensure()
         std = IngestionServices(

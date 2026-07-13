@@ -424,9 +424,22 @@ export function AdminPanel() {
   const addTenant = () =>
     run(
       async () => {
-        const t = await createAdminTenant({ name: tenantName.trim() });
+        const created = await createAdminTenant({ name: tenantName.trim() });
+        const t: AdminTenant = {
+          id: created.id,
+          name: created.name,
+          status: created.status,
+          created_at: null,
+        };
         setTenants((prev) => [...(prev ?? []), t]);
         setTenantCreated(t);
+        if (created.bootstrap_token) {
+          setReveal({
+            label: `Bootstrap admin token for "${created.name}"`,
+            value: created.bootstrap_token,
+            note: "Point DOKTOK_DEV_TOKEN / the UI at this to administer the new tenant. Restart the worker so it starts watching it.",
+          });
+        }
         setTenantName("");
       },
       setTenantsErr,

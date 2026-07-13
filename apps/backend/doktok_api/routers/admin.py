@@ -25,6 +25,7 @@ from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.security.auth import hash_token
 from doktok_core.security.passwords import hash_password, validate_password
 from doktok_core.security.roles import Role
+from doktok_core.tenants.provisioning import provision_tenant
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
@@ -169,24 +170,37 @@ def list_tenants(caller: AdminUser, registry: Registry) -> list[Tenant]:
     return registry.list_tenants()
 
 
-@router.post("/tenants", response_model=Tenant, status_code=status.HTTP_201_CREATED)
+class CreatedTenant(BaseModel):
+    """A newly provisioned tenant + its one-time bootstrap admin token (shown ONCE)."""
+
+    id: str
+    name: str
+    status: str
+    bootstrap_token: str
+
+
+@router.post("/tenants", response_model=CreatedTenant, status_code=status.HTTP_201_CREATED)
 def create_tenant(
-    body: CreateTenantRequest, caller: AdminUser, registry: Registry, audit: Audit
-) -> Tenant:
-    tenant_id = str(uuid.uuid4())  # server-generated opaque GUID
-    registry.create_tenant(Tenant(id=tenant_id, name=body.name))
+    request: Request, body: CreateTenantRequest, caller: AdminUser, registry: Registry, audit: Audit
+) -> CreatedTenant:
+    # Provision a USABLE tenant (row + lifecycle folders + a one-time bootstrap admin token) via the
+    # shared core, so the UI no longer produces dead tenants. The worker picks it up on next start.
+    result = provision_tenant(registry, request.app.state.settings.files_root, name=body.name)
     record_activity(
         audit,
         caller.tenant_id,
         AuditEventType.TENANT_CREATED,
         actor=actor_identity(caller),
         actor_kind="user",
-        description=f'Tenant "{body.name}" ({tenant_id}) created',
-        details={"tenant": tenant_id},
+        description=f'Tenant "{result.name}" ({result.tenant_id}) provisioned',
+        details={"tenant": result.tenant_id},
     )
-    created = registry.get_tenant(tenant_id)
-    assert created is not None
-    return created
+    return CreatedTenant(
+        id=result.tenant_id,
+        name=result.name,
+        status="active",
+        bootstrap_token=result.token or "",
+    )
 
 
 # --- users / members ---

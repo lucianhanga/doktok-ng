@@ -1,6 +1,7 @@
 """Tenant/member administration API (#559): admin-only CRUD for tenants, users, roles, tokens."""
 
 import os
+from pathlib import Path
 
 import pytest
 from doktok_api.main import create_app
@@ -33,7 +34,7 @@ def _registry() -> InMemoryTenantRegistry:
     return reg
 
 
-def _client() -> tuple[TestClient, InMemoryTenantRegistry]:
+def _client(files_root: str = "./storage/files") -> tuple[TestClient, InMemoryTenantRegistry]:
     reg = _registry()
     registry = build_registry()
     registry.register(TenantRegistry, reg)  # type: ignore[type-abstract]
@@ -42,6 +43,7 @@ def _client() -> tuple[TestClient, InMemoryTenantRegistry]:
         env="test",
         auth_jwt_secret=JWT_SECRET,
         tenant_tokens=STATIC_TOKENS,
+        files_root=files_root,
         _env_file=None,  # type: ignore[call-arg]
     )
     return TestClient(create_app(settings=settings, registry=registry)), reg
@@ -205,26 +207,31 @@ def test_issue_token_for_unknown_user_is_404() -> None:
 # --- tenants ---
 
 
-def test_create_tenant_generates_a_guid_id() -> None:
+def test_create_tenant_provisions_row_folders_and_token(tmp_path: Path) -> None:
     import uuid
 
-    client, _ = _client()
+    client, reg = _client(files_root=str(tmp_path))
     created = client.post("/api/v1/admin/tenants", json={"name": "Second"}, headers=_admin())
     assert created.status_code == 201, created.text
-    new_id = created.json()["id"]
-    assert created.json()["name"] == "Second"
-    # The id is a server-generated UUID, not client-supplied.
-    assert uuid.UUID(new_id)  # raises if not a valid UUID
+    body = created.json()
+    new_id = body["id"]
+    assert body["name"] == "Second"
+    assert uuid.UUID(new_id)  # server-generated UUID
+    # A one-time bootstrap admin token is returned and actually resolves (tenant-scoped => admin).
+    assert body["bootstrap_token"]
+    assert reg.resolve_token(hash_token(body["bootstrap_token"])) is not None
+    # Filesystem lifecycle folders were created (no more dead tenants).
+    assert (tmp_path / new_id / "ingest").is_dir()
+    assert (tmp_path / new_id / "ingest.enhanced").is_dir()
 
-    tenants = client.get("/api/v1/admin/tenants", headers=_admin()).json()
-    ids = {t["id"] for t in tenants}
+    ids = {t["id"] for t in client.get("/api/v1/admin/tenants", headers=_admin()).json()}
     assert {"tenant-a", new_id} <= ids
 
 
-def test_create_tenant_ignores_client_supplied_id() -> None:
+def test_create_tenant_ignores_client_supplied_id(tmp_path: Path) -> None:
     import uuid
 
-    client, _ = _client()
+    client, _ = _client(files_root=str(tmp_path))
     # A client that tries to set the id is ignored (extra field); the server still generates one.
     created = client.post(
         "/api/v1/admin/tenants", json={"id": "hacked", "name": "Third"}, headers=_admin()

@@ -1,5 +1,5 @@
 .PHONY: help setup lint format typecheck test arch check \
-        run-backend run-worker run-ui preflight-backend preflight-worker clean-tenant seed-dev rag-eval enrich-eval ocr-paddle ocr-rapid ocr-rapid-openvino projection-engine address-libpostal db db-down \
+        run-backend run-worker run-ui preflight-backend preflight-worker clean-tenant create-tenant seed-dev rag-eval enrich-eval ocr-paddle ocr-rapid ocr-rapid-openvino projection-engine address-libpostal db db-down \
         js-install js-typecheck js-lint js-test js \
         secrets sbom hooks deploy-box drp-selftest backup
 
@@ -58,6 +58,9 @@ run-ui: ## Run the UI dev server (injects DOKTOK_DEV_TOKEN into proxied API call
 
 clean-tenant: ## Wipe all DB rows + files for one tenant: make clean-tenant TENANT=developer
 	@scripts/clean-tenant.sh $(TENANT)
+
+create-tenant: ## Provision a usable tenant (row + folders + bootstrap token): make create-tenant NAME="Staging" [ARGS=--admin-email a@b.com --admin-password ...]
+	@scripts/create-tenant.sh "$(NAME)" $(ARGS)
 
 seed-dev: ## Seed a 'dev' tenant + admin/editor/viewer users for UI login (local/dev only; ARGS=--reset)
 	@scripts/seed-dev.sh $(ARGS)

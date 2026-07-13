@@ -3,8 +3,10 @@ import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
 
 import {
+  confirmFamilyRelation,
   decomposeEntity,
   entityDisplayName,
+  fetchFamilySuggestions,
   fetchKgEntityDocuments,
   fetchKgNeighborhood,
   fetchKgNodes,
@@ -20,6 +22,7 @@ import {
   type KgMergeSuggestion,
   type KgNeighborhood,
   type KgStats,
+  type KgSurnameGroup,
 } from "./api";
 
 // ---- Domain constants ----
@@ -27,6 +30,28 @@ import {
 const MAX_NODES = 200;
 const LABEL_COUNT = 8; // max auto-labeled nodes beyond the focus node (Orient tier)
 const SEARCH_DEBOUNCE_MS = 250;
+
+// Possible-family (shared-surname) hint tuning (#532).
+const FAMILY_PAIRS_COLLAPSED = 4; // show this many pairs per group before "Show all N pairs"
+
+/** Order-independent key for a pair of entity ids (a family link is symmetric). */
+function familyPairKey(a: string, b: string): string {
+  return [a, b].sort().join("|");
+}
+
+/** All unordered member pairs of a group, ordered by display name for stable rows. */
+function familyPairs(members: KgEntity[]): [KgEntity, KgEntity][] {
+  const sorted = [...members].sort((a, b) =>
+    entityDisplayName(a).localeCompare(entityDisplayName(b)),
+  );
+  const pairs: [KgEntity, KgEntity][] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    for (let j = i + 1; j < sorted.length; j++) {
+      pairs.push([sorted[i], sorted[j]]);
+    }
+  }
+  return pairs;
+}
 
 // ---- Canvas sizing ----
 // The canvas height is measured from the viewport rather than fixed, so collapsing the Insights
@@ -284,6 +309,18 @@ export function KnowledgeGraphPanel({
   const [dismissedAliasIds, setDismissedAliasIds] = useState<Set<string>>(new Set());
   const [approvingAliasId, setApprovingAliasId] = useState<string | null>(null);
   const [mergeMsg, setMergeMsg] = useState<{ text: string; isError: boolean } | null>(null);
+
+  // Possible-family (shared-surname) hints state (#532)
+  const [familyGroups, setFamilyGroups] = useState<KgSurnameGroup[]>([]);
+  const [familyLoading, setFamilyLoading] = useState(false);
+  const [familyError, setFamilyError] = useState<string | null>(null);
+  const [confirmingPairKey, setConfirmingPairKey] = useState<string | null>(null);
+  const [confirmedPairKeys, setConfirmedPairKeys] = useState<Set<string>>(new Set());
+  const [familyErrorKey, setFamilyErrorKey] = useState<{ key: string; text: string } | null>(null);
+  const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(new Set());
+  // The just-confirmed pair whose "View in graph" button should receive focus (a11y: focus must
+  // not be lost when the Confirm button unmounts on success).
+  const justConfirmedKeyRef = useRef<string | null>(null);
 
   // Split state
   const [splitConfirmId, setSplitConfirmId] = useState<string | null>(null);
@@ -593,6 +630,24 @@ export function KnowledgeGraphPanel({
         if (c.signal.aborted) return;
         setSuggError(err instanceof Error ? err.message : "Could not load suggestions.");
         setSuggLoading(false);
+      });
+    return () => c.abort();
+  }, []);
+
+  // Possible-family (shared-surname) hints (mount only, #532)
+  useEffect(() => {
+    const c = new AbortController();
+    setFamilyLoading(true);
+    setFamilyError(null);
+    fetchFamilySuggestions(100, c.signal)
+      .then(data => {
+        setFamilyGroups(data);
+        setFamilyLoading(false);
+      })
+      .catch(err => {
+        if (c.signal.aborted) return;
+        setFamilyError(err instanceof Error ? err.message : "Could not load family hints.");
+        setFamilyLoading(false);
       });
     return () => c.abort();
   }, []);
@@ -907,6 +962,36 @@ export function KnowledgeGraphPanel({
     // persistence failure the pair simply reappears next load - no worse than the old behavior.
     setDismissedAliasIds(prev => new Set([...prev, s.alias_id]));
     void rejectMergeSuggestion(s.canonical_value, s.alias_value).catch(() => {});
+  }
+
+  // ---- Possible-family (shared-surname) confirm handler (#532) ----
+
+  async function handleConfirmFamily(a: KgEntity, b: KgEntity): Promise<void> {
+    const key = familyPairKey(a.id, b.id);
+    setConfirmingPairKey(key);
+    setFamilyErrorKey(null);
+    try {
+      await confirmFamilyRelation(a.id, b.id);
+      // Focus moves to the row's "View in graph" button once the Confirm button unmounts (a11y).
+      justConfirmedKeyRef.current = key;
+      setConfirmedPairKeys(prev => new Set([...prev, key]));
+    } catch (err) {
+      setFamilyErrorKey({
+        key,
+        text: err instanceof Error ? err.message : "Could not confirm.",
+      });
+    } finally {
+      setConfirmingPairKey(null);
+    }
+  }
+
+  function toggleFamilyExpanded(key: string): void {
+    setExpandedFamilies(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   function handleSplitRequest(entityId: string): void {
@@ -1906,6 +1991,130 @@ export function KnowledgeGraphPanel({
                 </div>
               </li>
             ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Possible-family (shared-surname) hints — below merges: a weaker, unscored signal (#532) */}
+      <section className="kg-fam-section" aria-label="Possible family, shared surname">
+        <h4 className="kg-detail-section-label kg-fam-heading">
+          Possible family
+          <span className="kg-fam-hint-pill" aria-hidden="true">
+            ? Hint
+          </span>
+        </h4>
+        <p className="kg-fam-caveat muted">
+          People who share a surname. A weak hint, not a fact — a shared surname is not a family.
+          Confirm only pairs you know are related; each confirm asserts a link in the graph.
+        </p>
+        {familyLoading ? (
+          <p role="status" className="kg-status muted">
+            Loading family hints...
+          </p>
+        ) : familyError ? (
+          <p role="alert" className="kg-status status-error">
+            {familyError}
+          </p>
+        ) : familyGroups.length === 0 ? (
+          <p className="kg-status muted">No shared surnames — no family hints to review.</p>
+        ) : (
+          <ul className="kg-fam-list">
+            {familyGroups.map(group => {
+              const groupKey = group.family_name.toLowerCase();
+              const pairs = familyPairs(group.members);
+              const expanded = expandedFamilies.has(groupKey);
+              const shown =
+                expanded || pairs.length <= FAMILY_PAIRS_COLLAPSED
+                  ? pairs
+                  : pairs.slice(0, FAMILY_PAIRS_COLLAPSED);
+              return (
+                <li key={groupKey} className="kg-fam-card">
+                  <div className="kg-fam-card-head">
+                    <span className="kg-fam-surname" title={group.family_name}>
+                      {group.family_name}
+                    </span>
+                    <span className="kg-fam-count muted">
+                      {group.members.length} people
+                    </span>
+                  </div>
+                  <ul className="kg-fam-pairs">
+                    {shown.map(([a, b]) => {
+                      const key = familyPairKey(a.id, b.id);
+                      const nameA = entityDisplayName(a);
+                      const nameB = entityDisplayName(b);
+                      const confirmed = confirmedPairKeys.has(key);
+                      const confirming = confirmingPairKey === key;
+                      const err = familyErrorKey?.key === key ? familyErrorKey.text : null;
+                      return (
+                        <li key={key} className="kg-fam-pair">
+                          <div
+                            className="kg-fam-tie"
+                            aria-label={`${nameA} and ${nameB} share the surname ${group.family_name}`}
+                          >
+                            <span className="kg-fam-name" title={nameA}>
+                              {nameA}
+                            </span>
+                            <span className="kg-fam-tie-glyph" aria-hidden="true">
+                              ··········
+                            </span>
+                            <span className="kg-fam-name" title={nameB}>
+                              {nameB}
+                            </span>
+                          </div>
+                          {confirmed ? (
+                            <div className="kg-fam-confirmed">
+                              <span className="kg-fam-check" role="status">
+                                ✓ Related — confirmed
+                              </span>
+                              <button
+                                type="button"
+                                className="kg-merge-btn kg-fam-view-btn"
+                                ref={el => {
+                                  if (el && justConfirmedKeyRef.current === key) {
+                                    el.focus();
+                                    justConfirmedKeyRef.current = null;
+                                  }
+                                }}
+                                onClick={() => handleFocus(a)}
+                              >
+                                View in graph
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="kg-fam-actions">
+                              <button
+                                type="button"
+                                className="kg-merge-btn approve"
+                                disabled={confirming}
+                                aria-label={`Confirm ${nameA} and ${nameB} are family`}
+                                onClick={() => void handleConfirmFamily(a, b)}
+                              >
+                                {confirming ? "Confirming..." : "Confirm family"}
+                              </button>
+                              {err && (
+                                <span role="alert" className="kg-fam-pair-error status-error">
+                                  {err}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {pairs.length > FAMILY_PAIRS_COLLAPSED && (
+                    <button
+                      type="button"
+                      className="kg-fam-more"
+                      aria-expanded={expanded}
+                      onClick={() => toggleFamilyExpanded(groupKey)}
+                    >
+                      {expanded ? "Show fewer" : `Show all ${pairs.length} pairs`}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

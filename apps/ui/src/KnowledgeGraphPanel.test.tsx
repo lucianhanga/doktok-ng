@@ -2,7 +2,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { KnowledgeGraphPanel, pickLabeledNodeIds, tierFor } from "./KnowledgeGraphPanel";
-import type { KgEntity, KgMergeSuggestion, KgNeighborhood, KgStats } from "./api";
+import type {
+  KgEdge,
+  KgEntity,
+  KgMergeSuggestion,
+  KgNeighborhood,
+  KgStats,
+  KgSurnameGroup,
+} from "./api";
 
 // ---- Stub react-force-graph-2d (canvas/WebGL does not work in jsdom) ----
 
@@ -82,6 +89,32 @@ const ACME_ALIAS: KgMergeSuggestion = {
   score: 0.78,
 };
 
+// Possible-family (shared-surname) fixtures (#532)
+const HANGA_A: KgEntity = {
+  id: "p1",
+  tenant_id: "t1",
+  entity_type: "PERSON",
+  normalized_value: "Daniel Dennis Hanga",
+  metadata: { family_name: "Hanga" },
+};
+const HANGA_B: KgEntity = {
+  id: "p2",
+  tenant_id: "t1",
+  entity_type: "PERSON",
+  normalized_value: "Lucian Cosmin Hanga",
+  metadata: { family_name: "Hanga" },
+};
+const HANGA_GROUP: KgSurnameGroup = { family_name: "Hanga", members: [HANGA_A, HANGA_B] };
+const CONFIRM_EDGE: KgEdge = {
+  id: "fam1",
+  tenant_id: "t1",
+  src_entity_id: "p1",
+  predicate: "RELATED_TO",
+  dst_entity_id: "p2",
+  evidence_count: 1,
+  metadata: { source: "manual_family" },
+};
+
 const DEFAULT_NEIGHBORHOOD: KgNeighborhood = {
   focus: ALICE,
   nodes: [ACME],
@@ -108,12 +141,16 @@ function stubFetch(opts: {
   neighborhood?: KgNeighborhood;
   suggestions?: KgMergeSuggestion[];
   mergeResult?: KgEntity;
+  family?: KgSurnameGroup[];
+  confirmResult?: KgEdge;
   statsErr?: boolean;
   nodesErr?: boolean;
   nbErr?: boolean;
   suggErr?: boolean;
   mergeErr?: boolean;
   splitErr?: boolean;
+  familyErr?: boolean;
+  confirmErr?: boolean;
   onFetch?: (url: string) => void;
 } = {}): FetchMock {
   const {
@@ -122,12 +159,16 @@ function stubFetch(opts: {
     neighborhood = DEFAULT_NEIGHBORHOOD,
     suggestions = [],
     mergeResult = ALICE,
+    family = [],
+    confirmResult = CONFIRM_EDGE,
     statsErr = false,
     nodesErr = false,
     nbErr = false,
     suggErr = false,
     mergeErr = false,
     splitErr = false,
+    familyErr = false,
+    confirmErr = false,
     onFetch,
   } = opts;
 
@@ -166,6 +207,20 @@ function stubFetch(opts: {
     if (/\/entities\/[^/]+\/split/.test(url)) {
       if (splitErr) return new Response(null, { status: 500 });
       return new Response(JSON.stringify({ status: "split" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/family-suggestions/confirm")) {
+      if (confirmErr) return new Response(null, { status: 400 });
+      return new Response(JSON.stringify(confirmResult), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/family-suggestions")) {
+      if (familyErr) return new Response(null, { status: 500 });
+      return new Response(JSON.stringify(family), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -771,5 +826,64 @@ describe("KnowledgeGraphPanel - split action", () => {
       );
       expect(hasSplitErr).toBe(true);
     });
+  });
+});
+
+describe("KnowledgeGraphPanel - possible family (shared surname)", () => {
+  it("renders shared-surname groups with the weak-hint caveat", async () => {
+    stubFetch({ family: [HANGA_GROUP] });
+    render(<KnowledgeGraphPanel />);
+
+    await waitFor(() => screen.getByText("Possible family"));
+    // The uncertainty disclosure is always-visible text, not a tooltip.
+    expect(screen.getByText(/a shared surname is not a family/i)).toBeInTheDocument();
+    expect(screen.getByText("Daniel Dennis Hanga")).toBeInTheDocument();
+    expect(screen.getByText("Lucian Cosmin Hanga")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Confirm .* are family/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the empty state when no surnames are shared", async () => {
+    stubFetch({ family: [] });
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText(/no shared surnames/i));
+  });
+
+  it("confirming a pair posts to the confirm endpoint and shows a receipt", async () => {
+    const mockFetch = stubFetch({ family: [HANGA_GROUP] });
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Possible family"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirm .* are family/i }));
+
+    await waitFor(() => {
+      const calls = (
+        mockFetch.mock.calls as Array<[RequestInfo | URL, RequestInit | undefined]>
+      ).filter(([url]) => String(url).includes("/family-suggestions/confirm"));
+      expect(calls.length).toBe(1);
+      expect(String(calls[0][1]?.body)).toContain("p1");
+      expect(String(calls[0][1]?.body)).toContain("p2");
+    });
+    // Confirmed pair persists as a receipt with a graph link (idempotent backend).
+    await waitFor(() => {
+      expect(screen.getByText(/Related — confirmed/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /View in graph/i })).toBeInTheDocument();
+    });
+  });
+
+  it("surfaces a per-pair error when confirm fails", async () => {
+    stubFetch({ family: [HANGA_GROUP], confirmErr: true });
+    render(<KnowledgeGraphPanel />);
+    await waitFor(() => screen.getByText("Possible family"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirm .* are family/i }));
+
+    await waitFor(() => {
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts.some(el => (el.textContent ?? "").length > 0)).toBe(true);
+    });
+    // The row stays actionable (no false receipt).
+    expect(screen.queryByText(/Related — confirmed/i)).not.toBeInTheDocument();
   });
 });

@@ -16,6 +16,8 @@ from doktok_contracts.schemas import (
     EntityType,
     KgEdge,
     KgEdgeProvenance,
+    KgEntity,
+    KgEntityMention,
 )
 from doktok_core.features.processors import EntityGraphFeature
 from doktok_core.knowledge_graph.predicates import canonical_edge_id
@@ -259,3 +261,71 @@ def test_reject_merge_persists_and_is_idempotent(db: Database) -> None:
     kg.reject_merge(TENANT_B, "pair-c")  # other tenant, must not leak
     assert kg.rejected_pair_keys(TENANT) == {"pair-a", "pair-b"}
     assert kg.rejected_pair_keys(TENANT_B) == {"pair-c"}
+
+
+TENANT_514 = "test-kg-514"
+
+
+def _person_nodes_with_value(db: Database, tenant: str, normalized_value: str) -> list[str]:
+    with db.connection() as conn:
+        rows = conn.execute(
+            "SELECT id FROM kg_entities "
+            "WHERE tenant_id=%s AND entity_type='PERSON' AND normalized_value=%s",
+            (tenant, normalized_value),
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def test_reprocess_over_legacy_unsorted_node_does_not_crash_and_converges(db: Database) -> None:
+    """#514 regression: a KG reprocess must not crash on a pre-#508 node that stored the same
+    (unsorted) normalized_value under a different id, and must converge onto the sorted-key
+    canonical - the dropped UNIQUE(tenant, type, normalized_value) constraint made the second
+    INSERT collide with the legacy row even though the ids differ."""
+    _add_document(db, TENANT_514, "d514")
+    _add_mention(db, TENANT_514, "d514", EntityType.PERSON, "Viviana Cornelia Cotirlea")
+    entities = PostgresEntityRepository(db)
+    kg = PostgresKnowledgeGraphRepository(db)
+
+    raw = "Viviana Cornelia Cotirlea"
+    sorted_id = canonical_entity_id(TENANT_514, "PERSON", raw)
+    # A node minted before #508: identity derived from the raw (unsorted) value, so its id differs
+    # from today's token-sorted-key id while it stores the very same normalized_value.
+    legacy_id = uuid.uuid4().hex
+    assert legacy_id != sorted_id
+    kg.upsert_entities(
+        [
+            KgEntity(
+                id=legacy_id,
+                tenant_id=TENANT_514,
+                entity_type=EntityType.PERSON,
+                normalized_value=raw,
+            )
+        ]
+    )
+    # The document's mention currently resolves to that legacy node (the pre-fix state on disk).
+    mention = entities.list_for_document(TENANT_514, "d514")[0]
+    kg.replace_mentions_for_document(
+        TENANT_514,
+        "d514",
+        [
+            KgEntityMention(
+                mention_id=mention.id,
+                tenant_id=TENANT_514,
+                canonical_entity_id=legacy_id,
+                document_id="d514",
+                chunk_id=None,
+                entity_type=EntityType.PERSON,
+                normalized_value=raw,
+            )
+        ],
+    )
+
+    # Reprocess with the current code. Before #514's fix this raised a UniqueViolation on the
+    # legacy normalized_value; now it succeeds and converges.
+    EntityGraphFeature(entities, kg).process(TENANT_514, "d514")
+
+    # The mention resolves to the sorted-key canonical; the orphaned legacy node is pruned; and
+    # exactly one PERSON node carries this normalized_value (no lingering duplicate).
+    assert kg.get_entity(TENANT_514, sorted_id) is not None
+    assert kg.get_entity(TENANT_514, legacy_id) is None
+    assert _person_nodes_with_value(db, TENANT_514, raw) == [sorted_id]

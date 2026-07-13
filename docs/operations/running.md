@@ -181,6 +181,59 @@ pull, then start the stack as above (`make db`, `make run-backend`, `make run-wo
 roles, preferences, invitations) auto-apply the first time the backend or worker touches the
 database - there is no separate migration step.
 
+### Creating a tenant
+
+`make create-tenant NAME="Staging"` provisions a *usable* tenant in one idempotent step, and is the
+canonical way to add one: the DB `tenants` registry - not the static `DOKTOK_TENANT_TOKENS` map - is
+the source of truth. Each run:
+
+- inserts the DB `tenants` row (an opaque, server-generated UUID id),
+- creates the tenant's filesystem lifecycle folders (`ingest`, `ingest.enhanced`, ...),
+- mints a one-time **bootstrap admin token** (tenant-scoped, so it resolves to admin), printed once.
+
+Then **restart the worker** (`make run-worker`) so it starts watching the new tenant. The worker's
+watched set is the token map unioned with the *active* DB tenants, so no `.env` edit is required (a
+tenant marked `suspended` in the DB is dropped even if it is still in the map). Creating a tenant
+from the **Admin tab** does the same provisioning and reveals the bootstrap token in its one-time
+secret box.
+
+There are two ways to reach the new tenant:
+
+| Goal | Do | Result |
+|---|---|---|
+| Operate token-free (no login) | set `DOKTOK_DEV_TOKEN=<bootstrap token>` in `.env`, then `make run-ui` | the UI acts as that tenant's admin, no login screen |
+| Log in with email + password | pass `--admin-email` / `--admin-password` at create time (or add a user later) | sign in with the tenant id + those credentials |
+
+```bash
+# token only (add a login user later):
+make create-tenant NAME="Staging"
+
+# or create a login admin in the same step:
+make create-tenant NAME="Staging" \
+  ARGS="--admin-email admin@staging.local --admin-password <at-least-12-chars>"
+```
+
+`DOKTOK_DEV_TOKEN` selects **which tenant the token-free UI acts as** (the dev proxy injects it as
+the bearer token). `make run-ui` reads it from `.env` (the Makefile does `-include .env`), so set it
+there - or `make run-ui DOKTOK_DEV_TOKEN=<token>`; a plain shell `export` is overridden by the
+`.env` value. While a user is logged in the proxy does not inject it (the session JWT is used
+instead). The CLI prints an `export DOKTOK_DEV_TOKEN=...` line as a copy-paste hint, but `.env` is
+the durable place for it.
+
+**Adding an admin later.** Creating a tenant without `--admin-email` is fine - the bootstrap token
+is itself a tenant-scoped admin credential, so you can add users at any time (you are never locked
+out):
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/admin/users \
+  -H "Authorization: Bearer <bootstrap-token>" -H "Content-Type: application/json" \
+  -d '{"email": "admin@staging.local", "role": "admin", "password": "<at-least-12-chars>"}'
+```
+
+or point `DOKTOK_DEV_TOKEN` at the bootstrap token and use the **Admin tab** (Members -> Invite /
+Add). Deprovision a tenant's content with `make clean-tenant TENANT=<id>` (wipes its documents +
+files; the registry row and its users remain).
+
 ### Token-free mode (the default)
 
 With no signing secret configured, `/auth/login` answers 503, the UI shows **no login screen**, and

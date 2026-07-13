@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [ADR-0024](docs/adr/ADR-0024-tenant-user-management-and-rbac.md), the dev walkthrough in
   [docs/operations/running.md](docs/operations/running.md), and
   [docs/operations/testing.md](docs/operations/testing.md).
+- **Usable tenant provisioning (`make create-tenant`).** One idempotent step now creates a tenant's
+  DB row, its filesystem lifecycle folders, and a one-time bootstrap admin token - the same
+  `provision_tenant` core backs the CLI, the Admin tab, and `POST /api/v1/admin/tenants`, so newly
+  created tenants are immediately usable instead of "dead" rows. The worker's watched set is now the
+  token map unioned with the *active* DB tenants (suspended tenants excluded), so a new tenant needs
+  only a worker restart, not an `.env` edit. See the "Creating a tenant" walkthrough in
+  [docs/operations/running.md](docs/operations/running.md).
 
 ### Security
 - **No-egress is now configurable from the UI, with an operator hard-lock.** A toggle in Settings →

@@ -13,8 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect whether the change touches anything other than documentation. Docs-only changes
+  # (docs/**, any *.md, CHANGELOG, LICENSE) skip the heavy Python + Frontend jobs below; the secret
+  # scan still runs (docs can leak tokens in examples). Keeps docs PRs fast and cheap.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!(docs/**|**/*.md|CHANGELOG.md|LICENSE)'
+
   python:
     name: Python checks
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -57,6 +76,8 @@ jobs:
 
   frontend:
     name: Frontend checks
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

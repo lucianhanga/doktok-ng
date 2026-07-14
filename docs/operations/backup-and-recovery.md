@@ -393,6 +393,20 @@ make drp-selftest
 Runs the PITR proof + a full portable export -> encrypt -> decrypt -> restore round-trip in throwaway
 containers, asserting rows + a pgvector value + a file survive A -> B. Touches nothing real.
 
+**1b. Round-trip YOUR real dev data (no install, no risk):**
+```bash
+make verify-recovery
+```
+The "did my documents + enrichment actually come back?" check. It dumps the **live dev database**
+(read-only, via the db container's own `pg_dump`), restores it into a **throwaway** Postgres
+container, and asserts the row count of every key table - `documents`, `document_entities`,
+`document_chunks`, `extracted_records`, the `kg_*` tables, `categories`, `ingestion_jobs`, chat, and
+`app_settings` - matches live -> restored, plus that `files_root` re-extracts with the same file
+count. It touches neither the live DB nor `files_root` (`deploy/verify-recovery-dev.sh`). Run it
+**after ingesting** for a concrete proof that your real data survives a restore. Unlike
+`make drp-selftest` it does not exercise the encrypted portable archive or WAL/PITR - it verifies the
+data leg on your actual corpus.
+
 **2. Exercise the real backup + recovery-validate UI (your actual data):**
 ```bash
 brew install libpq && brew link --force libpq   # gives dev pg_dump@17 (one-time)

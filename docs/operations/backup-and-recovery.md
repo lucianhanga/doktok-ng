@@ -170,6 +170,28 @@ on-demand equivalent for dev/macOS.
 4. Start the stack, then `doktok-worker repair` to reconcile DB <-> files and re-queue any
    re-derivable gaps (the reconciler backfills derived artifacts).
 
+### Restoring across schema versions (older backup, newer code)
+
+A common case: you back up at version V1, upgrade the app to V2 (which adds a new migration), then
+restore the **old** V1 backup. **This is safe and automatic.** The backup carries the schema *and*
+the `schema_migrations` ledger as they were at V1. On the next backend/worker start, the ordered
+`.sql` migration runner (ADR-0002, `storage/postgres/.../db.py`) reads the ledger, sees the newer
+migrations are not yet applied, and **applies them forward** onto the restored data - so the old
+backup is brought up to the running code's schema with your documents + enrichment intact. This
+works because migrations are **additive, ordered, and idempotent**; it is exactly what makes an
+old backup restorable under new code.
+
+Two rules bound it:
+
+- **Forward only - never restore a *newer* backup under *older* code.** The runner only applies
+  pending migrations; it never rolls back. A backup whose `schema_migrations` is ahead of the code
+  leaves schema the old code doesn't understand. Upgrade the code first, then restore.
+- **Same PostgreSQL major version** (pg17 -> pg17); `restore-pg.sh` refuses a mismatch (#356). The
+  portable-backup "Check backup" preview also validates version compatibility before you apply.
+
+(Data-transforming migrations - e.g. dropping a constraint, deleting rows of a retired type - run
+against the restored old data just like they did originally, so the upgrade is faithful.)
+
 ## Recover onto a new / different device
 
 The backup repos are **portable** - a backup taken on one device restores on another (this is the
@@ -406,6 +428,21 @@ count. It touches neither the live DB nor `files_root` (`deploy/verify-recovery-
 **after ingesting** for a concrete proof that your real data survives a restore. Unlike
 `make drp-selftest` it does not exercise the encrypted portable archive or WAL/PITR - it verifies the
 data leg on your actual corpus.
+
+**1c. Full destructive drill on dev - actually wipe and restore (`make restore-drill-dev`):**
+```bash
+make restore-drill-dev      # stop run-backend/run-worker first; FORCE=1 to skip the prompt
+```
+The real "delete the database and bring it back" drill against your **actual** dev stack: it records
+baseline counts, **backs up** (kept under `./backups/dev-drill`, aborts before wiping if the backup
+fails), **DROPs + recreates** the dev database and empties `files_root`, **restores** from the
+backup, and **asserts** the post-restore counts match the pre-wipe baseline
+(`deploy/restore-drill-dev.sh`). This is destructive - it genuinely wipes the real dev DB - but a kept
+backup is taken first and it only ever targets the local `doktok-db` container. It exercises the
+**logical** dump/restore path (same engine as the portable `.tgz.enc`); it does **not** exercise
+WAL/PITR (dev's `db` isn't wired for WAL archiving - that's a box concern, and `make drp-selftest`
+proves the PITR mechanism separately). The productized **UI** "Restore now" is still Linux-only (root
+systemd path-unit, by design); this script is the manual equivalent for a dev disaster drill.
 
 **2. Exercise the real backup + recovery-validate UI (your actual data):**
 ```bash

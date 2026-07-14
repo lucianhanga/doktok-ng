@@ -1,7 +1,7 @@
 .PHONY: help setup lint format typecheck test arch check \
         run-backend run-worker run-ui preflight-backend preflight-worker clean-tenant create-tenant seed-dev rag-eval enrich-eval ocr-paddle ocr-rapid ocr-rapid-openvino projection-engine address-libpostal db db-down \
         js-install js-typecheck js-lint js-test js \
-        secrets sbom hooks deploy-box drp-selftest backup
+        secrets sbom hooks deploy-box drp-selftest backup verify-recovery
 
 # Load local environment from .env (if present) and export it to every recipe.
 # Command-line overrides (e.g. `make db DOKTOK_DB_PORT=5500`) still win.
@@ -135,6 +135,9 @@ deploy-box: ## Deploy the working tree to the compose box: rsync + rebuild (live
 
 drp-selftest: ## No-risk DRP self-test: Postgres PITR proof + portable export/restore round-trip (throwaway containers; needs Docker)
 	@deploy/drp-selftest.sh
+
+verify-recovery: ## No-risk dev recovery check: round-trip the LIVE dev DB + files into a throwaway Postgres and assert documents + enriched/extracted rows survive. Run after ingesting. (needs `make db`)
+	@deploy/verify-recovery-dev.sh
 
 TYPE ?= full
 backup: ## Run a backup now -> populates the DRP (sentinels + history). Honors DOKTOK_DEPLOY_MODE; TYPE=full|diff|incr (default full). The on-demand, no-systemd path for dev.

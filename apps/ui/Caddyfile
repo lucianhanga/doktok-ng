@@ -2,6 +2,12 @@
 # Serves the built SPA and reverse-proxies the API, injecting the bearer token so the token-free
 # bundle can call /api (mirrors the Vite dev proxy).
 #
+# TRUST BOUNDARY (#616, F-04): the injected DOKTOK_API_TOKEN is a PLATFORM credential (ADR-0025) -
+# every request without its own Authorization runs as the platform owner. Restrict who can reach
+# this port (trusted LAN, firewall, tailnet, or an authenticated external proxy), or enable login
+# (DOKTOK_AUTH_JWT_SECRET) so each user presents their own JWT - which is now passed THROUGH
+# untouched (the injection fires only when the client sent no Authorization header).
+#
 # TLS (#321): the site address comes from DOKTOK_SITE_ADDRESS.
 #   - ":80"               -> plain HTTP (default; put behind a trusted LAN or an external TLS proxy)
 #   - "docs.example.com"  -> automatic HTTPS via Let's Encrypt (the box must be reachable on 443)
@@ -15,12 +21,14 @@
 	encode zstd gzip
 	# tls internal   # uncomment for a self-signed cert on a LAN host without a public domain
 
-	# API + health endpoints -> backend, with the tenant bearer token injected from the environment.
+	# API + health endpoints -> backend. Inject the tenant bearer token ONLY when the client sent
+	# no Authorization of its own (#616): a logged-in user's JWT flows through unchanged, so
+	# per-user RBAC and platform flags work end-to-end; the token-free bundle still works.
 	@api path /api/* /health /ready
 	handle @api {
-		reverse_proxy {$DOKTOK_BACKEND_URL:backend:8000} {
-			header_up Authorization "Bearer {$DOKTOK_API_TOKEN}"
-		}
+		@no_client_token not header Authorization *
+		header @no_client_token >Authorization "Bearer {$DOKTOK_API_TOKEN}"
+		reverse_proxy {$DOKTOK_BACKEND_URL:backend:8000}
 	}
 
 	# Everything else is the SPA (client-side routing -> index.html fallback).

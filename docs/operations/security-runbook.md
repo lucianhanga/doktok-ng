@@ -32,6 +32,11 @@ once on the box per the [fresh-box runbook section 3](deploy-fresh-box-runbook.m
       `tls internal`; nothing is served on plain HTTP to untrusted networks.
 - [ ] Tenant tokens rotated off the `dev-token-*` defaults; long and random. `DOKTOK_API_TOKEN`
       (the Caddy edge token) is one of `DOKTOK_TENANT_TOKENS`.
+- [ ] Edge trust boundary understood (#616): the Caddy edge injects `DOKTOK_API_TOKEN` only when a
+      request has no `Authorization` of its own (logged-in JWTs pass through), but that token is a
+      **platform credential** (ADR-0025) - anonymous callers to the port act as the platform owner.
+      Either restrict the port to a trusted network, or enable password login so real users present
+      their own credentials.
 - [ ] `DOKTOK_SECRETS_KEY` set so the OpenAI key is encrypted at rest (APP-8).
 - [ ] If password login is enabled: a dedicated `DOKTOK_AUTH_JWT_SECRET` set, at least 32 bytes
       (the backend warns at startup otherwise - do not lean on the `DOKTOK_SECRETS_KEY` fallback in

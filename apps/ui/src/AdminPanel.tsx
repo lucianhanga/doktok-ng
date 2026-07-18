@@ -21,6 +21,7 @@ import {
   revokeAdminToken,
   setAdminUserRole,
 } from "./api";
+import { isPlatformAdmin } from "./session";
 
 const ROLES = ["viewer", "editor", "admin"] as const;
 
@@ -232,6 +233,9 @@ function ResetPasswordDialog({
  * members and API tokens are nested inside it; instance-level tenant provisioning is a subordinate
  * card. Reached with the proxy-injected admin token (no in-browser login). */
 export function AdminPanel() {
+  // Tenant provisioning + cross-tenant user creation are platform-only (#658, ADR-0025); member
+  // and token management stay available to every tenant admin.
+  const platform = isPlatformAdmin();
   const [ctx, setCtx] = useState<AdminContext | null>(null);
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [tokens, setTokens] = useState<AdminTokenView[] | null>(null);
@@ -255,6 +259,8 @@ export function AdminPanel() {
   const [inviteRole, setInviteRole] = useState<string>("viewer");
   const [inviteMode, setInviteMode] = useState<"link" | "direct">("link");
   const [invitePw, setInvitePw] = useState("");
+  // Platform admins pick the target tenant for direct user creation (#620); empty = own tenant.
+  const [inviteTenant, setInviteTenant] = useState<string>("");
   // Issue-token form
   const [tokenName, setTokenName] = useState("");
   const [tokenUser, setTokenUser] = useState<string>("");
@@ -274,10 +280,13 @@ export function AdminPanel() {
     fetchAdminTokens()
       .then(setTokens)
       .catch((e) => setTokensErr(errMsg(e, "could not load tokens")));
-    setTenantsErr(null);
-    fetchAdminTenants()
-      .then(setTenants)
-      .catch((e) => setTenantsErr(errMsg(e, "could not load tenants")));
+    // Tenant listing is platform-only (#620): skip the call entirely for tenant admins.
+    if (platform) {
+      setTenantsErr(null);
+      fetchAdminTenants()
+        .then(setTenants)
+        .catch((e) => setTenantsErr(errMsg(e, "could not load tenants")));
+    }
   }
 
   useEffect(loadAll, []);
@@ -300,7 +309,12 @@ export function AdminPanel() {
     run(
       async () => {
         if (inviteMode === "direct") {
-          await createAdminUser({ email: inviteEmail.trim(), role: inviteRole, password: invitePw });
+          await createAdminUser({
+            email: inviteEmail.trim(),
+            role: inviteRole,
+            password: invitePw,
+            ...(platform && inviteTenant ? { tenant_id: inviteTenant } : {}),
+          });
         } else {
           const inv: AdminIssuedInvitation = await inviteAdminUser({
             email: inviteEmail.trim(),
@@ -535,6 +549,23 @@ export function AdminPanel() {
                 </button>
               </div>
             )}
+            {inviteMode === "direct" && platform && (
+              <div className="admin-form">
+                <select
+                  aria-label="Target tenant"
+                  value={inviteTenant}
+                  onChange={(e) => setInviteTenant(e.target.value)}
+                >
+                  <option value="">This tenant</option>
+                  {(tenants ?? []).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="muted">platform: create the user in another tenant</span>
+              </div>
+            )}
           </fieldset>
           <div className="admin-dialog-actions">
             <button type="button" className="link-button" onClick={() => setInviteOpen(false)}>
@@ -606,6 +637,12 @@ export function AdminPanel() {
                         </option>
                       ))}
                     </select>
+                    {u.is_platform_admin && (
+                      <span className="muted" title="Deployment-level platform owner (ADR-0025)">
+                        {" "}
+                        · platform
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className={`admin-status admin-status-${u.status}`}>{u.status}</span>
@@ -711,48 +748,50 @@ export function AdminPanel() {
         </div>
       )}
 
-      {/* Instance administration (subordinate) ------------------------------------------------- */}
-      <div className="admin-instance-card">
-        <h4 className="admin-subhead">Instance administration</h4>
-        <p className="muted">
-          Tenants on this server. Each tenant has its own members, documents, and tokens; the section
-          above manages the current tenant.
-        </p>
-        {tenantsErr && <p className="status-error">{tenantsErr}</p>}
-        {tenants && tenants.length > 0 && (
-          <ul className="admin-tenant-list">
-            {tenants.map((t) => (
-              <li key={t.id}>
-                <strong>{t.name}</strong> <IdChip id={t.id} describe={`tenant ID for ${t.name}`} />
-                {ctx?.tenant_id === t.id && <span className="muted"> (current)</span>}
-              </li>
-            ))}
-          </ul>
-        )}
-        {tenantCreated && (
-          <p className="status-success">
-            Tenant &ldquo;{tenantCreated.name}&rdquo; created.{" "}
-            <span className="muted">New tenants start empty; members are provisioned per tenant.</span>
+      {/* Instance administration (subordinate) - platform admins only (#658, ADR-0025) ---------- */}
+      {platform && (
+        <div className="admin-instance-card">
+          <h4 className="admin-subhead">Instance administration</h4>
+          <p className="muted">
+            Tenants on this server. Each tenant has its own members, documents, and tokens; the
+            section above manages the current tenant.
           </p>
-        )}
-        <div className="admin-form">
-          <input
-            type="text"
-            placeholder="tenant name"
-            aria-label="New tenant name"
-            value={tenantName}
-            onChange={(e) => setTenantName(e.target.value)}
-          />
-          <button
-            type="button"
-            className="link-button"
-            onClick={addTenant}
-            disabled={busy || !tenantName.trim()}
-          >
-            Create tenant
-          </button>
+          {tenantsErr && <p className="status-error">{tenantsErr}</p>}
+          {tenants && tenants.length > 0 && (
+            <ul className="admin-tenant-list">
+              {tenants.map((t) => (
+                <li key={t.id}>
+                  <strong>{t.name}</strong> <IdChip id={t.id} describe={`tenant ID for ${t.name}`} />
+                  {ctx?.tenant_id === t.id && <span className="muted"> (current)</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {tenantCreated && (
+            <p className="status-success">
+              Tenant &ldquo;{tenantCreated.name}&rdquo; created.{" "}
+              <span className="muted">New tenants start empty; members are provisioned per tenant.</span>
+            </p>
+          )}
+          <div className="admin-form">
+            <input
+              type="text"
+              placeholder="tenant name"
+              aria-label="New tenant name"
+              value={tenantName}
+              onChange={(e) => setTenantName(e.target.value)}
+            />
+            <button
+              type="button"
+              className="link-button"
+              onClick={addTenant}
+              disabled={busy || !tenantName.trim()}
+            >
+              Create tenant
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {resetFor && (
         <ResetPasswordDialog

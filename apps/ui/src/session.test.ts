@@ -5,6 +5,7 @@ import {
   currentUser,
   hasSession,
   installAuthFetch,
+  isPlatformAdmin,
   loadSession,
   onSessionExpired,
   setSession,
@@ -70,4 +71,14 @@ test("a 401 clears the session and notifies the app", async () => {
   await window.fetch("/api/v1/documents");
   expect(hasSession()).toBe(false);
   expect(expired).toBe(true);
+});
+
+test("isPlatformAdmin: token-free defaults to platform; the flag decides for logged-in users", () => {
+  expect(isPlatformAdmin()).toBe(true); // no session: the edge injects a host/static credential
+  setSession("jwt-a", { ...USER, is_platform_admin: true });
+  expect(isPlatformAdmin()).toBe(true);
+  setSession("jwt-b", { ...USER, is_platform_admin: false });
+  expect(isPlatformAdmin()).toBe(false);
+  setSession("jwt-c", USER); // older backend: the payload carries no flag
+  expect(isPlatformAdmin()).toBe(false);
 });

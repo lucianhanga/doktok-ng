@@ -2141,6 +2141,7 @@ export interface AdminUser {
   display_name: string;
   role: string; // viewer | editor | admin
   status: string; // active | deactivated | invited
+  is_platform_admin?: boolean; // deployment-level platform owner (ADR-0025)
 }
 
 export interface AdminTokenView {
@@ -2213,6 +2214,7 @@ export function createAdminUser(body: {
   display_name?: string;
   role?: string;
   password?: string;
+  tenant_id?: string; // platform admins only (#620): create in another tenant
 }): Promise<AdminUser> {
   return sendJson<AdminUser>("/api/v1/admin/users", "POST", body);
 }
@@ -2307,7 +2309,14 @@ export interface LoginResult {
   access_token: string;
   token_type: string;
   expires_in: number;
-  user: { id: string; tenant_id: string; email: string; display_name: string; role: string };
+  user: {
+    id: string;
+    tenant_id: string;
+    email: string;
+    display_name: string;
+    role: string;
+    is_platform_admin?: boolean;
+  };
 }
 
 /** Whether password login is available (a signing secret is configured). Unauthenticated. */

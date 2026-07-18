@@ -103,8 +103,14 @@ is the [fresh-box runbook](deploy-fresh-box-runbook.md).
 Key points:
 
 - **Caddy** terminates TLS and is the only component with a published host port. It injects the
-  `Authorization: Bearer <token>` header toward the backend, so the bearer token is not handled by the
-  browser. (This mirrors the dev UI proxy, which injects the dev token; see `make run-ui`.)
+  `Authorization: Bearer <token>` header toward the backend **only when the request carries no
+  `Authorization` of its own** (#616), so the token-free bundle works while a logged-in user's JWT
+  passes through untouched (per-user RBAC and platform flags apply end-to-end). (This mirrors the
+  dev UI proxy, which injects the dev token; see `make run-ui`.) Treat the injected
+  `DOKTOK_API_TOKEN` as a **platform credential** (ADR-0025): anyone who can reach the published
+  port without logging in acts as the platform owner (backup export/restore, model stack, tenant
+  provisioning). Restrict the port to a trusted network, or enable password login for multi-user
+  use - with login on, the edge token only ever covers anonymous requests.
 - The **backend binds loopback / internal only** and fails closed without tokens
   (`DOKTOK_TENANT_TOKENS`); it must never be exposed directly (ADR-0008). If you bind it to a
   non-loopback host, it refuses to start unless tokens are configured.

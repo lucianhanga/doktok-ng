@@ -97,11 +97,16 @@ def _require_login_secret(request: Request) -> str:
 def _client_ip(request: Request) -> str:
     """The client IP for the login throttle. Honors ``X-Forwarded-For`` ONLY behind a trusted proxy
     (``DOKTOK_TRUSTED_PROXY``); otherwise a client could spoof the header to dodge the per-IP limit.
+
+    The RIGHTMOST element is used (#621, F-10): it is the hop appended by the trusted proxy itself.
+    The shipped Caddy overwrites inbound XFF (single trustworthy element); behind an appending
+    proxy (e.g. nginx ``proxy_add_x_forwarded_for``) the left side is client-controlled and must be
+    ignored, or the per-IP bucket is trivially dodged by rotating spoofed values.
     """
     if getattr(request.app.state.settings, "trusted_proxy", False):
         xff = request.headers.get("X-Forwarded-For")
         if xff:
-            return xff.split(",")[0].strip()
+            return xff.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 

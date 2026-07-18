@@ -168,3 +168,58 @@ def test_login_acct_bucket_keys_do_not_embed_the_email() -> None:
     limiter = app.state.login_acct_limiter
     assert limiter._buckets, "expected the failed login to register a bucket"  # noqa: SLF001
     assert all("alice@x.com" not in key for key in limiter._buckets)  # noqa: SLF001
+
+
+def _build_tp(*, ip_rate: int) -> TestClient:
+    """A client for a deployment behind a trusted proxy (XFF honored)."""
+    reg = InMemoryTenantRegistry()
+    reg.create_tenant(Tenant(id="tenant-a", name="Tenant A"))
+    reg.create_user(
+        User(
+            id="u1",
+            tenant_id="tenant-a",
+            email="alice@x.com",
+            role="editor",
+            password_hash=hash_password(GOOD_PW),
+        )
+    )
+    registry = build_registry()
+    registry.register(TenantRegistry, reg)  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    settings = Settings(
+        env="test",
+        auth_jwt_secret=JWT_SECRET,
+        tenant_tokens={"tok-a": "tenant-a"},
+        login_rate_per_minute=1000,  # isolate the per-IP bucket for these tests
+        login_ip_rate_per_minute=ip_rate,
+        trusted_proxy=True,
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    return TestClient(create_app(settings=settings, registry=registry))
+
+
+def _login_xff(client: TestClient, xff: str) -> int:
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"tenant_id": "tenant-a", "email": "alice@x.com", "password": "wrong-password-1"},
+        headers={"X-Forwarded-For": xff},
+    )
+    return int(resp.status_code)
+
+
+def test_xff_spoofing_does_not_dodge_the_per_ip_bucket() -> None:
+    # F-10: behind an APPENDING proxy the leftmost XFF elements are client-controlled; the bucket
+    # must key on the rightmost (proxy-appended) element, so rotating the left part cannot dodge it.
+    client = _build_tp(ip_rate=3)
+    for i in range(3):
+        assert _login_xff(client, f"10.0.0.{i}, 192.168.1.7") == 401
+    # The fourth attempt spoofs yet another leftmost value; the rightmost is unchanged -> throttled.
+    assert _login_xff(client, "10.9.9.9, 192.168.1.7") == 429
+
+
+def test_single_xff_value_is_honored() -> None:
+    # The shipped-Caddy shape: one element = the real client IP (Caddy overwrites inbound XFF).
+    client = _build_tp(ip_rate=2)
+    assert _login_xff(client, "203.0.113.9") == 401
+    assert _login_xff(client, "203.0.113.9") == 401
+    assert _login_xff(client, "203.0.113.9") == 429

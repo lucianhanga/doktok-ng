@@ -80,11 +80,12 @@ levers:
 - **Brute-force posture.** Login attempts are throttled before any credential work:
   `DOKTOK_LOGIN_RATE_PER_MINUTE` per (tenant, email) (default 5) and
   `DOKTOK_LOGIN_IP_RATE_PER_MINUTE` per source IP (default 20), answered with 429 + `Retry-After`.
-  Throttling, never account lockout (lockout is a denial-of-service primitive). Set
-  `DOKTOK_TRUSTED_PROXY=true` behind Caddy so the per-IP key uses `X-Forwarded-For`; leave it false
-  when clients reach the API directly, or the header becomes spoofable. Concurrent scrypt
-  verifications are capped (`DOKTOK_LOGIN_MAX_CONCURRENT_VERIFIES`, default 4) so login cannot
-  exhaust the API workers.
+  Throttling, never account lockout (lockout is a denial-of-service primitive). The shipped prod
+  compose sets `DOKTOK_TRUSTED_PROXY=true` (Caddy fronts the API, #621) so the per-IP key uses the
+  rightmost, proxy-appended `X-Forwarded-For` element - behind an appending proxy the left side is
+  client-controlled and ignored. Keep it `false` when clients reach the API directly, or the header
+  becomes spoofable. Concurrent scrypt verifications are capped
+  (`DOKTOK_LOGIN_MAX_CONCURRENT_VERIFIES`, default 4) so login cannot exhaust the API workers.
 - **Revoke-all sessions**: rotate `DOKTOK_AUTH_JWT_SECRET` and restart the backend. Every
   outstanding session JWT becomes invalid immediately.
 - **Revoke one person immediately**: deactivate the user

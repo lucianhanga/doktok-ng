@@ -217,19 +217,36 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
                 content={"detail": "service is in maintenance (a restore is in progress)"},
                 headers={"Retry-After": "30"},
             )
-        # Reject oversized bodies up front (APP-10) - except the restore preview upload, which is
-        # capped by DOKTOK_MAX_RESTORE_GB inside the route instead.
-        cl = request.headers.get("Content-Length")
-        # Per-path body ceiling: restore preview is exempt (capped in-route); document upload uses
-        # the larger batch cap; everything else the JSON cap.
+        # Body-size enforcement (APP-10 + F-05): the restore preview is exempt (capped in-route);
+        # document upload uses the larger batch cap; everything else the JSON cap. A request
+        # WITHOUT a valid Content-Length (chunked, or a garbage/absurd header) previously bypassed
+        # the cap and was fully buffered in RAM before validation - including pre-auth on
+        # /auth/login (F-05), and a >4300-digit header crashed this middleware (F-27). Fail closed
+        # BEFORE any buffering: 411 when the length is missing, 400 when malformed, 413 when over.
         if request.url.path == _restore_preview_path:
             body_limit: int | None = None
         elif request.url.path == _upload_path:
             body_limit = _max_upload_bytes
         else:
             body_limit = _max_body_bytes
-        if body_limit is not None and cl is not None and cl.isdigit() and int(cl) > body_limit:
-            return JSONResponse(status_code=413, content={"detail": "request body too large"})
+        if body_limit is not None and request.method not in ("GET", "HEAD", "OPTIONS"):
+            cl = request.headers.get("Content-Length")
+            if cl is None:
+                # A request body is signaled by Transfer-Encoding or Content-Length (RFC 9112):
+                # neither header means NO body (DELETEs, body-less POSTs), which is fine. A body
+                # sent chunked carries no length and previously bypassed the cap, getting fully
+                # buffered in RAM - including pre-auth on /auth/login (F-05). Fail closed first.
+                if request.headers.get("Transfer-Encoding"):
+                    return JSONResponse(
+                        status_code=411,
+                        content={"detail": "Content-Length header required (no chunked bodies)"},
+                    )
+            elif not cl.isdigit():
+                return JSONResponse(
+                    status_code=400, content={"detail": "invalid Content-Length header"}
+                )
+            elif len(cl) > 18 or int(cl) > body_limit:  # 18 digits bounds int() cost (F-27)
+                return JSONResponse(status_code=413, content={"detail": "request body too large"})
         # Per-token rate limit (APP-9); health/ready/metrics are exempt so probes aren't throttled.
         limiter = request.app.state.rate_limiter
         if limiter is not None and request.url.path not in _exempt_paths:

@@ -28,13 +28,15 @@ DEV_TENANT_NAME = "Dev"
 # One account per role so RBAC is actually exercisable from the UI.
 DEV_USERS: tuple[tuple[str, str], ...] = (
     ("dev-admin@doktok.local", "admin"),
+    ("dev-manager@doktok.local", "admin"),  # tenant admin WITHOUT the platform flag (#620)
     ("dev-editor@doktok.local", "editor"),
     ("dev-viewer@doktok.local", "viewer"),
 )
 
 # The dev admin doubles as the platform-owner persona (#613, ADR-0025): it can reach the
-# platform-gated surfaces (backup export/restore, DRP) in UI/dev flows. The editor/viewer stay
-# non-platform so the denial paths are exercisable with the same seed.
+# platform-gated surfaces (backup export/restore, DRP) in UI/dev flows. The manager/editor/viewer
+# stay non-platform so the denial paths are exercisable with the same seed; the manager in
+# particular exercises the restricted tenant-admin view (#620).
 DEV_PLATFORM_ADMINS = frozenset({"dev-admin@doktok.local"})
 
 # Length floor for a seeded password (kept in step with the API password policy).

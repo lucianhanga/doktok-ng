@@ -239,7 +239,7 @@ def ollama_status(request: Request, tenant: Tenant, repo: Repo) -> OllamaStatus:
 
 @router.put("/ai", response_model=AiSettingsResponse)
 def put_ai_settings(
-    update: AiSettingsUpdate, request: Request, tenant: Tenant, repo: Repo, audit: Audit
+    update: AiSettingsUpdate, request: Request, tenant: PlatformAdmin, repo: Repo, audit: Audit
 ) -> AiSettingsResponse:
     """Persist the AI model selection and apply it immediately for the RAG/chat path.
 
@@ -522,9 +522,12 @@ def get_ocr_settings(tenant: Tenant, repo: Repo) -> OcrSettings:
 
 
 @router.put("/ocr", response_model=OcrSettings)
-def put_ocr_settings(update: OcrSettings, tenant: Tenant, repo: Repo, audit: Audit) -> OcrSettings:
+def put_ocr_settings(
+    update: OcrSettings, tenant: PlatformAdmin, repo: Repo, audit: Audit
+) -> OcrSettings:
     """Persist OCR settings. Concurrency live-reloads between ingest scans; an engine change applies
-    on the next worker restart (M17 #375)."""
+    on the next worker restart (M17 #375). Platform admins only (#619): these are deployment-global
+    defaults, not per-tenant preferences."""
     if update.engine and update.engine not in OCR_ENGINES:
         raise HTTPException(
             status_code=422,
@@ -731,7 +734,7 @@ def get_drp_history(
 
 @router.post("/drp/drill", response_model=DrillTriggerResponse)
 def trigger_drp_drill(
-    request: Request, tenant: Tenant, repo: Repo, audit: Audit
+    request: Request, tenant: PlatformAdmin, repo: Repo, audit: Audit
 ) -> DrillTriggerResponse:
     """Request an on-demand restore drill (M12 DRP hardening). The backend NEVER runs the drill - it
     only drops a request file a root systemd path-unit watches. Rate-limited: 429 if a request is
@@ -1111,7 +1114,7 @@ def _record_restore(
 @router.post("/backup/restore/preview", response_model=RestorePreview)
 async def preview_backup_restore(
     request: Request,
-    tenant: Tenant,
+    tenant: PlatformAdmin,
     audit: Audit,
     file: Annotated[UploadFile, File()],
     passphrase: Annotated[str, Form(min_length=8, max_length=1024)],
@@ -1208,7 +1211,7 @@ def apply_backup_restore(
     staged_id: str,
     body: RestoreApplyRequest,
     request: Request,
-    tenant: Tenant,
+    tenant: PlatformAdmin,
     audit: Audit,
 ) -> RestoreResult:
     """Trigger the DESTRUCTIVE apply of a PRE-VALIDATED staged archive (M12 portable restore Phase

@@ -82,6 +82,7 @@ def test_seeded_admin_is_platform_admin() -> None:
     }
     assert flags == {
         "dev-admin@doktok.local": True,
+        "dev-manager@doktok.local": False,
         "dev-editor@doktok.local": False,
         "dev-viewer@doktok.local": False,
     }

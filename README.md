@@ -259,14 +259,18 @@ tenant/user management stack on top (ADR-0024). HTTP routes are versioned under 
 - **Roles.** `viewer` < `editor` < `admin`: reads pass for any authenticated caller; content writes
   (ingest, entities, chat, ...) need editor; settings writes and all administration need admin.
   `make seed-dev` seeds a gated `dev` tenant with one user per role to try this locally.
-- **Platform owners (ADR-0025).** Deployment-spanning actions - portable backup export/restore,
-  DRP, tenant provisioning - require a **platform admin**, not just a tenant admin: a
-  host-provisioned static token (a `DOKTOK_TENANT_TOKENS` entry), or a user flagged
-  `is_platform_admin` (granted only by an existing platform admin via
+- **Platform owners (ADR-0025).** Deployment-spanning actions require a **platform admin**, not just
+  a tenant admin: a host-provisioned static token (a `DOKTOK_TENANT_TOKENS` entry), or a user
+  flagged `is_platform_admin` (granted only by an existing platform admin via
   `POST /api/v1/admin/users/{id}/platform-admin`, never through user creation; self-revoke is
-  blocked). DB-minted user-less API tokens are tenant admins but never platform admins. `make
-  seed-dev` marks the dev admin user; `make create-tenant ... ARGS=--platform-admin` creates a
-  platform-owner user on a fresh box.
+  blocked). Platform-only surfaces: portable backup export + restore, the DRP drill, model-stack
+  writes (`PUT /settings/ai`, `PUT /settings/ocr`), and tenant provisioning
+  (`GET`/`POST /admin/tenants`); platform admins can also create users in any tenant
+  (`POST /admin/users` with `tenant_id`). Tenant admins keep tenant-scoped user management
+  (users/roles/passwords/invitations/tokens) and DRP *status* reads. `make seed-dev` marks the dev
+  admin user as platform admin (and seeds a non-platform `dev-manager` tenant admin for the
+  restricted view); `make create-tenant ... ARGS=--platform-admin` creates a platform-owner user on
+  a fresh box.
 - **Invitations and deactivation.** Admins invite an email (one-time token, expiry
   `DOKTOK_AUTH_INVITE_TTL_HOURS`, default 168); the invitee accepts via
   `POST /api/v1/auth/accept-invite` to set a password. Deactivating a user blocks their session

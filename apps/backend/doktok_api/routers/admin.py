@@ -29,7 +29,12 @@ from doktok_core.tenants.provisioning import provision_tenant
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from doktok_api.dependencies import AdminUser, get_audit_repository, get_tenant_registry
+from doktok_api.dependencies import (
+    AdminUser,
+    PlatformAdmin,
+    get_audit_repository,
+    get_tenant_registry,
+)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -97,6 +102,9 @@ class CreateUserRequest(BaseModel):
     display_name: str = ""
     role: str = "viewer"
     password: str | None = None
+    # Optional target tenant (#620): honored ONLY for platform admins (to seed a tenant's first
+    # admin); a tenant admin's users always land in their own tenant.
+    tenant_id: str | None = None
 
 
 class SetRoleRequest(BaseModel):
@@ -172,7 +180,8 @@ def admin_context(caller: AdminUser, registry: Registry) -> AdminContext:
 
 
 @router.get("/tenants", response_model=list[Tenant])
-def list_tenants(caller: AdminUser, registry: Registry) -> list[Tenant]:
+def list_tenants(caller: PlatformAdmin, registry: Registry) -> list[Tenant]:
+    # Platform admins only (#620): tenant existence/identity is deployment-level information.
     return registry.list_tenants()
 
 
@@ -187,7 +196,11 @@ class CreatedTenant(BaseModel):
 
 @router.post("/tenants", response_model=CreatedTenant, status_code=status.HTTP_201_CREATED)
 def create_tenant(
-    request: Request, body: CreateTenantRequest, caller: AdminUser, registry: Registry, audit: Audit
+    request: Request,
+    body: CreateTenantRequest,
+    caller: PlatformAdmin,
+    registry: Registry,
+    audit: Audit,
 ) -> CreatedTenant:
     # Provision a USABLE tenant (row + lifecycle folders + a one-time bootstrap admin token) via the
     # shared core, so the UI no longer produces dead tenants. The worker picks it up on next start.
@@ -222,13 +235,24 @@ def create_user(
     body: CreateUserRequest, caller: AdminUser, registry: Registry, audit: Audit
 ) -> AdminUserView:
     role = _valid_role(body.role)
-    if registry.get_user_by_email(caller.tenant_id, body.email) is not None:
+    target_tenant = caller.tenant_id
+    if body.tenant_id is not None and body.tenant_id != caller.tenant_id:
+        # Cross-tenant user creation is a platform capability (#620): a platform admin seeds
+        # another tenant's first admin. Tenant admins stay locked to their own tenant.
+        if not caller.platform_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="platform administrator required"
+            )
+        if registry.get_tenant(body.tenant_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such tenant")
+        target_tenant = body.tenant_id
+    if registry.get_user_by_email(target_tenant, body.email) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="a user with this email already exists"
         )
     user = User(
         id=uuid.uuid4().hex,
-        tenant_id=caller.tenant_id,
+        tenant_id=target_tenant,
         email=body.email.strip(),
         display_name=body.display_name,
         role=role,
@@ -244,7 +268,7 @@ def create_user(
         record_kind="user",
         record_id=user.id,
         description=f'User "{user.email}" created with role {role}',
-        details={"user_id": user.id, "role": role},
+        details={"user_id": user.id, "role": role, "tenant_id": target_tenant},
     )
     return _user_view(user)
 

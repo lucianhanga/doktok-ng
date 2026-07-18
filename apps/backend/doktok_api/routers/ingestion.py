@@ -17,6 +17,9 @@ router = APIRouter(prefix="/api/v1/ingestion", tags=["ingestion"])
 
 Repo = Annotated[IngestionJobRepository, Depends(get_job_repository)]
 
+# Bounded chunk size for the streaming upload write (F-12); mirrors the restore preview's pattern.
+_UPLOAD_CHUNK = 1024 * 1024  # 1 MiB
+
 
 def _safe_filename(name: str | None) -> str | None:
     """Reduce an uploaded name to a safe basename, or None if it is unusable / path-traversal."""
@@ -43,7 +46,11 @@ async def upload_documents(
 ) -> IngestUploadResult:
     """Accept dropped documents and write them into the tenant's ingest folder for the worker (M14
     #370). Each file is written to a hidden temp name then renamed - the worker ignores dotfiles, so
-    it never claims a partial upload. Accepts any type; the pipeline sorts out the rest."""
+    it never claims a partial upload. Accepts any type; the pipeline sorts out the rest.
+
+    The copy is STREAMED in bounded chunks (F-12, mirroring the restore preview): a read-then-check
+    approach made the whole file RAM-resident before the size cap fired, so the cap is now enforced
+    while writing - abort + cleanup as soon as it is crossed."""
     settings = request.app.state.settings
     # Too many files is a batch-level error: refuse the WHOLE drop (you can't pick which to keep),
     # unlike an individual oversized file below, which is rejected on its own so the rest still go.
@@ -65,16 +72,28 @@ async def upload_documents(
         if safe is None:
             rejected.append(f"{upload.filename!r}: invalid filename")
             continue
-        data = await upload.read()
-        if not data:
-            rejected.append(f"{safe}: empty file")
-            continue
-        if len(data) > limit:
-            rejected.append(f"{safe}: exceeds {settings.max_request_mb} MB")
-            continue
         target = _unique_target(layout.ingest, safe)
         tmp = layout.ingest / f".upload-{uuid.uuid4().hex}.part"
-        tmp.write_bytes(data)
+        written = 0
+        oversized = False
+        try:
+            with tmp.open("wb") as out:
+                while chunk := await upload.read(_UPLOAD_CHUNK):
+                    written += len(chunk)
+                    if written > limit:
+                        oversized = True
+                        break
+                    out.write(chunk)
+        finally:
+            await upload.close()
+        if oversized:
+            tmp.unlink(missing_ok=True)
+            rejected.append(f"{safe}: exceeds {settings.max_request_mb} MB")
+            continue
+        if written == 0:
+            tmp.unlink(missing_ok=True)
+            rejected.append(f"{safe}: empty file")
+            continue
         tmp.rename(target)  # atomic publish; the worker only claims non-dotfiles
         accepted.append(target.name)
     return IngestUploadResult(accepted=accepted, rejected=rejected)

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from doktok_api.main import create_app
 from doktok_contracts.ports import AppSettingsRepository
 from doktok_core.config import Settings
@@ -106,3 +107,40 @@ def test_upload_rejects_an_empty_file(tmp_path: Path) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["accepted"] == [] and any("empty" in r for r in body["rejected"])
+
+
+def test_oversized_file_is_rejected_without_a_full_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # F-12: read-then-check made the whole file RAM-resident before the size cap fired. The route
+    # now streams in bounded chunks and aborts as soon as the cap is crossed.
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+
+    limit = 25 * 1024 * 1024
+    chunk = 1024 * 1024
+    read_bytes = 0
+    real_read = StarletteUploadFile.read
+
+    async def _counting_read(self: StarletteUploadFile, size: int = -1) -> bytes:
+        nonlocal read_bytes
+        data = await real_read(self, size)
+        read_bytes += len(data)
+        return data
+
+    monkeypatch.setattr(StarletteUploadFile, "read", _counting_read)
+    client = _client(tmp_path)  # max_request_mb=25
+    big = b"x" * (limit + 5 * chunk)  # 5 MiB over the cap
+    resp = client.post(
+        "/api/v1/ingestion/upload",
+        files=[("files", ("big.bin", big, "application/octet-stream"))],
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["accepted"] == []
+    assert body["rejected"] == ["big.bin: exceeds 25 MB"]
+    # The read stopped as soon as the cap was crossed - not the whole 30 MiB.
+    assert read_bytes <= limit + chunk
+    ingest = tmp_path / "tenant-a" / "ingest"
+    assert not (ingest / "big.bin").exists()
+    assert list(ingest.glob(".upload-*")) == []

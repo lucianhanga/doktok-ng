@@ -352,3 +352,32 @@ def test_preview_exempt_from_body_size_limit(tmp_path: Path) -> None:
     # Not a 413 from the global middleware; the garbage decrypts-fail to ok=false at the route.
     assert resp.status_code == 200
     assert resp.json()["ok"] is False
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl not available")
+def test_preview_validation_runs_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # F-11: the multi-GB decrypt/extract/hash used to run synchronously in the async handler,
+    # stalling the uvicorn event loop for every request (including /health). It must be
+    # dispatched to a worker thread via fastapi's run_in_threadpool.
+    from doktok_api.routers import settings as settings_router
+    from doktok_core.backup import restore as restore_mod_fn
+
+    dispatched: list[object] = []
+
+    async def _spy(fn: object, *args: object, **kwargs: object) -> object:
+        dispatched.append(fn)
+        return fn(*args, **kwargs)  # type: ignore[operator]
+
+    monkeypatch.setattr(settings_router, "run_in_threadpool", _spy)
+    client, _, _, _ = _make_client(tmp_path)
+    payload = _build_encrypted_archive(tmp_path, monkeypatch, "preview-pass-1234")
+    resp = client.post(
+        "/api/v1/settings/backup/restore/preview",
+        files={"file": ("backup.tgz.enc", payload, "application/octet-stream")},
+        data={"passphrase": "preview-pass-1234"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    assert restore_mod_fn.validate_staged_upload in dispatched

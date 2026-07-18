@@ -72,6 +72,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pydantic import Field as PydField
@@ -1199,7 +1200,11 @@ async def preview_backup_restore(
         _status_dir(request), state="validating", step="validate", restore_id=staged_id
     )
 
-    result = restore_mod.validate_staged_upload(
+    # The multi-GB decrypt + extract + hash below used to run synchronously in this async handler,
+    # stalling the uvicorn event loop for EVERY request (including /health) for minutes (#623,
+    # F-11). It runs in a worker thread instead; the streamed upload above already uses async IO.
+    result = await run_in_threadpool(
+        restore_mod.validate_staged_upload,
         export_dir,
         staged_id,
         passphrase,

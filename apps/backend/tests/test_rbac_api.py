@@ -113,11 +113,13 @@ def test_editor_cannot_write_settings() -> None:
     assert "admin" in resp.json()["detail"]
 
 
-def test_admin_passes_settings_guard() -> None:
+def test_tenant_admin_is_refused_settings_writes_without_platform_flag() -> None:
     client = _client()
-    # Guard passes for admin; the empty body then fails validation (422) - the point is: not 403.
+    # Settings writes moved behind the platform-owner tier (#619, ADR-0025): a tenant admin
+    # without is_platform_admin is refused (403), no longer merely validated.
     resp = client.put("/api/v1/settings/ai", json={}, headers=_bearer("u_admin"))
-    assert resp.status_code != 403
+    assert resp.status_code == 403
+    assert "platform" in resp.json()["detail"]
 
 
 # --- local-first: a tenant-scoped static token (no user) is admin ---

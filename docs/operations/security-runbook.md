@@ -56,14 +56,16 @@ levers:
   Keep members at viewer unless they ingest/edit; keep admins to a minimum. A tenant-scoped static
   token (`DOKTOK_TENANT_TOKENS`, including the Caddy edge token) has **no user identity and acts as
   admin** - treat every static token as an admin credential.
-- **Platform owners (ADR-0025).** Deployment-spanning surfaces - portable backup export/restore and
-  DRP - are gated to platform admins: host-provisioned static tokens (which are therefore also
-  **platform** credentials - guard them accordingly), and users flagged `is_platform_admin`
+- **Platform owners (ADR-0025).** Deployment-spanning surfaces - portable backup export/restore,
+  the DRP drill, model-stack writes (`PUT /settings/ai`, `PUT /settings/ocr`), and tenant
+  provisioning - are gated to platform admins: host-provisioned static tokens (which are therefore
+  also **platform** credentials - guard them accordingly), and users flagged `is_platform_admin`
   (migration `0052`). Grant only via `POST /api/v1/admin/users/{id}/platform-admin` from an existing
   platform admin; there is no self-bootstrap and no self-revoke. DB-minted user-less api tokens are
-  tenant admins but never platform admins. On a multi-tenant deployment, review who holds the flag
-  (`GET /api/v1/admin/users` shows it per user) and keep it to the operators who would also hold the
-  backup passphrases.
+  tenant admins but never platform admins. Tenant admins keep tenant-scoped user management
+  (users, roles, passwords, invitations, tokens) and read-only DRP status. On a multi-tenant
+  deployment, review who holds the flag (`GET /api/v1/admin/users` shows it per user) and keep it
+  to the operators who would also hold the backup passphrases.
 - **Enabling password login (opt-in).** Set `DOKTOK_AUTH_JWT_SECRET` (at least 32 bytes, e.g.
   `openssl rand -base64 48`; without it, `DOKTOK_SECRETS_KEY` is used as the fallback signing
   secret, and with neither, login is disabled with a 503). The backend logs a loud startup warning

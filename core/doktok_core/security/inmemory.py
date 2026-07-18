@@ -71,6 +71,11 @@ class InMemoryTenantRegistry:
         if user and user.tenant_id == tenant_id:
             self.users[user_id] = user.model_copy(update={"status": status})
 
+    def set_platform_admin(self, tenant_id: str, user_id: str, value: bool) -> None:
+        user = self.users.get(user_id)
+        if user and user.tenant_id == tenant_id:
+            self.users[user_id] = user.model_copy(update={"is_platform_admin": value})
+
     def create_invitation(self, invitation: Invitation) -> None:
         self.invitations.setdefault(invitation.id, invitation)
 

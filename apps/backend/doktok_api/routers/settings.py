@@ -73,6 +73,7 @@ from pydantic import BaseModel
 from pydantic import Field as PydField
 
 from doktok_api.dependencies import (
+    PlatformAdmin,
     Tenant,
     get_app_settings_repository,
     get_audit_repository,
@@ -872,11 +873,12 @@ def _record_portable(
 
 @router.post("/backup/export", response_model=BackupExportInfo)
 def start_backup_export(
-    request: Request, tenant: Tenant, audit: Audit, background: BackgroundTasks
+    request: Request, tenant: PlatformAdmin, audit: Audit, background: BackgroundTasks
 ) -> BackupExportInfo:
     """Start an ASYNC portable backup build and return immediately with status='building' (M12
     portable backup, Phase 1). Single-flight + rate-limited: 429 if a build is already running or
-    one started in the last minute. The build is read-only (pg_dump + a read of files_root)."""
+    one started in the last minute. The build is read-only (pg_dump + a read of files_root).
+    Platform admins only (#613): the archive spans EVERY tenant's data."""
     import uuid
 
     from doktok_core.backup import export as export_mod
@@ -937,7 +939,7 @@ def start_backup_export(
 
 @router.get("/backup/export/status", response_model=BackupExportInfo)
 def get_backup_export_status(
-    request: Request, tenant: Tenant, export_id: str | None = Query(None)
+    request: Request, tenant: PlatformAdmin, export_id: str | None = Query(None)
 ) -> BackupExportInfo:
     """Poll the status of a portable backup build. With ``export_id`` returns that build; otherwise
     the most recent one. 404 if there is no matching build (M12 portable backup, Phase 1)."""
@@ -959,7 +961,7 @@ def get_backup_export_status(
 def download_backup_export(
     export_id: str,
     request: Request,
-    tenant: Tenant,
+    tenant: PlatformAdmin,
     audit: Audit,
     body: BackupExportDownloadRequest,
 ) -> StreamingResponse:

@@ -32,6 +32,11 @@ DEV_USERS: tuple[tuple[str, str], ...] = (
     ("dev-viewer@doktok.local", "viewer"),
 )
 
+# The dev admin doubles as the platform-owner persona (#613, ADR-0025): it can reach the
+# platform-gated surfaces (backup export/restore, DRP) in UI/dev flows. The editor/viewer stay
+# non-platform so the denial paths are exercisable with the same seed.
+DEV_PLATFORM_ADMINS = frozenset({"dev-admin@doktok.local"})
+
 # Length floor for a seeded password (kept in step with the API password policy).
 MIN_SEED_PASSWORD_LENGTH = 12
 
@@ -92,6 +97,7 @@ def seed_dev(
                     display_name=email.split("@")[0],
                     role=role,
                     status="active",
+                    is_platform_admin=email in DEV_PLATFORM_ADMINS,
                     password_hash=hash_password(password),
                 )
             )
@@ -102,6 +108,7 @@ def seed_dev(
             password = password_for(email)
             registry.set_user_password(DEV_TENANT_ID, existing.id, hash_password(password))
             registry.set_user_role(DEV_TENANT_ID, existing.id, role)
+            registry.set_platform_admin(DEV_TENANT_ID, existing.id, email in DEV_PLATFORM_ADMINS)
             results.append(
                 SeededAccount(email, role, created=False, password_set=True, password=password)
             )

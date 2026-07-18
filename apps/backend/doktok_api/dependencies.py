@@ -100,6 +100,13 @@ def require_tenant(
     # while that user is active. This is the authoritative revocation lever - it blocks a
     # deactivated (or not-yet-accepted 'invited') user's session JWT AND api-tokens immediately,
     # regardless of token TTL. Tenant-scoped tokens (no user) and registry-less deployments skip it.
+    #
+    # Platform-owner tier (#613, ADR-0025): host-provisioned static tokens are platform admins; a
+    # user-bound credential (session JWT / user api token) inherits the user's is_platform_admin
+    # flag from the SAME fetch used for the deactivation check (no extra query). A DB-minted
+    # user-less api token is a tenant admin but NEVER a platform admin (any tenant admin can mint
+    # those, so they must not reach deployment-spanning surfaces).
+    platform_admin = resolution.via == "static"
     if resolution.user_id is not None and registry is not None:
         user = registry.get_user(resolution.tenant_id, resolution.user_id)
         if user is None or user.status != "active":
@@ -108,10 +115,13 @@ def require_tenant(
                 detail="user is not active",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        platform_admin = user.is_platform_admin
     from doktok_core.logging_setup import tenant_id_var
 
     tenant_id_var.set(resolution.tenant_id)  # correlate log lines by tenant (APP-12)
-    return TenantContext(tenant_id=resolution.tenant_id, user_id=resolution.user_id)
+    return TenantContext(
+        tenant_id=resolution.tenant_id, user_id=resolution.user_id, platform_admin=platform_admin
+    )
 
 
 def effective_jwt_secret(settings: object) -> str:
@@ -761,3 +771,24 @@ def require_admin(request: Request, tenant: Tenant) -> TenantContext:
 
 
 AdminUser = Annotated[TenantContext, Depends(require_admin)]
+
+
+def require_platform_admin(request: Request, tenant: Tenant) -> TenantContext:
+    """Require a platform-admin caller for ANY method (#613, ADR-0025).
+
+    Platform admins own the deployment-spanning surfaces (portable backup export/restore, DRP,
+    the egress posture, tenant provisioning): host-provisioned static tokens, and users flagged
+    ``is_platform_admin`` who also hold the admin role. Tenant admins - including DB-minted
+    user-less api tokens, which any tenant admin can issue - are NOT platform admins.
+    """
+    if not tenant.platform_admin or not role_at_least(
+        resolve_caller_role(request, tenant), Role.ADMIN
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="platform administrator required",
+        )
+    return tenant
+
+
+PlatformAdmin = Annotated[TenantContext, Depends(require_platform_admin)]

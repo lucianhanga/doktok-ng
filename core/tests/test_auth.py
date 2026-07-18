@@ -56,7 +56,7 @@ def test_resolve_token_prefers_db_registry() -> None:
 def test_resolve_token_falls_back_to_static_map() -> None:
     reg = InMemoryTenantRegistry()  # empty DB
     assert resolve_token("tok-a", registry=reg, static_tokens=TOKENS) == TokenResolution(
-        tenant_id="tenant-a", user_id=None
+        tenant_id="tenant-a", user_id=None, via="static"
     )
 
 
@@ -76,7 +76,7 @@ def test_resolve_token_revoked_db_token_does_not_resolve() -> None:
 
 def test_resolve_token_works_without_registry() -> None:
     assert resolve_token("tok-b", static_tokens=TOKENS) == TokenResolution(
-        tenant_id="tenant-b", user_id=None
+        tenant_id="tenant-b", user_id=None, via="static"
     )
 
 
@@ -93,14 +93,14 @@ def test_resolve_credential_accepts_session_jwt() -> None:
     )
     assert resolve_credential(
         token, jwt_secret=JWT_SECRET, static_tokens=TOKENS
-    ) == TokenResolution(tenant_id="tenant-x", user_id="user-9")
+    ) == TokenResolution(tenant_id="tenant-x", user_id="user-9", via="jwt")
 
 
 def test_resolve_credential_falls_through_to_opaque_token() -> None:
     # A non-JWT opaque token still resolves via the static map even when a jwt_secret is configured.
     assert resolve_credential(
         "tok-a", jwt_secret=JWT_SECRET, static_tokens=TOKENS
-    ) == TokenResolution(tenant_id="tenant-a", user_id=None)
+    ) == TokenResolution(tenant_id="tenant-a", user_id=None, via="static")
 
 
 def test_resolve_credential_bad_jwt_does_not_resolve() -> None:

@@ -168,3 +168,33 @@ def test_tenant_scoped_token_has_no_user(db: Database) -> None:
     assert resolution is not None
     assert resolution.tenant_id == TENANT
     assert resolution.user_id is None
+
+
+def test_platform_admin_flag_round_trip(db: Database) -> None:
+    reg = PostgresTenantRegistry(db)
+    reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))
+    reg.create_user(
+        User(
+            id="upa",
+            tenant_id=TENANT,
+            email="pa@example.com",
+            role="admin",
+            is_platform_admin=True,
+        )
+    )
+    # create_user persists the flag; the plain read path surfaces it (without the digest).
+    user = reg.get_user(TENANT, "upa")
+    assert user is not None
+    assert user.is_platform_admin is True
+    assert user.password_hash is None
+
+    # The flag defaults to off for a plain user; set_platform_admin toggles it.
+    reg.create_user(User(id="uplain", tenant_id=TENANT, email="plain@example.com"))
+    assert reg.get_user(TENANT, "uplain").is_platform_admin is False  # type: ignore[union-attr]
+    reg.set_platform_admin(TENANT, "uplain", True)
+    assert reg.get_user(TENANT, "uplain").is_platform_admin is True  # type: ignore[union-attr]
+    # The login lookup and the listing carry the flag too.
+    assert reg.get_user_by_email(TENANT, "plain@example.com").is_platform_admin is True  # type: ignore[union-attr]
+    assert {u.id: u.is_platform_admin for u in reg.list_users(TENANT)}["uplain"] is True
+    reg.set_platform_admin(TENANT, "uplain", False)
+    assert reg.get_user(TENANT, "uplain").is_platform_admin is False  # type: ignore[union-attr]

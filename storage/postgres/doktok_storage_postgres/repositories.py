@@ -3472,8 +3472,9 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             conn.execute(
                 "INSERT INTO users "
-                "(id, tenant_id, email, display_name, status, role, password_hash) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                "(id, tenant_id, email, display_name, status, role, is_platform_admin, "
+                "password_hash) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
                 (
                     user.id,
                     user.tenant_id,
@@ -3481,6 +3482,7 @@ class PostgresTenantRegistry:
                     user.display_name,
                     user.status,
                     user.role,
+                    user.is_platform_admin,
                     user.password_hash,
                 ),
             )
@@ -3490,8 +3492,8 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
-                "SELECT id, tenant_id, email, display_name, status, role, created_at "
-                "FROM users WHERE tenant_id=%s AND id=%s",
+                "SELECT id, tenant_id, email, display_name, status, role, is_platform_admin, "
+                "created_at FROM users WHERE tenant_id=%s AND id=%s",
                 (tenant_id, user_id),
             ).fetchone()
         return User(**row) if row else None
@@ -3501,8 +3503,9 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
-                "SELECT id, tenant_id, email, display_name, status, role, password_hash, "
-                "created_at FROM users WHERE tenant_id=%s AND lower(email)=lower(%s)",
+                "SELECT id, tenant_id, email, display_name, status, role, is_platform_admin, "
+                "password_hash, created_at FROM users "
+                "WHERE tenant_id=%s AND lower(email)=lower(%s)",
                 (tenant_id, email.strip()),
             ).fetchone()
         return User(**row) if row else None
@@ -3512,8 +3515,8 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT id, tenant_id, email, display_name, status, role, created_at "
-                "FROM users WHERE tenant_id=%s ORDER BY lower(email)",
+                "SELECT id, tenant_id, email, display_name, status, role, is_platform_admin, "
+                "created_at FROM users WHERE tenant_id=%s ORDER BY lower(email)",
                 (tenant_id,),
             ).fetchall()
         return [User(**row) for row in rows]
@@ -3537,6 +3540,13 @@ class PostgresTenantRegistry:
             conn.execute(
                 "UPDATE users SET status=%s WHERE tenant_id=%s AND id=%s",
                 (status, tenant_id, user_id),
+            )
+
+    def set_platform_admin(self, tenant_id: str, user_id: str, value: bool) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE users SET is_platform_admin=%s WHERE tenant_id=%s AND id=%s",
+                (value, tenant_id, user_id),
             )
 
     def create_invitation(self, invitation: Invitation) -> None:

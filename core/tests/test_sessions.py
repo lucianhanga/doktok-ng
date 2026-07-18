@@ -12,7 +12,7 @@ def test_roundtrip_resolves_tenant_and_user() -> None:
         tenant_id="tenant-a", user_id="user-1", secret=SECRET, ttl_seconds=3600, now=NOW
     )
     resolution = decode_access_token(token, secret=SECRET, now=NOW + timedelta(minutes=10))
-    assert resolution == TokenResolution(tenant_id="tenant-a", user_id="user-1")
+    assert resolution == TokenResolution(tenant_id="tenant-a", user_id="user-1", via="jwt")
 
 
 def test_expired_token_resolves_none() -> None:

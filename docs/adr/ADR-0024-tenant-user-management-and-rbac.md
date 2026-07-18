@@ -5,6 +5,9 @@
 Accepted (EPIC #523: layers #554-#560, plus the login-experience phases from the CISO review -
 hardening, dev seed, and the in-browser login screen - all shipped and merged).
 
+Amended by [ADR-0025](ADR-0025-platform-owner-tier.md) (platform-owner tier: deployment-spanning
+surfaces are gated to platform admins, not merely tenant admins).
+
 Extends [ADR-0007](ADR-0007-multi-tenancy-shared-db-tenant-id.md) (multi-tenancy) and delivers the
 "Later (DB-backed)" token store that [ADR-0008](ADR-0008-token-authentication.md) planned.
 

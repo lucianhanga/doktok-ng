@@ -152,6 +152,9 @@ services:
       DOKTOK_RATE_LIMIT_PER_MINUTE: ${DOKTOK_RATE_LIMIT_PER_MINUTE:-0}
       DOKTOK_MAX_REQUEST_MB: ${DOKTOK_MAX_REQUEST_MB:-25}
       DOKTOK_CORS_ORIGINS: ${DOKTOK_CORS_ORIGINS:-[]}
+      # Caddy fronts the API in this topology, so X-Forwarded-For is trustworthy for client IPs
+      # (#621, F-10): per-IP login throttling and audit IPs key on real clients, not the proxy.
+      DOKTOK_TRUSTED_PROXY: ${DOKTOK_TRUSTED_PROXY:-true}
       # DRP (M12 #377): read the backup freshness sentinels written by the backup orchestrator.
       DOKTOK_BACKUP_DIR: /var/lib/doktok/backups
       # Portable one-file backup (M12 Phase 1): the backend STAGES the plaintext export here before

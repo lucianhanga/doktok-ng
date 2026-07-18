@@ -120,3 +120,51 @@ def test_password_policy_rejects_short_passwords() -> None:
     )
     assert resp.status_code == 422
     assert "at least 12" in resp.json()["detail"]
+
+
+def test_login_rejects_absurd_field_lengths() -> None:
+    # F-06(a): unbounded email/tenant strings were used directly as limiter bucket keys.
+    client = _client()
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"tenant_id": "tenant-a", "email": "x" * 400, "password": "pw-123456789"},
+    )
+    assert resp.status_code == 422
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"tenant_id": "y" * 200, "email": "a@b.co", "password": "pw-123456789"},
+    )
+    assert resp.status_code == 422
+
+
+def test_login_acct_bucket_keys_do_not_embed_the_email() -> None:
+    # Build the app directly so its state is reachable with types (TestClient.app is the ASGI
+    # transport wrapper, not the FastAPI app).
+    reg = InMemoryTenantRegistry()
+    reg.create_tenant(Tenant(id="tenant-a", name="Tenant A"))
+    reg.create_user(
+        User(
+            id="u1",
+            tenant_id="tenant-a",
+            email="alice@x.com",
+            role="editor",
+            password_hash=hash_password(GOOD_PW),
+        )
+    )
+    registry = build_registry()
+    registry.register(TenantRegistry, reg)  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    settings = Settings(
+        env="test",
+        auth_jwt_secret=JWT_SECRET,
+        tenant_tokens={"tok-a": "tenant-a"},
+        login_rate_per_minute=5,
+        login_ip_rate_per_minute=20,
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    app = create_app(settings=settings, registry=registry)
+    client = TestClient(app)
+    _login(client, "alice@x.com", "wrong-password-1")
+    limiter = app.state.login_acct_limiter
+    assert limiter._buckets, "expected the failed login to register a bucket"  # noqa: SLF001
+    assert all("alice@x.com" not in key for key in limiter._buckets)  # noqa: SLF001

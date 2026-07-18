@@ -46,10 +46,11 @@ _INVALID_CREDENTIALS = "invalid email or password"
 
 
 class LoginRequest(BaseModel):
-    tenant_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1, max_length=128)
     # Plain str (not EmailStr) to avoid pulling in the optional email-validator dependency; the
-    # email is only a lookup key here, verified against the stored password.
-    email: str = Field(min_length=3)
+    # email is only a lookup key here, verified against the stored password. Bounded (F-06): the
+    # value feeds a rate-limiter bucket key, so it must not be arbitrarily large.
+    email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1)
 
 
@@ -106,12 +107,13 @@ def _client_ip(request: Request) -> str:
 
 def _throttle_login(request: Request, tenant_id: str, email: str) -> None:
     """Pre-auth brute-force throttle (CISO M2): per-IP and per-(tenant, email) token buckets, run
-    BEFORE any credential work so a throttled attacker gets no timing/enumeration signal."""
+    BEFORE any credential work so a throttled attacker gets no timing/enumeration signal. The
+    account bucket key is hashed (F-06): a fixed-size key that never embeds the raw email."""
     checks = (
         (getattr(request.app.state, "login_ip_limiter", None), f"ip:{_client_ip(request)}"),
         (
             getattr(request.app.state, "login_acct_limiter", None),
-            f"acct:{tenant_id}:{email.strip().lower()}",
+            f"acct:{hash_token(f'{tenant_id}:{email.strip().lower()}')}",
         ),
     )
     for limiter, key in checks:

@@ -99,3 +99,15 @@ def test_bodyless_methods_pass() -> None:
     client = TestClient(app)
     assert client.delete("/nope").status_code != 411
     assert client.post("/nope").status_code != 411
+
+
+def test_api_limiter_bucket_keys_are_hashed() -> None:
+    # F-06(b): the API limiter must not key buckets on the raw bearer token (each unique garbage
+    # token was a permanent entry). Keys are the token's sha256 - fixed size, no secret in memory.
+    app = create_app(settings=Settings(env="test", rate_limit_per_minute=5))
+    client = TestClient(app)
+    client.get("/nope", headers={"Authorization": "Bearer tok-a"})
+    buckets = app.state.rate_limiter._buckets  # noqa: SLF001 - asserted for the F-06 contract
+    assert buckets, "expected at least one bucket"
+    assert all("tok-a" not in key for key in buckets)
+    assert all(len(key) == 64 for key in buckets)  # sha256 hex digests

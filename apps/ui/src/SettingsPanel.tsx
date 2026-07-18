@@ -50,6 +50,7 @@ import {
   type RestoreStatus,
 } from "./api";
 import { Ellipsis } from "./Ellipsis";
+import { isPlatformAdmin } from "./session";
 
 const MIN_PASSPHRASE = 8;
 
@@ -904,6 +905,9 @@ function PortableRestore() {
 function DrpSection() {
   const [drp, setDrp] = useState<DrpStatusResponse | null>(null);
   const [err, setErr] = useState(false);
+  // DRP status is readable for every admin; backup/drill/restore ACTIONS are platform-only
+  // (#658, ADR-0025) - the backend enforces with 403, we just don't offer them.
+  const platform = isPlatformAdmin();
   // Bumped to force the history + drill children to re-fetch immediately (e.g. right after a drill
   // is triggered) without waiting for their own 45s/10s poll.
   const [refreshKey, setRefreshKey] = useState(0);
@@ -1045,11 +1049,19 @@ function DrpSection() {
               <span className="muted">{yn(drp.config.azure_credentials_configured)}</span>
             </div>
           </div>
-          <RecoveryDrill drill={drp.status.drill} onTriggered={refreshNow} />
+          {platform && <RecoveryDrill drill={drp.status.drill} onTriggered={refreshNow} />}
         </>
       )}
-      <PortableBackup />
-      <PortableRestore />
+      {platform ? (
+        <>
+          <PortableBackup />
+          <PortableRestore />
+        </>
+      ) : (
+        <p className="muted settings-platform-hint">
+          Backup export and restore are managed by platform admins (and on the host console).
+        </p>
+      )}
       <BackupHistory refreshKey={refreshKey} />
     </div>
   );
@@ -1442,6 +1454,9 @@ function selectionBlocked(
 }
 
 export function SettingsPanel() {
+  // Platform-only surfaces (ADR-0025): model-stack writes + DRP actions. The backend enforces with
+  // 403; here we just don't offer the controls to tenant admins (#658).
+  const platform = isPlatformAdmin();
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
   // Snapshot of the loaded settings = the server defaults (until the backend exposes per-tenant
@@ -1659,6 +1674,15 @@ export function SettingsPanel() {
     </>
   );
 
+  // Writes are platform-only (#658): tenant admins get the hint instead of the save bar.
+  const saveSection = platform ? (
+    saveBar
+  ) : (
+    <p className="muted settings-platform-hint">
+      Only platform admins can change these deployment defaults.
+    </p>
+  );
+
   return (
     <section className="panel settings-page" aria-label="Settings">
       <div className="settings-layout">
@@ -1703,6 +1727,7 @@ export function SettingsPanel() {
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section">
+          <fieldset className="settings-fieldset" disabled={!platform}>
           <div className="settings-purpose">
             <h4>OpenAI</h4>
             <p className="muted">
@@ -1757,8 +1782,9 @@ export function SettingsPanel() {
               )}
             </div>
           </div>
+          </fieldset>
 
-          {saveBar}
+          {saveSection}
         </div>
         ))}
 
@@ -1769,6 +1795,7 @@ export function SettingsPanel() {
           <div className="settings-section settings-section--wide">
             {/* Host data-egress posture spans both cards; it gates every model picker below. */}
             {ai.no_egress !== undefined && (
+              <fieldset className="settings-fieldset" disabled={!platform}>
               <div className="egress-control model-stack-egress">
                 <p
                   role="status"
@@ -1812,6 +1839,7 @@ export function SettingsPanel() {
                   </p>
                 )}
               </div>
+              </fieldset>
             )}
             {ai.egress_active && (
               <p className="status-error model-stack-egress" role="status">
@@ -1975,6 +2003,7 @@ export function SettingsPanel() {
                   </div>
                 </div>
               </div>
+              <fieldset className="settings-fieldset" disabled={!platform}>
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
                   Your overrides{" "}
@@ -2129,8 +2158,9 @@ export function SettingsPanel() {
                   )}
                 </div>
               </div>
+              </fieldset>
             </div>
-            {saveBar}
+            {saveSection}
             {healthAt && (
               <p className="muted model-stack-checked">
                 Checked {new Date(healthAt).toLocaleString()}

@@ -6746,3 +6746,16 @@ tr.row-selected {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+
+/* Platform-gated form sections (#658): a fieldset used purely to disable groups of controls; the
+   native border/margin/padding must not disturb the layout. */
+.settings-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+.settings-fieldset:disabled {
+  opacity: 0.65;
+}

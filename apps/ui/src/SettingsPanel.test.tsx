@@ -2,8 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, test, vi } from "vitest";
 
 import { SettingsPanel } from "./SettingsPanel";
+import { clearSession, setSession } from "./session";
 
 afterEach(() => {
+  clearSession();
   vi.restoreAllMocks();
 });
 
@@ -1087,4 +1089,48 @@ test("a 422 no_egress_locked on save surfaces the message without throwing", asy
       screen.getByText(/enforced by the host and cannot be disabled from here/i),
     ).toBeInTheDocument(),
   );
+});
+
+test("tenant admins (non-platform) get a read-only model stack and no save bar", async () => {
+  setSession("jwt", {
+    id: "mgr",
+    email: "mgr@x.com",
+    role: "admin",
+    tenant_id: "t",
+    is_platform_admin: false,
+  });
+  mockApi();
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
+  expect(
+    screen.getByText(/Only platform admins can change these deployment defaults/),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Data pipeline model")).toBeDisabled();
+  expect(screen.getByLabelText("OCR engine")).toBeDisabled();
+});
+
+test("tenant admins (non-platform) see DRP status but no backup/restore actions", async () => {
+  setSession("jwt", {
+    id: "mgr",
+    email: "mgr@x.com",
+    role: "admin",
+    tenant_id: "t",
+    is_platform_admin: false,
+  });
+  mockApi();
+  render(<SettingsPanel />);
+  fireEvent.click(await screen.findByRole("tab", { name: "DRP" }));
+  await waitFor(() =>
+    expect(
+      screen.getByText(/Backup export and restore are managed by platform admins/),
+    ).toBeInTheDocument(),
+  );
+  // Status + history stay readable; the action sections are gone.
+  expect(screen.getByText("Files (restic)")).toBeInTheDocument();
+  expect(screen.getByText("Backup history")).toBeInTheDocument();
+  expect(screen.queryByText("Recovery drill")).not.toBeInTheDocument();
+  expect(screen.queryByText("Portable backup")).not.toBeInTheDocument();
+  expect(screen.queryByText("Restore from a backup file")).not.toBeInTheDocument();
 });

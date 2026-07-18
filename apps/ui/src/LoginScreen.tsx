@@ -24,6 +24,7 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
         email: result.user.email,
         role: result.user.role,
         tenant_id: result.user.tenant_id,
+        is_platform_admin: result.user.is_platform_admin,
       });
       onLoggedIn();
     } catch (err) {

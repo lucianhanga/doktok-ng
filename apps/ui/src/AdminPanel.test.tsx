@@ -3,8 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { AdminPanel } from "./AdminPanel";
+import { clearSession, setSession } from "./session";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  clearSession();
+  vi.unstubAllGlobals();
+});
 
 const CTX = {
   tenant_id: "3f9a2c1b-0000-4000-8000-000000000000",
@@ -98,4 +102,50 @@ test("the caller's own row cannot be deactivated", async () => {
   await waitFor(() => expect(screen.getByText("(you)")).toBeInTheDocument());
   const selfRow = screen.getByRole("cell", { name: /alice@x\.com/ }).closest("tr")!;
   expect(within(selfRow).getByRole("button", { name: "Deactivate" })).toBeDisabled();
+});
+
+test("tenant admins (non-platform) do not see instance administration and skip the tenants fetch", async () => {
+  setSession("jwt", {
+    id: "mgr",
+    email: "mgr@x.com",
+    role: "admin",
+    tenant_id: "t",
+    is_platform_admin: false,
+  });
+  const urls: string[] = [];
+  stub((url) => {
+    urls.push(url);
+    return undefined;
+  });
+  render(<AdminPanel />);
+  await waitFor(() => expect(screen.getByRole("cell", { name: /alice@x\.com/ })).toBeInTheDocument());
+  expect(screen.queryByRole("heading", { name: "Instance administration" })).not.toBeInTheDocument();
+  expect(urls.every((u) => !u.endsWith("/admin/tenants"))).toBe(true);
+});
+
+test("platform admins see instance administration and the direct-create tenant picker", async () => {
+  stub((url) => {
+    if (url.endsWith("/admin/tenants")) {
+      return [{ id: "t2", name: "Second", status: "active", created_at: null }];
+    }
+    return undefined;
+  });
+  render(<AdminPanel />);
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Instance administration" })).toBeInTheDocument(),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Invite member" }));
+  await userEvent.click(screen.getByLabelText(/Create directly with a password now/));
+  expect(screen.getByLabelText("Target tenant")).toBeInTheDocument();
+});
+
+test("members flagged as platform owners show a badge", async () => {
+  stub((url) => {
+    if (url.endsWith("/admin/users")) {
+      return [{ ...USERS[0], is_platform_admin: true }, USERS[1]];
+    }
+    return undefined;
+  });
+  render(<AdminPanel />);
+  await waitFor(() => expect(screen.getByText(/· platform/)).toBeInTheDocument());
 });

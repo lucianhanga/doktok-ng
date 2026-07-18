@@ -170,6 +170,8 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     # Per-token rate limiter (APP-9); only active when configured (>0).
     import threading
 
+    from doktok_core.security.auth import hash_token
+
     from doktok_api.metrics import Metrics
     from doktok_api.ratelimit import RateLimiter
 
@@ -248,12 +250,14 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             elif len(cl) > 18 or int(cl) > body_limit:  # 18 digits bounds int() cost (F-27)
                 return JSONResponse(status_code=413, content={"detail": "request body too large"})
         # Per-token rate limit (APP-9); health/ready/metrics are exempt so probes aren't throttled.
+        # The bucket key is the token's sha256 (F-06): fixed size regardless of the presented
+        # token's length, and no credential material kept in memory.
         limiter = request.app.state.rate_limiter
         if limiter is not None and request.url.path not in _exempt_paths:
             auth = request.headers.get("Authorization", "")
             token = auth[7:] if auth.startswith("Bearer ") else ""
             if token:
-                allowed, retry_after = limiter.allow(token)
+                allowed, retry_after = limiter.allow(hash_token(token))
                 if not allowed:
                     return JSONResponse(
                         status_code=429,

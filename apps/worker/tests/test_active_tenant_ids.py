@@ -1,9 +1,21 @@
 """Worker watched-set = env token-map UNION active DB tenants, minus suspended ones."""
 
+import os
+
+import pytest
 from doktok_contracts.schemas import Tenant
 from doktok_core.config import Settings
 from doktok_core.security.inmemory import InMemoryTenantRegistry
 from doktok_worker.composition import active_tenant_ids
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Settings(_env_file=None) still honors real process env vars; scrub them so a developer's
+    # exported .env (e.g. under `make check`) cannot leak into these assertions.
+    for key in list(os.environ):
+        if key.startswith("DOKTOK_"):
+            monkeypatch.delenv(key, raising=False)
 
 
 def _settings(**tokens: str) -> Settings:

@@ -757,6 +757,11 @@ class TenantRegistry(Protocol):
         deactivation is an immediate, authoritative revocation of all their credentials."""
         ...
 
+    def set_platform_admin(self, tenant_id: str, user_id: str, value: bool) -> None:
+        """Set a user's platform-owner flag (#613, ADR-0025). Grant/revoke is restricted to
+        existing platform admins at the API layer; the registry just persists the flag."""
+        ...
+
     def create_invitation(self, invitation: Invitation) -> None:
         """Persist a pending invitation (its ``token_sha256`` + expiry), #557."""
         ...

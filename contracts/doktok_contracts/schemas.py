@@ -102,6 +102,7 @@ class AuditEventType(StrEnum):
     TENANT_CREATED = "tenant.created"
     USER_CREATED = "user.created"
     USER_ROLE_CHANGED = "user.role_changed"
+    USER_PLATFORM_ADMIN_CHANGED = "user.platform_admin_changed"  # #613 (ADR-0025) grant/revoke
     USER_PASSWORD_RESET = "user.password_reset"  # pragma: allowlist secret
     API_TOKEN_ISSUED = "api_token.issued"
     API_TOKEN_REVOKED = "api_token.revoked"
@@ -154,10 +155,14 @@ class TenantContext(BaseModel):
 
     ``user_id`` is populated when the request authenticated via a user-scoped DB token (#554);
     it is ``None`` for the static env-map fallback and for tenant-scoped tokens without a user.
+    ``platform_admin`` marks the deployment-level platform owner (#613, ADR-0025): host-provisioned
+    static tokens, and users whose ``is_platform_admin`` flag is set. DB-minted user-less api tokens
+    are tenant admins but never platform admins.
     """
 
     tenant_id: str
     user_id: str | None = None
+    platform_admin: bool = False
 
 
 class Tenant(BaseModel):
@@ -184,6 +189,7 @@ class User(BaseModel):
     display_name: str = ""
     status: str = "active"  # active | deactivated
     role: str = "viewer"  # viewer | editor | admin (RBAC, #556)
+    is_platform_admin: bool = False  # deployment-level platform owner (#613, ADR-0025)
     password_hash: str | None = None
     created_at: datetime | None = None
 
@@ -207,10 +213,16 @@ class ApiToken(BaseModel):
 
 
 class TokenResolution(BaseModel):
-    """The tenant (and optional user) a presented bearer token resolves to (#554)."""
+    """The tenant (and optional user) a presented bearer token resolves to (#554).
+
+    ``via`` records WHICH credential tier resolved the token (#613, ADR-0025): ``"db"`` (registry
+    api_tokens), ``"static"`` (the host-provisioned env map - platform admin), or ``"jwt"`` (a login
+    session token). The API uses it to compute platform-admin status without re-deriving the tier.
+    """
 
     tenant_id: str
     user_id: str | None = None
+    via: str = "db"  # db | static | jwt
 
 
 class Invitation(BaseModel):

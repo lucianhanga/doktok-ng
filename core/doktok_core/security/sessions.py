@@ -71,4 +71,4 @@ def decode_access_token(
             return None
     except (TypeError, ValueError, KeyError):
         return None
-    return TokenResolution(tenant_id=str(payload["tenant"]), user_id=str(payload["sub"]))
+    return TokenResolution(tenant_id=str(payload["tenant"]), user_id=str(payload["sub"]), via="jwt")

@@ -67,7 +67,8 @@ def resolve_token(
     if static_tokens:
         tenant_id = resolve_tenant(static_tokens, presented)
         if tenant_id is not None:
-            return TokenResolution(tenant_id=tenant_id, user_id=None)
+            # Host-provisioned static token: the deployment's platform tier (#613, ADR-0025).
+            return TokenResolution(tenant_id=tenant_id, user_id=None, via="static")
     return None
 
 

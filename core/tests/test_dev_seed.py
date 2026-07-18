@@ -69,3 +69,30 @@ def test_reset_rotates_existing_passwords() -> None:
     assert admin is not None
     assert verify_password(new_pw, admin.password_hash)
     assert not verify_password(FIXED, admin.password_hash)  # old password no longer works
+
+
+def test_seeded_admin_is_platform_admin() -> None:
+    # The dev admin doubles as the platform-owner persona for UI login (#613, ADR-0025); the
+    # editor/viewer stay non-platform so both denial paths are exercisable.
+    reg = InMemoryTenantRegistry()
+    seed_dev(reg, password_for=_pw)
+    flags = {
+        email: reg.get_user_by_email(DEV_TENANT_ID, email).is_platform_admin  # type: ignore[union-attr]
+        for email, _role in DEV_USERS
+    }
+    assert flags == {
+        "dev-admin@doktok.local": True,
+        "dev-editor@doktok.local": False,
+        "dev-viewer@doktok.local": False,
+    }
+
+
+def test_reset_resyncs_the_platform_flag() -> None:
+    reg = InMemoryTenantRegistry()
+    seed_dev(reg, password_for=_pw)
+    admin = reg.get_user_by_email(DEV_TENANT_ID, "dev-admin@doktok.local")
+    assert admin is not None
+    reg.set_platform_admin(DEV_TENANT_ID, admin.id, False)  # revoked out-of-band
+    seed_dev(reg, password_for=_pw, reset=True)
+    admin = reg.get_user_by_email(DEV_TENANT_ID, "dev-admin@doktok.local")
+    assert admin is not None and admin.is_platform_admin is True

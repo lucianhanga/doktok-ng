@@ -71,6 +71,7 @@ class AdminUserView(BaseModel):
     display_name: str = ""
     role: str
     status: str
+    is_platform_admin: bool = False
 
 
 def _user_view(user: User) -> AdminUserView:
@@ -80,6 +81,7 @@ def _user_view(user: User) -> AdminUserView:
         display_name=user.display_name,
         role=user.role,
         status=user.status,
+        is_platform_admin=user.is_platform_admin,
     )
 
 
@@ -99,6 +101,10 @@ class CreateUserRequest(BaseModel):
 
 class SetRoleRequest(BaseModel):
     role: str
+
+
+class SetPlatformAdminRequest(BaseModel):
+    platform_admin: bool
 
 
 class SetPasswordRequest(BaseModel):
@@ -262,6 +268,46 @@ def set_user_role(
         record_id=user_id,
         description=f'Role for "{user.email}" changed from {user.role} to {role}',
         details={"user_id": user_id, "from": user.role, "to": role},
+    )
+    updated = registry.get_user(caller.tenant_id, user_id)
+    assert updated is not None
+    return _user_view(updated)
+
+
+@router.post("/users/{user_id}/platform-admin", response_model=AdminUserView)
+def set_platform_admin(
+    user_id: str, body: SetPlatformAdminRequest, caller: AdminUser, registry: Registry, audit: Audit
+) -> AdminUserView:
+    """Grant/revoke the platform-owner flag (#613, ADR-0025). Platform admins only: the flag is the
+    key to deployment-spanning surfaces (backup export/restore, DRP, tenant provisioning), so it is
+    never self-bootstrapable - an existing platform admin must grant it, and it cannot be granted
+    through user creation. Self-revoke is blocked so an operator cannot lock the deployment out."""
+    if not caller.platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="platform administrator required"
+        )
+    user = registry.get_user(caller.tenant_id, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such user")
+    if user_id == caller.user_id and not body.platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="you cannot revoke your own platform-admin status",
+        )
+    registry.set_platform_admin(caller.tenant_id, user_id, body.platform_admin)
+    record_activity(
+        audit,
+        caller.tenant_id,
+        AuditEventType.USER_PLATFORM_ADMIN_CHANGED,
+        actor=actor_identity(caller),
+        actor_kind="user",
+        record_kind="user",
+        record_id=user_id,
+        description=(
+            f"Platform admin {'granted to' if body.platform_admin else 'revoked from'} "
+            f'"{user.email}"'
+        ),
+        details={"user_id": user_id, "platform_admin": body.platform_admin},
     )
     updated = registry.get_user(caller.tenant_id, user_id)
     assert updated is not None

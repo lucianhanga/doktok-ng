@@ -45,6 +45,12 @@ def main() -> int:
     ap.add_argument("--id", help="explicit tenant id (default: a generated UUID)")
     ap.add_argument("--admin-email", help="also create a first admin user with this email")
     ap.add_argument("--admin-password", help="password for --admin-email (>= 12 chars)")
+    ap.add_argument(
+        "--platform-admin",
+        action="store_true",
+        help="make the --admin-email user a platform admin (#613, ADR-0025): they can reach the "
+        "deployment-spanning surfaces (backup export/restore, DRP, tenant provisioning)",
+    )
     ap.add_argument("--no-token", action="store_true", help="do not mint a bootstrap admin token")
     ap.add_argument("--allow-remote", action="store_true", help="permit a non-loopback database")
     ap.add_argument("-y", "--yes", action="store_true", help="skip the outside-local/dev confirm")
@@ -97,11 +103,14 @@ def main() -> int:
                     email=args.admin_email.strip(),
                     role="admin",
                     status="active",
+                    is_platform_admin=args.platform_admin,
                     password_hash=hash_password(args.admin_password),
                 )
             )
+            platform_note = ", platform admin" if args.platform_admin else ""
             admin_line = (
-                f"  admin user:    {args.admin_email} (role admin) - log in with this tenant id"
+                f"  admin user:    {args.admin_email} (role admin{platform_note})"
+                " - log in with this tenant id"
             )
     finally:
         db.close()

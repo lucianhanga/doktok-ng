@@ -47,7 +47,7 @@ class QwenReranker:
 
         self._torch = torch
         self._tok = AutoTokenizer.from_pretrained(model, padding_side="left")
-        self._model = AutoModelForCausalLM.from_pretrained(model).eval()
+        self._model = AutoModelForCausalLM.from_pretrained(model).eval()  # type: ignore[no-untyped-call]
         self._device = _pick_device(device, torch)
         self._model.to(self._device)
         self._max_length = max_length

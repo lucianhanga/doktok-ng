@@ -1,6 +1,18 @@
+import os
+
 import pytest
 from doktok_core.config import Settings
 from doktok_core.registry import PortNotRegistered, Registry, build_registry
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Settings(_env_file=None) still honors real process env vars; scrub them so a developer's
+    # exported .env (e.g. under `make check`) cannot leak into these assertions. Tests set the
+    # DOKTOK_* vars they exercise explicitly via monkeypatch.
+    for key in list(os.environ):
+        if key.startswith("DOKTOK_"):
+            monkeypatch.delenv(key, raising=False)
 
 
 def _settings_without_env_file() -> Settings:

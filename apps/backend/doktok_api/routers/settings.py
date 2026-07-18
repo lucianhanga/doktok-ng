@@ -53,7 +53,11 @@ from doktok_contracts.schemas import (
 )
 from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.backup.export import ExportPaths
-from doktok_core.security.egress import effective_no_egress, purpose_requires_egress
+from doktok_core.security.egress import (
+    effective_no_egress,
+    is_loopback_url,
+    purpose_requires_egress,
+)
 from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
@@ -172,6 +176,20 @@ def _resolve_no_egress(repo: AppSettingsRepository, settings: Any) -> tuple[bool
         repo.get_no_egress(), env_default=settings.no_egress, lock=locked
     )
     return no_egress, locked
+
+
+def _refuse_egress_probe(repo: AppSettingsRepository, settings: Any, *, remote: bool) -> None:
+    """Egress gate for the AI test/probe endpoints (#622, F-07). Probing api.openai.com - or a
+    remote Ollama URL - opens a connection OFF this host; under no-egress that violates the
+    deployment's guarantee, and it made these endpoints a blind SSRF into the host's network
+    (connect/timeout/status oracle plus a reflected error-body snippet). Refused with 422, the
+    same contract the PUT /ai boundary uses."""
+    no_egress, _locked = _resolve_no_egress(repo, settings)
+    if no_egress and remote:
+        raise HTTPException(
+            status_code=422,
+            detail="egress is not permitted by the no-egress policy (probe targets must be local)",
+        )
 
 
 def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> AiSettingsResponse:
@@ -408,13 +426,17 @@ def _warmup_ollama(url: str, model: str) -> tuple[bool, str]:
 
 
 @router.post("/ai/test-ollama", response_model=OllamaTestResult)
-def test_ollama_url(req: OllamaTestRequest, request: Request, tenant: Tenant) -> OllamaTestResult:
+def test_ollama_url(
+    req: OllamaTestRequest, request: Request, tenant: Tenant, repo: Repo
+) -> OllamaTestResult:
     """Probe an Ollama server (the override, or the configured default if blank) before saving. When
-    a model is supplied, also report whether it is installed (a fast check; no model is loaded)."""
+    a model is supplied, also report whether it is installed (a fast check; no model is loaded).
+    Remote targets are refused under no-egress (#622, F-07)."""
     _ = tenant
     _validate_ollama_url(req.url, "url")
     settings = request.app.state.settings
     url = (req.url or "").strip() or settings.ollama_base_url
+    _refuse_egress_probe(repo, settings, remote=not is_loopback_url(url))
     ok, detail, names = _probe_ollama(url)
     model = req.model.strip()
     model_present: bool | None = None
@@ -428,13 +450,17 @@ def test_ollama_url(req: OllamaTestRequest, request: Request, tenant: Tenant) ->
 
 
 @router.post("/ai/warmup-ollama", response_model=OllamaWarmupResult)
-def warmup_ollama(req: OllamaWarmupRequest, request: Request, tenant: Tenant) -> OllamaWarmupResult:
+def warmup_ollama(
+    req: OllamaWarmupRequest, request: Request, tenant: Tenant, repo: Repo
+) -> OllamaWarmupResult:
     """Preload a model into an Ollama server so the first real request is not cold (M13 follow-up).
-    Distinct from Test: this deliberately loads the model and can take a while on a large model."""
+    Distinct from Test: this deliberately loads the model and can take a while on a large model.
+    Remote targets are refused under no-egress (#622, F-07)."""
     _ = tenant
     _validate_ollama_url(req.url, "url")
     settings = request.app.state.settings
     url = (req.url or "").strip() or settings.ollama_base_url
+    _refuse_egress_probe(repo, settings, remote=not is_loopback_url(url))
     model = req.model.strip()
     ok, detail = _warmup_ollama(url, model)
     return OllamaWarmupResult(ok=ok, detail=detail, url=url, model=model)
@@ -464,12 +490,15 @@ def _probe_openai(key: str) -> tuple[bool, str]:
 def test_openai_key(
     req: OpenAiTestRequest, request: Request, tenant: Tenant, repo: Repo
 ) -> OpenAiTestResult:
-    """Validate the candidate OpenAI key (or the stored one if blank) before saving (M13)."""
+    """Validate the candidate OpenAI key (or the stored one if blank) before saving (M13). With no
+    key at all the probe reports failure WITHOUT a network call; with one, it is refused under
+    no-egress (#622, F-07): the probe itself is an egress call to api.openai.com."""
     _ = tenant
     settings = request.app.state.settings
     key = (req.api_key or "").strip() or repo.get_openai_api_key() or settings.openai_api_key
     if not key:
         return OpenAiTestResult(ok=False, detail="no API key provided or stored")
+    _refuse_egress_probe(repo, settings, remote=True)
     ok, detail = _probe_openai(key)
     return OpenAiTestResult(ok=ok, detail=detail)
 

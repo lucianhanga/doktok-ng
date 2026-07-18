@@ -185,7 +185,7 @@ def test_test_ollama_reports_selected_model_installed(monkeypatch: pytest.Monkey
         "_probe_ollama",
         lambda url: (True, "reachable - 2 model(s) installed", ["qwen3:30b", "nomic-embed:latest"]),
     )
-    client = _client()
+    client = _client(no_egress=False)  # remote probe URLs need egress permitted (#622)
     resp = client.post(
         "/api/v1/settings/ai/test-ollama",
         json={"url": "http://10.0.0.5:11434", "model": "qwen3:30b"},
@@ -206,7 +206,7 @@ def test_test_ollama_flags_missing_model(monkeypatch: pytest.MonkeyPatch) -> Non
         "_probe_ollama",
         lambda url: (True, "reachable - 1 model(s) installed", ["nomic-embed:latest"]),
     )
-    client = _client()
+    client = _client(no_egress=False)  # remote probe URLs need egress permitted (#622)
     resp = client.post(
         "/api/v1/settings/ai/test-ollama",
         json={"url": "http://10.0.0.5:11434", "model": "qwen3:30b"},
@@ -224,7 +224,7 @@ def test_warmup_ollama_loads_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         settings_router, "_warmup_ollama", lambda url, model: (True, f"model '{model}' loaded")
     )
-    client = _client()
+    client = _client(no_egress=False)  # remote probe URLs need egress permitted (#622)
     resp = client.post(
         "/api/v1/settings/ai/warmup-ollama",
         json={"url": "http://10.0.0.5:11434", "model": "qwen3:30b"},

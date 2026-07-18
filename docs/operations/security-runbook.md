@@ -17,10 +17,13 @@ This deployment deliberately departs from the local-first / no-egress default:
   Ollama embedder); pgvector and the file tree never leave the box.
 
 `DOKTOK_NO_EGRESS=true` blocks OpenAI entirely (APP-3): the system refuses to egress and falls back
-to the local model. The hybrid requires `DOKTOK_NO_EGRESS=false` as the explicit opt-in. The actual
-outbound traffic is then constrained at the host firewall, not in the app. Communicate this to
-stakeholders before ingesting sensitive material, and review OpenAI's data-handling terms. If
-on-prem confidentiality is required, use the separate-LAN-Ollama-host option in ADR-0020 instead.
+to the local model. The same posture gates the Settings **test/probe endpoints** (#622): under
+no-egress, `test-openai` is refused and `test-ollama`/`warmup-ollama` accept only loopback targets
+- they cannot be used to reach the host's network. The hybrid requires `DOKTOK_NO_EGRESS=false` as
+the explicit opt-in. The actual outbound traffic is then constrained at the host firewall, not in
+the app. Communicate this to stakeholders before ingesting sensitive material, and review OpenAI's
+data-handling terms. If on-prem confidentiality is required, use the separate-LAN-Ollama-host
+option in ADR-0020 instead.
 
 ## Exposure checklist (before going live)
 

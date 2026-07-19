@@ -66,3 +66,12 @@ def test_search_returns_hits_for_caller_tenant() -> None:
     assert response.status_code == 200
     assert response.json()[0]["snippet"] == "quarterly revenue grew"
     assert retriever.calls == [("tenant-a", "revenue", 10)]
+
+
+def test_search_query_is_length_bounded() -> None:
+    # F-39 (#651): an absurd-length q costs DB CPU per request - 422 before any scan.
+    client = _client(FakeRetriever([]))
+    resp = client.get(f"/api/v1/search?q={'x' * 501}", headers={"Authorization": "Bearer tok-a"})
+    assert resp.status_code == 422
+    ok = client.get(f"/api/v1/search?q={'x' * 500}", headers={"Authorization": "Bearer tok-a"})
+    assert ok.status_code == 200

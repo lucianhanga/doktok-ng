@@ -285,3 +285,28 @@ def test_sort_by_chunks_and_cursor_round_trip() -> None:
     ).json()
     assert [d["id"] for d in p2["items"]] == ["c0"]
     assert p2["next_cursor"] is None
+
+
+# ---------------------------------------------------------------------------
+# F-39 (#651): free-text query params are length-bounded
+# ---------------------------------------------------------------------------
+
+
+def test_title_and_category_params_are_length_bounded() -> None:
+    # F-39: unbounded title/category feed ILIKE scans; >500 chars is a client error, not DB work.
+    client = _client(_doc("d1", "tenant-a"))
+    assert (
+        client.get(f"/api/v1/documents?title={'x' * 501}", headers=_auth("tok-a")).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            f"/api/v1/documents/ids?category={'x' * 501}", headers=_auth("tok-a")
+        ).status_code
+        == 422
+    )
+    # The boundary value still passes.
+    assert (
+        client.get(f"/api/v1/documents?title={'x' * 500}", headers=_auth("tok-a")).status_code
+        == 200
+    )

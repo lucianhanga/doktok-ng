@@ -676,7 +676,10 @@ def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator 
     use_openai = pl.provider == "openai" and openai_egress_allowed(
         key=openai_key, no_egress=no_egress
     )
-    timeout: float = settings.ollama_timeout_seconds
+    # The adjudicator is REQUEST-scoped (the merge-suggestions GET), so it gets the interactive
+    # budget, not the 600s ingestion one (F-15): a hung/slow model can pin a request thread for
+    # minutes, never for hours.
+    timeout: float = settings.rag_timeout_seconds
 
     if use_openai:
         from doktok_provider_openai.adjudicator import OpenAiEntityMergeAdjudicator

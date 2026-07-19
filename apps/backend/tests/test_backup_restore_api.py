@@ -421,3 +421,25 @@ def test_second_preview_is_429_while_one_is_staged(tmp_path: Path) -> None:
     )
     assert resp.status_code == 429
     restore_mod.release_preview(export_dir)
+
+
+def test_download_passphrase_min_length_is_12(tmp_path: Path) -> None:
+    # F-17: the backup passphrase floor is 12 chars (matching the login password policy).
+    client, _, _, _ = _make_client(tmp_path)
+    resp = client.post(
+        "/api/v1/settings/backup/export/x/download",
+        json={"passphrase": "short-pw1"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 422
+
+
+def test_preview_passphrase_min_length_is_12(tmp_path: Path) -> None:
+    client, _, _, _ = _make_client(tmp_path)
+    resp = client.post(
+        "/api/v1/settings/backup/restore/preview",
+        files={"file": ("a.enc", b"ciphertext", "application/octet-stream")},
+        data={"passphrase": "short-pw1"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 422

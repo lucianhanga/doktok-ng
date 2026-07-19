@@ -25,7 +25,7 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _build(
-    *, jwt_secret: str = JWT_SECRET, login_rate: int = 5, ip_rate: int = 20
+    *, jwt_secret: str = JWT_SECRET, login_rate: int = 5, ip_rate: int = 20, env: str = "test"
 ) -> tuple[TestClient, InMemoryAuditLogRepository]:
     reg = InMemoryTenantRegistry()
     reg.create_tenant(Tenant(id="tenant-a", name="Tenant A"))
@@ -43,7 +43,7 @@ def _build(
     registry.register(TenantRegistry, reg)  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
     settings = Settings(
-        env="test",
+        env=env,
         auth_jwt_secret=jwt_secret,
         tenant_tokens={"tok-a": "tenant-a"},
         login_rate_per_minute=login_rate,
@@ -53,8 +53,10 @@ def _build(
     return TestClient(create_app(settings=settings, registry=registry)), audit
 
 
-def _client(*, jwt_secret: str = JWT_SECRET, login_rate: int = 5, ip_rate: int = 20) -> TestClient:
-    return _build(jwt_secret=jwt_secret, login_rate=login_rate, ip_rate=ip_rate)[0]
+def _client(
+    *, jwt_secret: str = JWT_SECRET, login_rate: int = 5, ip_rate: int = 20, env: str = "test"
+) -> TestClient:
+    return _build(jwt_secret=jwt_secret, login_rate=login_rate, ip_rate=ip_rate, env=env)[0]
 
 
 def _login(client: TestClient, email: str, password: str) -> int:
@@ -223,3 +225,28 @@ def test_single_xff_value_is_honored() -> None:
     assert _login_xff(client, "203.0.113.9") == 401
     assert _login_xff(client, "203.0.113.9") == 401
     assert _login_xff(client, "203.0.113.9") == 429
+
+
+# ---------------------------------------------------------------------------
+# F-35 (#647): a weak JWT secret disables login OUTSIDE local/dev/test
+# ---------------------------------------------------------------------------
+
+
+def test_weak_jwt_secret_disables_login_in_production() -> None:
+    # A short HS256 secret is offline-crackable from a single captured token; outside local-first
+    # dev/test the deployment must fail closed (login disabled) rather than sign with it.
+    client = _client(jwt_secret="short-secret-16b", env="production")
+    assert client.get("/api/v1/auth/config").json() == {"login_enabled": False}
+    assert _login(client, "alice@x.com", GOOD_PW) == 503
+
+
+def test_weak_jwt_secret_still_works_in_local_dev() -> None:
+    # Local-first dev boxes are exempt (never wedge a developer).
+    client = _client(jwt_secret="short-secret-16b", env="local")
+    assert client.get("/api/v1/auth/config").json() == {"login_enabled": True}
+    assert _login(client, "alice@x.com", GOOD_PW) == 200
+
+
+def test_strong_jwt_secret_works_in_production() -> None:
+    client = _client(jwt_secret=JWT_SECRET, env="production")
+    assert _login(client, "alice@x.com", GOOD_PW) == 200

@@ -50,21 +50,31 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _WORKER_STALE_SECONDS = 120
 
 
-_MIN_JWT_SECRET_BYTES = 32
-
-
 def _check_login_secret(settings: Settings) -> None:
     """Warn (loudly) about a weak or cross-purpose JWT signing secret when login is enabled (CISO
     M5). HS256 is only as strong as its secret; a short one is offline-crackable from any captured
-    token. We warn rather than refuse so a local-first dev box is never wedged, but the operator
-    should mint a dedicated ``DOKTOK_AUTH_JWT_SECRET`` (openssl rand -base64 48)."""
+    token. Local-first dev boxes only get the warning (never wedge a developer); everywhere else a
+    short dedicated secret DISABLES login (F-35, #647 - see effective_jwt_secret) and gets an
+    error. The operator should mint a dedicated ``DOKTOK_AUTH_JWT_SECRET``
+    (openssl rand -base64 48)."""
+    from doktok_api.dependencies import MIN_JWT_SECRET_BYTES, WEAK_SECRET_EXEMPT_ENVS
+
     if settings.auth_jwt_secret:
-        if len(settings.auth_jwt_secret.encode()) < _MIN_JWT_SECRET_BYTES:
-            logger.warning(
-                "DOKTOK_AUTH_JWT_SECRET is shorter than %d bytes; use a longer random secret "
-                "(openssl rand -base64 48) - short HS256 secrets are offline-crackable",
-                _MIN_JWT_SECRET_BYTES,
-            )
+        if len(settings.auth_jwt_secret.encode()) < MIN_JWT_SECRET_BYTES:
+            if settings.env not in WEAK_SECRET_EXEMPT_ENVS:
+                logger.error(
+                    "DOKTOK_AUTH_JWT_SECRET is shorter than %d bytes and env=%r is not a dev "
+                    "environment - LOGIN IS DISABLED (F-35). Set a longer random secret "
+                    "(openssl rand -base64 48) to re-enable it",
+                    MIN_JWT_SECRET_BYTES,
+                    settings.env,
+                )
+            else:
+                logger.warning(
+                    "DOKTOK_AUTH_JWT_SECRET is shorter than %d bytes; use a longer random secret "
+                    "(openssl rand -base64 48) - short HS256 secrets are offline-crackable",
+                    MIN_JWT_SECRET_BYTES,
+                )
     elif settings.secrets_key:
         logger.warning(
             "login is signing JWTs with DOKTOK_SECRETS_KEY (no dedicated DOKTOK_AUTH_JWT_SECRET); "

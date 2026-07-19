@@ -128,12 +128,29 @@ def require_tenant(
     )
 
 
+MIN_JWT_SECRET_BYTES = 32  # HS256 keys below this are offline-crackable (F-35)
+
+# Environments where a weak JWT secret is tolerated (never wedge a local-first dev box or the
+# test suite); everywhere else a short dedicated secret disables login entirely (F-35, #647).
+WEAK_SECRET_EXEMPT_ENVS = frozenset({"local", "dev", "test"})
+
+
 def effective_jwt_secret(settings: object) -> str:
     """The secret used to sign/verify login session JWTs (#555): the dedicated
     ``DOKTOK_AUTH_JWT_SECRET`` if set, else the purpose-separated ``jwt`` subkey of
-    ``DOKTOK_SECRETS_KEY`` (#631, F-16 - not the raw master key), else empty (login disabled)."""
+    ``DOKTOK_SECRETS_KEY`` (#631, F-16 - not the raw master key), else empty (login disabled).
+
+    F-35 (#647): a dedicated secret shorter than :data:`MIN_JWT_SECRET_BYTES` is
+    offline-crackable from a single captured token. Outside ``WEAK_SECRET_EXEMPT_ENVS`` it is
+    refused here - returned as empty, so neither issuing nor verification can use it (login
+    reports 503; API/static tokens keep working). The derived jwt subkey is always 32 bytes, so
+    only the dedicated secret can trip this gate.
+    """
     dedicated = getattr(settings, "auth_jwt_secret", "")
     if dedicated:
+        env = getattr(settings, "env", "local")
+        if env not in WEAK_SECRET_EXEMPT_ENVS and len(dedicated.encode()) < MIN_JWT_SECRET_BYTES:
+            return ""
         return dedicated
     fallback = getattr(settings, "secrets_key", "")
     if not fallback:

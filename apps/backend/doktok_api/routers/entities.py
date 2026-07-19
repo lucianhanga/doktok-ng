@@ -340,26 +340,35 @@ def get_kg_neighborhood(
 
 @router.get("/{entity_id}/documents", response_model=list[Document])
 def documents_for_kg_entity(
-    entity_id: str, tenant: Tenant, kg: KgRepo, docs: Docs
+    entity_id: str,
+    tenant: Tenant,
+    kg: KgRepo,
+    docs: Docs,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[Document]:
     """Documents containing a KG entity, resolved through its mentions (not by value).
 
     A merged/folded entity's documents mentioned an ALIAS surface form, not the canonical value, so
     a value-based lookup misses them. Going through ``kg_entity_mentions`` (which point at the
-    canonical node) returns every document behind the node, aliases included.
+    canonical node) returns every document behind the node, aliases included. Paged (#628, F-18):
+    mentions are fetched bounded and the documents are batch-loaded in ONE query - no N+1 for hot
+    entities with thousands of mentions.
     """
+    # Dedup document ids preserving mention order. Mentions may repeat a document, so fetch a bit
+    # wider than the page to fill it (bounded either way).
     seen: set[str] = set()
     ordered_ids: list[str] = []
-    for mention in kg.mentions_for_entity(tenant.tenant_id, entity_id):
+    for mention in kg.mentions_for_entity(
+        tenant.tenant_id, entity_id, limit=max(limit * 4, 50), offset=offset
+    ):
         if mention.document_id not in seen:
             seen.add(mention.document_id)
             ordered_ids.append(mention.document_id)
-    result: list[Document] = []
-    for document_id in ordered_ids:
-        document = docs.get(tenant.tenant_id, document_id)
-        if document is not None:
-            result.append(document)
-    return result
+        if len(ordered_ids) >= limit:
+            break
+    by_id = {d.id: d for d in docs.get_many(tenant.tenant_id, ordered_ids)}
+    return [by_id[i] for i in ordered_ids if i in by_id]
 
 
 @router.post("/{canonical_id}/merge", response_model=KgEntity)

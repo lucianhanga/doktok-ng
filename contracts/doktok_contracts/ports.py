@@ -97,6 +97,10 @@ from doktok_contracts.schemas import (
 @runtime_checkable
 class DocumentRepository(Protocol):
     def get(self, tenant_id: str, document_id: str) -> Document | None: ...
+    def get_many(self, tenant_id: str, document_ids: list[str]) -> list[Document]:
+        """Batch-fetch documents by id in ONE query (``id = ANY(...)``), tenant-scoped (#628,
+        F-18). Callers with a list of ids must never loop over :meth:`get` - that is an N+1."""
+        ...
     def add(self, document: Document) -> None:
         """Insert a document. Raises ``DuplicateActiveDocumentError`` if an active document with the
         same (tenant_id, sha256) already exists (the content-dedup invariant)."""
@@ -890,9 +894,12 @@ class KnowledgeGraphRepository(Protocol):
 
     def mentions_for_document(self, tenant_id: str, document_id: str) -> list[KgEntityMention]: ...
 
-    def mentions_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEntityMention]:
-        """All mentions (across documents) resolving to one canonical node - the cross-document
-        readout and a Phase-3 traversal seed."""
+    def mentions_for_entity(
+        self, tenant_id: str, entity_id: str, *, limit: int | None = None, offset: int = 0
+    ) -> list[KgEntityMention]:
+        """Mentions (across documents) resolving to one canonical node - the cross-document
+        readout and a Phase-3 traversal seed. ``limit``/``offset`` page the rows (#628, F-18);
+        the default (None) returns all, preserving the pre-pagination behavior."""
         ...
 
     def entity_count(self, tenant_id: str) -> int:

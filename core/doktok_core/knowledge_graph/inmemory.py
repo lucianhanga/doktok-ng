@@ -108,12 +108,16 @@ class InMemoryKnowledgeGraphRepository:
             if m.tenant_id == tenant_id and m.document_id == document_id
         ]
 
-    def mentions_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEntityMention]:
-        return [
+    def mentions_for_entity(
+        self, tenant_id: str, entity_id: str, *, limit: int | None = None, offset: int = 0
+    ) -> list[KgEntityMention]:
+        rows = [
             m.model_copy(deep=True)
             for m in self._mentions.values()
             if m.tenant_id == tenant_id and m.canonical_entity_id == entity_id
         ]
+        rows.sort(key=lambda m: m.mention_id)  # mirror the Postgres ORDER BY mention_id
+        return rows if limit is None else rows[offset : offset + limit]
 
     def entity_count(self, tenant_id: str) -> int:
         # Canonical nodes only: a merged alias is not a distinct entity (#508).

@@ -29,6 +29,30 @@ def test_hash_is_self_describing_scrypt() -> None:
     assert len(digest.split("$")) == 6
 
 
+def test_new_hashes_use_the_owasp_current_work_factor() -> None:
+    # F-30 (#642): N=2^17 (~128 MiB) per OWASP guidance - ~8x the offline-cracking cost of the
+    # old 2^14 per guess after a DB leak. Hashes are self-describing, so old ones still verify.
+    digest = hash_password("correct horse battery staple")
+    assert digest.split("$")[1] == str(2**17)
+
+
+def test_pre_change_2pow14_hash_still_verifies() -> None:
+    # A hash written before the work-factor raise carries its own parameters and still verifies.
+    import base64
+    import hashlib
+
+    salt = b"0123456789abcdef"
+    dk = hashlib.scrypt(b"s3cret!", salt=salt, n=2**14, r=8, p=1, dklen=32, maxmem=2**26)
+    stored = (
+        "scrypt$16384$8$1$"
+        + base64.urlsafe_b64encode(salt).decode()
+        + "$"
+        + base64.urlsafe_b64encode(dk).decode()
+    )
+    assert verify_password("s3cret!", stored) is True
+    assert verify_password("nope", stored) is False
+
+
 def test_hash_is_salted_and_unique() -> None:
     a = hash_password("same-password")
     b = hash_password("same-password")

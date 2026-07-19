@@ -25,10 +25,16 @@ class InMemoryAuditLogRepository:
         document_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        event_type_prefixes: tuple[str, ...] | None = None,
     ) -> list[AuditEvent]:
         matches = [
             e
             for e in reversed(self._events)
-            if e.tenant_id == tenant_id and (document_id is None or e.document_id == document_id)
+            if e.tenant_id == tenant_id
+            and (document_id is None or e.document_id == document_id)
+            and (
+                event_type_prefixes is None
+                or any(e.event_type.startswith(prefix) for prefix in event_type_prefixes)
+            )
         ]
         return [e.model_copy(deep=True) for e in matches[offset : offset + limit]]

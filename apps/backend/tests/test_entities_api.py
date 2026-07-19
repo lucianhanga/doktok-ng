@@ -356,7 +356,7 @@ def _merge_setup() -> tuple[TestClient, InMemoryKnowledgeGraphRepository, FakeAu
     registry = build_registry()
     registry.register(EntityRepository, FakeEntityRepository())
     registry.register(KnowledgeGraphRepository, kg)  # type: ignore[type-abstract]
-    registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, audit)
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
     return client, kg, audit
@@ -570,7 +570,7 @@ def _family_setup() -> tuple[TestClient, InMemoryKnowledgeGraphRepository, FakeA
     registry = build_registry()
     registry.register(EntityRepository, FakeEntityRepository())
     registry.register(KnowledgeGraphRepository, kg)  # type: ignore[type-abstract]
-    registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, audit)
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry)), kg, audit
 

@@ -39,6 +39,45 @@ def test_secrets_are_redacted() -> None:
     assert redact("Authorization: Bearer abc.def-123") == "Authorization: [REDACTED]"
 
 
+def test_dsn_credentials_are_redacted_but_structure_kept() -> None:
+    # F-31 (#643): a connection string's user:pass must never reach the logs; the host/db shape
+    # stays for debuggability.
+    out = redact("connecting to postgresql://doktok:s3cret-value@db:5432/doktok failed")
+    assert "s3cret-value" not in out
+    assert "postgresql://[REDACTED]@db:5432/doktok" in out
+
+
+def test_jwt_shaped_strings_are_redacted() -> None:
+    # F-31 (#643): a raw JWT (not preceded by 'Bearer') must not survive into a log line.
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.c2lnbmF0dXJlLXZhbHVl"
+    assert jwt not in redact(f"token was {jwt} ok")
+    assert "[REDACTED]" in redact(f"token was {jwt} ok")
+
+
+def test_text_mode_formatter_redacts_message_args_and_traceback() -> None:
+    # F-31 (#643): the default text formatter previously installed NO redaction - a secret in the
+    # message args or inside an exception traceback landed unmasked.
+    import io
+
+    from doktok_core.logging_setup import configure_logging
+
+    stream = io.StringIO()
+    configure_logging(json_format=False, level="INFO")
+    handler = logging.getLogger().handlers[0]
+    assert isinstance(handler, logging.StreamHandler)
+    handler.stream = stream
+
+    logger = logging.getLogger("doktok.test.f31")
+    logger.info("dsn is %s", "postgresql://u:s3cret@h/db")
+    try:
+        raise RuntimeError("boom for sk-TRACESECRET1")
+    except RuntimeError:
+        logger.exception("failed")
+    out = stream.getvalue()
+    assert "s3cret" not in out
+    assert "sk-TRACESECRET1" not in out
+
+
 def test_redaction_applies_in_formatter() -> None:
     out = json.loads(JsonLogFormatter().format(_record("using sk-SECRETvalue99 now")))
     assert "sk-SECRETvalue99" not in out["msg"] and "[REDACTED]" in out["msg"]

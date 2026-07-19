@@ -308,12 +308,25 @@ def _sha256_file(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _is_safe_member_name(name: str) -> bool:
+    """True iff a manifest member name is a relative path that cannot escape the extraction root
+    (F-28, #640): no absolute POSIX/Windows paths, no drive letters, no ``..`` components. Mirrors
+    the tar-member checks in :func:`assert_member_safe` for the manifest's (untrusted) names."""
+    if name.startswith("/") or name.startswith("\\") or (len(name) > 1 and name[1] == ":"):
+        return False
+    return ".." not in Path(name).parts
+
+
 def verify_members(extracted: Path, members: list[BackupManifestMember]) -> list[str]:
     """Recompute each member's sha256 and size against the manifest. Returns a list of human error
     strings (empty == all members intact). Bounded memory (streamed). Missing/extra files are also
-    reported. No member name is interpreted as a path outside ``extracted`` (already gated)."""
+    reported. Member names are validated before any path join (F-28): an absolute or ``..`` name
+    is an error string, never a filesystem probe outside ``extracted``."""
     errors: list[str] = []
     for member in members:
+        if not _is_safe_member_name(member.name):
+            errors.append(f"unsafe member name in manifest: {member.name!r}")
+            continue
         target = extracted / member.name
         if not target.is_file():
             errors.append(f"missing member: {member.name}")
@@ -453,8 +466,13 @@ def validate_staged_upload(
             "will not be decryptable after restore (re-enter it in Settings)"
         )
 
-    result.errors.extend(validate_manifest_integrity(manifest, secrets_key))
-    result.errors.extend(verify_members(extracted, manifest.members))
+    integrity_errors = validate_manifest_integrity(manifest, secrets_key)
+    result.errors.extend(integrity_errors)
+    # F-28 (#640): only verify members against an integrity-AUTHENTICATED manifest. An HMAC
+    # failure means the manifest is attacker-authored; probing its member names against the
+    # filesystem would hand the uploader a host file-existence oracle.
+    if not integrity_errors:
+        result.errors.extend(verify_members(extracted, manifest.members))
 
     compatible, ver_errors, ver_warnings = check_compatibility(
         manifest, running_schema_version=running_schema_version

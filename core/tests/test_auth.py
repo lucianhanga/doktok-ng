@@ -49,7 +49,7 @@ def _registry_with(
 def test_resolve_token_prefers_db_registry() -> None:
     reg = _registry_with("db-token", "tenant-db", user_id="user-1")
     assert resolve_token("db-token", registry=reg, static_tokens=TOKENS) == TokenResolution(
-        tenant_id="tenant-db", user_id="user-1"
+        tenant_id="tenant-db", user_id="user-1", role="admin"
     )
 
 

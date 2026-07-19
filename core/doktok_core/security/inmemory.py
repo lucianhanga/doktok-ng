@@ -19,7 +19,9 @@ class InMemoryTenantRegistry:
     def resolve_token(self, token_sha256: str) -> TokenResolution | None:
         for token in self.tokens.values():
             if token.token_sha256 == token_sha256 and token.revoked_at is None:
-                return TokenResolution(tenant_id=token.tenant_id, user_id=token.user_id)
+                return TokenResolution(
+                    tenant_id=token.tenant_id, user_id=token.user_id, role=token.role
+                )
         return None
 
     def create_tenant(self, tenant: Tenant) -> None:

@@ -149,3 +149,32 @@ test("members flagged as platform owners show a badge", async () => {
   render(<AdminPanel />);
   await waitFor(() => expect(screen.getByText(/· platform/)).toBeInTheDocument());
 });
+
+test("issuing a tenant-scoped token defaults to viewer and warns on admin (#645)", async () => {
+  let posted: unknown;
+  stub((url, method, body) => {
+    if (method === "POST" && url.endsWith("/admin/tokens")) {
+      posted = body;
+      return {
+        id: "t1",
+        token: "sekret",
+        token_prefix: "sekret12",
+        user_id: null,
+        name: "",
+        role: "admin",
+      };
+    }
+    return undefined;
+  });
+  render(<AdminPanel />);
+  const roleSelect = await screen.findByLabelText("Token role");
+  // Least privilege by default: viewer, no warning.
+  expect(roleSelect).toHaveValue("viewer");
+  expect(screen.queryByText(/full-access machine credential/)).not.toBeInTheDocument();
+
+  await userEvent.selectOptions(roleSelect, "admin");
+  expect(screen.getByText(/full-access machine credential/)).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Issue token" }));
+  await waitFor(() => expect(posted).toMatchObject({ user_id: null, role: "admin" }));
+});

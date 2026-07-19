@@ -264,6 +264,8 @@ export function AdminPanel() {
   // Issue-token form
   const [tokenName, setTokenName] = useState("");
   const [tokenUser, setTokenUser] = useState<string>("");
+  // Least-privilege machine credentials (#645): user-less tokens default to viewer.
+  const [tokenRole, setTokenRole] = useState<string>("viewer");
   // New-tenant form
   const [tenantName, setTenantName] = useState("");
   const [tenantCreated, setTenantCreated] = useState<AdminTenant | null>(null);
@@ -407,10 +409,12 @@ export function AdminPanel() {
         const t: AdminIssuedToken = await createAdminToken({
           name: tokenName.trim(),
           user_id: tokenUser || null,
+          role: tokenRole,
         });
         setReveal({ label: `API token "${t.name || t.token_prefix}"`, value: t.token });
         setTokenName("");
         setTokenUser("");
+        setTokenRole("viewer");
         fetchAdminTokens().then(setTokens).catch(() => {});
       },
       setTokensErr,
@@ -697,10 +701,27 @@ export function AdminPanel() {
             </option>
           ))}
         </select>
+        <select aria-label="Token role" value={tokenRole} onChange={(e) => setTokenRole(e.target.value)}>
+          <option value="viewer">viewer</option>
+          <option value="editor">editor</option>
+          <option value="admin">admin</option>
+        </select>
         <button type="button" className="link-button" onClick={issueToken} disabled={busy}>
           Issue token
         </button>
       </div>
+      {!tokenUser && tokenRole === "admin" && (
+        <p className="muted" role="note">
+          A tenant-scoped token with the admin role is a full-access machine credential - prefer
+          viewer or editor unless the integration truly needs administration.
+        </p>
+      )}
+      {tokenUser && (
+        <p className="muted" role="note">
+          The role applies to tenant-scoped (machine) tokens only; a user-bound token acts with
+          the user's own role.
+        </p>
+      )}
       {tokensErr && <p className="status-error">{tokensErr}</p>}
       {tokens === null ? (
         <p className="muted">Loading tokens…</p>
@@ -717,6 +738,7 @@ export function AdminPanel() {
                 <th scope="col">Name</th>
                 <th scope="col">Prefix</th>
                 <th scope="col">Scope</th>
+                <th scope="col">Role</th>
                 <th scope="col">Status</th>
                 <th scope="col">Actions</th>
               </tr>
@@ -729,6 +751,7 @@ export function AdminPanel() {
                     <code>{t.token_prefix}…</code>
                   </td>
                   <td className="muted">{tokenScope(t)}</td>
+                  <td>{t.user_id ? <span className="muted">per user</span> : t.role}</td>
                   <td>
                     <span className={`admin-status admin-status-${t.active ? "active" : "deactivated"}`}>
                       {t.active ? "active" : "revoked"}

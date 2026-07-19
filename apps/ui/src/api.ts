@@ -2149,6 +2149,7 @@ export interface AdminTokenView {
   user_id: string | null;
   name: string;
   token_prefix: string;
+  role: string; // viewer | editor | admin (governs user-less machine tokens; #645)
   active: boolean;
 }
 
@@ -2158,6 +2159,7 @@ export interface AdminIssuedToken {
   token_prefix: string;
   user_id: string | null;
   name: string;
+  role: string;
 }
 
 export interface AdminTenant {
@@ -2262,6 +2264,7 @@ export function fetchAdminTokens(signal?: AbortSignal): Promise<AdminTokenView[]
 export function createAdminToken(body: {
   name?: string;
   user_id?: string | null;
+  role?: string;
 }): Promise<AdminIssuedToken> {
   return sendJson<AdminIssuedToken>("/api/v1/admin/tokens", "POST", body);
 }

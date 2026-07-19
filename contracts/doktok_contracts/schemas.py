@@ -165,12 +165,14 @@ class TenantContext(BaseModel):
     it is ``None`` for the static env-map fallback and for tenant-scoped tokens without a user.
     ``platform_admin`` marks the deployment-level platform owner (#613, ADR-0025): host-provisioned
     static tokens, and users whose ``is_platform_admin`` flag is set. DB-minted user-less api tokens
-    are tenant admins but never platform admins.
+    are tenant admins but never platform admins. ``token_role`` carries the api_token row's role
+    (#645, F-33) for user-less machine tokens; ``None`` for static tokens and user-bound creds.
     """
 
     tenant_id: str
     user_id: str | None = None
     platform_admin: bool = False
+    token_role: str | None = None
 
 
 class Tenant(BaseModel):
@@ -215,6 +217,9 @@ class ApiToken(BaseModel):
     token_sha256: str
     token_prefix: str = ""
     name: str = ""
+    # Least-privilege scope for USER-LESS (machine) tokens (#645, F-33): viewer|editor|admin.
+    # Ignored for user-bound tokens - those resolve through the user's own registry role.
+    role: str = "admin"
     created_at: datetime | None = None
     last_used_at: datetime | None = None
     revoked_at: datetime | None = None
@@ -231,6 +236,9 @@ class TokenResolution(BaseModel):
     tenant_id: str
     user_id: str | None = None
     via: str = "db"  # db | static | jwt
+    # The api_token row's role (#645, F-33) - set for DB-resolved user-less machine tokens; None
+    # for static tokens (platform tier) and JWTs (the user's registry role governs).
+    role: str | None = None
 
 
 class Invitation(BaseModel):

@@ -126,12 +126,16 @@ class TokenView(BaseModel):
     user_id: str | None = None
     name: str = ""
     token_prefix: str = ""
+    role: str = "admin"
     active: bool
 
 
 class CreateTokenRequest(BaseModel):
     name: str = ""
     user_id: str | None = None
+    # Least-privilege machine credentials (#645, F-33): governs USER-LESS tokens only (a
+    # user-bound token resolves through the user's own role). Defaults to viewer.
+    role: str = "viewer"
 
 
 class IssuedToken(BaseModel):
@@ -142,6 +146,7 @@ class IssuedToken(BaseModel):
     token_prefix: str
     user_id: str | None = None
     name: str = ""
+    role: str = "viewer"
 
 
 # --- context ---
@@ -514,6 +519,7 @@ def list_tokens(caller: AdminUser, registry: Registry) -> list[TokenView]:
             user_id=t.user_id,
             name=t.name,
             token_prefix=t.token_prefix,
+            role=t.role,
             active=t.revoked_at is None,
         )
         for t in registry.list_api_tokens(caller.tenant_id)
@@ -526,6 +532,7 @@ def create_token(
 ) -> IssuedToken:
     if body.user_id is not None and registry.get_user(caller.tenant_id, body.user_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such user")
+    role = _valid_role(body.role)
     plaintext = secrets.token_urlsafe(_TOKEN_BYTES)
     token_id = uuid.uuid4().hex
     registry.create_api_token(
@@ -536,6 +543,7 @@ def create_token(
             token_sha256=hash_token(plaintext),
             token_prefix=plaintext[:_PREFIX_LEN],
             name=body.name,
+            role=role,
         )
     )
     record_activity(
@@ -546,8 +554,8 @@ def create_token(
         actor_kind="user",
         record_kind="api_token",
         record_id=token_id,
-        description=f'API token "{body.name or token_id[:8]}" issued',
-        details={"token_id": token_id, "user_id": body.user_id},
+        description=f'API token "{body.name or token_id[:8]}" issued with role {role}',
+        details={"token_id": token_id, "user_id": body.user_id, "role": role},
     )
     return IssuedToken(
         id=token_id,
@@ -555,6 +563,7 @@ def create_token(
         token_prefix=plaintext[:_PREFIX_LEN],
         user_id=body.user_id,
         name=body.name,
+        role=role,
     )
 
 

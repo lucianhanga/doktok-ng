@@ -1240,6 +1240,7 @@ async def preview_backup_restore(
             passphrase,
             secrets_key=settings.secrets_key,
             running_schema_version=_running_schema_version(),
+            actor=actor_identity(tenant),
         )
         # Restore the status to idle after a NON-destructive preview (nothing was applied).
         restore_mod.write_restore_status(_status_dir(request), state="idle")
@@ -1294,10 +1295,19 @@ def apply_backup_restore(
         raise HTTPException(status_code=422, detail="confirm must be true to apply a restore")
 
     export_dir = _export_dir(request)
-    if not restore_mod.is_validated(export_dir, staged_id):
+    validated_by = restore_mod.validated_actor(export_dir, staged_id)
+    if validated_by is None:
         # Either it never existed, or it failed preview (the tree is cleaned on failure).
         raise HTTPException(
             status_code=409, detail="no validated staged restore with that id; run preview first"
+        )
+    # F-34 (#646): the destructive apply is bound to the operator who validated the preview -
+    # possession of the staged_id alone is not enough for another platform admin to fire it.
+    if validated_by != actor_identity(tenant):
+        raise HTTPException(
+            status_code=403,
+            detail="this staged restore was validated by another platform admin; "
+            "re-run the preview as the same operator",
         )
 
     status_dir = _status_dir(request)

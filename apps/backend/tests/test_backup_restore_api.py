@@ -266,10 +266,11 @@ def test_apply_unknown_staged_id_is_409(tmp_path: Path) -> None:
 
 
 def _stage_validated(export_dir: Path, staged_id: str) -> None:
-    """Simulate a staged_id that already passed preview (drop the .validated marker)."""
+    """Simulate a staged_id that already passed preview (drop the .validated marker, recorded
+    under the static token's actor - the tenant id)."""
     sdir = restore_mod.staging_dir(export_dir, staged_id)
     (sdir / "extracted").mkdir(parents=True, exist_ok=True)
-    restore_mod._mark_validated(sdir)
+    restore_mod._mark_validated(sdir, "tenant-a")
 
 
 def test_apply_drops_request_file_once_and_is_single_flight(tmp_path: Path) -> None:
@@ -443,3 +444,103 @@ def test_preview_passphrase_min_length_is_12(tmp_path: Path) -> None:
         headers=AUTH,
     )
     assert resp.status_code == 422
+
+
+# --------------------------------------------------------------------------------------------------
+# F-34 (#646): the apply is bound to the platform admin who validated the preview
+# --------------------------------------------------------------------------------------------------
+
+JWT_SECRET = "restore-binding-secret"  # pragma: allowlist secret
+
+
+def _make_client_with_platform_users(
+    tmp_path: Path,
+) -> tuple[TestClient, Path]:
+    from doktok_contracts.ports import TenantRegistry
+    from doktok_contracts.schemas import Tenant, User
+    from doktok_core.security.inmemory import InMemoryTenantRegistry
+
+    export_dir = tmp_path / "exports"
+    backup_dir = tmp_path / "backups"
+    files_root = tmp_path / "files"
+    files_root.mkdir(parents=True)
+    reg = InMemoryTenantRegistry()
+    reg.create_tenant(Tenant(id="tenant-a", name="Tenant A"))
+    for uid in ("pa_a", "pa_b"):
+        reg.create_user(
+            User(
+                id=uid,
+                tenant_id="tenant-a",
+                email=f"{uid}@x.com",
+                role="admin",
+                is_platform_admin=True,
+            )
+        )
+    audit = InMemoryAuditLogRepository()
+    registry = build_registry()
+    registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
+    registry.register(TenantRegistry, reg)  # type: ignore[type-abstract]
+    settings = Settings(  # type: ignore[call-arg]
+        env="test",
+        tenant_tokens=TOKENS,
+        auth_jwt_secret=JWT_SECRET,
+        files_root=str(files_root),
+        backup_dir=str(backup_dir),
+        backup_export_dir=str(export_dir),
+        secrets_key=_SECRET,
+        _env_file=None,
+    )
+    return TestClient(create_app(settings=settings, registry=registry)), export_dir
+
+
+def _bearer(user_id: str) -> dict[str, str]:
+    from doktok_core.security.sessions import issue_access_token
+
+    token = issue_access_token(
+        tenant_id="tenant-a", user_id=user_id, secret=JWT_SECRET, ttl_seconds=3600
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_apply_by_another_platform_admin_is_refused(tmp_path: Path) -> None:
+    # F-34: within the staged tree's TTL, possession of the staged_id alone must NOT be enough -
+    # the destructive apply is bound to the operator who validated the preview.
+    import json
+
+    client, export_dir = _make_client_with_platform_users(tmp_path)
+    staged_id = "staged-by-a"
+    sdir = restore_mod.staging_dir(export_dir, staged_id)
+    (sdir / "extracted").mkdir(parents=True, exist_ok=True)
+    sdir.joinpath(".validated").write_text(json.dumps({"actor": "pa_a"}), encoding="utf-8")
+
+    refused = client.post(
+        f"/api/v1/settings/backup/restore/{staged_id}/apply",
+        json={"confirm": True},
+        headers=_bearer("pa_b"),
+    )
+    assert refused.status_code == 403
+
+    # The operator who validated the preview can apply.
+    accepted = client.post(
+        f"/api/v1/settings/backup/restore/{staged_id}/apply",
+        json={"confirm": True},
+        headers=_bearer("pa_a"),
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["accepted"] is True
+
+
+def test_apply_via_static_token_matches_the_tenant_actor(tmp_path: Path) -> None:
+    # A static-token preview records actor=<tenant_id>; the same static token can apply.
+    import json
+
+    client, _, export_dir, _ = _make_client(tmp_path)
+    staged_id = "staged-by-static"
+    sdir = restore_mod.staging_dir(export_dir, staged_id)
+    (sdir / "extracted").mkdir(parents=True, exist_ok=True)
+    sdir.joinpath(".validated").write_text(json.dumps({"actor": "tenant-a"}), encoding="utf-8")
+    resp = client.post(
+        f"/api/v1/settings/backup/restore/{staged_id}/apply", json={"confirm": True}, headers=AUTH
+    )
+    assert resp.status_code == 200

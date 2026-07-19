@@ -78,6 +78,20 @@ def test_list_entities_page_query_case_insensitive(db: Database) -> None:
     assert nodes[0].normalized_value == "alice"
 
 
+def test_list_entities_page_query_escapes_like_wildcards(db: Database) -> None:
+    # F-38 (#650): LIKE wildcards in the query must match LITERALLY - '50%' matches only a value
+    # containing the literal percent sign, not every value containing '50'.
+    kg = PostgresKnowledgeGraphRepository(db)
+    kg.upsert_entities(
+        [
+            _node(EntityType.ORG, "50% off sale"),
+            _node(EntityType.ORG, "item 50"),
+        ]
+    )
+    nodes = kg.list_entities_page(TENANT, query="50%")
+    assert [n.normalized_value for n in nodes] == ["50% off sale"]
+
+
 def test_list_entities_page_query_and_type_combined(db: Database) -> None:
     """entity_type and query filters compose via AND."""
     kg = _seed(db)

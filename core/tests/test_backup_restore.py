@@ -393,3 +393,58 @@ def test_restore_status_roundtrip(tmp_path: Path) -> None:
     # An invalid state in the file is normalized back to idle (defensive).
     (status_dir / "restore.json").write_text(json.dumps({"state": "bogus"}), encoding="utf-8")
     assert restore_mod.read_restore_status(status_dir)["state"] == "idle"
+
+
+# ---------------------------------------------------------------------------
+# F-17 (#632): OWASP-current PBKDF2 work factor + legacy-count fallback
+# ---------------------------------------------------------------------------
+
+
+def test_encryption_uses_600k_pbkdf2_iterations() -> None:
+    # F-17: the archive encryption pins the OWASP-current work factor (was the 10k openssl
+    # default) and an explicit digest, so human passphrases cost ~60x more to crack offline.
+    argv = export_mod.encrypt_argv(Path("a.tgz"), Path("a.tgz.enc"))
+    assert "-iter" in argv and argv[argv.index("-iter") + 1] == "600000"
+    assert "-md" in argv and argv[argv.index("-md") + 1] == "sha256"
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl not available")
+def test_new_archive_round_trips_with_the_new_work_factor(tmp_path: Path) -> None:
+    # A 600k-encrypted archive decrypts through the restore path (first attempt, no fallback).
+    import subprocess as sp
+
+    plain = tmp_path / "plain.tgz"
+    plain.write_bytes(b"archive-bytes-600k")
+    enc = tmp_path / "new.tgz.enc"
+    proc = sp.run(
+        export_mod.encrypt_argv(plain, enc),
+        input=b"new-pass-1234\n",
+        capture_output=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = tmp_path / "out.tgz"
+    restore_mod.decrypt_archive(enc, out, "new-pass-1234")
+    assert out.read_bytes() == b"archive-bytes-600k"
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl not available")
+def test_pre_change_archive_still_decrypts_via_fallback(tmp_path: Path) -> None:
+    # F-17: archives written with the openssl DEFAULT (10k) count before this change still
+    # decrypt - the restore path falls back to the legacy count when 600k fails.
+    import subprocess as sp
+
+    plain = tmp_path / "plain.tgz"
+    plain.write_bytes(b"archive-bytes-10k")
+    enc = tmp_path / "old.tgz.enc"
+    proc = sp.run(
+        [
+            "openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-salt", "-pass", "stdin",
+            "-in", str(plain), "-out", str(enc),
+        ],
+        input=b"old-pass-1234\n",
+        capture_output=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = tmp_path / "out.tgz"
+    restore_mod.decrypt_archive(enc, out, "old-pass-1234")
+    assert out.read_bytes() == b"archive-bytes-10k"

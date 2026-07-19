@@ -138,8 +138,32 @@ def extracted_dir(export_dir: Path, staged_id: str) -> Path:
 
 def decrypt_argv(in_path: Path, out_path: Path) -> list[str]:
     """The openssl argv that DECRYPTS ``in_path`` (the uploaded ciphertext) to ``out_path`` (the
-    plaintext .tgz). Mirrors export.encrypt_argv with ``-d``; passphrase on stdin only (-pass stdin)
-    so it is never on the command line, written to disk, or logged."""
+    plaintext .tgz) with the CURRENT PBKDF2 work factor (600k, F-17 #632). Mirrors
+    export.encrypt_argv with ``-d``; passphrase on stdin only (-pass stdin) so it is never on the
+    command line, written to disk, or logged."""
+    return [
+        "openssl",
+        "enc",
+        "-d",
+        "-aes-256-cbc",
+        "-pbkdf2",
+        "-iter",
+        "600000",
+        "-md",
+        "sha256",
+        "-salt",
+        "-pass",
+        "stdin",
+        "-in",
+        str(in_path),
+        "-out",
+        str(out_path),
+    ]
+
+
+def decrypt_argv_legacy(in_path: Path, out_path: Path) -> list[str]:
+    """The decrypt argv WITHOUT an explicit iteration count (the openssl default, 10k): the
+    fallback for archives written before the 600k work factor shipped (F-17 #632)."""
     return [
         "openssl",
         "enc",
@@ -159,21 +183,28 @@ def decrypt_argv(in_path: Path, out_path: Path) -> list[str]:
 def decrypt_archive(enc_path: Path, plaintext_path: Path, passphrase: str) -> None:
     """Decrypt ``enc_path`` to ``plaintext_path`` (0600) with ``passphrase`` (piped on stdin only).
 
-    Raises ValueError on the WRONG passphrase / corrupt ciphertext (a clear, non-secret error). The
-    passphrase is never logged, written to disk, or placed on the command line."""
-    fd = os.open(plaintext_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.close(fd)
-    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+    Tries the current PBKDF2 work factor (600k, F-17 #632) first and falls back to the openssl
+    default count for archives written before the change (the iteration count is not stored in
+    the file). Raises ValueError on the WRONG passphrase / corrupt ciphertext (a clear, non-secret
+    error). The passphrase is never logged, written to disk, or placed on the command line."""
+    for argv in (
         decrypt_argv(enc_path, plaintext_path),
-        input=(passphrase + "\n").encode("utf-8"),
-        capture_output=True,
-        timeout=1800,
-        check=False,
-    )
-    if proc.returncode != 0:
+        decrypt_argv_legacy(enc_path, plaintext_path),
+    ):
+        fd = os.open(plaintext_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.close(fd)
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            argv,
+            input=(passphrase + "\n").encode("utf-8"),
+            capture_output=True,
+            timeout=1800,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return
         plaintext_path.unlink(missing_ok=True)
-        # openssl reports "bad decrypt" on a wrong passphrase; never surface the passphrase or argv.
-        raise ValueError("could not decrypt the archive - wrong passphrase or corrupt file")
+    # openssl reports "bad decrypt" on a wrong passphrase; never surface the passphrase or argv.
+    raise ValueError("could not decrypt the archive - wrong passphrase or corrupt file")
 
 
 # --------------------------------------------------------------------------------------------------

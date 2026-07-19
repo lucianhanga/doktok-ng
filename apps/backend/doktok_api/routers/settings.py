@@ -849,7 +849,7 @@ class BackupExportDownloadRequest(BaseModel):
     """Download body. The passphrase is POSTed (never a URL/query) so it can't leak into access
     logs; it is piped to openssl via stdin and is never written to disk or logged."""
 
-    passphrase: str = PydField(min_length=8, max_length=1024)
+    passphrase: str = PydField(min_length=12, max_length=1024)
 
 
 def _export_dir(request: Request) -> Path:
@@ -1010,7 +1010,8 @@ def download_backup_export(
     """Stream the staged plaintext archive through ``openssl enc`` and return the AES-256
     ciphertext (M12 portable backup, Phase 1). POST so the passphrase is in the body, never a
     URL/log. The passphrase is piped to openssl on stdin and is never written to disk or logged.
-    The download filename ends ``.tgz.enc``; decrypt with the matching ``openssl enc -d``."""
+    The download filename ends ``.tgz.enc``; decrypt with ``openssl enc -d -aes-256-cbc -pbkdf2
+    -iter 600000 -md sha256 -salt -pass stdin -in <file> -out <plain>`` (F-17 #632)."""
     from doktok_core.backup import export as export_mod
 
     export_dir = _export_dir(request)
@@ -1156,7 +1157,7 @@ async def preview_backup_restore(
     tenant: PlatformAdmin,
     audit: Audit,
     file: Annotated[UploadFile, File()],
-    passphrase: Annotated[str, Form(min_length=8, max_length=1024)],
+    passphrase: Annotated[str, Form(min_length=12, max_length=1024)],
 ) -> RestorePreview:
     """Upload + NON-destructively validate an encrypted portable archive (M12 portable restore
     Phase 2). Streams the upload to disk (never buffers it in memory), decrypts it with the

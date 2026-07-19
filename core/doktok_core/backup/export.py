@@ -365,16 +365,23 @@ def encrypt_argv(in_path: Path, out_path: Path) -> list[str]:
     """The openssl argv that encrypts ``in_path`` (the staged plaintext archive) to ``out_path`` at
     the download boundary.
 
-    AES-256-CBC with PBKDF2 + a random salt; the passphrase is supplied on stdin (``-pass stdin``)
-    so it is NEVER on the command line, written to disk, or logged. The data is read from ``-in``
-    and written to ``-out`` (NOT stdin/stdout) so the passphrase line cannot be mistaken for data -
-    a robust, version-portable invocation. The caller pipes ONLY the passphrase line on stdin.
-    Decrypt: ``openssl enc -d -aes-256-cbc -pbkdf2 -salt -pass stdin -in <file> -out <plain>``."""
+    AES-256-CBC with PBKDF2-HMAC-SHA256 at 600,000 iterations (F-17 #632, the OWASP-current
+    recommendation - the openssl default of 10k made a stolen archive ~60x cheaper to crack) and
+    a random salt; the passphrase is supplied on stdin (``-pass stdin``) so it is NEVER on the
+    command line, written to disk, or logged. The data is read from ``-in`` and written to
+    ``-out`` (NOT stdin/stdout) so the passphrase line cannot be mistaken for data - a robust,
+    version-portable invocation. The caller pipes ONLY the passphrase line on stdin.
+    Decrypt: ``openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -salt -pass stdin
+    -in <file> -out <plain>`` (pre-#632 archives used the default count; restore falls back)."""
     return [
         "openssl",
         "enc",
         "-aes-256-cbc",
         "-pbkdf2",
+        "-iter",
+        "600000",
+        "-md",
+        "sha256",
         "-salt",
         "-pass",
         "stdin",

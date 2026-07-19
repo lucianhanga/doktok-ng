@@ -1170,83 +1170,94 @@ async def preview_backup_restore(
 
     settings = request.app.state.settings
     export_dir = _export_dir(request)
-    staged_id = uuid.uuid4().hex
-    sdir = restore_mod.staging_dir(export_dir, staged_id)
-    enc = restore_mod.upload_path(export_dir, staged_id)
-    # A non-positive cap means "uploads disabled" (0 bytes allowed -> any upload is a 413).
-    max_bytes = max(0, settings.max_restore_gb) * 1024 * 1024 * 1024
-
-    restore_mod.sweep_stale_restores(export_dir)  # opportunistic TTL cleanup of old decrypted trees
-
-    # Stream the upload to disk in bounded chunks, enforcing the size cap as we go (a client can lie
-    # about / omit Content-Length, so cap the actual streamed bytes, not just the header).
+    # Single-flight (#630, F-25): ONE staged validation at a time - concurrent previews would
+    # stage N x (ciphertext + plaintext tgz + extracted tree) and exhaust the exports volume.
+    # The slot is held for the whole preview and freed in the finally (also on errors).
+    if not restore_mod.claim_preview(export_dir):
+        raise HTTPException(status_code=429, detail="a restore preview is already in progress")
     try:
-        sdir.mkdir(parents=True, exist_ok=True)
-        os.chmod(sdir, 0o700)
-        written = 0
-        fd = os.open(enc, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        staged_id = uuid.uuid4().hex
+        sdir = restore_mod.staging_dir(export_dir, staged_id)
+        enc = restore_mod.upload_path(export_dir, staged_id)
+        # A non-positive cap means "uploads disabled" (0 bytes allowed -> any upload is a 413).
+        max_bytes = max(0, settings.max_restore_gb) * 1024 * 1024 * 1024
+
+        # Opportunistic TTL cleanup of old decrypted trees.
+        restore_mod.sweep_stale_restores(export_dir)
+
+        # Stream the upload to disk in bounded chunks, enforcing the size cap as we go (a
+        # client can lie about Content-Length, so cap the streamed bytes, not the header).
         try:
-            with os.fdopen(fd, "wb") as out:
-                while chunk := await file.read(_RESTORE_UPLOAD_CHUNK):
-                    written += len(chunk)
-                    if written > max_bytes:
-                        raise HTTPException(
-                            status_code=413,
-                            detail=f"upload exceeds the {settings.max_restore_gb} GB restore limit",
-                        )
-                    out.write(chunk)
-        finally:
-            await file.close()
-    except HTTPException:
-        restore_mod.discard_staged(export_dir, staged_id)
-        raise
-    except OSError:
-        restore_mod.discard_staged(export_dir, staged_id)
-        raise HTTPException(status_code=503, detail="could not stage the upload") from None
+            sdir.mkdir(parents=True, exist_ok=True)
+            os.chmod(sdir, 0o700)
+            written = 0
+            fd = os.open(enc, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    while chunk := await file.read(_RESTORE_UPLOAD_CHUNK):
+                        written += len(chunk)
+                        if written > max_bytes:
+                            raise HTTPException(
+                                status_code=413,
+                                detail=(
+                                    f"upload exceeds the {settings.max_restore_gb} GB restore limit"
+                                ),
+                            )
+                        out.write(chunk)
+            finally:
+                await file.close()
+        except HTTPException:
+            restore_mod.discard_staged(export_dir, staged_id)
+            raise
+        except OSError:
+            restore_mod.discard_staged(export_dir, staged_id)
+            raise HTTPException(status_code=503, detail="could not stage the upload") from None
 
-    # Flip the status sentinel to 'validating' (best-effort) so the UI poll reflects work in flight.
-    restore_mod.write_restore_status(
-        _status_dir(request), state="validating", step="validate", restore_id=staged_id
-    )
+        # Flip the status sentinel to 'validating' (best-effort) so the UI poll sees the work.
+        restore_mod.write_restore_status(
+            _status_dir(request), state="validating", step="validate", restore_id=staged_id
+        )
 
-    # The multi-GB decrypt + extract + hash below used to run synchronously in this async handler,
-    # stalling the uvicorn event loop for EVERY request (including /health) for minutes (#623,
-    # F-11). It runs in a worker thread instead; the streamed upload above already uses async IO.
-    result = await run_in_threadpool(
-        restore_mod.validate_staged_upload,
-        export_dir,
-        staged_id,
-        passphrase,
-        secrets_key=settings.secrets_key,
-        running_schema_version=_running_schema_version(),
-    )
-    # Restore the status to idle after a NON-destructive preview (nothing was applied).
-    restore_mod.write_restore_status(_status_dir(request), state="idle")
+        # The multi-GB decrypt + extract + hash used to run synchronously in this async
+        # handler, stalling the event loop for minutes (#623, F-11). It runs in a worker thread
+        # instead; the streamed upload above already uses async IO.
+        result = await run_in_threadpool(
+            restore_mod.validate_staged_upload,
+            export_dir,
+            staged_id,
+            passphrase,
+            secrets_key=settings.secrets_key,
+            running_schema_version=_running_schema_version(),
+        )
+        # Restore the status to idle after a NON-destructive preview (nothing was applied).
+        restore_mod.write_restore_status(_status_dir(request), state="idle")
 
-    _record_restore(
-        audit,
-        tenant.tenant_id,
-        AuditEventType.RESTORE_PREVIEWED,
-        actor=actor_identity(tenant),
-        description=(
-            f"Portable restore previewed: {'valid' if result.ok else 'rejected'} "
-            f"({result.member_count} members)"
-        ),
-        staged_id=staged_id,
-    )
-    return RestorePreview(
-        staged_id=staged_id,
-        ok=result.ok,
-        compatible=result.compatible,
-        app_version=result.app_version,
-        pg_version=result.pg_version,
-        created_at=result.created_at,
-        member_count=result.member_count,
-        total_bytes=result.total_bytes,
-        secrets_key_match=result.secrets_key_match,
-        warnings=result.warnings,
-        errors=result.errors,
-    )
+        _record_restore(
+            audit,
+            tenant.tenant_id,
+            AuditEventType.RESTORE_PREVIEWED,
+            actor=actor_identity(tenant),
+            description=(
+                f"Portable restore previewed: {'valid' if result.ok else 'rejected'} "
+                f"({result.member_count} members)"
+            ),
+            staged_id=staged_id,
+        )
+        return RestorePreview(
+            staged_id=staged_id,
+            ok=result.ok,
+            compatible=result.compatible,
+            app_version=result.app_version,
+            pg_version=result.pg_version,
+            created_at=result.created_at,
+            member_count=result.member_count,
+            total_bytes=result.total_bytes,
+            secrets_key_match=result.secrets_key_match,
+            warnings=result.warnings,
+            errors=result.errors,
+        )
+    finally:
+        restore_mod.release_preview(export_dir)
 
 
 @router.post("/backup/restore/{staged_id}/apply", response_model=RestoreResult)

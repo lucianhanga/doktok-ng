@@ -60,6 +60,33 @@ MAX_COMPRESSION_RATIO = 200  # expanded:compressed beyond this is treated as a d
 
 DEFAULT_TTL_SECONDS = 6 * 3600  # validated staging dirs older than this are swept
 
+_PREVIEW_LOCK = "_restore_preview.lock"  # the single slot for a staged validation (#630)
+
+
+def claim_preview(export_dir: Path) -> bool:
+    """Atomically claim the restore-preview slot (F-25 #630): ONE staged validation at a time,
+    so concurrent previews cannot stage N x (ciphertext + plaintext + extracted tree) and
+    exhaust the exports volume. The lock is create-exclusive; a lock older than the staging TTL
+    means the owning process died mid-preview and is swept at claim time (no wedge)."""
+    export_dir.mkdir(parents=True, exist_ok=True)
+    lock = export_dir / _PREVIEW_LOCK
+    if lock.exists():
+        if lock.stat().st_mtime < time.time() - DEFAULT_TTL_SECONDS:
+            lock.unlink(missing_ok=True)
+        else:
+            return False
+    try:
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return False
+    os.close(fd)
+    return True
+
+
+def release_preview(export_dir: Path) -> None:
+    """Free the restore-preview slot (best-effort, idempotent)."""
+    (export_dir / _PREVIEW_LOCK).unlink(missing_ok=True)
+
 
 @dataclass
 class StagedValidation:

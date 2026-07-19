@@ -275,7 +275,12 @@ def test_validate_staged_upload_happy_path(tmp_path: Path, monkeypatch: pytest.M
     shutil.copy(enc, upload)
 
     result = restore_mod.validate_staged_upload(
-        export_dir, staged_id, passphrase, secrets_key=_SECRET, running_schema_version=10
+        export_dir,
+        staged_id,
+        passphrase,
+        secrets_key=_SECRET,
+        running_schema_version=10,
+        actor="tester",
     )
     assert result.ok is True
     assert result.compatible is True
@@ -284,6 +289,8 @@ def test_validate_staged_upload_happy_path(tmp_path: Path, monkeypatch: pytest.M
     assert result.member_count == 4  # db.dump + manifest.json + doc.txt + sub/note.txt
     assert result.pg_version == "17.2"
     assert restore_mod.is_validated(export_dir, staged_id) is True
+    # F-34 (#646): the validated marker records WHO previewed - the apply binds to that operator.
+    assert restore_mod.validated_actor(export_dir, staged_id) == "tester"
 
 
 @pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl not available")
@@ -302,6 +309,7 @@ def test_validate_staged_upload_wrong_passphrase(
         "the WRONG passphrase",
         secrets_key=_SECRET,
         running_schema_version=10,
+        actor="tester",
     )
     assert result.ok is False
     assert any("decrypt" in e for e in result.errors)
@@ -321,7 +329,12 @@ def test_validate_staged_upload_secrets_key_mismatch_is_warning(
     shutil.copy(enc, upload)
 
     result = restore_mod.validate_staged_upload(
-        export_dir, staged_id, passphrase, secrets_key="this-box-key", running_schema_version=10
+        export_dir,
+        staged_id,
+        passphrase,
+        secrets_key="this-box-key",
+        running_schema_version=10,
+        actor="tester",
     )
     # The keyed HMAC won't reproduce with a different key, AND the mismatch is surfaced as a warning
     # + secrets_key_match=False (the key-warning path is exercised).
@@ -376,7 +389,12 @@ def test_validate_staged_upload_tampered_member_refused(
     upload.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(enc, upload)
     result = restore_mod.validate_staged_upload(
-        export_dir, staged_id, passphrase, secrets_key=_SECRET, running_schema_version=10
+        export_dir,
+        staged_id,
+        passphrase,
+        secrets_key=_SECRET,
+        running_schema_version=10,
+        actor="tester",
     )
     assert result.ok is False
     assert any("mismatch" in e for e in result.errors)
@@ -530,7 +548,12 @@ def test_hmac_failure_skips_member_verification(
     upload.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(enc, upload)
     result = restore_mod.validate_staged_upload(
-        export_dir, staged_id, passphrase, secrets_key=_SECRET, running_schema_version=10
+        export_dir,
+        staged_id,
+        passphrase,
+        secrets_key=_SECRET,
+        running_schema_version=10,
+        actor="tester",
     )
     assert result.ok is False
     assert any("integrity" in e for e in result.errors)

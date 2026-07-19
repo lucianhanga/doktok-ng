@@ -411,11 +411,13 @@ def validate_staged_upload(
     *,
     secrets_key: str,
     running_schema_version: int,
+    actor: str,
 ) -> StagedValidation:
     """Decrypt + safely extract + validate the upload already streamed to upload_path(). Returns a
     StagedValidation; NEVER raises (failures land in ``errors`` and ``ok`` is False). On a HARD
     failure the extracted tree is removed but the staging dir is retained briefly (TTL) so the
-    caller can still report status; on success the extracted tree is kept for the apply step."""
+    caller can still report status; on success the extracted tree is kept for the apply step, and
+    ``actor`` is recorded in the validated marker - the apply is bound to that operator (F-34)."""
     sdir = staging_dir(export_dir, staged_id)
     enc = upload_path(export_dir, staged_id)
     extracted = extracted_dir(export_dir, staged_id)
@@ -486,7 +488,7 @@ def validate_staged_upload(
         # A failed validation must not leave a restorable tree around.
         _cleanup_extracted(sdir, plaintext)
     else:
-        _mark_validated(sdir)
+        _mark_validated(sdir, actor)
     _write_validation(export_dir, staged_id, result)
     return result
 
@@ -502,16 +504,30 @@ _VALIDATED_MARKER = ".validated"
 _VALIDATION_SUFFIX = ".validation.json"
 
 
-def _mark_validated(sdir: Path) -> None:
-    """Drop a 0600 marker so the apply step can cheaply confirm this staged_id passed preview."""
+def _mark_validated(sdir: Path, actor: str) -> None:
+    """Drop a 0600 marker so the apply step can cheaply confirm this staged_id passed preview.
+    Records WHO validated it (F-34, #646): the destructive apply is bound to the same operator,
+    so a learned staged_id alone is never enough to trigger a restore."""
     marker = sdir / _VALIDATED_MARKER
-    marker.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+    marker.write_text(
+        json.dumps({"actor": actor, "at": datetime.now(UTC).isoformat()}), encoding="utf-8"
+    )
     os.chmod(marker, 0o600)
 
 
 def is_validated(export_dir: Path, staged_id: str) -> bool:
     """True iff ``staged_id`` exists and passed preview (the .validated marker is present)."""
     return (staging_dir(export_dir, staged_id) / _VALIDATED_MARKER).is_file()
+
+
+def validated_actor(export_dir: Path, staged_id: str) -> str | None:
+    """The actor identity that validated ``staged_id`` (F-34), or None when the marker is absent
+    or unreadable - fail closed, so a corrupted marker can never authorize an apply."""
+    marker = staging_dir(export_dir, staged_id) / _VALIDATED_MARKER
+    try:
+        return str(json.loads(marker.read_text(encoding="utf-8"))["actor"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def _write_validation(export_dir: Path, staged_id: str, result: StagedValidation) -> None:

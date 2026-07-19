@@ -48,6 +48,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 MAKE="${MAKE:-make}"
 
+# F-40 (#652): the .env carries secrets (DOKTOK_SECRETS_KEY, the DB DSN, tenant tokens) - warn
+# when it is group/other-readable (non-fatal, like the other external warnings here).
+if [ -f .env ] && [ -n "$(find .env -perm -044 2>/dev/null)" ]; then
+  warn ".env is group/other-readable and contains secrets - restrict it: chmod 600 .env"
+fi
+
 info "Provisioning local model-stack resources for '$SERVICE' (idempotent; set DOKTOK_SKIP_PREFLIGHT=1 to skip)."
 
 # Resolve the per-service resource plan from the catalog/config (single source of truth).

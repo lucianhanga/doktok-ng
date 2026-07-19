@@ -17,15 +17,17 @@ import base64
 import hashlib
 import secrets
 
-# Interactive-login cost. n must be a power of two; n*r*p bounds memory (~16 MiB here). Tuned so a
-# single verification is a few tens of milliseconds on a laptop - painful to brute-force, cheap
-# enough for a login request. Stored per-hash, so these can be raised without breaking old hashes.
-_N = 2**14
+# Interactive-login cost. n must be a power of two; N*r*p bounds memory (~128 MiB here) and time
+# (~100-300 ms per verification on a modern laptop). F-30 (#642): raised to the OWASP-current
+# N=2^17 - the old 2^14 made a leaked hash ~8x cheaper to crack per guess. Verifications are
+# semaphore-capped (login_max_concurrent_verifies), so peak memory stays bounded. Stored per-hash,
+# so pre-change hashes keep verifying with their own parameters.
+_N = 2**17
 _R = 8
 _P = 1
 _DKLEN = 32
 _SALT_BYTES = 16
-_MAXMEM = 64 * 1024 * 1024  # scrypt's default 32 MiB cap is too low for these params; lift it.
+_MAXMEM = 256 * 1024 * 1024  # OpenSSL needs maxmem >= 128*N*r (128 MiB here); headroom above.
 
 
 # Password length policy (NIST SP 800-63B): a meaningful minimum, a generous maximum, and NO

@@ -381,3 +381,43 @@ def test_preview_validation_runs_off_the_event_loop(
     )
     assert resp.status_code == 200
     assert restore_mod_fn.validate_staged_upload in dispatched
+
+
+# ---------------------------------------------------------------------------
+# F-25 (#630): restore preview single-flight
+# ---------------------------------------------------------------------------
+
+
+def test_preview_claim_is_create_exclusive(tmp_path: Path) -> None:
+    # F-25: one staged validation at a time - a concurrent preview is refused instantly
+    # (create-exclusive), and releasing the slot lets the next preview in.
+    export_dir = tmp_path / "exports"
+    assert restore_mod.claim_preview(export_dir) is True
+    assert restore_mod.claim_preview(export_dir) is False
+    restore_mod.release_preview(export_dir)
+    assert restore_mod.claim_preview(export_dir) is True
+
+
+def test_stale_preview_claim_is_swept(tmp_path: Path) -> None:
+    # F-25: a lock older than the staging TTL means the owning process died mid-preview - swept
+    # at claim time so the route can never wedge.
+    export_dir = tmp_path / "exports"
+    assert restore_mod.claim_preview(export_dir) is True
+    lock = export_dir / restore_mod._PREVIEW_LOCK  # noqa: SLF001
+    stale = lock.stat().st_mtime - 7 * 3600
+    os.utime(lock, (stale, stale))
+    assert restore_mod.claim_preview(export_dir) is True
+
+
+def test_second_preview_is_429_while_one_is_staged(tmp_path: Path) -> None:
+    # With a preview in flight (the claim is held), the next preview gets 429.
+    client, _, export_dir, _ = _make_client(tmp_path)
+    assert restore_mod.claim_preview(export_dir) is True
+    resp = client.post(
+        "/api/v1/settings/backup/restore/preview",
+        files={"file": ("a.enc", b"ciphertext", "application/octet-stream")},
+        data={"passphrase": "a-long-enough-passphrase"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 429
+    restore_mod.release_preview(export_dir)

@@ -26,6 +26,14 @@ cd "$(dirname "$0")/.."
 source deploy/lib.sh
 
 staged_id="${1:?usage: restore-import.sh <staged_id>}"
+# F-29 (#641): staged_id arrives via a host-writable request file (status/requests/), NOT the
+# validated API path - refuse anything but the backend's uuid4-hex format BEFORE it is ever
+# interpolated into a path (a '../../x' would traverse pg_restore and `rm -rf "$STAGING"` as
+# root). With slashes impossible no traversal exists, so this format check is the whole gate.
+if [[ ! "$staged_id" =~ ^[0-9a-f]{32}$ ]]; then
+    err "invalid staged_id (expected 32 lowercase hex chars): ${staged_id}"
+    exit 2
+fi
 mode="${DOKTOK_DEPLOY_MODE:-host}"
 
 EXPORT_DIR="${DOKTOK_BACKUP_EXPORT_DIR:-${BACKUP_DIR}/exports}"

@@ -298,12 +298,38 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             environment=settings.env,
         )
 
-    @app.get("/ready", tags=["system"])
-    def ready(request: Request) -> JSONResponse:
-        # Liveness (/health) never touches dependencies. Readiness probes each dependency so an
-        # orchestrator/proxy routes traffic only when the instance can serve. HARD deps (DB, the
-        # local embedder) fail the probe (503); SOFT deps (Gotenberg, and OpenAI when selected) are
-        # reported but do not deroute the instance. Every check is bounded so the probe can't hang.
+    # Readiness result cache (#625, F-13): each level computes at most once per window, so a probe
+    # flood coalesces instead of fanning out per call.
+    _READY_CACHE_SECONDS = 5.0
+    app.state._ready_shallow_cache = None
+    app.state._ready_deep_cache = None
+
+    def _ready_shallow(request: Request) -> JSONResponse:
+        # Shallow probe: process-up + the hard DB check with STATIC details - no exception text,
+        # no internal addresses, and NO outbound HTTP fan-out (#625, F-13).
+        from doktok_api.dependencies import _get_database
+
+        checks: list[dict[str, object]] = []
+        try:
+            with _get_database(request).connection() as conn:
+                conn.execute("SELECT 1")
+            checks.append({"name": "database", "hard": True, "status": "ok", "detail": ""})
+        except Exception:  # noqa: BLE001 - readiness reports, never raises
+            checks.append(
+                {"name": "database", "hard": True, "status": "down", "detail": "unavailable"}
+            )
+        ok = all(c["status"] == "ok" for c in checks if c["hard"])
+        return JSONResponse(
+            status_code=200 if ok else 503,
+            content={"status": "ready" if ok else "unavailable", "checks": checks},
+        )
+
+    def _ready_deep(request: Request) -> JSONResponse:
+        # Deep probe (authenticated): the full dependency fan-out with details. Liveness (/health)
+        # never touches dependencies. Readiness probes each dependency so an orchestrator/proxy
+        # routes traffic only when the instance can serve. HARD deps (DB, the local embedder) fail
+        # the probe (503); SOFT deps (Gotenberg, and OpenAI when selected) are reported but do not
+        # deroute the instance. Every check is bounded so the probe can't hang.
         import httpx
         from doktok_core.security.egress import effective_no_egress, openai_egress_allowed
 
@@ -394,6 +420,27 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             status_code=200 if ready_ok else 503,
             content={"status": "ready" if ready_ok else "unavailable", "checks": checks},
         )
+
+    @app.get("/ready", tags=["system"])
+    def ready(request: Request, deep: bool = False) -> JSONResponse:
+        # Two levels (#625, F-13): shallow (default, public) = process + DB with static details and
+        # no outbound probes, so a /ready flood cannot pin the threadpool or leak internals. Deep
+        # (?deep=1, authenticated) = the full dependency fan-out with details. Both cached briefly.
+        import time as _time
+
+        state = request.app.state
+        now = _time.monotonic()
+        attr = "_ready_deep_cache" if deep else "_ready_shallow_cache"
+        cached: tuple[float, JSONResponse] | None = getattr(state, attr, None)
+        if cached is not None and now - cached[0] < _READY_CACHE_SECONDS:
+            return cached[1]
+        if deep:
+            from doktok_api.dependencies import require_tenant
+
+            require_tenant(request, request.headers.get("authorization"))
+        response = _ready_deep(request) if deep else _ready_shallow(request)
+        setattr(state, attr, (now, response))
+        return response
 
     @app.get("/metrics", tags=["system"])
     def metrics(request: Request, tenant: Tenant) -> Response:

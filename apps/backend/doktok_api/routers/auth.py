@@ -219,9 +219,12 @@ def accept_invite(body: AcceptInviteRequest, registry: Registry, audit: Audit) -
     user = registry.get_user(inv.tenant_id, inv.user_id)
     if user is None:
         raise invalid
-    registry.set_user_password(inv.tenant_id, inv.user_id, hash_password(body.password))
-    registry.set_user_status(inv.tenant_id, inv.user_id, "active")
-    registry.mark_invitation_accepted(inv.id)
+    # F-36 (#648): claim + password-set + activation as ONE unit - a concurrent accept that also
+    # passed the pre-check loses the conditional claim and gets the same generic error.
+    if not registry.accept_invitation(
+        inv.tenant_id, inv.user_id, inv.id, hash_password(body.password)
+    ):
+        raise invalid
     record_activity(
         audit,
         inv.tenant_id,

@@ -43,6 +43,31 @@ def test_status_and_invitation_lifecycle(db: Database) -> None:
     assert reg.get_invitation_by_token(hash_token("nope")) is None
 
 
+def test_accept_invitation_is_atomic(db: Database) -> None:
+    # F-36 (#648): the conditional UPDATE ... accepted_at IS NULL gates exactly one claimer; the
+    # password-set + activation ride in the same transaction.
+    reg = PostgresTenantRegistry(db)
+    reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))
+    reg.create_user(
+        User(id="uacc", tenant_id=TENANT, email="acc@example.com", role="editor", status="invited")
+    )
+    reg.create_invitation(
+        Invitation(
+            id="inv-acc",
+            tenant_id=TENANT,
+            user_id="uacc",
+            email="acc@example.com",
+            role="editor",
+            token_sha256=hash_token("accept-token"),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    assert reg.accept_invitation(TENANT, "uacc", "inv-acc", "scrypt$new") is True
+    assert reg.get_user(TENANT, "uacc").status == "active"  # type: ignore[union-attr]
+    # A concurrent claim of the same invitation loses: exactly one accept wins.
+    assert reg.accept_invitation(TENANT, "uacc", "inv-acc", "scrypt$other") is False
+
+
 def test_create_and_resolve_token(db: Database) -> None:
     reg = PostgresTenantRegistry(db)
     reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))

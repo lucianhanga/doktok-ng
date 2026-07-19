@@ -22,6 +22,8 @@ an LLM adjudicator that judges whether fuzzy-matched pairs are truly the same re
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 from doktok_contracts.ports import EntityMergeAdjudicator, KnowledgeGraphRepository
 from doktok_contracts.schemas import (
@@ -53,6 +55,39 @@ _TRUSTED_METHODS = frozenset({METHOD_TOKEN_SET, METHOD_TOKEN_SUBSET, METHOD_TOKE
 
 # Number of direct KG edges to include per entity profile (disambiguation context).
 _NEIGHBOR_TOP_K = 5
+
+# F-15 (#627): bound the adjudication cost per request. A single GET must not run an unbounded
+# number of sequential LLM calls; beyond this budget the remaining uncached pairs pass through
+# unchanged this call (the human still reviews every merge, and the next request picks up where
+# the verdict cache left off).
+_MAX_LLM_CALLS_PER_REQUEST = 20
+
+# F-15 (#627): an adjudicator ERROR is cached briefly in-process (the verdict itself stays
+# uncached in the DB, so a transient model error is retried - just not re-paid on EVERY request).
+_ERROR_RETRY_SECONDS = 300.0
+_recent_errors: dict[tuple[str, str, str], float] = {}
+_errors_lock = threading.Lock()
+
+
+def _error_fresh(key: tuple[str, str, str]) -> bool:
+    with _errors_lock:
+        at = _recent_errors.get(key)
+        return at is not None and (time.monotonic() - at) < _ERROR_RETRY_SECONDS
+
+
+def _record_error(key: tuple[str, str, str]) -> None:
+    with _errors_lock:
+        if len(_recent_errors) >= 1000:  # bound the map: drop expired entries first
+            cutoff = time.monotonic() - _ERROR_RETRY_SECONDS
+            for k, at in list(_recent_errors.items()):
+                if at < cutoff:
+                    del _recent_errors[k]
+        _recent_errors[key] = time.monotonic()
+
+
+def _clear_error(key: tuple[str, str, str]) -> None:
+    with _errors_lock:
+        _recent_errors.pop(key, None)
 
 
 def build_entity_profile(
@@ -191,6 +226,7 @@ def adjudicate_suggestions(
         cached = {}
 
     result: list[KgMergeSuggestion] = []
+    llm_calls = 0
 
     for s in batch:
         if s.method in _TRUSTED_METHODS:
@@ -215,7 +251,19 @@ def adjudicate_suggestions(
                 result.append(applied)
             continue
 
+        # Cache miss. F-15: bound the per-request LLM call count - beyond the budget the pair
+        # passes through unchanged THIS call (the next request picks up where the cache left off).
+        if llm_calls >= _MAX_LLM_CALLS_PER_REQUEST:
+            result.append(s)
+            continue
+        # F-15: a recent adjudicator error is cached briefly - the failing pair is NOT re-paid on
+        # every request; after the cooldown it is retried (transient outages self-heal).
+        if _error_fresh(key):
+            result.append(s)
+            continue
+
         # Cache miss: adjudicate via the LLM, then persist the verdict for next time.
+        llm_calls += 1
         try:
             profile_a = build_entity_profile(
                 s.tenant_id, s.canonical_id, s.canonical_value, s.entity_type, kg
@@ -226,7 +274,9 @@ def adjudicate_suggestions(
             verdict: MergeVerdict = adjudicator.adjudicate(profile_a, profile_b)
         except Exception:
             # A single pair's adjudicator error must not abort the batch: keep it unchanged and do
-            # NOT cache (so a transient model error is retried on the next request).
+            # NOT cache the verdict in the DB (a transient model error is retried) - but record
+            # the error briefly in-process so it is not re-paid on EVERY request (F-15).
+            _record_error(key)
             logger.warning(
                 "adjudicator error for %s / %s; keeping suggestion unchanged",
                 s.canonical_id,
@@ -235,6 +285,7 @@ def adjudicate_suggestions(
             )
             result.append(s)
             continue
+        _clear_error(key)
 
         # Persist the verdict (best-effort: a cache write failure must not break the queue).
         pair_key, method, score_bucket = key

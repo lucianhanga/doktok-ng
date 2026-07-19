@@ -54,6 +54,11 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in list(os.environ):
         if key.startswith("DOKTOK_"):
             monkeypatch.delenv(key, raising=False)
+    # The F-15 adjudicator-error TTL is process-global process state: clear it per test so one
+    # test's failing adjudication cannot suppress the same pair in a later test.
+    import doktok_core.knowledge_graph.adjudication as adj_mod
+
+    adj_mod._recent_errors.clear()  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -501,18 +506,28 @@ class TestAdjudicationCache:
         assert adj.calls == 2
 
     def test_graceful_fallback_preserved_and_error_not_cached(self) -> None:
-        """A raising adjudicator keeps the pair unchanged AND caches nothing (retried next time)."""
+        """A raising adjudicator keeps the pair unchanged AND caches no verdict (retried later)."""
+        import doktok_core.knowledge_graph.adjudication as adj_mod
+
         kg = _kg_with_persons()
         raising = FakeRaisingAdjudicator()
         s = _fuzzy_suggestion()
+        adj_mod._recent_errors.clear()  # noqa: SLF001 - isolation
 
         result = adjudicate_suggestions([s], kg, raising)
         assert len(result) == 1 and result[0].llm_same is None  # unchanged fallback
-        # Nothing cached: a transient error must be retried, so a later good adjudicator runs.
+        # Within the F-15 error cooldown the pair is NOT re-adjudicated on every call...
         good = CountingAdjudicator(same=True)
+        skipped = adjudicate_suggestions([s], kg, good)
+        assert good.calls == 0 and skipped[0].llm_same is None
+        # ...but the error is not verdict-cached either: after the cooldown a good adjudicator
+        # IS consulted (a transient outage self-heals).
+        for key in adj_mod._recent_errors:  # noqa: SLF001
+            adj_mod._recent_errors[key] -= adj_mod._ERROR_RETRY_SECONDS + 1  # noqa: SLF001
         again = adjudicate_suggestions([s], kg, good)
         assert len(again) == 1 and again[0].llm_same is True
-        assert good.calls == 1  # the error was not cached: the good adjudicator was consulted
+        assert good.calls == 1
+        adj_mod._recent_errors.clear()  # noqa: SLF001 - isolation
 
 
 # ---------------------------------------------------------------------------
@@ -738,3 +753,113 @@ class TestRejectMergeSuggestion:
             )
             assert rej.status_code == 204
         assert client.get("/api/v1/entities/merge-suggestions", headers=_auth()).json() == []
+
+
+# ---------------------------------------------------------------------------
+# F-15 (#627): bounded adjudication cost
+# ---------------------------------------------------------------------------
+
+
+class CountingFailingAdjudicator:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def adjudicate(self, a: EntityProfile, b: EntityProfile) -> MergeVerdict:
+        self.calls += 1
+        raise RuntimeError("fake model error")
+
+
+def test_llm_calls_are_capped_per_request() -> None:
+    # F-15: one request may not run an unbounded number of sequential LLM adjudications - the
+    # per-request budget caps them; beyond-budget pairs pass through unchanged (the human still
+    # reviews every merge, and the next call picks up where the cache left off).
+    kg = _kg_with_persons()
+    adj = CountingAdjudicator(same=True)
+    suggestions = [
+        _fuzzy_suggestion(
+            canonical_id=f"e-c{i}",
+            canonical_value=f"person number {i}",
+            alias_id=f"e-a{i}",
+            alias_value=f"person numbr {i}",
+        )
+        for i in range(30)
+    ]
+    result = adjudicate_suggestions(suggestions, kg, adj, limit=50)
+    assert adj.calls == 20  # the per-request LLM budget, not 30
+    assert len(result) == 30  # everything is still returned
+    assert sum(1 for s in result if s.llm_same) == 20  # exactly the budget was enriched
+
+
+def test_adjudicator_error_is_retried_only_after_a_cooldown() -> None:
+    # F-15: a failing adjudicator must not be re-paid on EVERY request - errors are cached
+    # briefly (in-memory TTL), then retried so a transient outage self-heals.
+    import doktok_core.knowledge_graph.adjudication as adj_mod
+
+    kg = _kg_with_persons()
+    adj = CountingFailingAdjudicator()
+    suggestions = [_fuzzy_suggestion()]
+    adj_mod._recent_errors.clear()  # noqa: SLF001 - test isolation for the TTL map
+    try:
+        first = adjudicate_suggestions(suggestions, kg, adj, limit=50)
+        assert adj.calls == 1 and first == suggestions  # unchanged fallback on error
+        adjudicate_suggestions(suggestions, kg, adj, limit=50)
+        assert adj.calls == 1  # within the cooldown: NOT re-paid
+        # After the cooldown expires, the pair is retried.
+        for key in adj_mod._recent_errors:  # noqa: SLF001
+            adj_mod._recent_errors[key] -= adj_mod._ERROR_RETRY_SECONDS + 1  # noqa: SLF001
+        adjudicate_suggestions(suggestions, kg, adj, limit=50)
+        assert adj.calls == 2
+    finally:
+        adj_mod._recent_errors.clear()  # noqa: SLF001 - leave no TTL state for other tests
+
+
+def test_adjudicator_uses_the_interactive_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # F-15: the request-scoped adjudicator uses the interactive rag_timeout budget, not the
+    # 600s ingestion timeout - a hung model can pin a request thread for minutes, not hours.
+    from doktok_api import dependencies
+    from doktok_core.settings.inmemory import InMemoryAppSettingsRepository
+
+    captured: dict[str, float] = {}
+
+    class _RecordingAdj:
+        def __init__(
+            self,
+            model: str,
+            repair: str,
+            url: str,
+            *,
+            timeout: float,
+            num_ctx: int,
+            think: object,
+            keep_alive: str,
+        ) -> None:
+            captured["timeout"] = timeout
+
+    monkeypatch.setattr(
+        "doktok_provider_ollama.adjudicator.OllamaEntityMergeAdjudicator", _RecordingAdj
+    )
+    registry = build_registry()
+    from doktok_contracts.ports import AppSettingsRepository
+
+    registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
+    settings = Settings(  # type: ignore[call-arg]
+        env="test",
+        tenant_tokens={},
+        ollama_timeout_seconds=600,
+        rag_timeout_seconds=123,
+        _env_file=None,
+    )
+    app = create_app(settings=settings, registry=registry)
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "app": app,
+        "headers": [],
+        "method": "GET",
+        "path": "/",
+        "query_string": b"",
+    }
+    adj = dependencies._build_entity_merge_adjudicator(Request(scope))  # noqa: SLF001
+    assert adj is not None
+    assert captured["timeout"] == 123

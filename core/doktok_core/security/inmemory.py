@@ -96,6 +96,19 @@ class InMemoryTenantRegistry:
                 update={"accepted_at": datetime.now(UTC)}
             )
 
+    def accept_invitation(
+        self, tenant_id: str, user_id: str, invitation_id: str, password_hash: str
+    ) -> bool:
+        # F-36 (#648): claim + password-set + activation as one unit; an already-claimed
+        # invitation loses.
+        inv = self.invitations.get(invitation_id)
+        if inv is None or inv.accepted_at is not None:
+            return False
+        self.mark_invitation_accepted(invitation_id)
+        self.set_user_password(tenant_id, user_id, password_hash)
+        self.set_user_status(tenant_id, user_id, "active")
+        return True
+
     def create_api_token(self, token: ApiToken) -> None:
         self.tokens.setdefault(token.id, token)
 

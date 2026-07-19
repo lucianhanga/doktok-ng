@@ -3605,6 +3605,31 @@ class PostgresTenantRegistry:
                 (invitation_id,),
             )
 
+    def accept_invitation(
+        self, tenant_id: str, user_id: str, invitation_id: str, password_hash: str
+    ) -> bool:
+        # F-36 (#648): one transaction; the conditional UPDATE ... accepted_at IS NULL is the
+        # race arbiter - exactly one concurrent accept claims the row, then the password-set +
+        # activation ride in the same transaction.
+        with self._db.connection() as conn, conn.transaction():
+            cur = conn.cursor()
+            claimed = cur.execute(
+                "UPDATE invitations SET accepted_at=now() "
+                "WHERE id=%s AND accepted_at IS NULL RETURNING id",
+                (invitation_id,),
+            ).fetchone()
+            if claimed is None:
+                return False
+            conn.execute(
+                "UPDATE users SET password_hash=%s WHERE tenant_id=%s AND id=%s",
+                (password_hash, tenant_id, user_id),
+            )
+            conn.execute(
+                "UPDATE users SET status='active' WHERE tenant_id=%s AND id=%s",
+                (tenant_id, user_id),
+            )
+            return True
+
     def create_api_token(self, token: ApiToken) -> None:
         with self._db.connection() as conn:
             conn.execute(

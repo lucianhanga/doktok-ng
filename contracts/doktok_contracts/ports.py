@@ -780,6 +780,15 @@ class TenantRegistry(Protocol):
         """Stamp ``accepted_at`` so the one-time invite token cannot be reused (#557)."""
         ...
 
+    def accept_invitation(
+        self, tenant_id: str, user_id: str, invitation_id: str, password_hash: str
+    ) -> bool:
+        """Claim an invitation AND set the user's password + activate them as ONE unit (#648,
+        F-36). Returns True iff this call claimed the invitation - exactly one concurrent accept
+        wins (the Postgres implementation gates on a conditional ``UPDATE ... accepted_at IS
+        NULL``); a losing call changes nothing and returns False."""
+        ...
+
     def create_api_token(self, token: ApiToken) -> None: ...
     def revoke_api_token(self, tenant_id: str, token_id: str) -> None: ...
     def list_api_tokens(self, tenant_id: str) -> list[ApiToken]:

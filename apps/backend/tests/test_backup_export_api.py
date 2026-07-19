@@ -308,9 +308,7 @@ def test_stale_building_status_is_swept_and_exports_work_again(
         created_at=datetime.now(UTC) - timedelta(hours=25),
         app_version="1.0",
     )
-    export_dir.joinpath("crashed.status.json").write_text(
-        stale.model_dump_json(), encoding="utf-8"
-    )
+    export_dir.joinpath("crashed.status.json").write_text(stale.model_dump_json(), encoding="utf-8")
     assert export_mod.is_build_in_progress(export_dir) is False  # stale -> swept
     assert not export_dir.joinpath("crashed.status.json").exists()
 
@@ -318,3 +316,38 @@ def test_stale_building_status_is_swept_and_exports_work_again(
     client, _audit = _make_client_with_export_dir(tmp_path, export_dir)
     resp = client.post("/api/v1/settings/backup/export", headers=AUTH)
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# F-20 (#634): the staged plaintext archive is discarded after the download
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl not available")
+def test_download_discards_staged_plaintext_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # F-20: once the archive has been streamed, the staged PLAINTEXT .tgz (and its status file)
+    # must not linger until the 24h TTL sweep - it is deleted when the response finishes.
+    monkeypatch.setattr(export_mod.subprocess, "run", _fake_run)
+    client, _, export_dir = _make_client(tmp_path)
+    export_id = client.post("/api/v1/settings/backup/export", headers=AUTH).json()["export_id"]
+    staged = export_mod.staged_archive_path(export_dir, export_id)
+    assert staged.exists()
+
+    resp = client.post(
+        f"/api/v1/settings/backup/export/{export_id}/download",
+        json={"passphrase": "correct horse battery staple"},  # pragma: allowlist secret
+        headers=AUTH,
+    )
+    assert resp.status_code == 200
+    assert not staged.exists()
+    assert not export_dir.joinpath(f"{export_id}.status.json").exists()
+
+    # A second download of the discarded export is a clean 404, not a stale plaintext read.
+    again = client.post(
+        f"/api/v1/settings/backup/export/{export_id}/download",
+        json={"passphrase": "correct horse battery staple"},  # pragma: allowlist secret
+        headers=AUTH,
+    )
+    assert again.status_code == 404

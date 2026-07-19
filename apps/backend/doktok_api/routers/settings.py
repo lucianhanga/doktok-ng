@@ -1011,7 +1011,8 @@ def download_backup_export(
     ciphertext (M12 portable backup, Phase 1). POST so the passphrase is in the body, never a
     URL/log. The passphrase is piped to openssl on stdin and is never written to disk or logged.
     The download filename ends ``.tgz.enc``; decrypt with ``openssl enc -d -aes-256-cbc -pbkdf2
-    -iter 600000 -md sha256 -salt -pass stdin -in <file> -out <plain>`` (F-17 #632)."""
+    -iter 600000 -md sha256 -salt -pass stdin -in <file> -out <plain>`` (F-17 #632). The staged
+    plaintext archive is discarded when the stream finishes (F-20 #634)."""
     from doktok_core.backup import export as export_mod
 
     export_dir = _export_dir(request)
@@ -1023,6 +1024,16 @@ def download_backup_export(
         raise HTTPException(status_code=404, detail="backup export is not ready")
 
     stream = _encrypt_stream(staged, body.passphrase)
+
+    def _stream_and_discard() -> Iterator[bytes]:
+        # F-20 (#634): the staged PLAINTEXT archive (and its status file) must not linger until
+        # the 24h TTL sweep once it has been downloaded - delete it when the response finishes,
+        # whether the stream completed or the client disconnected.
+        try:
+            yield from stream
+        finally:
+            export_mod.discard_export(export_dir, export_id)
+
     ts = (info.created_at or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
     filename = f"doktok-backup-{ts}.tgz.enc"
     _record_portable(
@@ -1034,7 +1045,7 @@ def download_backup_export(
         export_id=export_id,
     )
     return StreamingResponse(
-        stream,
+        _stream_and_discard(),
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

@@ -109,15 +109,62 @@ def latest_export_status(export_dir: Path) -> BackupExportInfo | None:
     return max(candidates, key=lambda c: c[0])[1]
 
 
+_BUILDING_LOCK = "_building.lock"  # the single global slot for an in-flight build (#629)
+
+
 def is_build_in_progress(export_dir: Path) -> bool:
-    """True if any export is currently in the 'building' state (single-flight guard)."""
+    """True if any export is currently in the 'building' state (single-flight guard). A
+    'building' status or claim lock older than the TTL is STALE (the process died mid-build,
+    F-24 #629): it is swept and treated as not-in-progress, so a crashed build can never wedge
+    the feature at 429 forever."""
     if not export_dir.exists():
         return False
+    cutoff = time.time() - DEFAULT_TTL_SECONDS
+    lock = export_dir / _BUILDING_LOCK
+    if lock.exists():
+        if lock.stat().st_mtime < cutoff:
+            lock.unlink(missing_ok=True)
+        else:
+            return True
     for status_file in export_dir.glob(f"*{_STATUS_SUFFIX}"):
         info = _read_status(status_file)
-        if info is not None and info.status == "building":
-            return True
+        if info is None or info.status != "building":
+            continue
+        created = info.created_at.timestamp() if info.created_at else status_file.stat().st_mtime
+        if created < cutoff:
+            status_file.unlink(missing_ok=True)
+            continue
+        return True
     return False
+
+
+def claim_build(export_dir: Path, export_id: str, app_version: str) -> BackupExportInfo | None:
+    """Atomically claim the single export build slot (F-24 #629): the claim lock is created with
+    O_CREAT|O_EXCL in the REQUEST handler, so a concurrent starter loses instantly (429) -
+    closing the check-then-act race where the status was written only inside the background
+    task. Returns the info for the response on success, None when a build is already claimed.
+    The background task MUST call :func:`release_build` when it finishes (success or failure)."""
+    export_dir.mkdir(parents=True, exist_ok=True)
+    if is_build_in_progress(export_dir):  # fast path; the O_EXCL below is the atomic one
+        return None
+    lock = export_dir / _BUILDING_LOCK
+    try:
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return None
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        out.write(export_id)
+    return BackupExportInfo(
+        export_id=export_id,
+        status="building",
+        created_at=datetime.now(UTC),
+        app_version=app_version,
+    )
+
+
+def release_build(export_dir: Path) -> None:
+    """Free the build slot claimed by :func:`claim_build` (best-effort, idempotent)."""
+    (export_dir / _BUILDING_LOCK).unlink(missing_ok=True)
 
 
 def staged_archive_path(export_dir: Path, export_id: str) -> Path:

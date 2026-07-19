@@ -938,18 +938,27 @@ def start_backup_export(
     paths = _export_paths(request, export_dir)
     settings = request.app.state.settings
     app_version = paths.app_version
+    # Atomic single-flight claim (#629, F-24): the build slot is claimed HERE with a
+    # create-exclusive lock, so a concurrent starter loses instantly - no check-then-act window
+    # where parallel pg_dumps could start. The background task frees it in a finally.
+    claim = export_mod.claim_build(export_dir, export_id, app_version)
+    if claim is None:
+        raise HTTPException(status_code=429, detail="a backup export is already building")
 
     def _run() -> None:
-        result = export_mod.build_export(paths, export_id)
-        ok = result.status == "ready"
-        desc = (
-            f"Portable backup export ready ({result.member_count} members)"
-            if ok
-            else f"Portable backup export failed: {result.error}"
-        )
-        _record_portable(
-            audit, tenant.tenant_id, actor=caller, ok=ok, description=desc, export_id=export_id
-        )
+        try:
+            result = export_mod.build_export(paths, export_id)
+            ok = result.status == "ready"
+            desc = (
+                f"Portable backup export ready ({result.member_count} members)"
+                if ok
+                else f"Portable backup export failed: {result.error}"
+            )
+            _record_portable(
+                audit, tenant.tenant_id, actor=caller, ok=ok, description=desc, export_id=export_id
+            )
+        finally:
+            export_mod.release_build(export_dir)  # free the slot even on failure (#629)
 
     caller = actor_identity(tenant)
     background.add_task(_run)

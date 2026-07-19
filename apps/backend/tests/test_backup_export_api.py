@@ -12,13 +12,14 @@ import os
 import shutil
 import subprocess
 import tarfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from doktok_api.main import create_app
 from doktok_contracts.ports import AppSettingsRepository, AuditLogRepository
+from doktok_contracts.schemas import BackupExportInfo
 from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.backup import export as export_mod
 from doktok_core.config import Settings
@@ -57,6 +58,13 @@ def _fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
 
 def _make_client(tmp_path: Path) -> tuple[TestClient, InMemoryAuditLogRepository, Path]:
     export_dir = tmp_path / "exports"
+    client, audit = _make_client_with_export_dir(tmp_path, export_dir)
+    return client, audit, export_dir
+
+
+def _make_client_with_export_dir(
+    tmp_path: Path, export_dir: Path
+) -> tuple[TestClient, InMemoryAuditLogRepository]:
     files_root = tmp_path / "files"
     files_root.mkdir(parents=True)
     (files_root / "doc.txt").write_text("payload", encoding="utf-8")
@@ -72,7 +80,7 @@ def _make_client(tmp_path: Path) -> tuple[TestClient, InMemoryAuditLogRepository
         secrets_key="unit-secret",  # pragma: allowlist secret
         _env_file=None,
     )
-    return TestClient(create_app(settings=settings, registry=registry)), audit, export_dir
+    return TestClient(create_app(settings=settings, registry=registry)), audit
 
 
 def test_requires_auth(tmp_path: Path) -> None:
@@ -258,3 +266,51 @@ def test_download_records_portable_activity(
     events = audit.list_events("tenant-a", limit=100)
     legs = {e.metadata.get("leg") for e in events if isinstance(e.metadata, dict)}
     assert "portable" in legs
+
+
+# ---------------------------------------------------------------------------
+# F-24 (#629): atomic single-flight + stale-building recovery
+# ---------------------------------------------------------------------------
+
+
+def test_claim_build_is_create_exclusive(tmp_path: Path) -> None:
+    # F-24: the build slot is claimed atomically (O_CREAT|O_EXCL) - a concurrent starter loses
+    # INSTANTLY instead of racing into a parallel pg_dump.
+    export_dir = tmp_path / "exports"
+    first = export_mod.claim_build(export_dir, "id-a", "1.0")
+    assert first is not None and first.status == "building"
+    assert export_mod.claim_build(export_dir, "id-b", "1.0") is None
+
+
+def test_start_export_is_429_when_a_build_is_in_flight(tmp_path: Path) -> None:
+    # Pins the single-flight guard through the API: an in-flight build 429s the next starter.
+    export_dir = tmp_path / "exports"
+    export_mod.claim_build(export_dir, "in-flight", "1.0")
+    client, _audit = _make_client_with_export_dir(tmp_path, export_dir)
+    resp = client.post("/api/v1/settings/backup/export", headers=AUTH)
+    assert resp.status_code == 429
+
+
+def test_stale_building_status_is_swept_and_exports_work_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # F-24: a crashed build leaves a 'building' status behind; older than the TTL it is stale -
+    # swept and treated as not-in-progress, so the feature can never wedge at 429 forever.
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir(parents=True)
+    stale = BackupExportInfo(
+        export_id="crashed",
+        status="building",
+        created_at=datetime.now(UTC) - timedelta(hours=25),
+        app_version="1.0",
+    )
+    export_dir.joinpath("crashed.status.json").write_text(
+        stale.model_dump_json(), encoding="utf-8"
+    )
+    assert export_mod.is_build_in_progress(export_dir) is False  # stale -> swept
+    assert not export_dir.joinpath("crashed.status.json").exists()
+
+    monkeypatch.setattr(export_mod.subprocess, "run", _fake_run)
+    client, _audit = _make_client_with_export_dir(tmp_path, export_dir)
+    resp = client.post("/api/v1/settings/backup/export", headers=AUTH)
+    assert resp.status_code == 200

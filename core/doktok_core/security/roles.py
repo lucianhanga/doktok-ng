@@ -7,9 +7,10 @@ Three ordered roles gate write access in the API:
 - ``admin``   - editor + administration (settings, backups, tenant/user management).
 
 Enforcement is method-aware and applied per router (see ``make_write_guard`` in the API): safe
-methods pass for everyone; unsafe methods require the router's minimum role. A tenant-scoped token
-with no user identity (the static ``DOKTOK_TENANT_TOKENS`` / api_tokens path) resolves to ``admin``
-so local-first single-operator deployments keep full access with no configuration.
+methods pass for everyone; unsafe methods require the router's minimum role. User-less DB
+api_tokens resolve to the role stored on their row (#645, F-33 - least-privilege machine
+credentials); static host-provisioned tokens (``DOKTOK_TENANT_TOKENS``) resolve to ``admin`` -
+the local-first single-operator platform tier.
 """
 
 from __future__ import annotations

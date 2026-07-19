@@ -121,7 +121,10 @@ def require_tenant(
 
     tenant_id_var.set(resolution.tenant_id)  # correlate log lines by tenant (APP-12)
     return TenantContext(
-        tenant_id=resolution.tenant_id, user_id=resolution.user_id, platform_admin=platform_admin
+        tenant_id=resolution.tenant_id,
+        user_id=resolution.user_id,
+        platform_admin=platform_admin,
+        token_role=resolution.role,
     )
 
 
@@ -737,13 +740,15 @@ AuthenticatedUser = Annotated[TenantContext, Depends(require_user)]
 def resolve_caller_role(request: Request, tenant: TenantContext) -> Role:
     """The RBAC role of the authenticated caller (#556).
 
-    A tenant-scoped credential with no user identity (static ``DOKTOK_TENANT_TOKENS`` / a
-    user-less api_token) is the local-first single operator: it resolves to ``admin`` so existing
-    single-tenant deployments keep full access with no configuration. A user-scoped caller's role
-    comes from the registry (authoritative + revocable); if it cannot be resolved, we fail closed to
-    ``viewer`` (least privilege).
+    A user-less DB api_token resolves to the role stored on its row (#645, F-33) - least-privilege
+    machine credentials. A static host-provisioned token (``DOKTOK_TENANT_TOKENS``) has no row and
+    stays ``admin``: it is the local-first single operator / platform tier (ADR-0025). A
+    user-scoped caller's role comes from the registry (authoritative + revocable); if it cannot be
+    resolved, we fail closed to ``viewer`` (least privilege).
     """
     if tenant.user_id is None:
+        if tenant.token_role is not None:
+            return parse_role(tenant.token_role)
         return Role.ADMIN
     registry = _maybe_tenant_registry(request)
     if registry is None:

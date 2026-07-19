@@ -3458,12 +3458,12 @@ class PostgresTenantRegistry:
             row = cur.execute(
                 "UPDATE api_tokens SET last_used_at=now() "
                 "WHERE token_sha256=%s AND revoked_at IS NULL "
-                "RETURNING tenant_id, user_id",
+                "RETURNING tenant_id, user_id, role",
                 (token_sha256,),
             ).fetchone()
         if row is None:
             return None
-        return TokenResolution(tenant_id=row["tenant_id"], user_id=row["user_id"])
+        return TokenResolution(tenant_id=row["tenant_id"], user_id=row["user_id"], role=row["role"])
 
     def create_tenant(self, tenant: Tenant) -> None:
         with self._db.connection() as conn:
@@ -3609,8 +3609,8 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             conn.execute(
                 "INSERT INTO api_tokens "
-                "(id, tenant_id, user_id, token_sha256, token_prefix, name) "
-                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                "(id, tenant_id, user_id, token_sha256, token_prefix, name, role) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
                 (
                     token.id,
                     token.tenant_id,
@@ -3618,6 +3618,7 @@ class PostgresTenantRegistry:
                     token.token_sha256,
                     token.token_prefix,
                     token.name,
+                    token.role,
                 ),
             )
 
@@ -3633,8 +3634,8 @@ class PostgresTenantRegistry:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             rows = cur.execute(
-                "SELECT id, tenant_id, user_id, token_sha256, token_prefix, name, created_at, "
-                "last_used_at, revoked_at FROM api_tokens WHERE tenant_id=%s "
+                "SELECT id, tenant_id, user_id, token_sha256, token_prefix, name, role, "
+                "created_at, last_used_at, revoked_at FROM api_tokens WHERE tenant_id=%s "
                 "ORDER BY created_at DESC",
                 (tenant_id,),
             ).fetchall()

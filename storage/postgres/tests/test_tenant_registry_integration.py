@@ -61,10 +61,29 @@ def test_create_and_resolve_token(db: Database) -> None:
     assert reg.get_tenant(TENANT) is not None
     assert reg.get_user(TENANT, "u1") is not None
     assert reg.resolve_token(hash_token("plaintext-secret")) == TokenResolution(
-        tenant_id=TENANT, user_id="u1"
+        tenant_id=TENANT, user_id="u1", role="admin"
     )
     # A wrong hash never resolves.
     assert reg.resolve_token(hash_token("wrong")) is None
+
+
+def test_resolve_token_returns_the_stored_role(db: Database) -> None:
+    # F-33 (#645): the api_token row's role round-trips through resolution (viewer here).
+    reg = PostgresTenantRegistry(db)
+    reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))
+    reg.create_api_token(
+        ApiToken(
+            id="tok-role",
+            tenant_id=TENANT,
+            token_sha256=hash_token("ro-secret"),
+            role="viewer",
+        )
+    )
+    resolution = reg.resolve_token(hash_token("ro-secret"))
+    assert resolution is not None
+    assert resolution.role == "viewer"
+    listed = reg.list_api_tokens(TENANT)
+    assert next(t for t in listed if t.id == "tok-role").role == "viewer"
 
 
 def test_revoked_token_stops_resolving(db: Database) -> None:

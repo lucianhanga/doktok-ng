@@ -50,6 +50,7 @@ from doktok_core.security.roles import Role, parse_role, role_at_least
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
+    from doktok_core.config import Settings
     from doktok_core.tools import ToolRegistry
     from doktok_core.visualizations.map_service import EmbeddingMapService
     from doktok_storage_postgres import Database
@@ -186,6 +187,23 @@ def get_tenant_registry(request: Request) -> TenantRegistry:
 _DB_LOCK = threading.Lock()
 
 
+def open_database(settings: Settings) -> Database:
+    """Create + migrate + seed the shared DB pool (APP-2). Used by the request-time lazy path
+    (:func:`_get_database`) and the startup pre-warm (#637, F-23)."""
+    from doktok_core.settings.bootstrap import seed_ai_settings
+    from doktok_storage_postgres import Database, PostgresAppSettingsRepository, migrate
+
+    # Size the pool to expected concurrency: sync routes each hold a connection during a slow
+    # Ollama call, so the default (4) starves under a handful of concurrent requests.
+    database = Database(settings.database_url, max_size=settings.api_db_pool_size)
+    migrate(database)
+    # Headless bootstrap: seed the AI provider split from env on a fresh DB (APP-2).
+    seed_ai_settings(
+        PostgresAppSettingsRepository(database, secrets_key=settings.secrets_key), settings
+    )
+    return database
+
+
 def _get_database(request: Request) -> Database:
     database: Database | None = getattr(request.app.state, "database", None)
     if database is not None:
@@ -195,20 +213,7 @@ def _get_database(request: Request) -> Database:
     with _DB_LOCK:
         database = getattr(request.app.state, "database", None)
         if database is None:
-            from doktok_storage_postgres import Database, migrate
-
-            settings = request.app.state.settings
-            # Size the pool to expected concurrency: sync routes each hold a connection during a
-            # slow Ollama call, so the default (4) starves under a handful of concurrent requests.
-            database = Database(settings.database_url, max_size=settings.api_db_pool_size)
-            migrate(database)
-            # Headless bootstrap: seed the AI provider split from env on a fresh DB (APP-2).
-            from doktok_core.settings.bootstrap import seed_ai_settings
-            from doktok_storage_postgres import PostgresAppSettingsRepository
-
-            seed_ai_settings(
-                PostgresAppSettingsRepository(database, secrets_key=settings.secrets_key), settings
-            )
+            database = open_database(request.app.state.settings)
             request.app.state.database = database
     return database
 

@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
+from doktok_contracts.ports import TenantRegistry
 from doktok_contracts.schemas import HealthStatus
 from doktok_core.config import Settings, get_settings
 from doktok_core.registry import Registry, build_registry
@@ -90,9 +91,36 @@ def _maintenance_active(settings: Settings) -> bool:
         return False
 
 
+def _warm_tenant_registry(app: FastAPI) -> None:
+    """Register the DB-backed TenantRegistry at startup (F-23, #637).
+
+    The registry was built lazily on the first auth/admin request; until then the per-request
+    deactivation check was skipped, so a deactivated user's unexpired JWT (<=1 h TTL) kept tenant
+    read access after a restart - potentially for hours on a quiet box. Skipped under tests (test
+    apps pass their own registry) and when a registry is already present; any failure logs a
+    warning and leaves the lazy request-time path as the fallback - startup is never blocked."""
+    settings = app.state.settings
+    if settings.env == "test":
+        return
+    registry = app.state.registry
+    if registry.is_registered(TenantRegistry):
+        return
+    try:
+        from doktok_storage_postgres import PostgresTenantRegistry
+
+        from doktok_api.dependencies import open_database
+
+        database = open_database(settings)
+        app.state.database = database  # request-time resolution reuses this one pool
+        registry.register(TenantRegistry, PostgresTenantRegistry(database))
+    except Exception:  # noqa: BLE001 - never block startup; the lazy path is the fallback
+        logger.warning("failed to pre-warm the tenant registry", exc_info=True)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _record_service_started(app, actor="backend")
+    _warm_tenant_registry(app)
     yield
     # Close a lazily-created database pool, if one was opened during the app's lifetime.
     database = getattr(app.state, "database", None)

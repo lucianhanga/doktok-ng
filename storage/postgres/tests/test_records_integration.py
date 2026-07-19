@@ -84,6 +84,22 @@ def test_aggregate_sums_merchant_fuzzy_and_scopes_tenant(db: Database) -> None:
     assert recs.aggregate("test-other", AggregationIntent(merchant="block house")).count == 0
 
 
+def test_aggregate_merchant_escapes_like_wildcards(db: Database) -> None:
+    # F-38 (#650): '_' is a LIKE single-char wildcard; a merchant query 'a_b' must match the
+    # literal underscore only, not 'axb'.
+    docs = PostgresDocumentRepository(db)
+    recs = PostgresRecordRepository(db)
+    _doc(docs, "rde")
+    recs.replace_for_document(
+        TENANT,
+        "rde",
+        [_rec("rde", "a_b store", 1000), _rec("rde", "axb mart", 2000)],
+    )
+    result = recs.aggregate(TENANT, AggregationIntent(merchant="a_b"))
+    assert result.count == 1
+    assert result.by_currency[0].total_minor == 1000
+
+
 def test_amount_requires_currency_constraint(db: Database) -> None:
     docs = PostgresDocumentRepository(db)
     _doc(docs, "rd2")

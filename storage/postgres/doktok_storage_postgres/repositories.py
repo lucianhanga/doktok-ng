@@ -1461,9 +1461,10 @@ class PostgresKnowledgeGraphRepository:
             params.append(entity_type.value)
         if query is not None:
             # Match the display-name override too, so a renamed entity is found by its NEW name
-            # (not only the underlying normalized value).
+            # (not only the underlying normalized value). _like_contains: user wildcards are
+            # literal, not LIKE metacharacters (F-38, #650).
             where.append("(normalized_value ILIKE %s OR display_name ILIKE %s)")
-            params.extend([f"%{query}%", f"%{query}%"])
+            params.extend([_like_contains(query), _like_contains(query)])
         params.extend([limit, offset])
         sql = (
             f"SELECT {_KG_ENTITY_COLUMNS} "
@@ -2802,9 +2803,10 @@ class PostgresRecordRepository:
             params.append(intent.date_to)
         if intent.merchant:
             # Space-insensitive substring on the normalized merchant, so "block house" matches
-            # "BLOCKHOUSE #42 HAMBURG" as well as "block house restaurant".
+            # "BLOCKHOUSE #42 HAMBURG" as well as "block house restaurant". _like_contains: user
+            # wildcards match literally, not as LIKE metacharacters (F-38, #650).
             where.append("replace(merchant_normalized, ' ', '') ILIKE %s")
-            params.append(f"%{intent.merchant.strip().lower().replace(' ', '')}%")
+            params.append(_like_contains(intent.merchant.strip().lower().replace(" ", "")))
         clause = " AND ".join(where)
 
         with self._db.connection() as conn:

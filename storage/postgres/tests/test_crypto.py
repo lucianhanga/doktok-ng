@@ -44,3 +44,21 @@ def test_encrypted_value_without_key_raises() -> None:
 def test_legacy_plaintext_passes_through_even_with_key() -> None:
     # A value stored before APP-8 (no marker) is returned as-is.
     assert decrypt_secret("sk-legacy-plaintext", KEY) == "sk-legacy-plaintext"
+
+
+def test_legacy_sha256_values_still_decrypt_and_reencrypt_with_the_new_key() -> None:
+    # F-16 (#631): values written before purpose-separated keys used bare sha256 as the Fernet
+    # key. They still decrypt (legacy fallback), and a new write uses the derived subkey.
+    import base64
+    import hashlib
+
+    from cryptography.fernet import Fernet
+
+    key = "legacy-master-key"
+    legacy = Fernet(base64.urlsafe_b64encode(hashlib.sha256(key.encode()).digest()))
+    stored = "enc:v1:" + legacy.encrypt(b"openai-key-123").decode("ascii")
+    assert decrypt_secret(stored, key) == "openai-key-123"
+
+    rewritten = encrypt_secret("openai-key-123", key)
+    assert decrypt_secret(rewritten, key) == "openai-key-123"
+    assert rewritten != stored  # the new derivation, not bare sha256

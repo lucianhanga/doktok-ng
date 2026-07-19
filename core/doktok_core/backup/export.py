@@ -43,6 +43,7 @@ from doktok_contracts.schemas import BackupExportInfo as BackupExportInfo
 from doktok_contracts.schemas import BackupManifest, BackupManifestMember
 
 from doktok_core.backup.fingerprint import secrets_key_fingerprint
+from doktok_core.security.keys import derive_key
 
 logger = logging.getLogger("doktok.backup.export")
 
@@ -208,7 +209,8 @@ def _manifest_hmac(secrets_key: str, members: list[BackupManifestMember]) -> str
 
     lines = "\n".join(sorted(f"{m.name}:{m.sha256}" for m in members)).encode("utf-8")
     if secrets_key:
-        return hmac.new(secrets_key.encode("utf-8"), lines, hashlib.sha256).hexdigest()
+        # Keyed by the purpose-separated manifest subkey (#631, F-16), not the raw secrets key.
+        return hmac.new(derive_key(secrets_key, "manifest"), lines, hashlib.sha256).hexdigest()
     return hashlib.sha256(lines).hexdigest()
 
 

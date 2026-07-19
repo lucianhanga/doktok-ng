@@ -133,6 +133,10 @@ def _decode_cursor(token: str | None, sort: DocumentSort, direction: SortDir) ->
             value = date.fromisoformat(body)
         elif tag == "i":
             value = int(body)
+            # F-26 (#638): Python ints are unbounded but the value is cast ::bigint in Postgres;
+            # an out-of-int64 cursor must hit the documented 400 contract, never a 500.
+            if not -(2**63) <= value <= 2**63 - 1:
+                raise ValueError("cursor value out of range")
         elif tag == "s":
             value = unquote(body)
         else:

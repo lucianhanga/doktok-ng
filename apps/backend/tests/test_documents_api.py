@@ -140,6 +140,21 @@ def test_invalid_cursor_is_400() -> None:
     assert resp.status_code == 400
 
 
+def test_huge_integer_cursor_is_400_not_500() -> None:
+    # F-26 (#638): an i: value beyond int64 parses fine in Python but overflows the Postgres
+    # ::bigint cast downstream; the decode-time range check rejects it with the documented
+    # 400, never an unhandled 500.
+    import base64
+
+    raw = b"v2|chunks|desc|i:99999999999999999999999999|d1"
+    cursor = base64.urlsafe_b64encode(raw).decode()
+    client = _client(_doc("d1", "tenant-a"))
+    resp = client.get(
+        f"/api/v1/documents?sort=chunks&dir=desc&cursor={cursor}", headers=_auth("tok-a")
+    )
+    assert resp.status_code == 400
+
+
 def test_cannot_read_another_tenants_document() -> None:
     client = _client(_doc("a-doc", "tenant-a"), _doc("b-doc", "tenant-b"))
     assert client.get("/api/v1/documents/b-doc", headers=_auth("tok-a")).status_code == 404

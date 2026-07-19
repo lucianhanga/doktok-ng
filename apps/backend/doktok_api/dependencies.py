@@ -126,8 +126,19 @@ def require_tenant(
 
 def effective_jwt_secret(settings: object) -> str:
     """The secret used to sign/verify login session JWTs (#555): the dedicated
-    ``DOKTOK_AUTH_JWT_SECRET`` if set, else ``DOKTOK_SECRETS_KEY``, else empty (login disabled)."""
-    return getattr(settings, "auth_jwt_secret", "") or getattr(settings, "secrets_key", "")
+    ``DOKTOK_AUTH_JWT_SECRET`` if set, else the purpose-separated ``jwt`` subkey of
+    ``DOKTOK_SECRETS_KEY`` (#631, F-16 - not the raw master key), else empty (login disabled)."""
+    dedicated = getattr(settings, "auth_jwt_secret", "")
+    if dedicated:
+        return dedicated
+    fallback = getattr(settings, "secrets_key", "")
+    if not fallback:
+        return ""
+    import base64
+
+    from doktok_core.security.keys import derive_key
+
+    return base64.urlsafe_b64encode(derive_key(fallback, "jwt")).decode("ascii")
 
 
 def require_user(tenant: Annotated[TenantContext, Depends(require_tenant)]) -> TenantContext:

@@ -12,13 +12,19 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+from doktok_core.security.keys import derive_key
+
 # A fixed, non-secret domain-separation label. Changing it changes every fingerprint; keep stable.
 _FINGERPRINT_LABEL = b"doktok-portable-backup-secrets-key-fingerprint-v1"
 
 
 def secrets_key_fingerprint(secrets_key: str) -> str:
     """Return a stable, non-reversible hex fingerprint of ``secrets_key`` (HMAC-SHA256 of a fixed
-    label). Empty string when no key is configured. Never logs or returns the key itself."""
+    label, keyed by the purpose-separated fingerprint subkey #631 - a captured archive is no
+    longer an offline oracle against the raw key). Empty string when no key is configured.
+    Never logs or returns the key itself."""
     if not secrets_key:
         return ""
-    return hmac.new(secrets_key.encode("utf-8"), _FINGERPRINT_LABEL, hashlib.sha256).hexdigest()
+    return hmac.new(
+        derive_key(secrets_key, "fingerprint"), _FINGERPRINT_LABEL, hashlib.sha256
+    ).hexdigest()

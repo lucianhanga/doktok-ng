@@ -116,3 +116,79 @@ def test_traversal_tenant_isolation(db: Database) -> None:
     )
     assert all(e.tenant_id == TENANT_B for e in edges)
     assert len(edges) == 2
+
+
+def test_mentions_for_entity_paginates_and_documents_batch_fetch(db: Database) -> None:
+    # #628 (F-18): mentions_for_entity honors limit/offset, and get_many returns documents in one
+    # query (no N+1). Uses the test-tenant convention (rows are wiped by the fixture).
+    from datetime import UTC, datetime
+
+    from doktok_contracts.schemas import (
+        Document,
+        DocumentEntity,
+        DocumentStatus,
+        EntityType,
+        KgEntityMention,
+    )
+    from doktok_storage_postgres import PostgresDocumentRepository, PostgresEntityRepository
+
+    kg = PostgresKnowledgeGraphRepository(db)
+    docs = PostgresDocumentRepository(db)
+    entities = PostgresEntityRepository(db)
+    tid = "test-kg-page"
+    kg.upsert_entities(
+        [
+            KgEntity(
+                id="e-page",
+                tenant_id=tid,
+                entity_type=EntityType.PERSON,
+                normalized_value="alice johnson",
+            )
+        ]
+    )
+    for i in range(5):
+        docs.add(
+            Document(
+                id=f"dp{i}",
+                tenant_id=tid,
+                sha256=f"{i}" * 64,
+                original_filename=f"dp{i}.pdf",
+                status=DocumentStatus.ACTIVE,
+                created_at=datetime.now(UTC),
+            )
+        )
+        entities.add_entities(
+            [
+                DocumentEntity(
+                    id=f"mp{i}",
+                    tenant_id=tid,
+                    document_id=f"dp{i}",
+                    version_id=f"dp{i}",
+                    entity_text="Alice Johnson",
+                    entity_type=EntityType.PERSON,
+                    normalized_value="alice johnson",
+                    frequency=1,
+                )
+            ]
+        )
+        kg.replace_mentions_for_document(
+            tid,
+            f"dp{i}",
+            [
+                KgEntityMention(
+                    mention_id=f"mp{i}",
+                    tenant_id=tid,
+                    canonical_entity_id="e-page",
+                    document_id=f"dp{i}",
+                    entity_type=EntityType.PERSON,
+                    normalized_value="alice johnson",
+                )
+            ],
+        )
+    assert len(kg.mentions_for_entity(tid, "e-page")) == 5
+    assert len(kg.mentions_for_entity(tid, "e-page", limit=2)) == 2
+    page2 = kg.mentions_for_entity(tid, "e-page", limit=2, offset=2)
+    assert [m.mention_id for m in page2] == ["mp2", "mp3"]
+    found = docs.get_many(tid, ["dp0", "dp2", "dp4"])
+    assert {d.id for d in found} == {"dp0", "dp2", "dp4"}
+    assert docs.get_many(tid, []) == []

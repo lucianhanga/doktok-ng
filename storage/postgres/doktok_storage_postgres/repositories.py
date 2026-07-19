@@ -475,6 +475,17 @@ class PostgresDocumentRepository:
             ).fetchone()
         return _row_to_document(row) if row else None
 
+    def get_many(self, tenant_id: str, document_ids: list[str]) -> list[Document]:
+        if not document_ids:
+            return []
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_DOC_COLUMNS} FROM documents WHERE tenant_id=%s AND id = ANY(%s)",
+                (tenant_id, document_ids),
+            ).fetchall()
+        return [_row_to_document(row) for row in rows]
+
     def list_documents(
         self,
         tenant_id: str,
@@ -1126,14 +1137,20 @@ class PostgresKnowledgeGraphRepository:
             ).fetchall()
         return [_row_to_kg_mention(row) for row in rows]
 
-    def mentions_for_entity(self, tenant_id: str, entity_id: str) -> list[KgEntityMention]:
+    def mentions_for_entity(
+        self, tenant_id: str, entity_id: str, *, limit: int | None = None, offset: int = 0
+    ) -> list[KgEntityMention]:
+        sql = (
+            f"SELECT {_KG_MENTION_COLUMNS} FROM kg_entity_mentions "
+            "WHERE tenant_id=%s AND canonical_entity_id=%s ORDER BY mention_id"
+        )
+        params: list[object] = [tenant_id, entity_id]
+        if limit is not None:
+            sql += " LIMIT %s OFFSET %s"
+            params += [limit, offset]
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
-            rows = cur.execute(
-                f"SELECT {_KG_MENTION_COLUMNS} FROM kg_entity_mentions "
-                "WHERE tenant_id=%s AND canonical_entity_id=%s ORDER BY mention_id",
-                (tenant_id, entity_id),
-            ).fetchall()
+            rows = cur.execute(sql, params).fetchall()
         return [_row_to_kg_mention(row) for row in rows]
 
     def entity_count(self, tenant_id: str) -> int:

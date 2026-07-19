@@ -66,6 +66,14 @@ class InMemoryDocumentRepository:
             return None
         return doc.model_copy(deep=True)
 
+    def get_many(self, tenant_id: str, document_ids: list[str]) -> list[Document]:
+        result: list[Document] = []
+        for i in document_ids:
+            doc = self._docs.get(i)
+            if doc is not None and doc.tenant_id == tenant_id:
+                result.append(doc.model_copy(deep=True))
+        return result
+
     def set_metadata(
         self,
         tenant_id: str,

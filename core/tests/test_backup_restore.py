@@ -438,8 +438,17 @@ def test_pre_change_archive_still_decrypts_via_fallback(tmp_path: Path) -> None:
     enc = tmp_path / "old.tgz.enc"
     proc = sp.run(
         [
-            "openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-salt", "-pass", "stdin",
-            "-in", str(plain), "-out", str(enc),
+            "openssl",
+            "enc",
+            "-aes-256-cbc",
+            "-pbkdf2",
+            "-salt",
+            "-pass",
+            "stdin",
+            "-in",
+            str(plain),
+            "-out",
+            str(enc),
         ],
         input=b"old-pass-1234\n",
         capture_output=True,
@@ -448,3 +457,82 @@ def test_pre_change_archive_still_decrypts_via_fallback(tmp_path: Path) -> None:
     out = tmp_path / "out.tgz"
     restore_mod.decrypt_archive(enc, out, "old-pass-1234")
     assert out.read_bytes() == b"archive-bytes-10k"
+
+
+# ---------------------------------------------------------------------------
+# F-28 (#640): manifest member names are untrusted input - no filesystem probes
+# ---------------------------------------------------------------------------
+
+
+def test_verify_members_rejects_hostile_names(tmp_path: Path) -> None:
+    # F-28: an absolute name or a '..' escape must be refused as UNSAFE, never joined onto the
+    # extraction root and probed against the host filesystem (existence oracle).
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    members = [
+        BackupManifestMember(name="/etc/hosts", sha256="0" * 64, size=1),
+        BackupManifestMember(name="../../etc/hosts", sha256="0" * 64, size=1),
+        BackupManifestMember(name="C:\\Windows\\win.ini", sha256="0" * 64, size=1),
+    ]
+    errors = restore_mod.verify_members(extracted, members)
+    assert len(errors) == 3
+    assert all("unsafe member name" in e for e in errors)
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl not available")
+def test_hmac_failure_skips_member_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # F-28: an HMAC-unauthenticated manifest is attacker-authored - member verification is
+    # skipped entirely, so its names are never probed against the host filesystem.
+    passphrase = "hmac skip test passphrase"  # pragma: allowlist secret
+    monkeypatch.setattr(export_mod.subprocess, "run", _fake_run)
+    export_dir = tmp_path / "exports"
+    files_root = tmp_path / "files"
+    files_root.mkdir(parents=True)
+    (files_root / "doc.txt").write_text("payload", encoding="utf-8")
+    paths = ExportPaths(
+        export_dir=export_dir,
+        files_root=files_root,
+        database_url="postgresql://doktok:doktok@db:5432/doktok",  # pragma: allowlist secret
+        secrets_key=_SECRET,
+        app_version="0.2.0",
+        app_schema_version=5,
+    )
+    export_mod.build_export(paths, "exp1")
+    staged = export_mod.staged_archive_path(export_dir, "exp1")
+
+    # Repack with a forged member list pointing at a host file; the manifest HMAC (over the
+    # original member list) no longer matches, so the manifest is unauthenticated.
+    forged = tmp_path / "forged.tgz"
+    with tarfile.open(staged, "r:gz") as src, tarfile.open(forged, "w:gz") as dst:
+        for member in src.getmembers():
+            data = src.extractfile(member)
+            payload = data.read() if data is not None else b""
+            if member.name == "manifest.json":
+                forged_manifest = json.loads(payload)
+                forged_manifest["members"] = [{"name": "/etc/hosts", "sha256": "0" * 64, "size": 1}]
+                payload = json.dumps(forged_manifest).encode()
+                member.size = len(payload)
+            dst.addfile(member, io.BytesIO(payload))
+
+    enc = tmp_path / "upload.enc"
+    proc = _REAL_RUN(
+        export_mod.encrypt_argv(forged, enc),
+        input=(passphrase + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    staged_id = "stg-f28"
+    upload = restore_mod.upload_path(export_dir, staged_id)
+    upload.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(enc, upload)
+    result = restore_mod.validate_staged_upload(
+        export_dir, staged_id, passphrase, secrets_key=_SECRET, running_schema_version=10
+    )
+    assert result.ok is False
+    assert any("integrity" in e for e in result.errors)
+    # No member-level probe results leak: the forged name appears NOWHERE in the errors.
+    assert not any("/etc/hosts" in e for e in result.errors)

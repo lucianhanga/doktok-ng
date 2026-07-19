@@ -192,6 +192,8 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.state.login_verify_semaphore = threading.Semaphore(
         max(1, settings.login_max_concurrent_verifies)
     )
+    # Global cap on concurrent answer generations (#626, F-14): chat/SSE requests 429 when full.
+    app.state.chat_semaphore = threading.Semaphore(settings.chat_max_concurrent)
     _check_login_secret(settings)
     app.state.metrics = Metrics()  # APP-13
     _max_body_bytes = settings.max_request_mb * 1024 * 1024

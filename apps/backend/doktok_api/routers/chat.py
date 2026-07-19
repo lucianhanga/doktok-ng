@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Generator
+from contextlib import suppress
 from typing import Annotated
 
 from doktok_contracts.ports import ChatThreadRepository, RagAnswerer, ToolCallingChatModel
@@ -42,8 +43,9 @@ from doktok_core.chat.memory import recall_context, remember_turn
 from doktok_core.chat.summary import prepare_context
 from doktok_core.chat.title import generate_thread_title
 from doktok_core.tools import ToolGateway
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 
 from doktok_api.dependencies import (
     Tenant,
@@ -229,64 +231,106 @@ def chat(
     answerer: Answerer,
     threads: Threads,
 ) -> RagAnswer:
-    question = request.question
-    limit = max(1, min(request.limit, 20))
-    tenant_id = tenant.tenant_id
-    history = request.history
-    if request.thread_id:
-        history = _load_thread(threads, tenant_id, request.thread_id, question)
-        if not history:  # first turn: give the thread a short LLM title
-            _maybe_title_thread(http_request, threads, tenant_id, request.thread_id, question)
-        # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted summary so long
-        # threads stay within the context window. No-op for short threads (behaviour unchanged).
-        history = prepare_context(
-            threads, get_chat_model(http_request), tenant_id, request.thread_id, history
-        )
-    if request.remember:
-        history = _recall_memories(http_request, tenant_id, question, history)
+    _acquire_chat_slot(http_request)  # F-14: 429 instead of queueing behind zombie generations
+    try:
+        question = request.question
+        limit = max(1, min(request.limit, 20))
+        tenant_id = tenant.tenant_id
+        history = request.history
+        if request.thread_id:
+            history = _load_thread(threads, tenant_id, request.thread_id, question)
+            if not history:  # first turn: give the thread a short LLM title
+                _maybe_title_thread(http_request, threads, tenant_id, request.thread_id, question)
+            # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted
+            # summary so long threads stay within the context window. No-op for short threads.
+            history = prepare_context(
+                threads, get_chat_model(http_request), tenant_id, request.thread_id, history
+            )
+        if request.remember:
+            history = _recall_memories(http_request, tenant_id, question, history)
 
-    agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
-    if agent is not None:
-        registry = get_tool_registry(http_request)
-        gateway, specs = ToolGateway(registry), registry.specs()
-        if request.agent_mode == "multi":
-            answer = run_graph(
-                tenant_id, question, model=agent, gateway=gateway, tool_specs=specs, history=history
-            )
+        agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
+        if agent is not None:
+            registry = get_tool_registry(http_request)
+            gateway, specs = ToolGateway(registry), registry.specs()
+            if request.agent_mode == "multi":
+                answer = run_graph(
+                    tenant_id,
+                    question,
+                    model=agent,
+                    gateway=gateway,
+                    tool_specs=specs,
+                    history=history,
+                )
+            else:
+                answer = run_agent(
+                    tenant_id,
+                    question,
+                    model=agent,
+                    gateway=gateway,
+                    tool_specs=specs,
+                    history=history,
+                    context_limit=http_request.app.state.settings.chat_num_ctx,
+                )
         else:
-            answer = run_agent(
-                tenant_id,
-                question,
-                model=agent,
-                gateway=gateway,
-                tool_specs=specs,
-                history=history,
-                context_limit=http_request.app.state.settings.chat_num_ctx,
+            structured = _try_structured(question, http_request, tenant_id)
+            answer = (
+                structured
+                if structured is not None
+                else answerer.answer_thread(tenant_id, history, question, limit)
             )
-    else:
-        structured = _try_structured(question, http_request, tenant_id)
-        answer = (
-            structured
-            if structured is not None
-            else answerer.answer_thread(tenant_id, history, question, limit)
-        )
-    if request.remember and answer.answer:
-        _remember_turn(http_request, tenant_id, question, answer.answer, request.thread_id)
-    if request.thread_id:
-        threads.append_message(
-            tenant_id,
-            request.thread_id,
-            "assistant",
-            answer.answer,
-            citations=answer.citations,
-            ranking=answer.ranking,
-            metrics=answer.metrics,
-        )
-    return answer
+        if request.remember and answer.answer:
+            _remember_turn(http_request, tenant_id, question, answer.answer, request.thread_id)
+        if request.thread_id:
+            threads.append_message(
+                tenant_id,
+                request.thread_id,
+                "assistant",
+                answer.answer,
+                citations=answer.citations,
+                ranking=answer.ranking,
+                metrics=answer.metrics,
+            )
+        return answer
+    finally:
+        http_request.app.state.chat_semaphore.release()
 
 
 def _sse(event: ChatEvent) -> str:
     return f"event: {event.type}\ndata: {json.dumps(event.model_dump())}\n\n"
+
+
+def _acquire_chat_slot(http_request: Request) -> None:
+    """Take a generation slot, or 429 (#626, F-14). The model fleet is small, so a burst of
+    chat/stream requests must fail fast (Retry-After) instead of queueing behind each other -
+    and an abandoned stream must not hold its slot (released when the stream ends/aborts)."""
+    if not http_request.app.state.chat_semaphore.acquire(blocking=False):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="the model is busy - too many concurrent generations; retry shortly",
+            headers={"Retry-After": "5"},
+        )
+
+
+async def stream_with_disconnect_guard(
+    events: Generator[str, None, None], http_request: Request
+) -> AsyncIterator[str]:
+    """Yield an SSE sync-generator's events, stopping when the client disconnects (#626, F-14).
+
+    Abandoned streams used to keep generating server-side (zombie generations). Breaking here
+    drops our references to the generator; the explicit ``close()`` then runs its finally blocks,
+    which exits the provider's ``httpx.stream`` context and aborts the model generation. A
+    generator blocked mid-read cannot be closed (ValueError) - that residual zombie window stays
+    bounded by the provider's read timeout.
+    """
+    try:
+        async for chunk in iterate_in_threadpool(events):
+            if await http_request.is_disconnected():
+                break
+            yield chunk
+    finally:
+        with suppress(ValueError):
+            events.close()
 
 
 @router.post("/stream")
@@ -298,115 +342,135 @@ def chat_stream(
     threads: Threads,
 ) -> StreamingResponse:
     """Streaming chat (M6.4, ADR-0018 Phase 3): SSE of meta/reasoning/token/sources/done. Mirrors
-    the JSON endpoint, including the aggregation shortcut and optional thread persistence."""
-    question = request.question
-    limit = max(1, min(request.limit, 20))
-    tenant_id = tenant.tenant_id
-    # Validate + persist the user turn synchronously so a bad thread_id 404s before streaming.
-    history = request.history
-    if request.thread_id:
-        history = _load_thread(threads, tenant_id, request.thread_id, question)
-        if not history:  # first turn: give the thread a short LLM title
-            _maybe_title_thread(http_request, threads, tenant_id, request.thread_id, question)
-        # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted summary so long
-        # threads stay within the context window. No-op for short threads (behaviour unchanged).
-        history = prepare_context(
-            threads, get_chat_model(http_request), tenant_id, request.thread_id, history
-        )
-    if request.remember:
-        history = _recall_memories(http_request, tenant_id, question, history)
-
-    def events() -> Iterator[str]:
-        parts: list[str] = []
-        reason_parts: list[str] = []
-        citations: list[Citation] = []
-        ranking: list[RankedChunk] = []
-        steps: list[TraceStep] = []
-        metrics: TurnMetrics | None = None
-        agent = _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
-        structured = (
-            None if agent is not None else _try_structured(question, http_request, tenant_id)
-        )
-        if agent is not None:
-            registry = get_tool_registry(http_request)
-            gateway, specs = ToolGateway(registry), registry.specs()
-            yield _sse(ChatEvent(type="meta"))
-            if request.remember:
-                recall = step("recall", "Recalling memories from past chats")
-                steps.append(recall)
-                yield _sse(step_event(recall))
-            if request.agent_mode == "multi":
-                agent_events = run_graph_stream(
-                    tenant_id,
-                    question,
-                    model=agent,
-                    gateway=gateway,
-                    tool_specs=specs,
-                    history=history,
-                )
-            else:
-                agent_events = run_agent_stream(
-                    tenant_id,
-                    question,
-                    model=agent,
-                    gateway=gateway,
-                    tool_specs=specs,
-                    history=history,
-                    context_limit=http_request.app.state.settings.chat_num_ctx,
-                )
-            for event in agent_events:
-                if event.type == "token":
-                    parts.append(event.delta)
-                elif event.type == "sources":
-                    citations = event.citations
-                elif event.type == "step":
-                    steps.append(event.trace_step or TraceStep(kind="step", label=event.delta))
-                yield _sse(event)
-        elif structured is not None:
-            yield _sse(ChatEvent(type="meta"))
-            yield _sse(ChatEvent(type="token", delta=structured.answer))
-            yield _sse(ChatEvent(type="sources", citations=structured.citations))
-            yield _sse(ChatEvent(type="done", grounded=structured.grounded))
-            parts.append(structured.answer)
-            citations = structured.citations
-        else:
-            for event in answerer.answer_thread_stream(
-                tenant_id, history, question, limit, reasoning=request.reasoning
-            ):
-                if event.type == "token":
-                    parts.append(event.delta)
-                elif event.type == "reasoning":
-                    reason_parts.append(event.delta)
-                elif event.type == "sources":
-                    citations = event.citations
-                elif event.type == "ranking":
-                    ranking = event.ranking
-                elif event.type == "metrics":
-                    metrics = event.metrics
-                elif event.type == "step":
-                    steps.append(event.trace_step or TraceStep(kind="step", label=event.delta))
-                yield _sse(event)
-        answer_text = "".join(parts).strip()
-        if request.remember and answer_text:
-            _remember_turn(http_request, tenant_id, question, answer_text, request.thread_id)
-        if request.thread_id and answer_text:
-            threads.append_message(
-                tenant_id,
-                request.thread_id,
-                "assistant",
-                answer_text,
-                reasoning="".join(reason_parts).strip(),
-                citations=citations,
-                ranking=ranking,
-                metrics=metrics,
-                steps=steps,
+    the JSON endpoint, including the aggregation shortcut and optional thread persistence. The
+    generation slot is held for the whole stream and released in the generator's finally (#626,
+    F-14); the disconnect guard aborts abandoned generations."""
+    _acquire_chat_slot(http_request)
+    try:
+        question = request.question
+        limit = max(1, min(request.limit, 20))
+        tenant_id = tenant.tenant_id
+        # Validate + persist the user turn synchronously so a bad thread_id 404s before streaming.
+        history = request.history
+        if request.thread_id:
+            history = _load_thread(threads, tenant_id, request.thread_id, question)
+            if not history:  # first turn: give the thread a short LLM title
+                _maybe_title_thread(http_request, threads, tenant_id, request.thread_id, question)
+            # Rolling-summary STM (ADR-0022 Phase 3): fold older turns into a persisted
+            # summary so long threads stay within the context window. No-op for short threads.
+            history = prepare_context(
+                threads, get_chat_model(http_request), tenant_id, request.thread_id, history
             )
+        if request.remember:
+            history = _recall_memories(http_request, tenant_id, question, history)
 
-    return StreamingResponse(
-        events(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+        def events() -> Generator[str, None, None]:
+            try:
+                parts: list[str] = []
+                reason_parts: list[str] = []
+                citations: list[Citation] = []
+                ranking: list[RankedChunk] = []
+                steps: list[TraceStep] = []
+                metrics: TurnMetrics | None = None
+                agent = (
+                    _agent_model(http_request) if request.agent_mode in ("agent", "multi") else None
+                )
+                structured = (
+                    None
+                    if agent is not None
+                    else _try_structured(question, http_request, tenant_id)
+                )
+                if agent is not None:
+                    registry = get_tool_registry(http_request)
+                    gateway, specs = ToolGateway(registry), registry.specs()
+                    yield _sse(ChatEvent(type="meta"))
+                    if request.remember:
+                        recall = step("recall", "Recalling memories from past chats")
+                        steps.append(recall)
+                        yield _sse(step_event(recall))
+                    if request.agent_mode == "multi":
+                        agent_events = run_graph_stream(
+                            tenant_id,
+                            question,
+                            model=agent,
+                            gateway=gateway,
+                            tool_specs=specs,
+                            history=history,
+                        )
+                    else:
+                        agent_events = run_agent_stream(
+                            tenant_id,
+                            question,
+                            model=agent,
+                            gateway=gateway,
+                            tool_specs=specs,
+                            history=history,
+                            context_limit=http_request.app.state.settings.chat_num_ctx,
+                        )
+                    for event in agent_events:
+                        if event.type == "token":
+                            parts.append(event.delta)
+                        elif event.type == "sources":
+                            citations = event.citations
+                        elif event.type == "step":
+                            steps.append(
+                                event.trace_step or TraceStep(kind="step", label=event.delta)
+                            )
+                        yield _sse(event)
+                elif structured is not None:
+                    yield _sse(ChatEvent(type="meta"))
+                    yield _sse(ChatEvent(type="token", delta=structured.answer))
+                    yield _sse(ChatEvent(type="sources", citations=structured.citations))
+                    yield _sse(ChatEvent(type="done", grounded=structured.grounded))
+                    parts.append(structured.answer)
+                    citations = structured.citations
+                else:
+                    for event in answerer.answer_thread_stream(
+                        tenant_id, history, question, limit, reasoning=request.reasoning
+                    ):
+                        if event.type == "token":
+                            parts.append(event.delta)
+                        elif event.type == "reasoning":
+                            reason_parts.append(event.delta)
+                        elif event.type == "sources":
+                            citations = event.citations
+                        elif event.type == "ranking":
+                            ranking = event.ranking
+                        elif event.type == "metrics":
+                            metrics = event.metrics
+                        elif event.type == "step":
+                            steps.append(
+                                event.trace_step or TraceStep(kind="step", label=event.delta)
+                            )
+                        yield _sse(event)
+                answer_text = "".join(parts).strip()
+                if request.remember and answer_text:
+                    _remember_turn(
+                        http_request, tenant_id, question, answer_text, request.thread_id
+                    )
+                if request.thread_id and answer_text:
+                    threads.append_message(
+                        tenant_id,
+                        request.thread_id,
+                        "assistant",
+                        answer_text,
+                        reasoning="".join(reason_parts).strip(),
+                        citations=citations,
+                        ranking=ranking,
+                        metrics=metrics,
+                        steps=steps,
+                    )
+            finally:
+                http_request.app.state.chat_semaphore.release()
+
+        return StreamingResponse(
+            stream_with_disconnect_guard(events(), http_request),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    except Exception:
+        http_request.app.state.chat_semaphore.release()
+        raise
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)

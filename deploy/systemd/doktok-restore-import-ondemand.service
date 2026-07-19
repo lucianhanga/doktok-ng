@@ -13,11 +13,13 @@ StartLimitBurst=1
 Type=oneshot
 WorkingDirectory=/opt/doktok
 EnvironmentFile=/etc/doktok/backup.env
-# (a) Read the staged_id out of the request file, (b) DELETE the request file FIRST so a slow/failed
-# restore can't re-trigger an endless loop, then (c) run the importer under a flock so two restores
-# (or a restore + a backup timer) can never overlap. DOKTOK_BACKUP_DIR comes from the env file; the
-# default matches the .path unit above. The destructive importer takes its own safety snapshot first.
-ExecStartPre=/bin/sh -c 'sed -n "s/.*\\"staged_id\\":[[:space:]]*\\"\\([^\\"]*\\)\\".*/\\1/p" "${DOKTOK_BACKUP_DIR}/status/requests/restore.request" > /run/doktok-restore-staged-id'
+# (a) Read the staged_id out of the request file AND validate the uuid4-hex format (F-29, #641) -
+# a malformed id fails this ExecStartPre, so the destructive ExecStart never runs - (b) DELETE the
+# request file FIRST so a slow/failed restore can't re-trigger an endless loop, then (c) run the
+# importer under a flock so two restores (or a restore + a backup timer) can never overlap.
+# DOKTOK_BACKUP_DIR comes from the env file; the default matches the .path unit above. The
+# destructive importer takes its own safety snapshot first.
+ExecStartPre=/bin/sh -c 'sed -n "s/.*\\"staged_id\\":[[:space:]]*\\"\\([^\\"]*\\)\\".*/\\1/p" "${DOKTOK_BACKUP_DIR}/status/requests/restore.request" | grep -E "^[0-9a-f]{32}$" > /run/doktok-restore-staged-id'
 ExecStartPre=/bin/rm -f ${DOKTOK_BACKUP_DIR}/status/requests/restore.request
 ExecStart=/bin/sh -c '/usr/bin/flock -n /run/doktok-restore-import.lock /opt/doktok/deploy/restore-import.sh "$(cat /run/doktok-restore-staged-id)"'
 # A restore is heavy and IO-bound; let it use the box but stay below interactive starvation.

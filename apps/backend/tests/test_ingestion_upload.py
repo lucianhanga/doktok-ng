@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import AppSettingsRepository
+from doktok_contracts.ports import AppSettingsRepository, AuditLogRepository
+from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
 from doktok_core.registry import build_registry
 from doktok_core.settings.inmemory import InMemoryAppSettingsRepository
@@ -17,6 +18,7 @@ AUTH = {"Authorization": "Bearer tok-a"}
 def _client(tmp_path: Path, *, max_upload_files: int = 101, max_request_mb: int = 25) -> TestClient:
     registry = build_registry()
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     settings = Settings(  # type: ignore[call-arg]
         env="test",
         tenant_tokens=TOKENS,

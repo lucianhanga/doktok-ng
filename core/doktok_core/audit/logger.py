@@ -70,6 +70,10 @@ _EVENT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     AuditEventType.USER_INVITE_ACCEPTED.value: ("user", "info", "Invitation accepted"),
     AuditEventType.AUTH_LOGIN_SUCCEEDED.value: ("auth", "info", "Login succeeded"),
     AuditEventType.AUTH_LOGIN_FAILED.value: ("auth", "warning", "Login failed"),
+    AuditEventType.DOCUMENT_UPLOADED.value: ("intake", "info", "Document uploaded by user"),
+    AuditEventType.CHAT_THREAD_DELETED.value: ("user", "info", "Chat thread deleted"),
+    AuditEventType.CHAT_THREAD_TRUNCATED.value: ("user", "info", "Chat thread truncated"),
+    AuditEventType.CHAT_MEMORY_DELETED.value: ("user", "info", "Chat memory deleted"),
 }
 
 

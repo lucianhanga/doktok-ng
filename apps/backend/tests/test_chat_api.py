@@ -55,13 +55,15 @@ class _SemanticChat:
 
 
 def _client(answerer: FakeRagAnswerer) -> TestClient:
-    from doktok_contracts.ports import ChatModelProvider, ChatThreadRepository
+    from doktok_contracts.ports import AuditLogRepository, ChatModelProvider, ChatThreadRepository
+    from doktok_core.audit.inmemory import InMemoryAuditLogRepository
     from doktok_core.chat.inmemory import InMemoryChatThreadRepository
 
     registry = build_registry()
     registry.register(RagAnswerer, answerer)  # type: ignore[type-abstract]
     registry.register(ChatModelProvider, _SemanticChat())  # type: ignore[type-abstract]
     registry.register(ChatThreadRepository, InMemoryChatThreadRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -73,8 +75,14 @@ def test_requires_token() -> None:
 
 def test_memory_management_endpoints() -> None:
     # list / delete / forget-all over an in-memory store registered for the test (ADR-0022 P2-C).
-    from doktok_contracts.ports import ChatModelProvider, ChatThreadRepository, MemoryRepository
+    from doktok_contracts.ports import (
+        AuditLogRepository,
+        ChatModelProvider,
+        ChatThreadRepository,
+        MemoryRepository,
+    )
     from doktok_contracts.schemas import Memory
+    from doktok_core.audit.inmemory import InMemoryAuditLogRepository
     from doktok_core.chat.inmemory import InMemoryChatThreadRepository, InMemoryMemoryRepository
 
     mem = InMemoryMemoryRepository()
@@ -85,6 +93,7 @@ def test_memory_management_endpoints() -> None:
     registry.register(ChatModelProvider, _SemanticChat())  # type: ignore[type-abstract]
     registry.register(ChatThreadRepository, InMemoryChatThreadRepository())  # type: ignore[type-abstract]
     registry.register(MemoryRepository, mem)  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
     auth = {"Authorization": "Bearer tok-a"}

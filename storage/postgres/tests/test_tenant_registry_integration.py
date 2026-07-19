@@ -4,11 +4,26 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import psycopg
+import pytest
 from doktok_contracts.schemas import ApiToken, Invitation, Tenant, TokenResolution, User
 from doktok_core.security.auth import hash_token
 from doktok_storage_postgres import Database, PostgresTenantRegistry
 
 TENANT = "test-reg"
+
+
+def test_case_variant_email_is_rejected_by_the_unique_index(db: Database) -> None:
+    # F-37 (#649): login lookup is case-INsensitive, so case-variant duplicates must be
+    # impossible at the DB level - the unique index on (tenant_id, lower(email)) closes the race
+    # the API pre-check cannot cover.
+    reg = PostgresTenantRegistry(db)
+    reg.create_tenant(Tenant(id=TENANT, name="Test Registry Tenant"))
+    reg.create_user(User(id="ucase1", tenant_id=TENANT, email="Case@Example.com", role="viewer"))
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        reg.create_user(
+            User(id="ucase2", tenant_id=TENANT, email="case@example.com", role="viewer")
+        )
 
 
 def test_status_and_invitation_lifecycle(db: Database) -> None:

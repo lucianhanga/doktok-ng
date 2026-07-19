@@ -101,6 +101,7 @@ class DocumentRepository(Protocol):
         """Batch-fetch documents by id in ONE query (``id = ANY(...)``), tenant-scoped (#628,
         F-18). Callers with a list of ids must never loop over :meth:`get` - that is an N+1."""
         ...
+
     def add(self, document: Document) -> None:
         """Insert a document. Raises ``DuplicateActiveDocumentError`` if an active document with the
         same (tenant_id, sha256) already exists (the content-dedup invariant)."""
@@ -327,6 +328,7 @@ class AuditLogRepository(Protocol):
         document_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        event_type_prefixes: tuple[str, ...] | None = None,
     ) -> list[AuditEvent]: ...
 
 

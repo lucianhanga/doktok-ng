@@ -682,12 +682,17 @@ class PostgresAuditLogRepository:
         document_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        event_type_prefixes: tuple[str, ...] | None = None,
     ) -> list[AuditEvent]:
         clause = "WHERE tenant_id=%s"
         params: list[object] = [tenant_id]
         if document_id is not None:
             clause += " AND document_id=%s"
             params.append(document_id)
+        if event_type_prefixes:
+            alternatives = " OR ".join("event_type LIKE %s" for _ in event_type_prefixes)
+            clause += f" AND ({alternatives})"
+            params.extend(f"{prefix}%" for prefix in event_type_prefixes)
         params.extend([limit, offset])
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)

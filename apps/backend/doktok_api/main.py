@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from doktok_api import __version__
-from doktok_api.dependencies import Tenant, get_app_settings_repository
+from doktok_api.dependencies import AdminUser, get_app_settings_repository
 from doktok_api.routers import (
     admin,
     aggregate,
@@ -445,9 +445,10 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         return response
 
     @app.get("/metrics", tags=["system"])
-    def metrics(request: Request, tenant: Tenant) -> Response:
-        # Token-gated (APP-13). Request counters/latency + worker heartbeat age + uptime, in the
-        # Prometheus text format. Exempt from rate limiting; scrapers poll it frequently.
+    def metrics(request: Request, tenant: AdminUser) -> Response:
+        # Admin-gated (F-19, #633): metrics expose host topology, backup cadence, and heartbeat
+        # state. Static tenant tokens resolve to admin, so scrapers keep working. Exempt from
+        # rate limiting; scrapers poll it frequently.
         _ = tenant
         from datetime import UTC, datetime
 
@@ -479,16 +480,15 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         return Response(content=m.render(gauges), media_type="text/plain; version=0.0.4")
 
     # RBAC (#556): a method-aware guard applied per router. Reads (GET/HEAD) pass for any
-    # authenticated caller; writes require the role below. Content routers require 'editor';
-    # settings/administration require 'admin'. The auth router is intentionally unguarded - login is
-    # public and /auth/me is already user-gated. A tenant-scoped token (no user) resolves to admin,
-    # so local-first single-operator deployments are unaffected (see resolve_caller_role).
+    # authenticated caller; writes require the role below. Content routers require 'editor'. The
+    # auth router is intentionally unguarded - login is public and /auth/me is already user-gated.
+    # A tenant-scoped token (no user) resolves to admin, so local-first single-operator deployments
+    # are unaffected (see resolve_caller_role).
     from doktok_core.security.roles import Role
 
     from doktok_api.dependencies import make_write_guard, require_admin
 
     editor_writes = [Depends(make_write_guard(Role.EDITOR))]
-    admin_writes = [Depends(make_write_guard(Role.ADMIN))]
 
     app.include_router(auth.router)
     # Administration (#559): admin-only for EVERY method (listings included), not just writes.
@@ -508,7 +508,9 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(categories.router, dependencies=editor_writes)
     app.include_router(aggregate.router, dependencies=editor_writes)
     app.include_router(visualizations.router, dependencies=editor_writes)
-    app.include_router(settings_router.router, dependencies=admin_writes)
+    # Settings (F-19, #633): admin-only for EVERY method - reads expose host paths, backup cadence,
+    # and model topology.
+    app.include_router(settings_router.router, dependencies=[Depends(require_admin)])
 
     return app
 

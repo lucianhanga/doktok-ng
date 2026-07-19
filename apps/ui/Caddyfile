@@ -35,6 +35,20 @@
 	handle {
 		root * /srv
 		try_files {path} /index.html
+		# F-22 (#636): hardening headers for the app shell. The SPA must NEVER be framed -
+		# clickjacking it rides the edge-injected token, and no SameSite-cookie defense applies.
+		# The app MAY frame its own-origin file previews (frame-src 'self'). HSTS is ignored by
+		# browsers over plain HTTP, so sending it unconditionally is safe: it activates the
+		# moment DOKTOK_SITE_ADDRESS is a TLS name. API responses carry their own (same-origin
+		# framing) header set from the backend, so this block is scoped to the SPA only.
+		header {
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			Referrer-Policy "no-referrer"
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+			Strict-Transport-Security "max-age=31536000; includeSubDomains"
+			-Server
+		}
 		file_server
 	}
 }

@@ -687,3 +687,9 @@ def test_dismiss_family_requires_token() -> None:
         ).status_code
         == 401
     )
+
+
+def test_kg_nodes_query_is_length_bounded() -> None:
+    # F-39 (#651): the KG substring filter feeds an ILIKE scan - bound the input length.
+    resp = _client().get(f"/api/v1/entities/nodes?q={'x' * 501}", headers=_auth())
+    assert resp.status_code == 422

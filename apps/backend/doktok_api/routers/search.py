@@ -19,7 +19,7 @@ Ret = Annotated[Retriever, Depends(get_retriever)]
 def search(
     tenant: Tenant,
     retriever: Ret,
-    q: Annotated[str, Query(min_length=1, description="search query")],
+    q: Annotated[str, Query(min_length=1, max_length=500, description="search query")],
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
 ) -> list[SearchHit]:
     return retriever.search(tenant.tenant_id, q, limit)

@@ -164,7 +164,7 @@ def list_kg_nodes(
     tenant: Tenant,
     kg: KgRepo,
     entity_type: Annotated[EntityType | None, Query(alias="type")] = None,
-    q: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=500)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[KgEntity]:

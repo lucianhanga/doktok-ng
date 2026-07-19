@@ -291,6 +291,31 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         response.headers["X-Request-ID"] = request_id
         return response
 
+    @app.middleware("http")
+    async def _security_headers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Baseline hardening headers on EVERY response (F-22, #636) - registered last so it wraps
+        # the other middlewares and also covers their early rejections (401/413/429/503). The API
+        # serves JSON + file bytes but no HTML, so the CSP denies all sources; frame-ancestors
+        # 'self' (and XFO SAMEORIGIN as the legacy fallback) keeps the UI's same-origin PDF
+        # preview <iframe> working. setdefault: endpoint-specific values always win. HSTS is
+        # emitted only when the request arrived over HTTPS (edge TLS forwarded by Caddy) -
+        # plain-HTTP dev/test deployments must not pin TLS they don't terminate.
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'self'"
+        )
+        forwarded = request.headers.get("x-forwarded-proto", request.url.scheme)
+        if forwarded.split(",")[0].strip().lower() == "https":
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
     @app.get("/health", response_model=HealthStatus, tags=["system"])
     def health() -> HealthStatus:
         return HealthStatus(

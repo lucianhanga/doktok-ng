@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     # Keep the 23 GB RAG model resident so interactive chat doesn't pay a ~14s cold reload after an
     # idle gap. "-1" never evicts; "30m" balances residency against freeing the slot for ingestion.
     chat_keep_alive: str = "30m"
+    # Max concurrent answer generations across the API (#626, F-14): the model fleet is small
+    # (prod runs OLLAMA_NUM_PARALLEL=2), so a flood of chat/SSE requests must 429 instead of
+    # queueing behind each other - and abandoned streams must not hold a slot.
+    chat_max_concurrent: int = 2
     # RAG: retrieve this many candidates wide; the LLM reranker keeps the best (the chat `limit`).
     rag_retrieve_k: int = 40
     # Deterministic evidence floor: refuse before generating if the best retrieval score is below

@@ -281,6 +281,19 @@ def set_user_role(
     user = registry.get_user(caller.tenant_id, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such user")
+    # F-32 (#644): demoting the tenant's LAST active admin would lock the whole tenant out of
+    # /admin/* and settings writes (mirrors the self-deactivation guard in _set_status).
+    if role != "admin" and user.role == "admin" and user.status == "active":
+        active_admins = sum(
+            1
+            for u in registry.list_users(caller.tenant_id)
+            if u.role == "admin" and u.status == "active"
+        )
+        if active_admins <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="you cannot demote the tenant's last active admin",
+            )
     registry.set_user_role(caller.tenant_id, user_id, role)
     record_activity(
         audit,

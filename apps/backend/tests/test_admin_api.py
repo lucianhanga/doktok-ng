@@ -129,6 +129,29 @@ def test_create_list_and_change_user_role() -> None:
     assert reg.get_user("tenant-a", new_id).role == "admin"  # type: ignore[union-attr]
 
 
+def test_demoting_the_last_active_admin_is_refused() -> None:
+    # F-32 (#644): a sole admin demoting themselves would lock the whole tenant out of /admin/*.
+    client, reg = _client()
+    resp = client.post(
+        "/api/v1/admin/users/u_admin/role", json={"role": "editor"}, headers=_admin()
+    )
+    assert resp.status_code == 400
+    assert reg.get_user("tenant-a", "u_admin").role == "admin"  # type: ignore[union-attr]
+
+    # With a second active admin the demotion goes through (one remains).
+    reg.create_user(User(id="u_admin2", tenant_id="tenant-a", email="a2@x.com", role="admin"))
+    ok = client.post("/api/v1/admin/users/u_admin/role", json={"role": "editor"}, headers=_admin())
+    assert ok.status_code == 200
+    assert reg.get_user("tenant-a", "u_admin").role == "editor"  # type: ignore[union-attr]
+
+
+def test_demoting_a_non_admin_is_not_guarded() -> None:
+    # The last-admin guard must not over-fire on users who are not admins at all.
+    client, _ = _client()
+    resp = client.post("/api/v1/admin/users/u_view/role", json={"role": "editor"}, headers=_admin())
+    assert resp.status_code == 200
+
+
 def test_create_user_rejects_duplicate_email() -> None:
     client, _ = _client()
     assert (

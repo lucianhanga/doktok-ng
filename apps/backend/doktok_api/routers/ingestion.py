@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Annotated
 
 from doktok_contracts.ports import IngestionJobRepository
-from doktok_contracts.schemas import IngestionJob, IngestUploadResult
+from doktok_contracts.schemas import AuditEventType, IngestionJob, IngestUploadResult
+from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.ingestion.layout import FilesystemLayout
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
-from doktok_api.dependencies import Tenant, get_job_repository
+from doktok_api.dependencies import Tenant, get_audit_repository, get_job_repository
 
 router = APIRouter(prefix="/api/v1/ingestion", tags=["ingestion"])
 
@@ -96,6 +97,16 @@ async def upload_documents(
             continue
         tmp.rename(target)  # atomic publish; the worker only claims non-dotfiles
         accepted.append(target.name)
+        # F-21 (#635): record the HUMAN uploader - the worker's pipeline events carry
+        # actor="worker", so without this row "who uploaded this file?" is unanswerable.
+        record_activity(
+            get_audit_repository(request),
+            tenant.tenant_id,
+            AuditEventType.DOCUMENT_UPLOADED,
+            actor=actor_identity(tenant),
+            actor_kind="user",
+            doc_filename=target.name,
+        )
     return IngestUploadResult(accepted=accepted, rejected=rejected)
 
 

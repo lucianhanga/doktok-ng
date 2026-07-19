@@ -70,6 +70,9 @@ class AuditEventType(StrEnum):
     DOCUMENT_REINGESTED = "document.reingested"
     DOCUMENT_DELETED = "document.deleted"
     DOCUMENT_VIEWED = "document.viewed"
+    # The human upload itself (#635, F-21): the worker later logs pipeline events as "worker", so
+    # without this row the uploader's identity is lost for incident response.
+    DOCUMENT_UPLOADED = "document.uploaded"
     # System-level (non-document) events (M15 #373): configuration + service lifecycle.
     SETTINGS_CHANGED = "settings.changed"
     SERVICE_STARTED = "service.started"
@@ -115,6 +118,11 @@ class AuditEventType(StrEnum):
     # carries the password; records the attempted email + tenant + source IP.
     AUTH_LOGIN_SUCCEEDED = "auth.login_succeeded"
     AUTH_LOGIN_FAILED = "auth.login_failed"
+    # Chat + memory destruction (#635, F-21): deleting/truncating a conversation and forgetting a
+    # memory erase user data, so the actor is recorded for each.
+    CHAT_THREAD_DELETED = "chat.thread_deleted"
+    CHAT_THREAD_TRUNCATED = "chat.thread_truncated"
+    CHAT_MEMORY_DELETED = "chat.memory_deleted"
 
 
 class EntityType(StrEnum):

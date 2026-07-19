@@ -15,6 +15,7 @@ from typing import Annotated
 
 from doktok_contracts.ports import ChatThreadRepository, RagAnswerer, ToolCallingChatModel
 from doktok_contracts.schemas import (
+    AuditEventType,
     ChatEvent,
     ChatMessage,
     ChatRequest,
@@ -39,6 +40,7 @@ from doktok_core.aggregation import (
     parse_count_intent,
     route_to_intent,
 )
+from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.chat.memory import recall_context, remember_turn
 from doktok_core.chat.summary import prepare_context
 from doktok_core.chat.title import generate_thread_title
@@ -49,6 +51,7 @@ from starlette.concurrency import iterate_in_threadpool
 
 from doktok_api.dependencies import (
     Tenant,
+    get_audit_repository,
     get_chat_model,
     get_chat_thread_repository,
     get_document_repository,
@@ -209,15 +212,34 @@ def rename_thread(
 
 
 @router.delete("/threads/{thread_id}", status_code=204)
-def delete_thread(thread_id: str, tenant: Tenant, threads: Threads) -> None:
+def delete_thread(thread_id: str, tenant: Tenant, threads: Threads, http_request: Request) -> None:
     threads.delete_thread(tenant.tenant_id, thread_id)
+    # F-21 (#635): deleting a conversation erases user data - record who did it.
+    record_activity(
+        get_audit_repository(http_request),
+        tenant.tenant_id,
+        AuditEventType.CHAT_THREAD_DELETED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        details={"thread_id": thread_id},
+    )
 
 
 @router.delete("/threads/{thread_id}/messages/{message_id}/after", status_code=204)
-def truncate_thread(thread_id: str, message_id: str, tenant: Tenant, threads: Threads) -> None:
+def truncate_thread(
+    thread_id: str, message_id: str, tenant: Tenant, threads: Threads, http_request: Request
+) -> None:
     """Delete a message and everything after it (truncate the conversation) - used when a question
     is deleted or edited. Idempotent: a missing message simply removes nothing."""
     threads.delete_messages_from(tenant.tenant_id, thread_id, message_id)
+    record_activity(
+        get_audit_repository(http_request),
+        tenant.tenant_id,
+        AuditEventType.CHAT_THREAD_TRUNCATED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        details={"thread_id": thread_id, "message_id": message_id},
+    )
 
 
 # ---- Chat ----
@@ -499,8 +521,25 @@ def list_memories(tenant: Tenant, http_request: Request) -> list[Memory]:
 @router.delete("/memories", status_code=204)
 def forget_all_memories(tenant: Tenant, http_request: Request) -> None:
     get_memory_repository(http_request).forget_all(tenant.tenant_id)
+    # F-21 (#635): forgetting memories erases user data - record who did it.
+    record_activity(
+        get_audit_repository(http_request),
+        tenant.tenant_id,
+        AuditEventType.CHAT_MEMORY_DELETED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        details={"all": True},
+    )
 
 
 @router.delete("/memories/{memory_id}", status_code=204)
 def delete_memory(memory_id: str, tenant: Tenant, http_request: Request) -> None:
     get_memory_repository(http_request).delete_memory(tenant.tenant_id, memory_id)
+    record_activity(
+        get_audit_repository(http_request),
+        tenant.tenant_id,
+        AuditEventType.CHAT_MEMORY_DELETED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        details={"memory_id": memory_id},
+    )

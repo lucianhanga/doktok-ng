@@ -109,15 +109,18 @@ The model is now TWO personas; the "platform administrator" user identity is gon
 
 1. **System administrator — host console only.** Does everything deployment-spanning: manual
    backups and recoveries (`deploy/backup.sh`, `deploy/restore.sh`), tenant + first-admin
-   provisioning (`scripts/create-tenant.sh`), restore drills, model-stack/OCR/no-egress changes,
-   and portable backup export/restore. Mechanisms: the deploy scripts, file edits (env), or `curl`
-   against the API with the static host token (`DOKTOK_TENANT_TOKENS` - the console credential,
-   `via == "static"`). Nothing in the UI represents this persona.
+   provisioning (`scripts/create-tenant.sh`), restore drills, console-global model-stack/OCR
+   defaults and the no-egress lock, and portable backup export/restore. Mechanisms: the deploy
+   scripts, file edits (env), or `curl` against the API with the static host token
+   (`DOKTOK_TENANT_TOKENS` - the console credential, `via == "static"`). Nothing in the UI
+   represents this persona.
 2. **Tenant administrator** — per-tenant `admin` role, the only administrator who logs in
-   through the UI. User management for their own tenant (members, roles, passwords, API tokens)
-   and read-only DRP monitoring. The UI contains NO platform surfaces at all (no Instance
-   Administration, no DRP actions, read-only model stack), and every platform endpoint 403s any
-   session JWT or user api token.
+   through the UI. User management for their own tenant (members, roles, passwords, API tokens),
+   read-only DRP monitoring, and - since epic #708 - their tenant's model-stack override and
+   data-egress posture (Settings → Model stack; embedding/OCR stay deployment-global). The UI
+   contains NO platform surfaces at all (no Instance Administration, no DRP actions, no
+   console-global model-stack writes), and every platform endpoint 403s any session JWT or user
+   api token.
 
 Consequences: `users.is_platform_admin` was dropped (migration `0055`), along with the grant
 endpoint, `TenantRegistry.set_platform_admin`, the `· platform` UI badge, and the seed's

@@ -105,18 +105,23 @@ parallelism), see [docs/operations/performance-and-ollama.md](docs/operations/pe
 
 ### Choosing models at runtime (Settings tab)
 
-Beyond the environment defaults, the **Settings** tab (`GET`/`PUT /api/v1/settings/ai`) lets you pick
-the model **per purpose** — the ingestion pipeline (feature extraction) and RAG / interrogation — from
-a catalog of local Ollama models and remote OpenAI models, each with a reasoning-density control
-(`off|low|medium|high`). The choice is stored as global system settings (`app_settings` table) and
-applied on the next backend/worker restart. The OpenAI API key is **write-only** (set or cleared via
-the API, never read back). Selecting an OpenAI model is an explicit, opt-in exception to the
-local-first / no-egress default (ADR-0006, ADR-0014); the Ollama-only defaults keep everything local.
+Beyond the environment defaults, **Settings → Model stack** lets a tenant admin pick the model
+**per purpose** for their tenant — the ingestion pipeline (feature extraction), RAG / interrogation,
+NER, KEG (relations) and rerank — from a catalog of local Ollama models and remote OpenAI models,
+each with a reasoning-density control (`off|low|medium|high`). Resolution is **per tenant**, three
+layers (epic #708): the tenant override (`PUT`/`DELETE /api/v1/settings/ai/override`) wins over the
+console-global saved settings (`PUT /api/v1/settings/ai`, host token only), which win over the env
+defaults; changes apply live (the backend resolves per request, the worker re-resolves on a short
+interval). The OpenAI API key is **write-only** (set or cleared via the API, never read back).
+Selecting an OpenAI model is an explicit, opt-in exception to the local-first / no-egress default
+(ADR-0006, ADR-0014); the Ollama-only defaults keep everything local, each tenant's `no_egress`
+posture is overridable in the same card, and the host `DOKTOK_NO_EGRESS_LOCK` forces no-egress on
+for everyone as a floor.
 
 The Settings AI section also shows a **read-only "Embedding (index)"** display (the embedding model
 and its context window). The embedding model is intentionally **not** user-selectable: changing it
 would change the vector dimension and require a schema migration plus a full re-index of every
-document.
+document. OCR (engine, concurrency) is likewise deployment-global.
 
 ## Documents list and views
 
@@ -262,12 +267,13 @@ tenant/user management stack on top (ADR-0024). HTTP routes are versioned under 
   `make seed-dev` seeds a gated `dev` tenant with one user per role to try this locally.
 - **The host console (ADR-0025, epic #700).** Deployment-spanning actions are console work, not a
   UI login: tenant provisioning (`scripts/create-tenant.sh`), backup/recovery (`deploy/backup.sh`,
-  `deploy/restore.sh`), portable export/restore, DRP drills, and model-stack writes
+  `deploy/restore.sh`), portable export/restore, DRP drills, and console-global model-stack writes
   (`PUT /settings/ai`, `PUT /settings/ocr`) accept ONLY the static host credential
   (a `DOKTOK_TENANT_TOKENS` entry, `via == "static"`) - session JWTs and user api tokens always
   get 403, and the SPA carries no platform surfaces (no Instance Administration, DRP actions, or
-  model-stack editing). Tenant admins keep tenant-scoped user management
-  (users/roles/passwords/invitations/tokens) and DRP *status* reads. There is no platform-admin
+  console-global model-stack writes). Tenant admins keep tenant-scoped user management
+  (users/roles/passwords/invitations/tokens), DRP *status* reads, and their tenant's model-stack
+  override + data-egress posture (epic #708). There is no platform-admin
   user flag to grant; `make create-tenant` provisions tenants + first admins on a fresh box.
 - **Invitations and deactivation.** Admins invite an email (one-time token, expiry
   `DOKTOK_AUTH_INVITE_TTL_HOURS`, default 168); the invitee accepts via

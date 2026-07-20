@@ -350,14 +350,19 @@ selection model. See ADR-0013.
 ### Runtime AI model selection
 
 Model choice is configurable at runtime via the **Settings** tab, not only by environment variables.
-Global system settings (not tenant-scoped) persist in an `app_settings` key→JSON table (migration
-0017) and are merged over the env defaults at startup (changes apply on restart). The Settings UI lets
-the operator pick a model **per purpose** — the ingestion pipeline (feature extraction) and RAG /
-interrogation — from a catalog (`core/.../settings/catalog.py`) spanning local Ollama and remote
-OpenAI, with a unified reasoning-density control (`off|low|medium|high`) mapped to each provider's own
-knob. The OpenAI API key is **write-only** (set/cleared, never returned). Selecting an OpenAI model is
-an explicit, opt-in exception to the local-first / no-egress default (§12, ADR-0006); the defaults are
-Ollama-only. Adapters live in `providers/openai`. See ADR-0014.
+Resolution is **per tenant**, three layers (epic #708): a tenant override (a per-purpose partial in
+`tenant_ai_settings`, migration 0056) wins over the console-global saved settings (`app_settings`
+key→JSON table, migration 0017), which win over the env defaults. The Settings → Model stack UI lets
+a tenant admin pick a model **per purpose** for their tenant — the ingestion pipeline (feature
+extraction), RAG / interrogation, NER, KEG and rerank — from a catalog
+(`core/.../settings/catalog.py`) spanning local Ollama and remote OpenAI, with a unified
+reasoning-density control (`off|low|medium|high`) mapped to each provider's own knob; embedding and
+OCR are deployment-global. The effective stack is resolved per request (backend) and re-resolved on
+a short interval (worker) — no restart. Each tenant's `no_egress` posture is likewise
+tenant-overridable, with the host `DOKTOK_NO_EGRESS_LOCK` as a floor. The OpenAI API key is
+**write-only** (set/cleared, never returned). Selecting an OpenAI model is an explicit, opt-in
+exception to the local-first / no-egress default (§12, ADR-0006); the defaults are Ollama-only.
+Adapters live in `providers/openai`. See ADR-0014.
 
 ## 18. Insights: embedding-space visualization (M7.1, ADR-0016)
 

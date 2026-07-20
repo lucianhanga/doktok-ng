@@ -4,6 +4,13 @@
 
 Accepted
 
+**Revised (2026-07-20, epic #708): the model stack is per-tenant.** Resolution per purpose is
+**tenant override → console-global saved settings → env defaults**; the five LLM purposes
+(pipeline / RAG / NER / KEG / rerank) and `no_egress` are tenant-overridable, while embedding and
+OCR stay deployment-global. Settings are resolved per tenant at request/ingest time — no restart.
+The original "single-user system configuration, applies on restart" bullets below are superseded
+and kept only where they still describe the console-global layer.
+
 ## Context
 
 Model choice was fixed by environment variables (`DOKTOK_DEFAULT_MODEL`, `DOKTOK_ENRICH_MODEL`, ...),
@@ -21,20 +28,35 @@ environment, while keeping the env defaults as the safe baseline.
 
 ## Decision
 
-Add **per-purpose AI model selection** as persisted system settings, applied on restart, with OpenAI
-as an opt-in remote provider behind the same port as Ollama.
+Add **per-purpose AI model selection** as persisted settings, resolved per tenant at request time,
+with OpenAI as an opt-in remote provider behind the same port as Ollama.
 
-- **Per purpose, not global.** Two selectable purposes: the **pipeline** (feature extraction) and
-  **RAG / interrogation**. Each picks `(provider, model, context size)` plus a reasoning density.
+- **Per purpose, not global.** Five selectable LLM purposes: the **pipeline** (feature extraction),
+  **RAG / interrogation**, **NER**, **KEG** (relation extraction) and **rerank**. Each picks
+  `(provider, model, context size)` plus a reasoning density. **Embedding and OCR are
+  deployment-global**: the embedding model fixes the index vector dimension (a per-tenant change
+  would silently split the index), and OCR sizes the host worker pool.
 - **A unified reasoning-density control** (`off|low|medium|high`) that each provider maps to its own
   knob (Ollama `think` on/off; OpenAI `reasoning_effort`), so the UI exposes one concept regardless of
   backend.
 - **A catalog as the single source of truth** for what is selectable (`core/.../settings/catalog.py`),
   served to the UI; selections are validated against it.
-- **Global system settings, not tenant-scoped.** Stored in an `app_settings` key→JSON table
-  (migration `0017`) and **merged over the env defaults at startup**; changes take effect on the next
-  backend/worker restart (this is single-user system configuration). The env defaults remain the
-  baseline when nothing is set.
+- **Three-layer resolution, per tenant (epic #708).** Each purpose resolves
+  **tenant override → console-global saved settings → env defaults**:
+  - The **tenant override** is a per-purpose partial stored in `tenant_ai_settings`
+    (migration `0056`), written by the tenant admin in the UI (Settings → Model stack →
+    "Your tenant override"); unset purposes fall through. The tenant's `no_egress` is tri-state
+    (override → console global → env default **on**), and the host `DOKTOK_NO_EGRESS_LOCK` forces
+    no-egress on for every tenant as a floor the UI cannot lower.
+  - The **console-global saved settings** live in the `app_settings` key→JSON table
+    (migration `0017`), written by the host console (scripts / the static host token), merged over
+    the env defaults.
+  - The **env defaults** (`DOKTOK_DEFAULT_MODEL`, ...) remain the baseline when nothing is set.
+- **Resolved live, not on restart.** The backend resolves the effective stack per request and the
+  worker re-resolves on a short interval (`ai_reload` clears its memoized per-tenant clients), so a
+  tenant override takes effect without a restart. Writes are validated against the tenant's
+  *resulting* egress posture (a selection that would send content off-host under no-egress is
+  rejected 422), and the sinks re-check at runtime.
 - **OpenAI is opt-in and off by default.** Selecting an OpenAI model is the explicit exception to
   local-first / no-egress (ADR-0006); the defaults are Ollama-only. The OpenAI adapters live in
   `providers/openai` behind the existing chat/extraction ports.
@@ -42,41 +64,56 @@ as an opt-in remote provider behind the same port as Ollama.
   `GET` reports only whether a key is configured. (`AiSettingsUpdate.openai_api_key`: `None` leaves it
   unchanged, `""` clears it, a value sets it.)
 
-API: `GET /api/v1/settings/ai/catalog`, `GET /api/v1/settings/ai`, `PUT /api/v1/settings/ai`.
+API: `GET /api/v1/settings/ai/catalog`, `GET /api/v1/settings/ai` (tenant-effective + the console
+defaults + the tenant's own override layer), `PUT /api/v1/settings/ai` (console-global, host token
+only), `PUT`/`DELETE /api/v1/settings/ai/override` (tenant admin).
 
 ## Consequences
 
-Positive: the operator tunes cost/quality per job without editing `.env`; remote inference is
-available when wanted but stays an explicit, visible opt-in; the write-only key keeps the secret out
-of every response; the provider abstraction means new providers slot in behind the same port.
+Positive: each tenant tunes cost/quality per job without editing `.env` and without a restart;
+remote inference stays an explicit, visible opt-in per tenant; the write-only key keeps the secret
+out of every response; the provider abstraction means new providers slot in behind the same port;
+the host keeps a floor (env defaults + the no-egress lock) that no tenant can lower.
 
-Negative: changes apply only on restart (settings are read at startup), so the UI must say so;
-two configuration sources now exist (env defaults + persisted overrides), with the merge order as the
-contract; enabling OpenAI is a genuine egress decision the operator owns, and the catalog must be kept
-in step with what the providers actually support.
+Negative: three configuration layers now exist (tenant override → console global → env), with the
+resolution order as the contract every sink must use; enabling OpenAI is a genuine egress decision
+each tenant admin owns for their tenant; and the catalog must be kept in step with what the
+providers actually support.
 
 ## Alternatives considered
 
 - **Env-only configuration (status quo).** Simple and fully local, but no per-purpose split and no
   runtime change without editing files and restarting by hand. Kept as the default baseline, extended
   rather than replaced.
-- **Live hot-reload of model settings.** Avoids the restart, but means re-reading and re-wiring
-  providers mid-run for marginal benefit in a single-user system; restart-to-apply is simpler and
-  predictable.
+- **Deployment-global settings only (the original decision).** One stack for everyone, changed by
+  the host console. Rejected in epic #708: the data-egress posture and model choices are the
+  *tenant's* decision (their documents, their compliance posture), so the override is per tenant
+  while the host keeps the defaults and the no-egress floor.
+- **Per-tenant embedding/OCR overrides.** Rejected: the embedding model fixes the index vector
+  dimension (mixing dimensions in one index breaks retrieval), and OCR concurrency sizes the host
+  worker pool — both are deployment-global by nature.
+- **Live hot-reload of model settings.** Originally avoided in favour of restart-to-apply; made
+  unnecessary by per-tenant resolution — the worker re-resolves on a short interval and the backend
+  resolves per request, so changes apply live without a restart.
 - **A separate remote-provider feature flag instead of per-purpose selection.** Coarser; folding the
   provider into the same per-purpose catalog keeps one mental model and one validation path.
 
 ## Related files
 
-- `apps/backend/doktok_api/routers/settings.py` — the settings endpoints (write-only key handling).
+- `apps/backend/doktok_api/routers/settings.py` — the settings endpoints (write-only key handling,
+  the tenant override write/reset).
 - `core/doktok_core/settings/catalog.py` — `MODEL_CATALOG`, reasoning levels.
+- `core/doktok_core/settings/effective.py` — the per-tenant three-layer resolution.
+- `apps/worker/doktok_worker/composition.py` — per-tenant client resolution + `ai_reload`.
 - `contracts/doktok_contracts/schemas.py` — `AiSettings`, `AiSettingsResponse`, `AiSettingsUpdate`,
-  `ModelOption`, `ModelCatalog`.
-- `contracts/doktok_contracts/ports.py` — `AppSettingsRepository`.
-- `storage/postgres/migrations/0017_app_settings.sql`.
+  `TenantAiSettings`, `ModelOption`, `ModelCatalog`.
+- `contracts/doktok_contracts/ports.py` — `AppSettingsRepository` (incl. `*_tenant_ai_settings`).
+- `storage/postgres/migrations/0017_app_settings.sql`,
+  `storage/postgres/migrations/0056_tenant_ai_settings.sql`.
 - `providers/openai/` — OpenAI chat/extraction adapters.
-- `apps/ui/src/SettingsPanel.tsx` — the Settings tab UI.
+- `apps/ui/src/SettingsPanel.tsx` — the Settings → Model stack UI (defaults card + tenant override
+  card).
 
 ## Date
 
-2026-06-12
+2026-06-12 (revised 2026-07-20, epic #708)

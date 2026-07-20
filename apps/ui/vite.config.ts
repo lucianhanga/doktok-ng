@@ -30,6 +30,9 @@ const backend: ProxyOptions = {
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Listen on all interfaces so other LAN devices can open the dev UI (http://<host-ip>:5174).
+    // Dev-only surface: API calls still go through the proxy and still require a bearer token.
+    host: "0.0.0.0",
     // Dev UI always on 5174 (5173 stays free for other projects; strict so it fails loudly
     // rather than silently drifting to a random port).
     port: 5174,

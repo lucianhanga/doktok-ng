@@ -686,6 +686,9 @@ export interface AiSettings {
   no_egress_locked?: boolean;
   // Per-purpose resolved egress state from the backend. Optional for the same reason.
   purpose_status?: Record<AiPurpose, PurposeEgressStatus>;
+  // Read-only (#696): the "original system values" (schema defaults + env-requested providers) -
+  // what the Model stack defaults card shows. Optional for pre-upgrade backends.
+  defaults?: AiSettings;
 }
 
 /** Body for PUT /settings/ai. Each field is optional: omit to leave it unchanged. `no_egress` sets
@@ -890,6 +893,8 @@ export async function putAiSettings(body: AiSettingsUpdate): Promise<AiSettings>
 export interface OcrSettings {
   ocr_concurrency: number;
   engine?: string; // "" inherits the server default; "paddleocr" | "rapidocr" | "glm-ocr" (M17)
+  // Read-only (#696): the system defaults (env engine + schema concurrency) for the defaults card.
+  defaults?: OcrSettings;
 }
 
 export const OCR_ENGINES = ["paddleocr", "rapidocr", "glm-ocr"] as const;

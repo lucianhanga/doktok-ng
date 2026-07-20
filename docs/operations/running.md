@@ -5,6 +5,12 @@ daemon, no LaunchAgent, and no aggregate "start everything" target: you start th
 backend, worker, and UI by hand. This keeps each process's logs in front of you and matches the
 local-first, single-developer model.
 
+Do NOT also start `docker-compose.prod.yml` on your dev box: it is the SERVER deployment (full
+container stack), and a container publishing `localhost:8000` shadows the host-run backend - the
+UI then talks to the stale container instead of your code. For local development, only
+`docker-compose.yml` (Postgres + Gotenberg) runs in Docker; backend/worker/UI stay host processes.
+On the server, use `docker-compose.prod.yml` exclusively (only Caddy publishes 80/443).
+
 After a machine reboot (or a fresh shell), nothing in this list auto-starts on its own except what
 you have separately configured to launch at login (Docker Desktop, the Ollama menu-bar app). The rest
 you start in the order below.

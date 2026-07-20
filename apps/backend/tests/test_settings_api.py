@@ -531,3 +531,40 @@ def test_host_lock_forces_no_egress_and_rejects_disable() -> None:
     )
     assert resp.status_code == 422
     assert resp.json()["detail"]["code"] == "no_egress_locked"
+
+
+# ---------------------------------------------------------------------------
+# #696: the "original system values" (env defaults) ride along in the responses
+# ---------------------------------------------------------------------------
+
+
+def test_ai_settings_expose_the_system_defaults() -> None:
+    body = _client().get("/api/v1/settings/ai", headers=AUTH).json()
+    # No env override: the system defaults are the schema defaults.
+    assert body["defaults"]["pipeline"]["provider"] == "ollama"
+    assert body["defaults"]["pipeline"]["model"] == "qwen3.6:27b"
+    assert body["defaults"]["rag"]["provider"] == "ollama"
+
+
+def test_ai_settings_defaults_reflect_env_providers() -> None:
+    registry = build_registry()
+    registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    settings = Settings(  # type: ignore[call-arg]
+        env="test",
+        tenant_tokens=TOKENS,
+        pipeline_provider="openai",
+        rag_provider="openai",
+        _env_file=None,
+    )
+    client = TestClient(create_app(settings=settings, registry=registry))
+    body = client.get("/api/v1/settings/ai", headers=AUTH).json()
+    assert body["defaults"]["pipeline"]["provider"] == "openai"
+    assert body["defaults"]["rag"]["provider"] == "openai"
+
+
+def test_ocr_settings_expose_the_env_engine_default() -> None:
+    body = _client().get("/api/v1/settings/ocr", headers=AUTH).json()
+    # engine="" means "inherit DOKTOK_OCR_ENGINE" - the defaults block shows the effective value.
+    assert body["defaults"]["engine"] == "paddleocr"
+    assert body["defaults"]["ocr_concurrency"] == 4

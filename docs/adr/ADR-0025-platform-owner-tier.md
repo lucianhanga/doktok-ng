@@ -80,3 +80,20 @@ tenant-scoped RBAC roles:
 - Tests: `apps/backend/tests/test_platform_guard.py`, `test_platform_admin_api.py`,
   `core/tests/test_platform_admin.py`, `core/tests/test_dev_seed.py`,
   `storage/postgres/tests/test_tenant_registry_integration.py`
+
+## Administrator tiers (2026-07-20 clarification, #696)
+
+The deployment has THREE administrator personas; only two exist inside the app:
+
+1. **System administrator — host console only, never an app account.** Runs the manual
+   backup/recovery scripts (`deploy/backup.sh`, `deploy/restore.sh`), provisions tenants and
+   their first admin users (`scripts/create-tenant.sh`), and owns the root systemd units that
+   apply restores and drills. This persona authenticates to the host (ssh/console), not to the
+   API; nothing in the UI represents it.
+2. **Platform administrator** — this ADR's tier (static host tokens or `is_platform_admin`
+   users): deployment-spanning surfaces (portable backup export/restore, DRP actions, model-stack
+   and OCR defaults, no-egress posture, tenant provisioning).
+3. **Tenant administrator** — per-tenant `admin` role: user management for their own tenant
+   (members, roles, passwords, API tokens) and read-only DRP monitoring (status + history). A
+   tenant admin can never create tenants, run recovery tasks, or change deployment defaults; the
+   UI hides those surfaces and the API 403s them.

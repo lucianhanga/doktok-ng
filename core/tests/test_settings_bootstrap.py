@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from doktok_contracts.schemas import AiSettings
 from doktok_core.config import Settings
 from doktok_core.settings.bootstrap import seed_ai_settings
 from doktok_core.settings.inmemory import InMemoryAppSettingsRepository
@@ -74,3 +75,24 @@ def test_seed_still_applies_under_no_egress_for_local_providers() -> None:
     repo = InMemoryAppSettingsRepository()
     assert seed_ai_settings(repo, _settings(pipeline_provider="ollama", no_egress=True)) is True
     assert repo.get_ai_settings().pipeline.provider == "ollama"
+
+
+# ---------------------------------------------------------------------------
+# #696: the "original system values" the Model stack defaults card shows
+# ---------------------------------------------------------------------------
+
+
+def test_env_default_ai_settings_without_env_is_the_schema_defaults() -> None:
+    from doktok_core.settings.bootstrap import env_default_ai_settings
+
+    assert env_default_ai_settings(_settings()) == AiSettings()
+
+
+def test_env_default_ai_settings_reflects_env_providers() -> None:
+    from doktok_core.settings.bootstrap import env_default_ai_settings
+
+    defaults = env_default_ai_settings(_settings(pipeline_provider="openai", rag_provider="openai"))
+    assert defaults.pipeline.provider == "openai"
+    assert defaults.rag.provider == "openai"
+    # Untouched purposes keep the schema defaults.
+    assert defaults.ner == AiSettings().ner

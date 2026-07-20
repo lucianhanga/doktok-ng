@@ -308,6 +308,27 @@ test("renders NER and KEG model selectors from the catalog and current settings"
   expect(screen.getByLabelText("Knowledge graph (relations) model")).toBeInTheDocument();
 });
 
+test("the Server defaults card shows the env defaults, not the saved values (#696)", async () => {
+  aiResponse = {
+    ...AI,
+    pipeline: { provider: "openai", model: "gpt-4o", num_ctx: 8192, reasoning: "off" },
+    defaults: {
+      ...AI,
+      pipeline: { provider: "ollama", model: "qwen3.6:27b", num_ctx: 8192, reasoning: "off" },
+    },
+  };
+  mockApi();
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const heading = await screen.findByText(/Server defaults/);
+  const card = heading.closest(".settings-card");
+  expect(card).not.toBeNull();
+  expect(
+    within(card as HTMLElement).getAllByText(/ollama · qwen3\.6:27b/).length,
+  ).toBeGreaterThan(0);
+  expect(within(card as HTMLElement).queryByText(/openai · gpt-4o/)).not.toBeInTheDocument();
+});
+
 test("changing a model and saving PUTs the new selection", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);

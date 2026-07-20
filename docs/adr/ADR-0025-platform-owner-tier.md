@@ -3,6 +3,11 @@
 ## Status
 
 Accepted (2026-07-18; security audit finding F-01, ticket #613).
+**Revised (2026-07-20, epic #700 / #701-#703): the tier is a HOST credential only.** The
+`users.is_platform_admin` flag, the grant endpoint, and all UI platform surfaces are removed;
+platform endpoints accept ONLY the static `DOKTOK_TENANT_TOKENS` (`via == "static"`). The
+"Administrator tiers (2026-07-20 clarification)" section below is kept for history and superseded
+by the "Administrator model (2026-07-20 revision)" section at the end.
 
 Amends [ADR-0024](ADR-0024-tenant-user-management-and-rbac.md) by adding a deployment-level identity
 attribute on top of the tenant-scoped RBAC.
@@ -97,3 +102,25 @@ The deployment has THREE administrator personas; only two exist inside the app:
    (members, roles, passwords, API tokens) and read-only DRP monitoring (status + history). A
    tenant admin can never create tenants, run recovery tasks, or change deployment defaults; the
    UI hides those surfaces and the API 403s them.
+
+## Administrator model (2026-07-20 revision, epic #700)
+
+The model is now TWO personas; the "platform administrator" user identity is gone:
+
+1. **System administrator — host console only.** Does everything deployment-spanning: manual
+   backups and recoveries (`deploy/backup.sh`, `deploy/restore.sh`), tenant + first-admin
+   provisioning (`scripts/create-tenant.sh`), restore drills, model-stack/OCR/no-egress changes,
+   and portable backup export/restore. Mechanisms: the deploy scripts, file edits (env), or `curl`
+   against the API with the static host token (`DOKTOK_TENANT_TOKENS` - the console credential,
+   `via == "static"`). Nothing in the UI represents this persona.
+2. **Tenant administrator** — per-tenant `admin` role, the only administrator who logs in
+   through the UI. User management for their own tenant (members, roles, passwords, API tokens)
+   and read-only DRP monitoring. The UI contains NO platform surfaces at all (no Instance
+   Administration, no DRP actions, read-only model stack), and every platform endpoint 403s any
+   session JWT or user api token.
+
+Consequences: `users.is_platform_admin` was dropped (migration `0055`), along with the grant
+endpoint, `TenantRegistry.set_platform_admin`, the `· platform` UI badge, and the seed's
+`dev-admin` platform persona (it is a plain tenant admin; the static dev token is the console
+credential). The restore-apply actor binding (F-34) now binds to the host credential's tenant
+identity.

@@ -258,20 +258,17 @@ tenant/user management stack on top (ADR-0024). HTTP routes are versioned under 
   password verifications, audits every attempt, and warns at startup about a weak or fallback
   signing secret.
 - **Roles.** `viewer` < `editor` < `admin`: reads pass for any authenticated caller; content writes
-  (ingest, entities, chat, ...) need editor; settings writes and all administration need admin.
+  (ingest, entities, chat, ...) need editor; settings reads and all administration need admin.
   `make seed-dev` seeds a gated `dev` tenant with one user per role to try this locally.
-- **Platform owners (ADR-0025).** Deployment-spanning actions require a **platform admin**, not just
-  a tenant admin: a host-provisioned static token (a `DOKTOK_TENANT_TOKENS` entry), or a user
-  flagged `is_platform_admin` (granted only by an existing platform admin via
-  `POST /api/v1/admin/users/{id}/platform-admin`, never through user creation; self-revoke is
-  blocked). Platform-only surfaces: portable backup export + restore, the DRP drill, model-stack
-  writes (`PUT /settings/ai`, `PUT /settings/ocr`), and tenant provisioning
-  (`GET`/`POST /admin/tenants`); platform admins can also create users in any tenant
-  (`POST /admin/users` with `tenant_id`). Tenant admins keep tenant-scoped user management
-  (users/roles/passwords/invitations/tokens) and DRP *status* reads. `make seed-dev` marks the dev
-  admin user as platform admin (and seeds a non-platform `dev-manager` tenant admin for the
-  restricted view); `make create-tenant ... ARGS=--platform-admin` creates a platform-owner user on
-  a fresh box.
+- **The host console (ADR-0025, epic #700).** Deployment-spanning actions are console work, not a
+  UI login: tenant provisioning (`scripts/create-tenant.sh`), backup/recovery (`deploy/backup.sh`,
+  `deploy/restore.sh`), portable export/restore, DRP drills, and model-stack writes
+  (`PUT /settings/ai`, `PUT /settings/ocr`) accept ONLY the static host credential
+  (a `DOKTOK_TENANT_TOKENS` entry, `via == "static"`) - session JWTs and user api tokens always
+  get 403, and the SPA carries no platform surfaces (no Instance Administration, DRP actions, or
+  model-stack editing). Tenant admins keep tenant-scoped user management
+  (users/roles/passwords/invitations/tokens) and DRP *status* reads. There is no platform-admin
+  user flag to grant; `make create-tenant` provisions tenants + first admins on a fresh box.
 - **Invitations and deactivation.** Admins invite an email (one-time token, expiry
   `DOKTOK_AUTH_INVITE_TTL_HOURS`, default 168); the invitee accepts via
   `POST /api/v1/auth/accept-invite` to set a password. Deactivating a user blocks their session

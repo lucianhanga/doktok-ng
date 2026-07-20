@@ -1494,9 +1494,11 @@ export function SettingsPanel() {
       .then(([cat, s, o]) => {
         setCatalog(cat);
         setAi(s);
-        setServerDefaults(s);
+        // The Model stack defaults card shows the "original system values" (#696): the
+        // env-resolved defaults, never the saved settings (fall back for older backends).
+        setServerDefaults(s.defaults ?? s);
         setOcr(o);
-        setServerDefaultsOcr(o);
+        setServerDefaultsOcr(o.defaults ?? o);
       })
       .catch((err: unknown) => {
         if (c.signal.aborted) return;

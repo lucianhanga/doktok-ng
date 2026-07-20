@@ -1464,6 +1464,13 @@ class OcrSettings(BaseModel):
     engine: str = ""
 
 
+class OcrSettingsResponse(OcrSettings):
+    """OCR settings as returned to the UI (#696): the saved values plus the read-only system
+    defaults (the env engine + schema concurrency) for the Model stack defaults card."""
+
+    defaults: OcrSettings = Field(default_factory=OcrSettings)
+
+
 # Selectable OCR engines surfaced in the Settings UI (M17 #375).
 OCR_ENGINES: tuple[str, ...] = ("paddleocr", "rapidocr", "glm-ocr")
 
@@ -1508,6 +1515,10 @@ class AiSettingsResponse(AiSettings):
     # row, "blocked by no-egress" vs "needs an API key" vs "running off-host", without redoing
     # loopback detection in the client.
     purpose_status: dict[str, PurposeEgressStatus] = Field(default_factory=dict)
+    # Read-only (#696): the "original system values" - what a fresh install with this environment
+    # would start from (schema defaults + env-requested providers). The Model stack defaults card
+    # shows these; they never change with saved settings.
+    defaults: AiSettings = Field(default_factory=AiSettings)
     # True when any purpose actually moves content off-host right now (requires egress AND usable).
     # Drives a non-dismissable privacy indicator in the UI (APP-11). Covers OpenAI AND a remote
     # (non-loopback) Ollama URL, not just OpenAI.

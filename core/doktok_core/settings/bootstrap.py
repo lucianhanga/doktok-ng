@@ -39,6 +39,27 @@ def _resolve_purpose(
     )
 
 
+def env_default_ai_settings(settings: Settings) -> AiSettings:
+    """The AI settings a fresh install with this environment would start from (#696): the schema
+    defaults with any env-requested purpose providers (DOKTOK_PIPELINE_PROVIDER /
+    DOKTOK_RAG_PROVIDER) resolved - the same values seed_ai_settings writes on first boot. Served
+    read-only as the \"original system values\" in the Model stack defaults card."""
+    defaults = AiSettings()
+    pipeline = (
+        _resolve_purpose(
+            "pipeline", settings.pipeline_provider, settings.pipeline_model, defaults.pipeline
+        )
+        if settings.pipeline_provider
+        else defaults.pipeline
+    )
+    rag = (
+        _resolve_purpose("rag", settings.rag_provider, settings.rag_model, defaults.rag)
+        if settings.rag_provider
+        else defaults.rag
+    )
+    return defaults.model_copy(update={"pipeline": pipeline, "rag": rag})
+
+
 def seed_ai_settings(repo: AppSettingsRepository, settings: Settings) -> bool:
     """Seed the AI provider split from env if none is saved yet. Returns True if it wrote."""
     if not (settings.pipeline_provider or settings.rag_provider):
@@ -46,19 +67,7 @@ def seed_ai_settings(repo: AppSettingsRepository, settings: Settings) -> bool:
     if repo.has_ai_settings():
         return False
 
-    current = repo.get_ai_settings()  # the unset defaults
-    pipeline = (
-        _resolve_purpose(
-            "pipeline", settings.pipeline_provider, settings.pipeline_model, current.pipeline
-        )
-        if settings.pipeline_provider
-        else current.pipeline
-    )
-    rag = (
-        _resolve_purpose("rag", settings.rag_provider, settings.rag_model, current.rag)
-        if settings.rag_provider
-        else current.rag
-    )
+    seeded = env_default_ai_settings(settings)
     # F-42 (#654): under no-egress the env seed must not store a config the PUT boundary would
     # reject - the saved settings stay honest (the runtime sinks remain the fail-closed backstop).
     if settings.no_egress:
@@ -70,19 +79,19 @@ def seed_ai_settings(repo: AppSettingsRepository, settings: Settings) -> bool:
                 purpose.ollama_base_url,
                 default_url=settings.ollama_base_url,
             )
-            for purpose in (pipeline, rag)
+            for purpose in (seeded.pipeline, seeded.rag)
         ):
             logger.warning(
                 "DOKTOK_NO_EGRESS is on: skipping the env AI-settings seed (a seeded purpose "
                 "would egress); keeping the local defaults"
             )
             return False
-    repo.set_ai_settings(AiSettings(pipeline=pipeline, rag=rag))
+    repo.set_ai_settings(seeded)
     logger.info(
         "seeded AI settings from env: pipeline=%s/%s rag=%s/%s",
-        pipeline.provider,
-        pipeline.model,
-        rag.provider,
-        rag.model,
+        seeded.pipeline.provider,
+        seeded.pipeline.model,
+        seeded.rag.provider,
+        seeded.rag.model,
     )
     return True

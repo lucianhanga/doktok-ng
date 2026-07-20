@@ -38,6 +38,7 @@ from doktok_contracts.schemas import (
     ModelCatalog,
     OcrRecommendation,
     OcrSettings,
+    OcrSettingsResponse,
     OllamaStatus,
     OllamaTestRequest,
     OllamaTestResult,
@@ -58,6 +59,7 @@ from doktok_core.security.egress import (
     is_loopback_url,
     purpose_requires_egress,
 )
+from doktok_core.settings.bootstrap import env_default_ai_settings
 from doktok_core.settings.catalog import MODEL_CATALOG
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
@@ -209,6 +211,8 @@ def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> 
         no_egress=no_egress,
         no_egress_locked=locked,
         purpose_status=status,
+        # The "original system values" for the Model stack defaults card (#696).
+        defaults=env_default_ai_settings(settings),
         egress_active=any(s.requires_egress and s.usable for s in status.values()),
     )
 
@@ -544,11 +548,16 @@ def ocr_recommendation(tenant: Tenant) -> OcrRecommendation:
     return OcrRecommendation(engine=rec.engine, concurrency=rec.concurrency, reason=rec.reason)
 
 
-@router.get("/ocr", response_model=OcrSettings)
-def get_ocr_settings(tenant: Tenant, repo: Repo) -> OcrSettings:
-    """Current OCR processing settings (parallel OCR processes)."""
+@router.get("/ocr", response_model=OcrSettingsResponse)
+def get_ocr_settings(request: Request, tenant: Tenant, repo: Repo) -> OcrSettingsResponse:
+    """Current OCR processing settings (parallel OCR processes) plus the read-only system
+    defaults for the Model stack defaults card (#696)."""
     _ = tenant
-    return repo.get_ocr_settings()
+    settings = request.app.state.settings
+    return OcrSettingsResponse(
+        **repo.get_ocr_settings().model_dump(),
+        defaults=OcrSettings(engine=settings.ocr_engine),
+    )
 
 
 @router.put("/ocr", response_model=OcrSettings)

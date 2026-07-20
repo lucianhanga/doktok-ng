@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     )
 
     env: str = "local"
-    database_url: str = "postgresql://doktok:doktok@localhost:5432/doktok"
+    database_url: str = "postgresql://doktok:doktok@localhost:5433/doktok"
     files_root: str = "./storage/files"
 
     default_model: str = "qwen3.6:27b"

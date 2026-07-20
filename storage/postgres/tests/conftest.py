@@ -22,7 +22,7 @@ TEST_TENANT_B = "test-b"
 DSN = (
     os.environ.get("DOKTOK_TEST_DATABASE_URL")
     or os.environ.get("DOKTOK_DATABASE_URL")
-    or "postgresql://doktok:doktok@localhost:5432/doktok"
+    or "postgresql://doktok:doktok@localhost:5433/doktok"
 )
 
 

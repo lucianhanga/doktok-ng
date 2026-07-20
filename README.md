@@ -166,7 +166,8 @@ First copy `.env.example` to `.env` (it ships a local dev token and tenant). `ma
 make setup
 
 # 2. Start the Docker services (PostgreSQL 17 + pgvector, and Gotenberg for office conversion).
-#    If host port 5432 is taken, set DOKTOK_DB_PORT=5433 in .env first.
+#    Postgres binds host port 5433 by default (another local Postgres keeps 5432);
+#    override with DOKTOK_DB_PORT if you need something else.
 #    Gotenberg listens on host port 3000; override with DOKTOK_GOTENBERG_PORT if it clashes.
 make db
 

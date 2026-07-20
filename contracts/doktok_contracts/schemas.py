@@ -1463,6 +1463,15 @@ class TenantAiSettings(BaseModel):
     no_egress: bool | None = None
 
 
+class TenantAiSettingsUpdate(TenantAiSettings):
+    """Write body for the tenant override (#719). Adds the tenant's OpenAI API key, which is
+    WRITE-ONLY: ``None`` leaves the stored key unchanged, ``""`` clears it (back to the
+    console/env layers), a value sets it. The key is stored separately (encrypted, APP-8) and
+    never returned - this contract is accepted but never serialized back."""
+
+    openai_api_key: str | None = None
+
+
 class OcrSettings(BaseModel):
     """OCR processing settings (Settings tab > OCR, M7.6 / M17 #375).
 
@@ -1510,6 +1519,8 @@ class AiSettingsResponse(AiSettings):
     """AI settings as returned to the UI - never the OpenAI key, only whether one is set."""
 
     openai_api_key_set: bool = False
+    # Whether the CALLER'S TENANT has its own OpenAI key (#719); the key itself is never returned.
+    tenant_openai_api_key_set: bool = False
     # Read-only: the embedding model + its context, shown so the user can see what indexes their
     # corpus. Not user-selectable - changing it would need a vector-dimension migration + re-index.
     embedding_model: str = ""

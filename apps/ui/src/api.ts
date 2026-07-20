@@ -691,6 +691,8 @@ export interface AiSettings {
   defaults?: AiSettings;
   // The tenant's own override layer (epic #708); null when nothing is overridden.
   override?: TenantAiSettings | null;
+  // True when the tenant has its OWN OpenAI key (#719); the key itself is never returned.
+  tenant_openai_api_key_set?: boolean;
 }
 
 /** A tenant's PARTIAL model-stack override (epic #708): purposes set here win over the
@@ -702,6 +704,12 @@ export interface TenantAiSettings {
   rerank?: AiPurposeSettings | null;
   rag?: AiPurposeSettings | null;
   no_egress?: boolean | null;
+}
+
+/** Write body for the tenant override (#719): adds the tenant's OpenAI key, WRITE-ONLY
+ * (undefined = unchanged, "" = clear → inherit, value = set; never returned). */
+export interface TenantAiSettingsUpdate extends TenantAiSettings {
+  openai_api_key?: string | null;
 }
 
 /** Body for PUT /settings/ai. Each field is optional: omit to leave it unchanged. `no_egress` sets
@@ -741,7 +749,7 @@ export function fetchAiSettings(signal?: AbortSignal): Promise<AiSettings> {
 
 /** Write the caller's tenant model-stack override (epic #708): per-purpose partial; validated
  * against the tenant's resulting egress posture (422 egress_not_permitted / no_egress_locked). */
-export function putTenantAiOverride(body: TenantAiSettings): Promise<AiSettings> {
+export function putTenantAiOverride(body: TenantAiSettingsUpdate): Promise<AiSettings> {
   return sendJson<AiSettings>("/api/v1/settings/ai/override", "PUT", body);
 }
 

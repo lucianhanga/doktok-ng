@@ -8,7 +8,11 @@ from typing import Any
 
 from doktok_contracts.schemas import AiPurposeSettings, AiSettings, TenantAiSettings
 from doktok_core.config import Settings
-from doktok_core.settings.effective import effective_ai_settings, effective_tenant_no_egress
+from doktok_core.settings.effective import (
+    effective_ai_settings,
+    effective_openai_api_key,
+    effective_tenant_no_egress,
+)
 from doktok_core.settings.inmemory import InMemoryAppSettingsRepository
 
 
@@ -125,3 +129,33 @@ def test_tenant_store_round_trip_and_delete() -> None:
     assert loaded.pipeline is None  # partial: unset purposes stay unset
     repo.delete_tenant_ai_settings("t1")
     assert repo.get_tenant_ai_settings("t1") is None
+
+
+# --- per-tenant OpenAI API key (#719) ---
+
+
+def test_tenant_openai_key_store_round_trip_and_delete() -> None:
+    repo = InMemoryAppSettingsRepository()
+    assert repo.get_tenant_openai_api_key("t1") == ""
+    repo.set_tenant_openai_api_key("t1", "sk-t1")
+    assert repo.get_tenant_openai_api_key("t1") == "sk-t1"
+    assert repo.get_tenant_openai_api_key("t2") == ""  # tenant isolation
+    # Resetting the tenant's override drops the tenant key too (back to the layers below).
+    repo.delete_tenant_ai_settings("t1")
+    assert repo.get_tenant_openai_api_key("t1") == ""
+
+
+def test_openai_key_resolution_tenant_then_global_then_env() -> None:
+    repo = InMemoryAppSettingsRepository()
+    env = _env(openai_api_key="sk-env")
+    assert effective_openai_api_key(repo, "t1", env) == "sk-env"
+    repo.set_openai_api_key("sk-global")
+    assert effective_openai_api_key(repo, "t1", env) == "sk-global"
+    repo.set_tenant_openai_api_key("t1", "sk-tenant")
+    assert effective_openai_api_key(repo, "t1", env) == "sk-tenant"
+    assert effective_openai_api_key(repo, "t2", env) == "sk-global"  # other tenants unaffected
+
+
+def test_openai_key_resolution_empty_when_nothing_set() -> None:
+    repo = InMemoryAppSettingsRepository()
+    assert effective_openai_api_key(repo, "t1", _env()) == ""

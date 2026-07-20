@@ -586,6 +586,61 @@ test("Reset to defaults DELETEs the tenant override (#708)", async () => {
   ).toBe(true);
 });
 
+// ---- Tenant OpenAI API key (#719) ----
+
+const overridePuts = (calls: { url: string; method: string; body?: string }[]) =>
+  calls.filter((c) => c.method === "PUT" && c.url.endsWith("/settings/ai/override"));
+
+test("Save sends a typed tenant OpenAI key; untouched it is omitted (#719)", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const keyField = await screen.findByLabelText("Tenant OpenAI API key");
+
+  // Untouched: Save sends no key field at all (the stored key stays).
+  fireEvent.click(screen.getByRole("button", { name: /Save for this tenant/i }));
+  await waitFor(() => expect(overridePuts(calls).length).toBe(1));
+  expect("openai_api_key" in JSON.parse(overridePuts(calls)[0].body!)).toBe(false);
+
+  // Typed: Save sends it.
+  fireEvent.change(keyField, { target: { value: "sk-typed" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save for this tenant/i }));
+  await waitFor(() => expect(overridePuts(calls).length).toBe(2));
+  expect(JSON.parse(overridePuts(calls)[1].body!).openai_api_key).toBe("sk-typed");
+});
+
+test("Remove tenant key sends an empty key on Save (#719)", async () => {
+  const calls = mockApi();
+  aiResponse = { ...AI, tenant_openai_api_key_set: true };
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const field = (await screen.findByLabelText("Tenant OpenAI API key")) as HTMLInputElement;
+  expect(field.placeholder).toMatch(/enter to replace/);
+  fireEvent.click(screen.getByRole("button", { name: /Remove tenant key/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Save for this tenant/i }));
+  await waitFor(() => expect(overridePuts(calls).length).toBe(1));
+  expect(JSON.parse(overridePuts(calls)[0].body!).openai_api_key).toBe("");
+});
+
+test("the tenant key Test button probes the typed key (#719)", async () => {
+  const calls = mockApi();
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const keyField = await screen.findByLabelText("Tenant OpenAI API key");
+  fireEvent.change(keyField, { target: { value: "sk-typed" } });
+  // Scope to the key block: each model purpose has its own Test button.
+  const keyBlock = keyField.closest(".settings-purpose") as HTMLElement;
+  fireEvent.click(within(keyBlock).getByRole("button", { name: /^Test$/i }));
+  await waitFor(() =>
+    expect(calls.some((c) => c.url.endsWith("/settings/ai/test-openai"))).toBe(true),
+  );
+  const probe = calls.find((c) => c.url.endsWith("/settings/ai/test-openai"));
+  expect(JSON.parse(probe!.body!).api_key).toBe("sk-typed");
+  await waitFor(() =>
+    expect(screen.getByText(/valid - 50 models available/)).toBeInTheDocument(),
+  );
+});
+
 test("DRP shows status and history but no drill/export/restore actions (#700)", async () => {
   mockApi();
   render(<SettingsPanel />);

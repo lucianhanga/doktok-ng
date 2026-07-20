@@ -6,10 +6,11 @@ Accepted
 
 **Revised (2026-07-20, epic #708): the model stack is per-tenant.** Resolution per purpose is
 **tenant override → console-global saved settings → env defaults**; the five LLM purposes
-(pipeline / RAG / NER / KEG / rerank) and `no_egress` are tenant-overridable, while embedding and
-OCR stay deployment-global. Settings are resolved per tenant at request/ingest time — no restart.
-The original "single-user system configuration, applies on restart" bullets below are superseded
-and kept only where they still describe the console-global layer.
+(pipeline / RAG / NER / KEG / rerank), `no_egress` and the tenant's own OpenAI key (#719) are
+tenant-overridable, while embedding and OCR stay deployment-global. Settings are resolved per
+tenant at request/ingest time — no restart. The original "single-user system configuration,
+applies on restart" bullets below are superseded and kept only where they still describe the
+console-global layer.
 
 ## Context
 
@@ -60,9 +61,14 @@ with OpenAI as an opt-in remote provider behind the same port as Ollama.
 - **OpenAI is opt-in and off by default.** Selecting an OpenAI model is the explicit exception to
   local-first / no-egress (ADR-0006); the defaults are Ollama-only. The OpenAI adapters live in
   `providers/openai` behind the existing chat/extraction ports.
-- **The OpenAI API key is write-only.** It can be set or cleared through the API but is never returned;
-  `GET` reports only whether a key is configured. (`AiSettingsUpdate.openai_api_key`: `None` leaves it
-  unchanged, `""` clears it, a value sets it.)
+- **The OpenAI API key is write-only, and per tenant (#719).** A tenant's own key resolves over
+  the console-global stored key over the env var (`effective_openai_api_key`: tenant → console →
+  env). It is set or cleared through the tenant override API (`TenantAiSettingsUpdate.
+  openai_api_key`: `None` unchanged, `""` cleared → inherit, a value sets it) or, deployment-wide,
+  through the console's global PUT — and never returned; `GET` reports only whether one is
+  configured (`openai_api_key_set` for the console layer, `tenant_openai_api_key_set` for the
+  caller's tenant). Both layers are stored encrypted at rest (APP-8); resetting a tenant's
+  override drops the tenant's key with it.
 
 API: `GET /api/v1/settings/ai/catalog`, `GET /api/v1/settings/ai` (tenant-effective + the console
 defaults + the tenant's own override layer), `PUT /api/v1/settings/ai` (console-global, host token

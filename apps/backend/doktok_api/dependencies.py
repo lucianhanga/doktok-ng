@@ -46,7 +46,11 @@ from doktok_core.security.egress import (
     purpose_requires_egress,
 )
 from doktok_core.security.roles import Role, parse_role, role_at_least
-from doktok_core.settings.effective import effective_ai_settings, effective_tenant_no_egress
+from doktok_core.settings.effective import (
+    effective_ai_settings,
+    effective_openai_api_key,
+    effective_tenant_no_egress,
+)
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
@@ -343,8 +347,8 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
     app_settings = get_app_settings_repository(request)
     tenant = require_tenant(request, request.headers.get("authorization"))
     rag = effective_ai_settings(app_settings, tenant.tenant_id, settings).rag
-    # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
-    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
+    # The tenant's effective key chain (#719): tenant key -> console global -> env (APP-7).
+    openai_key = effective_openai_api_key(app_settings, tenant.tenant_id, settings)
     no_egress = effective_tenant_no_egress(app_settings, tenant.tenant_id, settings)
     use_openai = openai_egress_allowed(key=openai_key, no_egress=no_egress)
     model_provider: ChatModelProvider
@@ -415,7 +419,7 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     tenant = require_tenant(request, request.headers.get("authorization"))
     ai_settings = effective_ai_settings(app_settings, tenant.tenant_id, settings)
     rag = ai_settings.rag
-    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
+    openai_key = effective_openai_api_key(app_settings, tenant.tenant_id, settings)
     no_egress = effective_tenant_no_egress(app_settings, tenant.tenant_id, settings)
     use_openai = openai_egress_allowed(key=openai_key, no_egress=no_egress)
     chat_model = _build_rag_chat_model(request)
@@ -694,7 +698,7 @@ def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator 
     ai = effective_ai_settings(app_settings, tenant.tenant_id, settings)
     pl = ai.pipeline
     pl_url: str = pl.ollama_base_url or settings.ollama_base_url
-    openai_key: str = app_settings.get_openai_api_key() or settings.openai_api_key
+    openai_key: str = effective_openai_api_key(app_settings, tenant.tenant_id, settings)
     no_egress = effective_tenant_no_egress(app_settings, tenant.tenant_id, settings)
     pipeline_egress_blocked = no_egress and purpose_requires_egress(
         pl.provider, pl.ollama_base_url, default_url=settings.ollama_base_url

@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 
 from doktok_contracts.schemas import (
+    AiSettingsResponse,
     AuditEventType,
     BackupEvent,
     ChatEvent,
@@ -16,6 +17,8 @@ from doktok_contracts.schemas import (
     JobStatus,
     MerchantRollup,
     RecordCurrencyRollup,
+    TenantAiSettings,
+    TenantAiSettingsUpdate,
     TraceStep,
 )
 
@@ -199,3 +202,24 @@ def test_trace_step_embedded_in_chat_event_includes_new_fields() -> None:
     assert dumped["trace_step"]["role"] == "verifier"
     assert dumped["trace_step"]["verdict"] == "revise"
     assert dumped["trace_step"]["attempt"] is None
+
+
+def test_tenant_ai_settings_update_accepts_write_only_key() -> None:
+    update = TenantAiSettingsUpdate(openai_api_key="sk-x", no_egress=False)
+    assert update.openai_api_key == "sk-x"
+    assert update.no_egress is False
+    # None = leave the stored tenant key unchanged (the default).
+    assert TenantAiSettingsUpdate().openai_api_key is None
+
+
+def test_tenant_ai_settings_stays_secret_free() -> None:
+    # The override contract is returned by GET /settings/ai - the key must NOT live on it (#719).
+    assert "openai_api_key" not in TenantAiSettings.model_fields
+
+
+def test_ai_settings_response_reports_tenant_key_flag_only() -> None:
+    assert AiSettingsResponse().tenant_openai_api_key_set is False
+    resp = AiSettingsResponse(tenant_openai_api_key_set=True)
+    assert resp.tenant_openai_api_key_set is True
+    # Write-only everywhere: no response model carries a key field.
+    assert "openai_api_key" not in AiSettingsResponse.model_fields

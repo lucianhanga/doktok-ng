@@ -52,6 +52,7 @@ from doktok_contracts.schemas import (
     RestoreResult,
     RestoreStatus,
     TenantAiSettings,
+    TenantAiSettingsUpdate,
     TenantContext,
 )
 from doktok_core.audit.logger import actor_identity, record_activity
@@ -63,7 +64,11 @@ from doktok_core.security.egress import (
 )
 from doktok_core.settings.bootstrap import env_default_ai_settings
 from doktok_core.settings.catalog import MODEL_CATALOG
-from doktok_core.settings.effective import effective_ai_settings, effective_tenant_no_egress
+from doktok_core.settings.effective import (
+    effective_ai_settings,
+    effective_openai_api_key,
+    effective_tenant_no_egress,
+)
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
 from fastapi import (
@@ -185,14 +190,15 @@ def _resolve_no_egress(repo: AppSettingsRepository, settings: Any) -> tuple[bool
     return no_egress, locked
 
 
-def _refuse_egress_probe(repo: AppSettingsRepository, settings: Any, *, remote: bool) -> None:
+def _refuse_egress_probe(
+    repo: AppSettingsRepository, settings: Any, tenant_id: str, *, remote: bool
+) -> None:
     """Egress gate for the AI test/probe endpoints (#622, F-07). Probing api.openai.com - or a
-    remote Ollama URL - opens a connection OFF this host; under no-egress that violates the
-    deployment's guarantee, and it made these endpoints a blind SSRF into the host's network
-    (connect/timeout/status oracle plus a reflected error-body snippet). Refused with 422, the
-    same contract the PUT /ai boundary uses."""
-    no_egress, _locked = _resolve_no_egress(repo, settings)
-    if no_egress and remote:
+    remote Ollama URL - opens a connection OFF this host; under the TENANT's no-egress posture
+    (epic #708) that violates the deployment's guarantee, and it made these endpoints a blind
+    SSRF into the host's network (connect/timeout/status oracle plus a reflected error-body
+    snippet). Refused with 422, the same contract the PUT /ai boundary uses."""
+    if remote and effective_tenant_no_egress(repo, tenant_id, settings):
         raise HTTPException(
             status_code=422,
             detail="egress is not permitted by the no-egress policy (probe targets must be local)",
@@ -209,13 +215,15 @@ def _response(
     ai = effective_ai_settings(repo, tenant.tenant_id, settings)
     no_egress = effective_tenant_no_egress(repo, tenant.tenant_id, settings)
     locked = bool(settings.no_egress_lock)
-    key_set = bool(repo.get_openai_api_key() or settings.openai_api_key)
+    # The "key missing" status is tenant-aware (#719): the tenant's own key counts first.
+    key_set = bool(effective_openai_api_key(repo, tenant.tenant_id, settings))
     status = _purpose_statuses(
         ai, no_egress=no_egress, default_url=settings.ollama_base_url, key_set=key_set
     )
     return AiSettingsResponse(
         **ai.model_dump(),
         openai_api_key_set=bool(repo.get_openai_api_key()),
+        tenant_openai_api_key_set=bool(repo.get_tenant_openai_api_key(tenant.tenant_id)),
         embedding_model=settings.embedding_model,
         embedding_num_ctx=settings.embedding_num_ctx,
         ollama_base_url_default=settings.ollama_base_url,
@@ -391,11 +399,12 @@ _OVERRIDE_PURPOSES = ("pipeline", "rag", "ner", "keg", "rerank")
 
 @router.put("/ai/override", response_model=AiSettingsResponse)
 def put_tenant_ai_override(
-    update: TenantAiSettings, request: Request, tenant: AdminUser, repo: Repo, audit: Audit
+    update: TenantAiSettingsUpdate, request: Request, tenant: AdminUser, repo: Repo, audit: Audit
 ) -> AiSettingsResponse:
     """Write the caller's TENANT model-stack override (epic #708, T3): a per-purpose partial -
     unset purposes fall through to the console/env layers. Validated against the tenant's
-    RESULTING egress posture; the host lock forbids turning no-egress off here."""
+    RESULTING egress posture; the host lock forbids turning no-egress off here. The tenant's own
+    OpenAI key (#719) is write-only: None leaves it unchanged, "" clears it, a value sets it."""
     settings = request.app.state.settings
     if settings.no_egress_lock and update.no_egress is False:
         raise HTTPException(
@@ -420,11 +429,8 @@ def put_tenant_ai_override(
         rerank=update.rerank or current.rerank,
         embedding=current.embedding,
     )
-    new_posture = (
-        update.no_egress
-        if update.no_egress is not None
-        else effective_tenant_no_egress(repo, tenant.tenant_id, settings)
-    )
+    prior_posture = effective_tenant_no_egress(repo, tenant.tenant_id, settings)
+    new_posture = update.no_egress if update.no_egress is not None else prior_posture
     violations = _egress_violations(
         merged, no_egress=new_posture, default_url=settings.ollama_base_url
     )
@@ -440,24 +446,60 @@ def put_tenant_ai_override(
                 "violations": violations,
             },
         )
-    repo.set_tenant_ai_settings(tenant.tenant_id, update)
+    # The prior egress state, so an off->on transition is audited (same as the console's PUT).
+    prior_active = any(
+        s.requires_egress and s.usable
+        for s in _purpose_statuses(
+            current,
+            no_egress=prior_posture,
+            default_url=settings.ollama_base_url,
+            key_set=bool(effective_openai_api_key(repo, tenant.tenant_id, settings)),
+        ).values()
+    )
+    repo.set_tenant_ai_settings(
+        tenant.tenant_id, TenantAiSettings(**update.model_dump(exclude={"openai_api_key"}))
+    )
+    new_key = update.openai_api_key  # None leaves it unchanged; "" clears it (#719)
+    if new_key is not None:
+        repo.set_tenant_openai_api_key(tenant.tenant_id, new_key)
+    # Activity log: a non-secret summary of the change - never the key itself.
+    summary = "Tenant AI override saved"
+    if new_key:
+        summary += ", OpenAI key updated"
+    elif new_key is not None:
+        summary += ", OpenAI key cleared"
     record_activity(
         audit,
         tenant.tenant_id,
         AuditEventType.SETTINGS_CHANGED,
         actor=actor_identity(tenant),
         actor_kind="user",
-        description="Tenant AI override saved",
+        description=summary,
         details={"setting": "tenant_ai_override"},
     )
-    return _response(repo, tenant, request)
+    response = _response(repo, tenant, request)
+    # Audit the security-significant opt-in: egress went off->on (content now leaves the host).
+    if response.egress_active and not prior_active:
+        leaving = [p for p, s in response.purpose_status.items() if s.requires_egress and s.usable]
+        record_activity(
+            audit,
+            tenant.tenant_id,
+            AuditEventType.EGRESS_ENABLED,
+            actor=actor_identity(tenant),
+            actor_kind="user",
+            severity="warning",
+            description=f"Remote egress enabled for: {', '.join(sorted(leaving))}",
+            details={"purposes": sorted(leaving)},
+        )
+    return response
 
 
 @router.delete("/ai/override", response_model=AiSettingsResponse)
 def delete_tenant_ai_override(
     request: Request, tenant: AdminUser, repo: Repo, audit: Audit
 ) -> AiSettingsResponse:
-    """Reset the tenant to the console/env default layers (epic #708)."""
+    """Reset the tenant to the console/env default layers (epic #708) - the override AND the
+    tenant's own OpenAI key (#719) are dropped."""
     repo.delete_tenant_ai_settings(tenant.tenant_id)
     record_activity(
         audit,
@@ -534,12 +576,11 @@ def test_ollama_url(
 ) -> OllamaTestResult:
     """Probe an Ollama server (the override, or the configured default if blank) before saving. When
     a model is supplied, also report whether it is installed (a fast check; no model is loaded).
-    Remote targets are refused under no-egress (#622, F-07)."""
-    _ = tenant
+    Remote targets are refused under the tenant's no-egress posture (#622, F-07, epic #708)."""
     _validate_ollama_url(req.url, "url")
     settings = request.app.state.settings
     url = (req.url or "").strip() or settings.ollama_base_url
-    _refuse_egress_probe(repo, settings, remote=not is_loopback_url(url))
+    _refuse_egress_probe(repo, settings, tenant.tenant_id, remote=not is_loopback_url(url))
     ok, detail, names = _probe_ollama(url)
     model = req.model.strip()
     model_present: bool | None = None
@@ -558,12 +599,11 @@ def warmup_ollama(
 ) -> OllamaWarmupResult:
     """Preload a model into an Ollama server so the first real request is not cold (M13 follow-up).
     Distinct from Test: this deliberately loads the model and can take a while on a large model.
-    Remote targets are refused under no-egress (#622, F-07)."""
-    _ = tenant
+    Remote targets are refused under the tenant's no-egress posture (#622, F-07, epic #708)."""
     _validate_ollama_url(req.url, "url")
     settings = request.app.state.settings
     url = (req.url or "").strip() or settings.ollama_base_url
-    _refuse_egress_probe(repo, settings, remote=not is_loopback_url(url))
+    _refuse_egress_probe(repo, settings, tenant.tenant_id, remote=not is_loopback_url(url))
     model = req.model.strip()
     ok, detail = _warmup_ollama(url, model)
     return OllamaWarmupResult(ok=ok, detail=detail, url=url, model=model)
@@ -593,15 +633,16 @@ def _probe_openai(key: str) -> tuple[bool, str]:
 def test_openai_key(
     req: OpenAiTestRequest, request: Request, tenant: Tenant, repo: Repo
 ) -> OpenAiTestResult:
-    """Validate the candidate OpenAI key (or the stored one if blank) before saving (M13). With no
-    key at all the probe reports failure WITHOUT a network call; with one, it is refused under
-    no-egress (#622, F-07): the probe itself is an egress call to api.openai.com."""
-    _ = tenant
+    """Validate the candidate OpenAI key (or the stored one if blank) before saving (M13). The
+    stored-key fallback is the TENANT's effective key chain (#719): tenant key -> console-global
+    -> env. With no key at all the probe reports failure WITHOUT a network call; with one, it is
+    refused under the tenant's no-egress posture (#622, F-07): the probe itself is an egress call
+    to api.openai.com."""
     settings = request.app.state.settings
-    key = (req.api_key or "").strip() or repo.get_openai_api_key() or settings.openai_api_key
+    key = (req.api_key or "").strip() or effective_openai_api_key(repo, tenant.tenant_id, settings)
     if not key:
         return OpenAiTestResult(ok=False, detail="no API key provided or stored")
-    _refuse_egress_probe(repo, settings, remote=True)
+    _refuse_egress_probe(repo, settings, tenant.tenant_id, remote=True)
     ok, detail = _probe_openai(key)
     return OpenAiTestResult(ok=ok, detail=detail)
 

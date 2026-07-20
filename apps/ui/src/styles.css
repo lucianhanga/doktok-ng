@@ -1452,11 +1452,11 @@ tr.row-selected {
 }
 
 /* Model stack: two cards whose per-stage rows line up (CSS subgrid). Both cards have the same
-   children in the same order: a head row + one row per stage. */
+   children in the same order: a head row + one row per stage + the OpenAI key row. */
 .model-stack {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: repeat(8, auto);
+  grid-template-rows: repeat(9, auto);
   gap: 0.4rem 1rem;
 }
 .model-stack .settings-purpose h4 {

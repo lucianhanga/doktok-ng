@@ -65,15 +65,18 @@ levers:
   token (`DOKTOK_TENANT_TOKENS`, including the Caddy edge token) has **no user identity and acts as
   admin** - treat every static token as an admin credential.
 - **The console admin (ADR-0025, epic #700).** Deployment-spanning surfaces - portable backup
-  export/restore, the DRP drill, model-stack writes (`PUT /settings/ai`, `PUT /settings/ocr`), and
-  tenant provisioning - accept ONLY the static host token (`via == "static"`); session JWTs and
-  user api tokens always get 403, and the SPA carries no platform surfaces (no Instance
-  Administration, no DRP actions, read-only model stack). The static tokens are therefore the
-  deployment's console credentials - guard them like ssh keys. Day-to-day deployment operations
+  export/restore, the DRP drill, console-global model-stack writes (`PUT /settings/ai`,
+  `PUT /settings/ocr`), and tenant provisioning - accept ONLY the static host token
+  (`via == "static"`); session JWTs and user api tokens always get 403, and the SPA carries no
+  platform surfaces (no Instance Administration, no DRP actions). The static tokens are therefore
+  the deployment's console credentials - guard them like ssh keys. Day-to-day deployment operations
   run on the host: `scripts/create-tenant.sh` (tenants + first admins), `deploy/backup.sh` /
-  `deploy/restore.sh`, or `curl` with the static token for export/drill/model-stack writes. There
-  is no user platform flag to grant or review; tenant admins keep tenant-scoped user management
-  and read-only DRP status.
+  `deploy/restore.sh`, or `curl` with the static token for export/drill/global model-stack writes.
+  There is no user platform flag to grant or review; tenant admins keep tenant-scoped user
+  management, read-only DRP status, and - since epic #708 - their tenant's model-stack override
+  (`PUT`/`DELETE /settings/ai/override`) and data-egress posture in the UI (Settings → Model stack).
+  The console still owns the default layers and the `DOKTOK_NO_EGRESS_LOCK` floor; embedding and
+  OCR stay deployment-global.
 - **Enabling password login (opt-in).** Set `DOKTOK_AUTH_JWT_SECRET` (at least 32 bytes, e.g.
   `openssl rand -base64 48`; without it, `DOKTOK_SECRETS_KEY` is used as the fallback signing
   secret, and with neither, login is disabled with a 503). The backend logs a loud startup warning

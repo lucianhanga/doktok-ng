@@ -713,6 +713,7 @@ function PurposeEditor({
           onChange={(ollama_base_url) => onChange({ ...value, ollama_base_url })}
         />
       )}
+      {value.provider === "openai" && <OpenAiTestRow />}
       <EgressStatusNote status={status} />
       {violation && (
         <p role="alert" className="settings-test-fail egress-status">
@@ -721,6 +722,46 @@ function PurposeEditor({
             ? "OpenAI is not permitted while no-egress is on."
             : "That Ollama server is off this host and not permitted while no-egress is on."}{" "}
           <span className="egress-status-detail">({violation.value})</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Test row for OpenAI purposes (#721): validates the tenant's EFFECTIVE key chain (tenant key ->
+// deployment key -> env) with no candidate key - exactly what the runtime would use for the
+// purpose. Distinct from the key block's Test (which probes the typed, not-yet-saved key).
+function OpenAiTestRow() {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  return (
+    <div className="settings-row">
+      <button
+        type="button"
+        className="settings-test"
+        disabled={testing}
+        onClick={() => {
+          setTesting(true);
+          setResult(null);
+          testOpenAiKey(null)
+            .then((r) =>
+              setResult({
+                ok: r.ok,
+                detail: r.ok ? `✓ key valid — ${r.detail}` : `✖ ${r.detail}`,
+              }),
+            )
+            .catch((e: unknown) =>
+              setResult({ ok: false, detail: e instanceof Error ? e.message : "test failed" }),
+            )
+            .finally(() => setTesting(false));
+        }}
+      >
+        {testing ? "Testing…" : "Test"}
+      </button>{" "}
+      <span className="muted">probes the saved key chain</span>
+      {result && (
+        <p role="status" className={result.ok ? "settings-test-ok" : "settings-test-fail"}>
+          {result.detail}
         </p>
       )}
     </div>
@@ -851,21 +892,36 @@ export function SettingsPanel() {
     a.reasoning === b.reasoning &&
     (a.ollama_base_url ?? null) === (b.ollama_base_url ?? null);
 
-  // Save the tenant override: send ONLY purposes that genuinely differ from the tenant-effective
-  // stack (a purpose equal to the effective value means "no override", epic #708). no_egress
-  // goes explicitly (the toggle IS the tenant's posture choice). The OpenAI key goes only when
-  // touched: a typed value sets it, "Remove" clears it (#719).
+  // The tenant's DEFAULT layer (#721): console-global saved over env, WITHOUT the tenant's own
+  // override. It is the picker's "Use default" target AND the Save-diff baseline — NOT the
+  // effective value (which includes the override; diffing against it collapsed an explicit
+  // choice into "Use default" after save and wiped the override on a no-change re-save).
+  const tenantDefaults = ai ? (ai.tenant_defaults ?? ai.defaults ?? ai) : null;
+
+  // A tenant key is only meaningful when a draft purpose actually uses OpenAI (#721): the key
+  // input + Test gate on this; "Remove" stays available whenever a key is set.
+  const anyOpenAiDraft =
+    !!draft &&
+    [draft.pipeline, draft.rag, draft.ner, draft.keg, draft.rerank].some(
+      (p) => p.provider === "openai",
+    );
+
+  // Save the tenant override: send ONLY purposes that differ from the tenant's default layer
+  // (equal = "no override / inherit", epic #708; different = an explicit choice, sent even when
+  // it equals the current effective — that IS the override, #721). no_egress goes explicitly
+  // (the toggle IS the tenant's posture choice). The OpenAI key goes only when touched and an
+  // OpenAI purpose is in play: a typed value sets it, "Remove" clears it (#719).
   async function saveOverride() {
-    if (!ai || !draft) return;
+    if (!ai || !draft || !tenantDefaults) return;
     setSaving(true);
     setSaveError(null);
     setNotice("");
     const body: TenantAiSettingsUpdate = { no_egress: draft.no_egress };
     for (const p of ["pipeline", "rag", "ner", "keg", "rerank"] as const) {
-      body[p] = _samePurpose(draft[p], ai[p]) ? null : draft[p];
+      body[p] = _samePurpose(draft[p], tenantDefaults[p]) ? null : draft[p];
     }
     if (keyClear) body.openai_api_key = "";
-    else if (keyInput.trim()) body.openai_api_key = keyInput.trim();
+    else if (anyOpenAiDraft && keyInput.trim()) body.openai_api_key = keyInput.trim();
     try {
       const saved = await putTenantAiOverride(body);
       setAi(saved);
@@ -980,7 +1036,7 @@ export function SettingsPanel() {
         ))}
 
       {tab === "models" &&
-        (!catalog || !ai || !ocr || !draft ? (
+        (!catalog || !ai || !ocr || !draft || !tenantDefaults ? (
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section settings-section--wide">
@@ -1226,7 +1282,7 @@ export function SettingsPanel() {
                   description={STAGE_INFO.pipeline}
                   options={catalog.pipeline}
                   value={draft.pipeline}
-                  defaultValue={ai.pipeline}
+                  defaultValue={tenantDefaults.pipeline}
                   health={health?.pipeline}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
@@ -1239,7 +1295,7 @@ export function SettingsPanel() {
                   description={STAGE_INFO.rag}
                   options={catalog.rag}
                   value={draft.rag}
-                  defaultValue={ai.rag}
+                  defaultValue={tenantDefaults.rag}
                   health={health?.rag}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
@@ -1252,7 +1308,7 @@ export function SettingsPanel() {
                   description={STAGE_INFO.ner}
                   options={catalog.ner ?? []}
                   value={draft.ner}
-                  defaultValue={ai.ner}
+                  defaultValue={tenantDefaults.ner}
                   health={health?.ner}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
@@ -1265,7 +1321,7 @@ export function SettingsPanel() {
                   description={STAGE_INFO.keg}
                   options={catalog.keg ?? []}
                   value={draft.keg}
-                  defaultValue={ai.keg}
+                  defaultValue={tenantDefaults.keg}
                   health={health?.keg}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
@@ -1298,7 +1354,7 @@ export function SettingsPanel() {
                   description={STAGE_INFO.rerank}
                   options={catalog.rerank}
                   value={draft.rerank}
-                  defaultValue={ai.rerank}
+                  defaultValue={tenantDefaults.rerank}
                   health={health?.rerank}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
@@ -1348,6 +1404,7 @@ export function SettingsPanel() {
                         type="password"
                         aria-label="Tenant OpenAI API key"
                         autoComplete="off"
+                        disabled={!anyOpenAiDraft}
                         placeholder={
                           ai.tenant_openai_api_key_set
                             ? "configured — enter to replace"
@@ -1364,11 +1421,16 @@ export function SettingsPanel() {
                       />
                     </label>
                   </div>
+                  {!anyOpenAiDraft && (
+                    <span className="muted">
+                      Only needed when a stage uses an OpenAI model.
+                    </span>
+                  )}
                   <div className="settings-row">
                     <button
                       type="button"
                       className="settings-test"
-                      disabled={keyTesting || !keyInput.trim()}
+                      disabled={!anyOpenAiDraft || keyTesting || !keyInput.trim()}
                       onClick={() => void testKey()}
                     >
                       {keyTesting ? "Testing…" : "Test"}

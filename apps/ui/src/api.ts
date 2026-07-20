@@ -689,6 +689,9 @@ export interface AiSettings {
   // Read-only (#696): the "original system values" (schema defaults + env-requested providers) -
   // what the Model stack defaults card shows. Optional for pre-upgrade backends.
   defaults?: AiSettings;
+  // The tenant's DEFAULT layer (#721): console-global saved over env, WITHOUT the tenant's own
+  // override - the per-purpose "Use default" target + the Save-diff baseline.
+  tenant_defaults?: AiSettings;
   // The tenant's own override layer (epic #708); null when nothing is overridden.
   override?: TenantAiSettings | null;
   // True when the tenant has its OWN OpenAI key (#719); the key itself is never returned.

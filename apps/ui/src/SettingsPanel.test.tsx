@@ -593,8 +593,22 @@ const overridePuts = (calls: { url: string; method: string; body?: string }[]) =
 
 test("Save sends a typed tenant OpenAI key; untouched it is omitted (#719)", async () => {
   const calls = mockApi();
+  // A realistic save response: the server persists the OpenAI NER purpose, so the draft keeps
+  // an OpenAI purpose (and the key field stays ungated) after the first save.
+  const savedAi = {
+    ...AI,
+    ner: { provider: "openai", model: "gpt-4o-mini", num_ctx: 128000, reasoning: "off" },
+    override: {
+      ner: { provider: "openai", model: "gpt-4o-mini", num_ctx: 128000, reasoning: "off" },
+    },
+  };
+  overrideResponder = () => new Response(JSON.stringify(savedAi), { status: 200 });
   render(<SettingsPanel />);
   await gotoModelStack();
+  // The key field gates on an OpenAI draft purpose (#721): pick one (NER has an OpenAI option).
+  fireEvent.change(await screen.findByLabelText("Entity recognition (NER) model"), {
+    target: { value: "openai:gpt-4o-mini" },
+  });
   const keyField = await screen.findByLabelText("Tenant OpenAI API key");
 
   // Untouched: Save sends no key field at all (the stored key stays).
@@ -626,6 +640,10 @@ test("the tenant key Test button probes the typed key (#719)", async () => {
   const calls = mockApi();
   render(<SettingsPanel />);
   await gotoModelStack();
+  // Ungate the key field first (#721): pick an OpenAI purpose.
+  fireEvent.change(await screen.findByLabelText("Entity recognition (NER) model"), {
+    target: { value: "openai:gpt-4o-mini" },
+  });
   const keyField = await screen.findByLabelText("Tenant OpenAI API key");
   fireEvent.change(keyField, { target: { value: "sk-typed" } });
   // Scope to the key block: each model purpose has its own Test button.
@@ -656,4 +674,91 @@ test("DRP shows status and history but no drill/export/restore actions (#700)", 
   expect(screen.queryByText("Recovery drill")).not.toBeInTheDocument();
   expect(screen.queryByText("Portable backup")).not.toBeInTheDocument();
   expect(screen.queryByText("Restore from a backup file")).not.toBeInTheDocument();
+});
+
+// ---- Tenant override picker default layer (#721) ----
+
+const OPENAI_PIPELINE_SAVED = {
+  provider: "openai",
+  model: "gpt-5-nano",
+  num_ctx: 128000,
+  reasoning: "off",
+};
+
+test("after saving an override the picker shows the explicit choice, and a re-save keeps it (#721)", async () => {
+  const calls = mockApi();
+  catalogResponse = { ...CATALOG, pipeline: [...CATALOG.pipeline, OPENAI_OPTION] };
+  aiResponse = {
+    ...AI,
+    no_egress: false,
+    pipeline: OPENAI_PIPELINE_SAVED, // effective = the tenant's saved override
+    override: { pipeline: OPENAI_PIPELINE_SAVED }, // the tenant's own layer
+    tenant_defaults: AI, // the default layer (console/env) stays the fixture stack
+  };
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const picker = (await screen.findByLabelText("Data pipeline model")) as HTMLSelectElement;
+  // The explicit saved override is shown - NOT collapsed into "Use default".
+  expect(picker).toHaveValue("openai:gpt-5-nano");
+  // A no-change re-save SENDS the purpose (the diff baseline is the default layer, not the
+  // effective value) - the override is not wiped.
+  fireEvent.click(screen.getByRole("button", { name: /Save for this tenant/i }));
+  await waitFor(() => expect(overridePuts(calls).length).toBe(1));
+  expect(JSON.parse(overridePuts(calls)[0].body!).pipeline).toEqual(OPENAI_PIPELINE_SAVED);
+});
+
+test('"Use default" clears just that purpose\'s override (#721)', async () => {
+  const calls = mockApi();
+  catalogResponse = { ...CATALOG, pipeline: [...CATALOG.pipeline, OPENAI_OPTION] };
+  aiResponse = {
+    ...AI,
+    no_egress: false,
+    pipeline: OPENAI_PIPELINE_SAVED,
+    override: { pipeline: OPENAI_PIPELINE_SAVED },
+    tenant_defaults: AI,
+  };
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const picker = await screen.findByLabelText("Data pipeline model");
+  fireEvent.change(picker, { target: { value: "__default__" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save for this tenant/i }));
+  await waitFor(() => expect(overridePuts(calls).length).toBe(1));
+  expect(JSON.parse(overridePuts(calls)[0].body!).pipeline).toBeNull();
+});
+
+test("the tenant key input is gated on an OpenAI draft purpose (#721)", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const keyField = await screen.findByLabelText("Tenant OpenAI API key");
+  expect(keyField).toBeDisabled();
+  expect(
+    screen.getByText(/Only needed when a stage uses an OpenAI model/i),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Entity recognition (NER) model"), {
+    target: { value: "openai:gpt-4o-mini" },
+  });
+  expect(keyField).not.toBeDisabled();
+  expect(
+    screen.queryByText(/Only needed when a stage uses an OpenAI model/i),
+  ).not.toBeInTheDocument();
+});
+
+test("an OpenAI purpose has a Test button probing the saved key chain (#721)", async () => {
+  mockApi();
+  aiResponse = {
+    ...AI,
+    no_egress: false,
+    ner: { provider: "openai", model: "gpt-4o-mini", num_ctx: 128000, reasoning: "off" },
+  };
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const nerModel = await screen.findByLabelText("Entity recognition (NER) model");
+  const nerBlock = nerModel.closest(".settings-purpose") as HTMLElement;
+  fireEvent.click(within(nerBlock).getByRole("button", { name: /^Test$/i }));
+  await waitFor(() =>
+    expect(
+      within(nerBlock).getByText(/key valid — valid - 50 models available/),
+    ).toBeInTheDocument(),
+  );
 });

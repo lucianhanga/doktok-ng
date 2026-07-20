@@ -998,6 +998,10 @@ export function SettingsPanel() {
               </p>
             )}
             <div className="settings-cards-row model-stack">
+              {/* Subgrid pairing: BOTH cards must stay DIRECT children of this grid, with the same
+                  children in the same order (head + one block per stage) — a wrapper here breaks
+                  the per-stage row alignment (the wrapper lands in row 1 and pushes the other
+                  card's stages below it; #659 regression, fixed now). */}
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
                   Server defaults (read-only){" "}
@@ -1152,7 +1156,6 @@ export function SettingsPanel() {
                   </div>
                 </div>
               </div>
-              <fieldset className="settings-fieldset">
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
                   Your tenant override{" "}
@@ -1275,7 +1278,6 @@ export function SettingsPanel() {
                   )}
                 </div>
               </div>
-              </fieldset>
             </div>
             <div className="settings-save-bar">
               <button

@@ -7,6 +7,7 @@ registry. Document, search, and chat routes arrive in later milestones.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -18,6 +19,7 @@ from doktok_core.registry import Registry, build_registry
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.datastructures import State
 
 from doktok_api import __version__
 from doktok_api.dependencies import AdminUser, get_app_settings_repository
@@ -48,6 +50,9 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 # A worker heartbeat older than this marks the worker as stale in /ready (APP-5). The worker beats
 # every ~15s, so 120s tolerates a few missed beats / a slow scan without false alarms.
 _WORKER_STALE_SECONDS = 120
+# F-42 (#654): after the maintenance flag was seen in-process, a stat error keeps the gate closed
+# for this long (a broken mount mid-restore must not let mutations through).
+_MAINTENANCE_RECENT_SECONDS = 3600.0
 
 
 def _check_login_secret(settings: Settings) -> None:
@@ -83,22 +88,42 @@ def _check_login_secret(settings: Settings) -> None:
         )
 
 
-def _maintenance_active(settings: Settings) -> bool:
+def _maintenance_active(settings: Settings, state: State | None = None) -> bool:
     """True iff the host-written maintenance sentinel exists (M12 portable restore Phase 2).
 
     The destructive restore helper (deploy/restore-import.sh) drops
     ``<backup_dir>/status/maintenance.flag`` before it touches the DB/files and removes it on
     success (a failed restore leaves it ON until a human clears it - fail safe). The flag is a FILE,
     not the DB ``maintenance_mode`` row, because the DB is being rewritten mid-restore and a
-    DB-backed flag would be unreadable / rolled back. Best-effort: any error -> not in maintenance,
-    so a stat failure can never wedge the whole API closed."""
+    DB-backed flag would be unreadable / rolled back. On a stat error: fail CLOSED for
+    ``_MAINTENANCE_RECENT_SECONDS`` after the flag was last seen in this process (F-42, #654) -
+    a broken mount mid-restore must not let mutations through; never-seen + error stays
+    fail-open so a stat failure can never wedge the whole API closed."""
     from pathlib import Path
 
     try:
         flag = Path(f"{settings.backup_dir.rstrip('/')}/status/maintenance.flag")
-        return flag.exists()
+        active = flag.exists()
+        if active and state is not None:
+            state._maintenance_last_seen = time.monotonic()
+        return active
     except OSError:
-        return False
+        last_seen = getattr(state, "_maintenance_last_seen", None) if state is not None else None
+        return last_seen is not None and time.monotonic() - last_seen < _MAINTENANCE_RECENT_SECONDS
+
+
+_REQUEST_ID_MAX_LEN = 64
+_REQUEST_ID_SAFE = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+
+
+def _safe_request_id(raw: str | None) -> str | None:
+    """Return the caller's X-Request-ID when it is safe to echo + put into the log contextvar
+    (F-42, #654); else None so a fresh one is minted. Bounded length and a printable-token
+    charset - the HTTP parser already blocks CR/LF, this stops log forging with printable junk
+    and unbounded log bloat."""
+    if not raw or len(raw) > _REQUEST_ID_MAX_LEN:
+        return None
+    return raw if all(c in _REQUEST_ID_SAFE for c in raw) else None
 
 
 def _warm_tenant_registry(app: FastAPI) -> None:
@@ -253,7 +278,9 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         # a host-written sentinel file (OUTSIDE Postgres, since the DB is being rewritten) parks all
         # mutating requests with a 503 so nothing writes into a half-restored system. Read-only GETs
         # and the restore status poll itself stay available.
-        if request.method not in ("GET", "HEAD", "OPTIONS") and _maintenance_active(settings):
+        if request.method not in ("GET", "HEAD", "OPTIONS") and _maintenance_active(
+            settings, request.app.state
+        ):
             return JSONResponse(
                 status_code=503,
                 content={"detail": "service is in maintenance (a restore is in progress)"},
@@ -319,10 +346,11 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         # Correlation id: echo the caller's X-Request-ID or mint one, so logs/responses can be tied
-        # together. (Logging hookup can consume request.state.request_id later.)
+        # together. Caller-supplied ids are length/charset-checked (F-42, #654). (Logging hookup
+        # can consume request.state.request_id later.)
         from doktok_core.logging_setup import request_id_var
 
-        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        request_id = _safe_request_id(request.headers.get("X-Request-ID")) or uuid.uuid4().hex
         request.state.request_id = request_id
         request_id_var.set(request_id)  # correlate log lines for this request (APP-12)
         response = await call_next(request)

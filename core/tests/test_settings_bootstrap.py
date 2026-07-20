@@ -13,10 +13,11 @@ def _settings(
     pipeline_model: str = "",
     rag_provider: str = "",
     rag_model: str = "",
+    no_egress: bool = False,
 ) -> Settings:
     return Settings(  # type: ignore[call-arg]
         _env_file=None,
-        no_egress=False,
+        no_egress=no_egress,
         pipeline_provider=pipeline_provider,
         pipeline_model=pipeline_model,
         rag_provider=rag_provider,
@@ -59,3 +60,17 @@ def test_noop_when_no_env_requested() -> None:
     repo = InMemoryAppSettingsRepository()
     assert seed_ai_settings(repo, _settings()) is False
     assert repo.has_ai_settings() is False
+
+
+def test_seed_skipped_under_no_egress_when_a_purpose_would_egress() -> None:
+    # F-42 (#654): the env seed must not store a config the PUT boundary would reject - the saved
+    # settings stay honest (the runtime sinks remain the fail-closed backstop).
+    repo = InMemoryAppSettingsRepository()
+    assert seed_ai_settings(repo, _settings(pipeline_provider="openai", no_egress=True)) is False
+    assert repo.has_ai_settings() is False
+
+
+def test_seed_still_applies_under_no_egress_for_local_providers() -> None:
+    repo = InMemoryAppSettingsRepository()
+    assert seed_ai_settings(repo, _settings(pipeline_provider="ollama", no_egress=True)) is True
+    assert repo.get_ai_settings().pipeline.provider == "ollama"

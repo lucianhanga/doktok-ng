@@ -105,7 +105,6 @@ class AuditEventType(StrEnum):
     TENANT_CREATED = "tenant.created"
     USER_CREATED = "user.created"
     USER_ROLE_CHANGED = "user.role_changed"
-    USER_PLATFORM_ADMIN_CHANGED = "user.platform_admin_changed"  # #613 (ADR-0025) grant/revoke
     USER_PASSWORD_RESET = "user.password_reset"  # pragma: allowlist secret
     API_TOKEN_ISSUED = "api_token.issued"
     API_TOKEN_REVOKED = "api_token.revoked"
@@ -163,10 +162,10 @@ class TenantContext(BaseModel):
 
     ``user_id`` is populated when the request authenticated via a user-scoped DB token (#554);
     it is ``None`` for the static env-map fallback and for tenant-scoped tokens without a user.
-    ``platform_admin`` marks the deployment-level platform owner (#613, ADR-0025): host-provisioned
-    static tokens, and users whose ``is_platform_admin`` flag is set. DB-minted user-less api tokens
-    are tenant admins but never platform admins. ``token_role`` carries the api_token row's role
-    (#645, F-33) for user-less machine tokens; ``None`` for static tokens and user-bound creds.
+    ``platform_admin`` is True ONLY for host-provisioned static tokens (#700): the platform tier
+    is a host credential used by console scripts, never a user identity. ``token_role`` carries
+    the api_token row's role (#645, F-33) for user-less machine tokens; ``None`` for static
+    tokens and user-bound creds.
     """
 
     tenant_id: str
@@ -199,7 +198,6 @@ class User(BaseModel):
     display_name: str = ""
     status: str = "active"  # active | deactivated
     role: str = "viewer"  # viewer | editor | admin (RBAC, #556)
-    is_platform_admin: bool = False  # deployment-level platform owner (#613, ADR-0025)
     password_hash: str | None = None
     created_at: datetime | None = None
 

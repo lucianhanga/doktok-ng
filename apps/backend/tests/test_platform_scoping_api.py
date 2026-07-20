@@ -1,10 +1,10 @@
-"""Endpoint tests for platform-vs-tenant admin scoping (#614/#615/#619/#620, ADR-0025).
+"""Endpoint tests for host-token vs user-credential scoping (#614/#615/#619/#620, epic #700).
 
-Deployment-spanning surfaces are platform-admin only: portable restore preview/apply, the DRP
-drill trigger, model-stack writes (AI + OCR settings), and tenant provisioning. Tenant admins keep
-tenant-scoped user management (and DRP *status* reads) but get 403 on all of the above. A platform
-admin may additionally create users in ANY tenant (to seed tenant admins); a tenant admin's
-``tenant_id`` override is honored only for their own tenant.
+Deployment-spanning surfaces accept ONLY the static host token (the console credential):
+portable restore preview/apply, the DRP drill trigger, model-stack writes (AI + OCR settings),
+and tenant provisioning. Session users and user api tokens get 403 on all of them - there is no
+user flag anymore. Tenant admins keep tenant-scoped user management (and DRP *status* reads);
+the host token may additionally create users in ANY tenant (to seed tenant admins).
 """
 
 from __future__ import annotations
@@ -24,10 +24,9 @@ from doktok_core.security.inmemory import InMemoryTenantRegistry
 from doktok_core.settings.inmemory import InMemoryAppSettingsRepository
 from fastapi.testclient import TestClient
 
-STATIC = {"Authorization": "Bearer tok-static"}  # platform admin (host token), tenant-a
+STATIC = {"Authorization": "Bearer tok-static"}  # the host credential (console), tenant-a
 USERLESS = {"Authorization": "Bearer tok-userless"}  # tenant-b admin, not platform
 ADMIN = {"Authorization": "Bearer tok-admin"}  # tenant-b admin user, not platform
-PADMIN = {"Authorization": "Bearer tok-padmin"}  # tenant-b admin user + flag -> platform
 
 
 @pytest.fixture(autouse=True)
@@ -42,19 +41,9 @@ def _make_client(tmp_path: Path) -> tuple[TestClient, InMemoryTenantRegistry]:
     mem.create_tenant(Tenant(id="tenant-a", name="A"))
     mem.create_tenant(Tenant(id="tenant-b", name="B"))
     mem.create_user(User(id="admin-b", tenant_id="tenant-b", email="admin@b.example", role="admin"))
-    mem.create_user(
-        User(
-            id="padmin",
-            tenant_id="tenant-b",
-            email="padmin@b.example",
-            role="admin",
-            is_platform_admin=True,
-        )
-    )
     for token, tenant, uid in (
         ("tok-userless", "tenant-b", None),
         ("tok-admin", "tenant-b", "admin-b"),
-        ("tok-padmin", "tenant-b", "padmin"),
     ):
         mem.create_api_token(
             ApiToken(id=token, tenant_id=tenant, user_id=uid, token_sha256=hash_token(token))
@@ -119,7 +108,6 @@ def test_put_ai_settings_requires_platform_admin(tmp_path: Path) -> None:
     assert client.put("/api/v1/settings/ai", headers=ADMIN, json=body).status_code == 403
     assert client.put("/api/v1/settings/ai", headers=USERLESS, json=body).status_code == 403
     assert client.put("/api/v1/settings/ai", headers=STATIC, json=body).status_code == 200
-    assert client.put("/api/v1/settings/ai", headers=PADMIN, json=body).status_code == 200
 
 
 def test_put_ocr_settings_requires_platform_admin(tmp_path: Path) -> None:
@@ -168,13 +156,16 @@ def test_platform_admin_creates_user_in_another_tenant(tmp_path: Path) -> None:
     )
     assert resp.status_code == 201
     user = mem.get_user_by_email("tenant-b", "boss@b.example")
-    assert user is not None and user.role == "admin" and user.is_platform_admin is False
-    resp = client.post(
-        "/api/v1/admin/users",
-        headers=PADMIN,
-        json={"email": "boss2@a.example", "role": "admin", "tenant_id": "tenant-a"},
+    assert user is not None and user.role == "admin"
+    # A tenant admin's cross-tenant attempt is refused.
+    assert (
+        client.post(
+            "/api/v1/admin/users",
+            headers=ADMIN,
+            json={"email": "boss2@a.example", "role": "admin", "tenant_id": "tenant-a"},
+        ).status_code
+        == 403
     )
-    assert resp.status_code == 201
 
 
 def test_tenant_admin_cannot_create_user_in_another_tenant(tmp_path: Path) -> None:

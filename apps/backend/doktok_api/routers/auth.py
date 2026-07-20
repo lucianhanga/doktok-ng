@@ -62,7 +62,6 @@ class PublicUser(BaseModel):
     email: str
     display_name: str = ""
     role: str = "viewer"
-    is_platform_admin: bool = False  # the SPA reflects platform-only surfaces off this (#613)
 
 
 class LoginResponse(BaseModel):
@@ -80,7 +79,6 @@ def _public_user(user: User) -> PublicUser:
         email=user.email,
         display_name=user.display_name,
         role=user.role,
-        is_platform_admin=user.is_platform_admin,
     )
 
 

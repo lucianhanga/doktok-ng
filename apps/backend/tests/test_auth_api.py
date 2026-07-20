@@ -76,7 +76,6 @@ def test_login_success_returns_token_and_user() -> None:
         "email": "alice@example.com",
         "display_name": "Alice",
         "role": "viewer",  # default when created without an explicit role (#556)
-        "is_platform_admin": False,  # default; granted only via the platform-admin API (#613)
     }
     assert "password_hash" not in body["user"]
 

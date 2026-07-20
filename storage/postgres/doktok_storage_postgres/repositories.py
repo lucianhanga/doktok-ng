@@ -2980,6 +2980,25 @@ class PostgresAppSettingsRepository:
                 integrity_ok = False
                 break
 
+        # F-41 (#653): DB-anchored head check when a database is wired (the file-only test harness
+        # passes db=None and keeps sha-chain-only semantics). The sha chain covers only the read
+        # window; the anchor catches a fully rewritten file (the head inevitably changes) and a
+        # silently deleted tail (the head seq regresses). Advances only on an intact window, and
+        # the whole phase degrades silently - the history read must never break on the anchor.
+        if lines and self._db is not None:
+            try:
+                from doktok_core.backup.history_anchor import anchor_check
+
+                anchor_raw = self._get("drp_history_anchor")
+                anchor_ok, new_anchor = anchor_check(
+                    lines, anchor_raw if isinstance(anchor_raw, dict) else None
+                )
+                if anchor_ok and integrity_ok and new_anchor != anchor_raw:
+                    self._set("drp_history_anchor", new_anchor)
+                integrity_ok = integrity_ok and anchor_ok
+            except Exception:  # noqa: BLE001 - never break the read on the anchor phase
+                pass
+
         events: list[dict[str, object]] = []
         for ln in lines:
             try:

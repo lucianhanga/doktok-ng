@@ -109,3 +109,42 @@ def test_integrity_true_on_valid_chain(tmp_path: Path) -> None:
     (tmp_path / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     _events, _avail, _trunc, integrity = _repo(tmp_path).get_backup_history()
     assert integrity is True
+
+
+# ---------------------------------------------------------------------------
+# F-41 (#653): the DB-anchored head (needs a real DB; the anchor is global, so it
+# is reset per test)
+# ---------------------------------------------------------------------------
+
+
+def test_anchor_catches_full_rewrite_with_recomputed_chain(tmp_path: Path, db: Database) -> None:
+    # The attacker rewrites an earlier line AND recomputes the (unkeyed) chain consistently: the
+    # in-window sha chain verifies, but the anchored head's bytes inevitably changed.
+    repo = PostgresAppSettingsRepository(db, backup_status_dir=str(tmp_path))
+    repo._set("drp_history_anchor", None)
+    lines = _chained([("files", "success"), ("pg", "success"), ("files", "success")])
+    (tmp_path / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert repo.get_backup_history()[3] is True  # intact read anchors the head
+
+    forged = json.loads(lines[1])
+    forged["detail"] = "forged"
+    lines[1] = json.dumps(forged)
+    head = json.loads(lines[2])
+    head["prev_sha256"] = hashlib.sha256(lines[1].encode("utf-8")).hexdigest()
+    lines[2] = json.dumps(head)
+    (tmp_path / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert repo.get_backup_history()[3] is False
+
+
+def test_anchor_catches_tail_deletion_and_does_not_advance(tmp_path: Path, db: Database) -> None:
+    repo = PostgresAppSettingsRepository(db, backup_status_dir=str(tmp_path))
+    repo._set("drp_history_anchor", None)
+    lines = _chained([("files", "success"), ("pg", "success"), ("files", "success")])
+    (tmp_path / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert repo.get_backup_history()[3] is True  # anchored at seq 3
+
+    # Tail deleted: the remaining window's chain is valid, but the head regressed below the anchor.
+    (tmp_path / "history.jsonl").write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
+    assert repo.get_backup_history()[3] is False
+    # The truncated state was NOT blessed: reading it again still fails.
+    assert repo.get_backup_history()[3] is False

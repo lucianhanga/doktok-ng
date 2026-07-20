@@ -2146,7 +2146,6 @@ export interface AdminUser {
   display_name: string;
   role: string; // viewer | editor | admin
   status: string; // active | deactivated | invited
-  is_platform_admin?: boolean; // deployment-level platform owner (ADR-0025)
 }
 
 export interface AdminTokenView {
@@ -2165,13 +2164,6 @@ export interface AdminIssuedToken {
   user_id: string | null;
   name: string;
   role: string;
-}
-
-export interface AdminTenant {
-  id: string;
-  name: string;
-  status: string;
-  created_at: string | null;
 }
 
 export interface AdminIssuedInvitation {
@@ -2221,7 +2213,6 @@ export function createAdminUser(body: {
   display_name?: string;
   role?: string;
   password?: string;
-  tenant_id?: string; // platform admins only (#620): create in another tenant
 }): Promise<AdminUser> {
   return sendJson<AdminUser>("/api/v1/admin/users", "POST", body);
 }
@@ -2278,23 +2269,6 @@ export function revokeAdminToken(tokenId: string): Promise<void> {
   return sendJson<void>(`/api/v1/admin/tokens/${encodeURIComponent(tokenId)}`, "DELETE");
 }
 
-export function fetchAdminTenants(signal?: AbortSignal): Promise<AdminTenant[]> {
-  return getJson<AdminTenant[]>("/api/v1/admin/tenants", signal);
-}
-
-export interface CreatedTenant {
-  id: string;
-  name: string;
-  status: string;
-  bootstrap_token: string; // shown once - the credential to administer the new tenant
-}
-
-export function createAdminTenant(body: { name: string }): Promise<CreatedTenant> {
-  // Provisions a usable tenant (row + folders + one-time bootstrap admin token). The id is
-  // server-generated (a GUID); the client supplies only the display name.
-  return sendJson<CreatedTenant>("/api/v1/admin/tenants", "POST", body);
-}
-
 // --- Per-user preferences (#558) -----------------------------------------------------------------
 // Server-side UI preference store so settings sync across devices. persist.ts uses these to mirror
 // its localStorage cache to the server (subject = the proxy-injected identity).
@@ -2323,7 +2297,6 @@ export interface LoginResult {
     email: string;
     display_name: string;
     role: string;
-    is_platform_admin?: boolean;
   };
 }
 

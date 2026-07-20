@@ -10,7 +10,6 @@ export interface SessionUser {
   email: string;
   role: string;
   tenant_id: string;
-  is_platform_admin?: boolean;
 }
 
 const TOKEN_KEY = "doktok.session.token";
@@ -60,15 +59,6 @@ export function hasSession(): boolean {
 
 export function currentUser(): SessionUser | null {
   return user;
-}
-
-/** Whether the caller may use deployment-level (platform) surfaces (#658, ADR-0025): model-stack
- * writes, backup export/restore, DRP drill, tenant provisioning. Token-free mode (no session user)
- * means the edge injects a host/static credential, which is a platform admin by design; a logged-in
- * user needs the server's is_platform_admin flag (carried on login). The backend enforces either
- * way (403) - this only shapes what the panels offer. */
-export function isPlatformAdmin(): boolean {
-  return user === null ? true : user.is_platform_admin === true;
 }
 
 /** Register a callback fired when the server rejects the session token (401) - the app routes back

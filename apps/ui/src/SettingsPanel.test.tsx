@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, test, vi } from "vitest";
 
 import { SettingsPanel } from "./SettingsPanel";
-import { clearSession, setSession } from "./session";
+import { clearSession } from "./session";
 
 afterEach(() => {
   clearSession();
@@ -329,85 +329,6 @@ test("the Server defaults card shows the env defaults, not the saved values (#69
   expect(within(card as HTMLElement).queryByText(/openai · gpt-4o/)).not.toBeInTheDocument();
 });
 
-test("changing a model and saving PUTs the new selection", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
-
-  fireEvent.change(screen.getByLabelText("Data pipeline model"), {
-    target: { value: "ollama:qwen3.6:27b" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-  await waitFor(() => expect(screen.getByText(/Chat\/RAG model applied now/i)).toBeInTheDocument());
-  const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
-  expect(put).toBeTruthy();
-  expect(JSON.parse(put!.body!).pipeline.model).toBe("qwen3.6:27b");
-});
-
-test("per-purpose Ollama URL override saves, and reset-to-default clears it", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
-
-  // The override field is shown for an Ollama purpose; default URL is the placeholder.
-  const url = screen.getByLabelText("Data pipeline Ollama URL") as HTMLInputElement;
-  expect(url.placeholder).toBe("http://localhost:11434");
-
-  fireEvent.change(url, { target: { value: "http://gpu-box:11434" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => {
-    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
-    expect(JSON.parse(put!.body!).pipeline.ollama_base_url).toBe("http://gpu-box:11434");
-  });
-
-  // Reset clears the override back to "" (inherit the default). The pipeline field is the first of
-  // the per-purpose URL fields (pipeline, rag, embedding).
-  fireEvent.click(screen.getAllByRole("button", { name: "Reset to default" })[0]);
-  expect((screen.getByLabelText("Data pipeline Ollama URL") as HTMLInputElement).value).toBe("");
-});
-
-test("the Test button probes the Ollama URL and shows the result", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
-
-  // Pipeline is on Ollama in the mock, so it has a Test button (the first one).
-  fireEvent.click(screen.getAllByRole("button", { name: "Test" })[0]);
-  await waitFor(() => expect(screen.getByText(/OK — reachable - 2 model/i)).toBeInTheDocument());
-  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/test-ollama"))).toBe(true);
-});
-
-test("the Warm up button preloads the model via the warmup endpoint", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
-
-  // An Ollama purpose with a selected model exposes a Warm up button next to Test.
-  fireEvent.click(screen.getAllByRole("button", { name: "Warm up" })[0]);
-  await waitFor(() => expect(screen.getByText(/OK — model loaded/i)).toBeInTheDocument());
-  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/warmup-ollama"))).toBe(true);
-});
-
-test("the OpenAI Test button validates the entered key and shows the result", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await waitFor(() => expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument());
-
-  // The OpenAI Test button is enabled once a key is typed.
-  fireEvent.change(screen.getByLabelText("OpenAI API key"), { target: { value: "sk-test" } });
-  const openaiTest = screen.getAllByRole("button", { name: "Test" }).at(-1)!; // last Test = OpenAI
-  fireEvent.click(openaiTest);
-  await waitFor(() =>
-    expect(screen.getByText(/Valid — valid - 50 models/i)).toBeInTheDocument(),
-  );
-  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/test-openai"))).toBe(true);
-});
-
 test("shows the device-aware OCR recommendation hint", async () => {
   mockApi();
   render(<SettingsPanel />);
@@ -416,24 +337,6 @@ test("shows the device-aware OCR recommendation hint", async () => {
     expect(screen.getByText(/Recommended for this device/i)).toBeInTheDocument(),
   );
   expect(screen.getByText(/rapidocr @ 2 parallel/i)).toBeInTheDocument();
-});
-
-test("changing parallel OCR processes saves the OCR setting", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  await waitFor(() =>
-    expect(screen.getByLabelText("Parallel OCR processes")).toBeInTheDocument(),
-  );
-
-  fireEvent.change(screen.getByLabelText("Parallel OCR processes"), { target: { value: "6" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-  await waitFor(() => {
-    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ocr"));
-    expect(put).toBeTruthy();
-    expect(JSON.parse(put!.body!).ocr_concurrency).toBe(6);
-  });
 });
 
 test("shows the read-only DRP section with backup status and config", async () => {
@@ -496,424 +399,12 @@ test("shows a prominent integrity warning when the log fails its check", async (
   );
 });
 
-test("Run drill now POSTs to the drill endpoint and confirms", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Run drill now" })).toBeInTheDocument());
-
-  fireEvent.click(screen.getByRole("button", { name: "Run drill now" }));
-  await waitFor(() => expect(screen.getByText("Drill requested.")).toBeInTheDocument());
-  expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/settings/drp/drill"))).toBe(true);
-});
-
-test("a 429 from the drill endpoint surfaces the cooldown detail as a warning", async () => {
-  mockApi();
-  drillResponder = () =>
-    new Response(JSON.stringify({ detail: "A drill is already pending." }), { status: 429 });
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Run drill now" })).toBeInTheDocument());
-
-  fireEvent.click(screen.getByRole("button", { name: "Run drill now" }));
-  await waitFor(() =>
-    expect(screen.getByText("A drill is already pending.")).toBeInTheDocument(),
-  );
-});
-
 // ---- Portable backup (Phase 1: download) ----
-
-test("Create starts a build, polls to ready, and reveals the Download button with the size", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
-
-  // start POSTs to the export endpoint; the build then polls status to "ready".
-  await waitFor(() =>
-    expect(
-      calls.some((c) => c.method === "POST" && c.url.endsWith("/settings/backup/export")),
-    ).toBe(true),
-  );
-  // Polling resolves to ready: the humanized size and the Download button appear.
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument(),
-  );
-  expect(screen.getByLabelText("Backup size")).toHaveTextContent("662 MiB");
-  expect(calls.some((c) => c.url.includes("/settings/backup/export/status"))).toBe(true);
-});
-
-test("Download is blocked until the passphrase is at least 8 characters, then POSTs it", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument(),
-  );
-
-  // A short passphrase keeps Download disabled.
-  fireEvent.change(screen.getByLabelText("Backup passphrase"), { target: { value: "short" } });
-  expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
-
-  // A valid passphrase enables it and is sent in the download POST body.
-  fireEvent.change(screen.getByLabelText("Backup passphrase"), {
-    target: { value: "correct horse battery" },
-  });
-  expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Download" }));
-
-  await waitFor(() => {
-    const dl = calls.find((c) => /\/settings\/backup\/export\/[^/]+\/download$/.test(c.url));
-    expect(dl).toBeTruthy();
-    expect(JSON.parse(dl!.body!).passphrase).toBe("correct horse battery");
-  });
-});
-
-test("a 429 from start attaches to the running build by polling status to ready", async () => {
-  const calls = mockApi();
-  backupStartResponder = () =>
-    new Response(JSON.stringify({ detail: "already building" }), { status: 429 });
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
-  // On 429 we fetch the current status (which is ready) instead of erroring.
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument(),
-  );
-  expect(calls.some((c) => c.url.includes("/settings/backup/export/status"))).toBe(true);
-});
-
-test("a failed export status shows the error and offers a retry", async () => {
-  mockApi();
-  // Start returns failed straight away so no polling is needed.
-  backupStartResponder = () =>
-    new Response(
-      JSON.stringify({ ...READY_INFO, status: "failed", size_bytes: null, error: "disk full" }),
-      { status: 200 },
-    );
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Portable backup" })).toBeInTheDocument(),
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
-  await waitFor(() => expect(screen.getByText(/Backup failed/i)).toBeInTheDocument());
-  expect(screen.getByText("disk full")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-});
 
 // ---- Portable restore (Phase 2b: validate + apply an uploaded archive — DESTRUCTIVE) ----
 
-// A minimal File to drive the file input; the mock fetch ignores the actual bytes.
-function archiveFile(name = "doktok-backup.tgz.enc") {
-  return new File(["x"], name, { type: "application/octet-stream" });
-}
-
-// Upload a file + passphrase and click Check, returning once the preview summary has rendered.
-async function checkBackup(passphrase = "correct horse battery") {
-  fireEvent.change(screen.getByLabelText("Backup file"), {
-    target: { files: [archiveFile()] },
-  });
-  fireEvent.change(screen.getByLabelText("Restore passphrase"), {
-    target: { value: passphrase },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Check backup" }));
-}
-
-test("Check validates the file and renders the preview summary", async () => {
-  const calls = mockApi();
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup();
-
-  // The preview POST is sent and the summary (members, humanized size, versions) renders.
-  await waitFor(() => expect(screen.getByText("This backup contains")).toBeInTheDocument());
-  expect(
-    calls.some((c) => c.method === "POST" && c.url.endsWith("/settings/backup/restore/preview")),
-  ).toBe(true);
-  // Scope to the preview block — member_count (287) and size (662 MiB) also appear in the history
-  // table, so assert against the preview's own definition list.
-  const preview = screen
-    .getByText("This backup contains")
-    .closest(".drp-restore-preview") as HTMLElement;
-  expect(within(preview).getByText("287")).toBeInTheDocument(); // member_count
-  expect(within(preview).getByText("1.2.3")).toBeInTheDocument(); // app_version
-});
-
-test("an ok=false preview with errors blocks the restore (no danger zone)", async () => {
-  mockApi();
-  restorePreviewResponder = () =>
-    new Response(
-      JSON.stringify({
-        ...OK_PREVIEW,
-        ok: false,
-        errors: ["Wrong passphrase or the archive is corrupt."],
-      }),
-      { status: 200 },
-    );
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup("wrong pass phrase");
-
-  await waitFor(() =>
-    expect(screen.getByText("Wrong passphrase or the archive is corrupt.")).toBeInTheDocument(),
-  );
-  // No danger zone / Restore button for an unusable archive.
-  expect(screen.queryByRole("button", { name: "Restore now" })).not.toBeInTheDocument();
-  expect(screen.queryByText("This backup contains")).not.toBeInTheDocument();
-});
-
-test("a mismatched secrets key shows the amber warning but still allows restore", async () => {
-  mockApi();
-  restorePreviewResponder = () =>
-    new Response(JSON.stringify({ ...OK_PREVIEW, secrets_key_match: false }), { status: 200 });
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup();
-  await waitFor(() =>
-    expect(screen.getByText(/different secrets key/i)).toBeInTheDocument(),
-  );
-  // The danger zone is still offered (the warning is non-blocking).
-  expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument();
-});
-
-test("an incompatible backup is shown in red and blocks the apply", async () => {
-  mockApi();
-  restorePreviewResponder = () =>
-    new Response(JSON.stringify({ ...OK_PREVIEW, compatible: false }), { status: 200 });
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup();
-  await waitFor(() => expect(screen.getByText(/not compatible/i)).toBeInTheDocument());
-  // No danger zone for an incompatible archive.
-  expect(screen.queryByRole("button", { name: "Restore now" })).not.toBeInTheDocument();
-});
-
-test("Restore now is disabled until both the checkbox and the typed phrase are provided", async () => {
-  mockApi();
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument());
-
-  const restoreBtn = screen.getByRole("button", { name: "Restore now" });
-  expect(restoreBtn).toBeDisabled();
-
-  // Only the checkbox: still disabled.
-  fireEvent.click(screen.getByRole("checkbox"));
-  expect(restoreBtn).toBeDisabled();
-
-  // Wrong phrase: still disabled.
-  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "restore" } });
-  expect(restoreBtn).toBeDisabled();
-
-  // Exact phrase + checkbox: enabled.
-  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "RESTORE" } });
-  expect(restoreBtn).toBeEnabled();
-});
-
-test("confirming and clicking Restore now POSTs apply and the poller transitions to done", async () => {
-  const calls = mockApi();
-  // Status is idle until apply is POSTed, then reports applying, then done on the next poll.
-  let applied = false;
-  restoreApplyResponder = () => {
-    applied = true;
-    return new Response(
-      JSON.stringify({ accepted: true, restore_id: "rst-1", detail: "Restore started." }),
-      { status: 200 },
-    );
-  };
-  restoreStatusResponder = () => {
-    if (!applied) {
-      return new Response(
-        JSON.stringify({
-          state: "idle",
-          step: "",
-          started_at: null,
-          finished_at: null,
-          detail: "",
-          restore_id: "",
-        }),
-        { status: 200 },
-      );
-    }
-    // The first poll after apply already reports done (so the test does not depend on the 3s
-    // interval firing twice within waitFor's default 1s window).
-    return new Response(
-      JSON.stringify({
-        state: "done",
-        step: "finished",
-        started_at: "2026-06-17T02:00:00Z",
-        finished_at: "2026-06-17T02:05:00Z",
-        detail: "all data restored",
-        restore_id: "rst-1",
-      }),
-      { status: 200 },
-    );
-  };
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument());
-  fireEvent.click(screen.getByRole("checkbox"));
-  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "RESTORE" } });
-  fireEvent.click(screen.getByRole("button", { name: "Restore now" }));
-
-  // Apply is POSTed.
-  await waitFor(() =>
-    expect(
-      calls.some((c) => c.method === "POST" && /\/restore\/[^/]+\/apply$/.test(c.url)),
-    ).toBe(true),
-  );
-  // The poller advances to the done message.
-  await waitFor(() =>
-    expect(screen.getByText(/Restore complete/i)).toBeInTheDocument(),
-  );
-});
-
-test("a failed restore status shows the rollback message", async () => {
-  mockApi();
-  // Idle until apply is POSTed, then the restore reports failed.
-  let applied = false;
-  restoreApplyResponder = () => {
-    applied = true;
-    return new Response(
-      JSON.stringify({ accepted: true, restore_id: "rst-1", detail: "Restore started." }),
-      { status: 200 },
-    );
-  };
-  restoreStatusResponder = () =>
-    applied
-      ? new Response(
-          JSON.stringify({
-            state: "failed",
-            step: "apply",
-            started_at: "2026-06-17T02:00:00Z",
-            finished_at: "2026-06-17T02:01:00Z",
-            detail: "checksum mismatch",
-            restore_id: "rst-1",
-          }),
-          { status: 200 },
-        )
-      : new Response(
-          JSON.stringify({
-            state: "idle",
-            step: "",
-            started_at: null,
-            finished_at: null,
-            detail: "",
-            restore_id: "",
-          }),
-          { status: 200 },
-        );
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Restore now" })).toBeInTheDocument());
-  fireEvent.click(screen.getByRole("checkbox"));
-  fireEvent.change(screen.getByLabelText("Type RESTORE to confirm"), { target: { value: "RESTORE" } });
-  fireEvent.click(screen.getByRole("button", { name: "Restore now" }));
-
-  await waitFor(() => expect(screen.getByText(/Restore failed/i)).toBeInTheDocument());
-  expect(screen.getByText(/rolled back to its state before the restore/i)).toBeInTheDocument();
-});
-
-test("a 422 (missing passphrase) on Check shows the passphrase-required error and blocks proceeding", async () => {
-  mockApi();
-  restorePreviewResponder = () =>
-    new Response(JSON.stringify({ detail: "passphrase required" }), { status: 422 });
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  // Provide a file but no passphrase, then Check.
-  fireEvent.change(screen.getByLabelText("Backup file"), { target: { files: [archiveFile()] } });
-  fireEvent.click(screen.getByRole("button", { name: "Check backup" }));
-
-  await waitFor(() => expect(screen.getByText(/passphrase is required/i)).toBeInTheDocument());
-  expect(screen.queryByText("This backup contains")).not.toBeInTheDocument();
-});
-
-test("a 413 (too large) on Check shows the size-limit error", async () => {
-  mockApi();
-  restorePreviewResponder = () =>
-    new Response(JSON.stringify({ detail: "too big" }), { status: 413 });
-  render(<SettingsPanel />);
-  await openDrp();
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Restore from a backup file" })).toBeInTheDocument(),
-  );
-
-  await checkBackup();
-  await waitFor(() =>
-    expect(screen.getByText(/exceeds the restore size limit/i)).toBeInTheDocument(),
-  );
-});
-
-test("an in-progress restore on mount is reflected and resumes polling", async () => {
-  mockApi();
-  // The very first status read (on mount) reports applying.
-  restoreStatusResponder = () =>
-    new Response(
-      JSON.stringify({
-        state: "applying",
-        step: "restoring",
-        started_at: "2026-06-17T02:00:00Z",
-        finished_at: null,
-        detail: "in progress",
-        restore_id: "rst-9",
-      }),
-      { status: 200 },
-    );
-  render(<SettingsPanel />);
-  await openDrp();
-  // The restore-in-progress line appears without the user touching anything.
-  await waitFor(() => expect(screen.getByText(/Applying the backup/i)).toBeInTheDocument());
-});
+// (The restore/export/drill action flows were removed from the UI in #700; their helpers went
+// with them.)
 
 // ---- No-egress gate (Settings -> AI models) ----
 
@@ -944,8 +435,8 @@ test("under no-egress, an OpenAI option in the pipeline picker is disabled and l
     name: /GPT-5 nano \(blocked by no-egress\)/i,
   });
   expect(blocked).toBeDisabled();
-  // The local Ollama option in the same picker is still selectable.
-  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 27B" })).toBeEnabled();
+  // The whole picker is read-only in the UI (#700) - the local option shows, equally disabled.
+  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 27B" })).toBeDisabled();
 });
 
 test("a pipeline blocked_reason of openai_selected shows the red block, not the key-missing message", async () => {
@@ -984,38 +475,6 @@ test("a blocked_reason of openai_key_missing shows the distinct key-needed messa
   expect(screen.queryByText(/Blocked by no-egress/i)).not.toBeInTheDocument();
 });
 
-test("a 422 egress_not_permitted on save shows the violation inline and the form-level message", async () => {
-  mockApi();
-  aiPutResponder = () =>
-    new Response(
-      JSON.stringify({
-        detail: {
-          code: "egress_not_permitted",
-          message: "Cannot save: this selection would send data off-host while no-egress is on.",
-          violations: [{ purpose: "pipeline", reason: "openai_selected", value: "gpt-5-nano" }],
-        },
-      }),
-      { status: 422 },
-    );
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
-
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-  // The structured detail (an object, not a string) must not throw: the form-level message renders.
-  await waitFor(() =>
-    expect(
-      screen.getByText(/would send data off-host while no-egress is on/i),
-    ).toBeInTheDocument(),
-  );
-  // The violation is pinned to the offending purpose and names the offending value.
-  expect(
-    screen.getByText(/OpenAI is not permitted while no-egress is on/i),
-  ).toBeInTheDocument();
-  expect(screen.getByText(/\(gpt-5-nano\)/)).toBeInTheDocument();
-});
-
 test("the posture badge reflects no_egress on and off", async () => {
   mockApi();
   aiResponse = { ...AI, no_egress: true };
@@ -1034,118 +493,36 @@ test("the posture badge reflects no_egress on and off", async () => {
 
 // ---- No-egress toggle (user-configurable posture) ----
 
-test("the no-egress toggle reflects the posture and is disabled when host-locked", async () => {
+test("the no-egress toggle is always disabled and points at the console (#700)", async () => {
   mockApi();
-  aiResponse = { ...AI, no_egress: true, no_egress_locked: true };
+  aiResponse = { ...AI, no_egress: true };
   render(<SettingsPanel />);
   await gotoModelStack();
   const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
   expect(toggle).toBeChecked();
   expect(toggle).toBeDisabled();
-  // The reason is in visible text (not colour alone), with a matching aria-describedby/title.
-  expect(screen.getByText(/Enforced by the host/i)).toBeInTheDocument();
+  expect(screen.getByText(/Changed on the host console/i)).toBeInTheDocument();
 });
 
-test("turning the no-egress toggle off confirms, then sends no_egress:false in the save PUT", async () => {
-  const calls = mockApi();
-  aiResponse = { ...AI, no_egress: true };
-  // Echo the PUT body so the saved posture round-trips back into the form.
-  aiPutResponder = (body) => new Response(body ?? "{}", { status: 200 });
-  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
-  expect(toggle).toBeChecked();
-
-  // Turning OFF (allowing egress) must confirm first.
-  fireEvent.click(toggle);
-  expect(confirmSpy).toHaveBeenCalledTimes(1);
-  expect(toggle).not.toBeChecked();
-
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => {
-    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai"));
-    expect(put).toBeTruthy();
-    expect(JSON.parse(put!.body!).no_egress).toBe(false);
-  });
-});
-
-test("declining the confirm leaves the no-egress posture unchanged", async () => {
+test("the model stack is read-only for everyone - no save bar, controls disabled (#700)", async () => {
   mockApi();
   aiResponse = { ...AI, no_egress: true };
-  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
-  fireEvent.click(toggle);
-  expect(confirmSpy).toHaveBeenCalledTimes(1);
-  // Cancelled: still on.
-  expect(toggle).toBeChecked();
-});
-
-test("a 422 no_egress_locked on save surfaces the message without throwing", async () => {
-  mockApi();
-  aiResponse = { ...AI, no_egress: true };
-  aiPutResponder = () =>
-    new Response(
-      JSON.stringify({
-        detail: {
-          code: "no_egress_locked",
-          message: "No-egress is enforced by the host and cannot be disabled from here.",
-        },
-      }),
-      { status: 422 },
-    );
-  render(<SettingsPanel />);
-  await gotoModelStack();
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
-
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-  // The structured detail (no `violations`) must not throw: the form-level message renders.
-  await waitFor(() =>
-    expect(
-      screen.getByText(/enforced by the host and cannot be disabled from here/i),
-    ).toBeInTheDocument(),
-  );
-});
-
-test("tenant admins (non-platform) get a read-only model stack and no save bar", async () => {
-  setSession("jwt", {
-    id: "mgr",
-    email: "mgr@x.com",
-    role: "admin",
-    tenant_id: "t",
-    is_platform_admin: false,
-  });
-  mockApi();
   render(<SettingsPanel />);
   await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
   expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
-  expect(
-    screen.getByText(/Only platform admins can change these deployment defaults/),
-  ).toBeInTheDocument();
   expect(screen.getByLabelText("Data pipeline model")).toBeDisabled();
   expect(screen.getByLabelText("OCR engine")).toBeDisabled();
+  expect(screen.getByText(/Changed on the host console/i)).toBeInTheDocument();
 });
 
-test("tenant admins (non-platform) see DRP status but no backup/restore actions", async () => {
-  setSession("jwt", {
-    id: "mgr",
-    email: "mgr@x.com",
-    role: "admin",
-    tenant_id: "t",
-    is_platform_admin: false,
-  });
+test("DRP shows status and history but no drill/export/restore actions (#700)", async () => {
   mockApi();
   render(<SettingsPanel />);
   fireEvent.click(await screen.findByRole("tab", { name: "DRP" }));
   await waitFor(() =>
     expect(
-      screen.getByText(/Backup export and restore are managed by platform admins/),
+      screen.getByText(/Backup export, restore, and drills run on the host console/),
     ).toBeInTheDocument(),
   );
   // Status + history stay readable; the action sections are gone.

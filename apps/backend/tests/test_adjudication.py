@@ -613,6 +613,8 @@ class FakeAuditLogRepository:
 def _adjudication_client(
     kg: InMemoryKnowledgeGraphRepository,
     adjudicator: object | None = None,
+    *,
+    ollama_base_url: str = "http://localhost:11434",
 ) -> TestClient:
     registry = build_registry()
     registry.register(EntityRepository, FakeEntityRepository())
@@ -622,7 +624,9 @@ def _adjudication_client(
         from doktok_contracts.ports import EntityMergeAdjudicator
 
         registry.register(EntityMergeAdjudicator, adjudicator)
-    settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
+    settings = Settings(
+        env="test", tenant_tokens=TOKENS, ollama_base_url=ollama_base_url, _env_file=None
+    )  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
 
@@ -657,7 +661,12 @@ def _seeded_kg() -> InMemoryKnowledgeGraphRepository:
 class TestMergeSuggestionsEndpointWithAdjudicator:
     def test_no_adjudicator_returns_deterministic_suggestions(self) -> None:
         """Without an adjudicator the endpoint returns the plain deterministic list."""
-        client = _adjudication_client(_seeded_kg(), adjudicator=None)
+        # No adjudicator registered: the factory builds the real Ollama one, so point it at a
+        # dead port - its call fails and the endpoint falls back to deterministic, whether or
+        # not a live Ollama happens to run on this box.
+        client = _adjudication_client(
+            _seeded_kg(), adjudicator=None, ollama_base_url="http://127.0.0.1:9"
+        )
         r = client.get("/api/v1/entities/merge-suggestions", headers=_auth())
         assert r.status_code == 200
         body = r.json()

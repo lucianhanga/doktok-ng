@@ -7,8 +7,8 @@ services:
       POSTGRES_PASSWORD: doktok
       POSTGRES_DB: doktok
     ports:
-      # Host port is configurable to avoid clashes with other local Postgres instances.
-      - "${DOKTOK_DB_PORT:-5432}:5432"
+      # Host port defaults to 5433 so another local Postgres can keep 5432; override via .env.
+      - "${DOKTOK_DB_PORT:-5433}:5432"
     volumes:
       - doktok-pgdata:/var/lib/postgresql/data
       - ./storage/postgres/initdb:/docker-entrypoint-initdb.d:ro

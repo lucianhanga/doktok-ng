@@ -7,7 +7,9 @@ import { defineConfig, type ProxyOptions } from "vite";
 const devToken = process.env.DOKTOK_DEV_TOKEN;
 type IncomingLike = { headers?: Record<string, string | string[] | undefined> };
 const backend: ProxyOptions = {
-  target: "http://localhost:8000",
+  // Pin IPv4 loopback: "localhost" resolves to ::1 on macOS, and any OTHER container publishing
+  // *:8000 (IPv6 wildcard) would shadow the dev backend and 404 the whole UI (h0me-api did).
+  target: "http://127.0.0.1:8000",
   changeOrigin: true,
   configure: (proxy) => {
     proxy.on(

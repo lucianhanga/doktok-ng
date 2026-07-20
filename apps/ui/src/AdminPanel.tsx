@@ -4,15 +4,12 @@ import {
   type AdminContext,
   type AdminIssuedInvitation,
   type AdminIssuedToken,
-  type AdminTenant,
   type AdminTokenView,
   type AdminUser,
-  createAdminTenant,
   createAdminToken,
   createAdminUser,
   deactivateAdminUser,
   fetchAdminContext,
-  fetchAdminTenants,
   fetchAdminTokens,
   fetchAdminUsers,
   inviteAdminUser,
@@ -21,7 +18,6 @@ import {
   revokeAdminToken,
   setAdminUserRole,
 } from "./api";
-import { isPlatformAdmin } from "./session";
 
 const ROLES = ["viewer", "editor", "admin"] as const;
 
@@ -230,19 +226,14 @@ function ResetPasswordDialog({
 }
 
 /** Tenant/member administration (#559, #557), Model A: the caller's tenant is the page context;
- * members and API tokens are nested inside it; instance-level tenant provisioning is a subordinate
- * card. Reached with the proxy-injected admin token (no in-browser login). */
+ * members and API tokens are nested inside it. Tenant provisioning is console work (#700), so
+ * there is no instance-level section here. */
 export function AdminPanel() {
-  // Tenant provisioning + cross-tenant user creation are platform-only (#658, ADR-0025); member
-  // and token management stay available to every tenant admin.
-  const platform = isPlatformAdmin();
   const [ctx, setCtx] = useState<AdminContext | null>(null);
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [tokens, setTokens] = useState<AdminTokenView[] | null>(null);
-  const [tenants, setTenants] = useState<AdminTenant[] | null>(null);
   const [membersErr, setMembersErr] = useState<string | null>(null);
   const [tokensErr, setTokensErr] = useState<string | null>(null);
-  const [tenantsErr, setTenantsErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState<{ label: string; value: string; note?: string } | null>(null);
   const [confirm, setConfirm] = useState<{
@@ -259,16 +250,11 @@ export function AdminPanel() {
   const [inviteRole, setInviteRole] = useState<string>("viewer");
   const [inviteMode, setInviteMode] = useState<"link" | "direct">("link");
   const [invitePw, setInvitePw] = useState("");
-  // Platform admins pick the target tenant for direct user creation (#620); empty = own tenant.
-  const [inviteTenant, setInviteTenant] = useState<string>("");
   // Issue-token form
   const [tokenName, setTokenName] = useState("");
   const [tokenUser, setTokenUser] = useState<string>("");
   // Least-privilege machine credentials (#645): user-less tokens default to viewer.
   const [tokenRole, setTokenRole] = useState<string>("viewer");
-  // New-tenant form
-  const [tenantName, setTenantName] = useState("");
-  const [tenantCreated, setTenantCreated] = useState<AdminTenant | null>(null);
 
   function loadAll() {
     fetchAdminContext()
@@ -282,13 +268,6 @@ export function AdminPanel() {
     fetchAdminTokens()
       .then(setTokens)
       .catch((e) => setTokensErr(errMsg(e, "could not load tokens")));
-    // Tenant listing is platform-only (#620): skip the call entirely for tenant admins.
-    if (platform) {
-      setTenantsErr(null);
-      fetchAdminTenants()
-        .then(setTenants)
-        .catch((e) => setTenantsErr(errMsg(e, "could not load tenants")));
-    }
   }
 
   useEffect(loadAll, []);
@@ -315,7 +294,6 @@ export function AdminPanel() {
             email: inviteEmail.trim(),
             role: inviteRole,
             password: invitePw,
-            ...(platform && inviteTenant ? { tenant_id: inviteTenant } : {}),
           });
         } else {
           const inv: AdminIssuedInvitation = await inviteAdminUser({
@@ -439,31 +417,6 @@ export function AdminPanel() {
       },
     });
 
-  const addTenant = () =>
-    run(
-      async () => {
-        const created = await createAdminTenant({ name: tenantName.trim() });
-        const t: AdminTenant = {
-          id: created.id,
-          name: created.name,
-          status: created.status,
-          created_at: null,
-        };
-        setTenants((prev) => [...(prev ?? []), t]);
-        setTenantCreated(t);
-        if (created.bootstrap_token) {
-          setReveal({
-            label: `Bootstrap admin token for "${created.name}"`,
-            value: created.bootstrap_token,
-            note: "Point DOKTOK_DEV_TOKEN / the UI at this to administer the new tenant. Restart the worker so it starts watching it.",
-          });
-        }
-        setTenantName("");
-      },
-      setTenantsErr,
-      "could not create tenant",
-    );
-
   const tokenScope = (t: AdminTokenView) =>
     t.user_id ? (users ?? []).find((u) => u.id === t.user_id)?.email ?? t.user_id : "tenant";
 
@@ -553,23 +506,6 @@ export function AdminPanel() {
                 </button>
               </div>
             )}
-            {inviteMode === "direct" && platform && (
-              <div className="admin-form">
-                <select
-                  aria-label="Target tenant"
-                  value={inviteTenant}
-                  onChange={(e) => setInviteTenant(e.target.value)}
-                >
-                  <option value="">This tenant</option>
-                  {(tenants ?? []).map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-                <span className="muted">platform: create the user in another tenant</span>
-              </div>
-            )}
           </fieldset>
           <div className="admin-dialog-actions">
             <button type="button" className="link-button" onClick={() => setInviteOpen(false)}>
@@ -641,12 +577,6 @@ export function AdminPanel() {
                         </option>
                       ))}
                     </select>
-                    {u.is_platform_admin && (
-                      <span className="muted" title="Deployment-level platform owner (ADR-0025)">
-                        {" "}
-                        · platform
-                      </span>
-                    )}
                   </td>
                   <td>
                     <span className={`admin-status admin-status-${u.status}`}>{u.status}</span>
@@ -768,51 +698,6 @@ export function AdminPanel() {
               ))}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {/* Instance administration (subordinate) - platform admins only (#658, ADR-0025) ---------- */}
-      {platform && (
-        <div className="admin-instance-card">
-          <h4 className="admin-subhead">Instance administration</h4>
-          <p className="muted">
-            Tenants on this server. Each tenant has its own members, documents, and tokens; the
-            section above manages the current tenant.
-          </p>
-          {tenantsErr && <p className="status-error">{tenantsErr}</p>}
-          {tenants && tenants.length > 0 && (
-            <ul className="admin-tenant-list">
-              {tenants.map((t) => (
-                <li key={t.id}>
-                  <strong>{t.name}</strong> <IdChip id={t.id} describe={`tenant ID for ${t.name}`} />
-                  {ctx?.tenant_id === t.id && <span className="muted"> (current)</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-          {tenantCreated && (
-            <p className="status-success">
-              Tenant &ldquo;{tenantCreated.name}&rdquo; created.{" "}
-              <span className="muted">New tenants start empty; members are provisioned per tenant.</span>
-            </p>
-          )}
-          <div className="admin-form">
-            <input
-              type="text"
-              placeholder="tenant name"
-              aria-label="New tenant name"
-              value={tenantName}
-              onChange={(e) => setTenantName(e.target.value)}
-            />
-            <button
-              type="button"
-              className="link-button"
-              onClick={addTenant}
-              disabled={busy || !tenantName.trim()}
-            >
-              Create tenant
-            </button>
-          </div>
         </div>
       )}
 

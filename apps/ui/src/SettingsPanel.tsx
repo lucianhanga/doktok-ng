@@ -2,43 +2,22 @@ import { useEffect, useState } from "react";
 
 import { InfoHint } from "./InfoHint";
 import {
-  applyRestore,
-  downloadBackupArchive,
   fetchAiSettings,
-  fetchBackupExportStatus,
   fetchDrpHistory,
   fetchDrpStatus,
   fetchModelCatalog,
   fetchOcrRecommendation,
   fetchOcrSettings,
-  fetchRestoreStatus,
-  formatBytes,
   formatDuration,
-  previewRestore,
-  putAiSettings,
-  putOcrSettings,
-  startBackupExport,
   testOllamaUrl,
   testOpenAiKey,
-  triggerDrill,
   warmupOllama,
-  BackupExportBusyError,
-  BackupPassphraseTooShortError,
-  DrillRejectedError,
-  EgressNotPermittedError,
-  NoEgressLockedError,
-  RestoreConflictError,
-  RestoreFileTooLargeError,
-  RestoreNotConfirmedError,
-  RestorePassphraseError,
   OCR_ENGINES,
-  type AiPurpose,
   type AiPurposeSettings,
   type AiSettings,
   type EgressViolation,
   type PurposeEgressStatus,
   type BackupEvent,
-  type BackupExportInfo,
   type BackupLegStatus,
   type DrpHistoryResponse,
   type DrpStatusResponse,
@@ -46,13 +25,7 @@ import {
   type ModelOption,
   type OcrRecommendation,
   type OcrSettings,
-  type RestorePreview,
-  type RestoreStatus,
 } from "./api";
-import { Ellipsis } from "./Ellipsis";
-import { isPlatformAdmin } from "./session";
-
-const MIN_PASSPHRASE = 8;
 
 function relAge(seconds: number | null): string {
   if (seconds == null) return "never";
@@ -231,686 +204,12 @@ function BackupHistoryRow({ ev }: { ev: BackupEvent }) {
   );
 }
 
-// Recovery drill panel: trigger an on-demand drill and watch for it to complete, plus a compact
-// view of the last drill result drawn from the existing DrpStatus.drill leg (so we never duplicate
-// that state). On 429 we show the returned cooldown/pending detail as a warning, not an error.
-function RecoveryDrill({
-  drill,
-  onTriggered,
-}: {
-  drill: BackupLegStatus | undefined;
-  onTriggered: () => void;
-}) {
-  // idle | requesting | running (polling for completion) ; warn/error carry a message.
-  const [phase, setPhase] = useState<"idle" | "requesting" | "running">("idle");
-  const [message, setMessage] = useState<{ level: "ok" | "warn" | "fail"; text: string } | null>(
-    null,
-  );
-  // The drill last_run_at at the moment we triggered; we stop polling once it changes (new drill).
-  const baselineRef = useState<{ current: string | null }>(() => ({ current: null }))[0];
-
-  // While running, poll status + history every ~10s until a newer drill result appears, then stop.
-  useEffect(() => {
-    if (phase !== "running") return;
-    let active = true;
-    const id = setInterval(() => {
-      onTriggered(); // refreshes status + history in the parent
-      // The parent re-renders us with a fresh `drill` prop; the effect below detects completion.
-    }, 10000);
-    // Safety cap: stop polling after ~5 min so we never spin forever if no sentinel arrives.
-    const stop = setTimeout(() => {
-      if (active) setPhase("idle");
-    }, 300000);
-    return () => {
-      active = false;
-      clearInterval(id);
-      clearTimeout(stop);
-    };
-  }, [phase, onTriggered]);
-
-  // Detect completion: once running, a change in the drill leg's last_run_at means the drill ran.
-  useEffect(() => {
-    if (phase !== "running") return;
-    const last = drill?.last_run_at ?? null;
-    if (last && last !== baselineRef.current) {
-      setPhase("idle");
-      const passed = drill?.state === "ok";
-      setMessage({
-        level: passed ? "ok" : "fail",
-        text: passed ? "Drill passed." : `Drill finished: ${drill?.detail || drill?.state}`,
-      });
-    }
-  }, [drill, phase, baselineRef]);
-
-  async function run() {
-    setPhase("requesting");
-    setMessage(null);
-    baselineRef.current = drill?.last_run_at ?? null;
-    try {
-      const r = await triggerDrill();
-      setMessage({ level: "ok", text: r.detail || "Drill requested." });
-      setPhase("running");
-      onTriggered(); // kick an immediate refresh
-    } catch (e) {
-      if (e instanceof DrillRejectedError) {
-        setMessage({ level: "warn", text: e.detail });
-      } else {
-        setMessage({ level: "fail", text: e instanceof Error ? e.message : "Could not start the drill." });
-      }
-      setPhase("idle");
-    }
-  }
-
-  const busy = phase === "requesting" || phase === "running";
-  const statusClass =
-    message?.level === "ok"
-      ? "settings-test-ok"
-      : message?.level === "warn"
-        ? "settings-test-warn"
-        : "settings-test-fail";
-
-  const lastState = drill?.state ?? "unknown";
-  const hasLastDrill = !!(drill && drill.last_run_at);
-
-  return (
-    <div className="drp-drill">
-      <h4>Recovery drill</h4>
-      <p className="muted">
-        A drill restores the latest backups into a throwaway location to prove they can be recovered.
-        It touches no production data.
-      </p>
-      <div className="drp-drill-controls">
-        <button type="button" className="settings-test" disabled={busy} onClick={run}>
-          {phase === "requesting" ? "Requesting…" : phase === "running" ? "Running…" : "Run drill now"}
-        </button>
-        {message && (
-          <span role="status" className={statusClass}>
-            {message.text}
-          </span>
-        )}
-      </div>
-      {hasLastDrill && (
-        <div className="drp-drill-last">
-          <span className={`drp-badge drp-${lastState}`}>{lastState}</span>
-          <span className="muted">last run {relAge(drill?.age_seconds ?? null)}</span>
-          {drill?.detail && <span className="drp-drill-evidence drp-mono">{drill.detail}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Portable backup (Phase 1: download). Builds one encrypted, self-contained archive of the whole
-// system (Postgres + documents) and streams it to the browser, gated on a user-set passphrase that
-// encrypts the download. Restore (uploading an archive on another device) is a separate later phase.
-//
-// Flow: Create -> POST start (or attach to an in-flight build on 429) -> poll status every ~2.5s
-// while "building" -> when "ready", show the size + a Download button (POSTs the passphrase, saves
-// the streamed file) -> "failed" surfaces the server error with a retry. The passphrase is held in
-// component state only, sent once on download, and never logged or echoed elsewhere.
-const POLL_MS = 2500;
-
-function PortableBackup() {
-  const [passphrase, setPassphrase] = useState("");
-  const [info, setInfo] = useState<BackupExportInfo | null>(null);
-  // starting: the Create request is in flight. polling: a build is in progress (status === building).
-  const [phase, setPhase] = useState<"idle" | "starting" | "polling">("idle");
-  const [downloading, setDownloading] = useState(false);
-  // A user-facing message: error (red) for failures, or an inline passphrase-validation note.
-  const [error, setError] = useState<string | null>(null);
-  const [passphraseError, setPassphraseError] = useState(false);
-
-  const status = info?.status ?? null;
-  const passphraseValid = passphrase.length >= MIN_PASSPHRASE;
-  const busy = phase === "starting" || phase === "polling";
-
-  // Poll the build status every ~2.5s while a build is in progress, then stop on ready/failed.
-  useEffect(() => {
-    if (phase !== "polling") return;
-    let active = true;
-    const tick = () => {
-      fetchBackupExportStatus(info?.export_id)
-        .then((next) => {
-          if (!active) return;
-          setInfo(next);
-          if (next.status !== "building") setPhase("idle");
-        })
-        .catch((e) => {
-          if (!active) return;
-          setError(e instanceof Error ? e.message : "Could not check the backup status.");
-          setPhase("idle");
-        });
-    };
-    tick(); // poll once immediately on entering the polling phase, then on the interval
-    const id = setInterval(tick, POLL_MS);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [phase, info?.export_id]);
-
-  async function create() {
-    setPhase("starting");
-    setError(null);
-    setPassphraseError(false);
-    try {
-      const started = await startBackupExport();
-      setInfo(started);
-      setPhase(started.status === "building" ? "polling" : "idle");
-    } catch (e) {
-      if (e instanceof BackupExportBusyError) {
-        // A build is already running: attach to it by polling the most recent build's status.
-        try {
-          const current = await fetchBackupExportStatus();
-          setInfo(current);
-          setPhase(current.status === "building" ? "polling" : "idle");
-        } catch (inner) {
-          setError(inner instanceof Error ? inner.message : "Could not attach to the running backup.");
-          setPhase("idle");
-        }
-        return;
-      }
-      setError(e instanceof Error ? e.message : "Could not start the backup.");
-      setPhase("idle");
-    }
-  }
-
-  async function download() {
-    if (!info || !passphraseValid) return;
-    setDownloading(true);
-    setError(null);
-    setPassphraseError(false);
-    try {
-      await downloadBackupArchive(info.export_id, passphrase);
-    } catch (e) {
-      if (e instanceof BackupPassphraseTooShortError) {
-        setPassphraseError(true);
-      } else {
-        setError(e instanceof Error ? e.message : "Could not download the backup.");
-      }
-    } finally {
-      setDownloading(false);
-    }
-  }
-
-  const buildingState = status === "building" || busy;
-
-  return (
-    <div className="drp-portable">
-      <div className="drp-card-head">
-        <h4>Portable backup</h4>
-        {status && (
-          <span
-            className={`drp-badge ${
-              status === "ready" ? "drp-ok" : status === "failed" ? "drp-failed" : "drp-stale"
-            }`}
-          >
-            {status}
-          </span>
-        )}
-      </div>
-      <p className="muted">
-        Create a single encrypted file containing the whole system (database and documents) so you
-        can move or restore it on another device. This complements the automatic backups above.
-      </p>
-
-      <div className="settings-row settings-url-row">
-        <label>
-          Passphrase{" "}
-          <input
-            type="password"
-            className="settings-url-input"
-            aria-label="Backup passphrase"
-            autoComplete="new-password"
-            placeholder={`at least ${MIN_PASSPHRASE} characters`}
-            value={passphrase}
-            onChange={(e) => {
-              setPassphrase(e.target.value);
-              setPassphraseError(false);
-            }}
-          />
-        </label>
-      </div>
-      <p className="muted drp-portable-note">
-        You will need this exact passphrase to restore. Store it safely — we cannot recover it.
-      </p>
-      {passphraseError && (
-        <p role="alert" className="settings-test-fail">
-          Passphrase must be at least {MIN_PASSPHRASE} characters.
-        </p>
-      )}
-
-      <div className="drp-drill-controls">
-        <button type="button" className="settings-test" disabled={busy} onClick={create}>
-          {phase === "starting"
-            ? "Starting…"
-            : buildingState
-              ? "Building backup…"
-              : status === "ready"
-                ? "Rebuild"
-                : status === "failed"
-                  ? "Retry"
-                  : "Create backup"}
-        </button>
-
-        {buildingState && (
-          <span role="status" className="muted">
-            <span className="drp-spinner" aria-hidden="true" /> Building backup…
-          </span>
-        )}
-
-        {status === "ready" && info && (
-          <>
-            <span className="muted drp-portable-size" aria-label="Backup size">
-              {formatBytes(info.size_bytes) || "ready"}
-            </span>
-            <button
-              type="button"
-              className="settings-save"
-              disabled={downloading || !passphraseValid}
-              title={passphraseValid ? "" : `Set a passphrase of at least ${MIN_PASSPHRASE} characters`}
-              onClick={download}
-            >
-              {downloading ? "Encrypting + downloading…" : "Download"}
-            </button>
-          </>
-        )}
-      </div>
-
-      {status === "failed" && info && (
-        <p role="alert" className="settings-test-fail">
-          Backup failed{info.error ? <>: <Ellipsis text={info.error} /></> : "."}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="status-error">
-          {error}
-        </p>
-      )}
-
-    </div>
-  );
-}
-
-// Portable restore (Phase 2b): take an encrypted archive produced by the export above and replace
-// the whole system with it. This is DESTRUCTIVE — applying wipes all current documents and data —
-// so the flow is deliberately staged with friction:
-//   1. pick + check  : upload the file + passphrase -> previewRestore (validate only, no mutation)
-//   2. review        : if ok, show what is inside; block apply on incompatibility; warn on a
-//                      mismatched secrets key (the stored OpenAI key won't decrypt)
-//   3. confirm       : an explicit DANGER gesture (checkbox + typing RESTORE) gates the apply button
-//   4. progress      : applyRestore -> poll fetchRestoreStatus every ~3s until done/failed. The poll
-//                      TOLERATES transient failures (the backend 503s + may restart mid-restore).
-// The passphrase lives in component state only, is sent once on Check, and is never logged or echoed.
-const RESTORE_POLL_MS = 3000;
-const CONFIRM_PHRASE = "RESTORE";
-
-function PortableRestore() {
-  const [file, setFile] = useState<File | null>(null);
-  const [passphrase, setPassphrase] = useState("");
-  const [checking, setChecking] = useState(false);
-  // The validated preview (staged archive). ok=false means it cannot be applied (errors[] explains).
-  const [preview, setPreview] = useState<RestorePreview | null>(null);
-  // Inline validation/error message for the pick+check stage (413/422/network).
-  const [checkError, setCheckError] = useState<string | null>(null);
-
-  // The DANGER confirmation gesture: both the checkbox AND the typed phrase are required.
-  const [ackChecked, setAckChecked] = useState(false);
-  const [confirmText, setConfirmText] = useState("");
-
-  // Apply + progress. applying: the apply POST is in flight. polling: a restore is running and we
-  // poll status. status holds the latest server progress.
-  const [applyPhase, setApplyPhase] = useState<"idle" | "applying" | "polling">("idle");
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [status, setStatus] = useState<RestoreStatus | null>(null);
-
-  // On mount, read the status once so an already-running restore (e.g. after a page reload during a
-  // restore) is reflected and resumes polling. Best-effort: a failure here is non-fatal.
-  useEffect(() => {
-    let active = true;
-    fetchRestoreStatus()
-      .then((s) => {
-        if (!active) return;
-        setStatus(s);
-        if (s.state === "validating" || s.state === "applying") setApplyPhase("polling");
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  // Poll restore progress every ~3s while a restore is running. Crucially, a rejected fetch is
-  // EXPECTED here (the backend 503s mutating requests during the restore and may restart), so we
-  // swallow it and keep polling rather than tearing the poller down. Stop on done/failed.
-  useEffect(() => {
-    if (applyPhase !== "polling") return;
-    let active = true;
-    const tick = () => {
-      fetchRestoreStatus()
-        .then((s) => {
-          if (!active) return;
-          setStatus(s);
-          if (s.state === "done" || s.state === "failed") setApplyPhase("idle");
-        })
-        .catch(() => {
-          // Transient unavailability during the restore — keep retrying on the next tick.
-        });
-    };
-    tick(); // poll once immediately, then on the interval
-    const id = setInterval(tick, RESTORE_POLL_MS);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [applyPhase]);
-
-  async function check() {
-    if (!file) {
-      setCheckError("Choose a backup file first.");
-      return;
-    }
-    setChecking(true);
-    setCheckError(null);
-    setPreview(null);
-    // A new validation invalidates any prior confirmation gesture.
-    setAckChecked(false);
-    setConfirmText("");
-    try {
-      const p = await previewRestore(file, passphrase);
-      setPreview(p);
-    } catch (e) {
-      if (e instanceof RestoreFileTooLargeError) {
-        setCheckError("This file exceeds the restore size limit.");
-      } else if (e instanceof RestorePassphraseError) {
-        setCheckError("A passphrase is required to check this backup.");
-      } else {
-        setCheckError(e instanceof Error ? e.message : "Could not check the backup file.");
-      }
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  async function apply() {
-    if (!preview || !canApply) return;
-    setApplyPhase("applying");
-    setApplyError(null);
-    try {
-      await applyRestore(preview.staged_id);
-      // Accepted: the restore is now running on the server. Switch to polling for progress.
-      setApplyPhase("polling");
-    } catch (e) {
-      if (e instanceof RestoreConflictError) {
-        setApplyError(e.detail);
-      } else if (e instanceof RestoreNotConfirmedError) {
-        setApplyError("Restore was not confirmed — please tick the box and type the phrase.");
-      } else {
-        setApplyError(e instanceof Error ? e.message : "Could not start the restore.");
-      }
-      setApplyPhase("idle");
-    }
-  }
-
-  // A restore is in progress whenever we are applying or the server reports a running state.
-  const running =
-    applyPhase === "applying" ||
-    applyPhase === "polling" ||
-    status?.state === "validating" ||
-    status?.state === "applying";
-  const finished = status?.state === "done";
-  const failed = status?.state === "failed";
-
-  // The confirmation gesture is satisfied only when BOTH the box is ticked AND the exact phrase is
-  // typed. The phrase match is case-sensitive to force deliberate typing.
-  const confirmed = ackChecked && confirmText === CONFIRM_PHRASE;
-  // Apply is permitted only for a validated, compatible archive, with the gesture done, not running.
-  const canApply = !!preview && preview.ok && preview.compatible && confirmed && !running;
-
-  // Once a restore has been accepted or is running/finished, lock down the earlier stages.
-  const locked = running || finished;
-
-  return (
-    <div className="drp-restore">
-      <div className="drp-card-head">
-        <h4>Restore from a backup file</h4>
-        {status && status.state !== "idle" && (
-          <span
-            className={`drp-badge ${
-              status.state === "done"
-                ? "drp-ok"
-                : status.state === "failed"
-                  ? "drp-failed"
-                  : "drp-stale"
-            }`}
-          >
-            {status.state}
-          </span>
-        )}
-      </div>
-      <p className="muted">
-        Upload an encrypted backup file (<code>.tgz.enc</code>) created above to rebuild this system
-        from it. Restoring permanently replaces everything currently here.
-      </p>
-
-      {/* Stage 1: pick + check */}
-      <div className="settings-row settings-url-row">
-        <label>
-          Backup file{" "}
-          <input
-            type="file"
-            accept=".tgz.enc"
-            aria-label="Backup file"
-            disabled={locked || checking}
-            onChange={(e) => {
-              setFile(e.target.files?.[0] ?? null);
-              setPreview(null);
-              setCheckError(null);
-              setAckChecked(false);
-              setConfirmText("");
-            }}
-          />
-        </label>
-      </div>
-      <div className="settings-row settings-url-row">
-        <label>
-          Passphrase{" "}
-          <input
-            type="password"
-            className="settings-url-input"
-            aria-label="Restore passphrase"
-            autoComplete="new-password"
-            placeholder="the passphrase this backup was made with"
-            disabled={locked || checking}
-            value={passphrase}
-            onChange={(e) => {
-              setPassphrase(e.target.value);
-              setCheckError(null);
-            }}
-          />
-        </label>
-        <button
-          type="button"
-          className="settings-test"
-          disabled={!file || checking || locked}
-          onClick={check}
-        >
-          {checking ? "Checking…" : "Check backup"}
-        </button>
-      </div>
-      {checkError && (
-        <p role="alert" className="settings-test-fail">
-          <span aria-hidden="true">✖ </span>
-          {checkError}
-        </p>
-      )}
-      {/* A validated-but-unusable archive: render the server errors and do NOT allow proceeding. */}
-      {preview && !preview.ok && (
-        <div role="alert" className="drp-restore-blocked">
-          <p className="settings-test-fail">
-            <span aria-hidden="true">✖ </span>
-            This backup cannot be restored.
-          </p>
-          {preview.errors.length > 0 && (
-            <ul className="drp-restore-errors">
-              {preview.errors.map((msg, i) => (
-                <li key={i}>{msg}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {/* Stage 2: review the validated preview */}
-      {preview && preview.ok && (
-        <div className="drp-restore-preview">
-          <h5>This backup contains</h5>
-          <dl className="drp-metrics">
-            <dt>Created</dt>
-            <dd>{preview.created_at ? absoluteTs(preview.created_at) : "unknown"}</dd>
-            <dt>App version</dt>
-            <dd className="drp-mono">{preview.app_version || "—"}</dd>
-            <dt>Postgres</dt>
-            <dd className="drp-mono">{preview.pg_version || "—"}</dd>
-            <dt>Members</dt>
-            <dd className="drp-num">{preview.member_count.toLocaleString()}</dd>
-            <dt>Size</dt>
-            <dd className="drp-num">{formatBytes(preview.total_bytes) || "—"}</dd>
-          </dl>
-
-          {!preview.compatible && (
-            <p role="alert" className="settings-test-fail drp-restore-incompatible">
-              <span aria-hidden="true">✖ </span>
-              This backup is not compatible with the current version, so it cannot be restored here.
-            </p>
-          )}
-          {preview.secrets_key_match === false && (
-            <p role="status" className="settings-test-warn drp-restore-secretwarn">
-              <span aria-hidden="true">⚠ </span>
-              This backup was made with a different secrets key — your stored OpenAI key won&apos;t
-              decrypt and must be re-entered after the restore.
-            </p>
-          )}
-          {preview.warnings.length > 0 && (
-            <ul className="drp-restore-warnings">
-              {preview.warnings.map((msg, i) => (
-                <li key={i} className="settings-test-warn">
-                  <span aria-hidden="true">⚠ </span>
-                  {msg}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {/* Stage 3: confirm-to-destroy + apply (only for a compatible, validated archive) */}
-      {preview && preview.ok && preview.compatible && !finished && (
-        <div className="drp-danger-zone">
-          <h5 className="drp-danger-title">
-            <span aria-hidden="true">⚠ </span>
-            Danger: this permanently replaces all current data
-          </h5>
-          <p className="drp-danger-body">
-            Restoring will permanently <strong>replace all current documents and data</strong> with
-            the contents of this backup. The app goes into maintenance during the restore and may be
-            briefly unavailable. This cannot be undone.
-          </p>
-          <label className="drp-danger-ack">
-            <input
-              type="checkbox"
-              checked={ackChecked}
-              disabled={running}
-              onChange={(e) => setAckChecked(e.target.checked)}
-            />{" "}
-            I understand this will erase everything currently in this system.
-          </label>
-          <div className="settings-row drp-danger-confirm">
-            <label>
-              Type <code>{CONFIRM_PHRASE}</code> to confirm{" "}
-              <input
-                type="text"
-                aria-label={`Type ${CONFIRM_PHRASE} to confirm`}
-                autoComplete="off"
-                disabled={running}
-                value={confirmText}
-                onChange={(e) => setConfirmText(e.target.value)}
-              />
-            </label>
-            <button
-              type="button"
-              className="drp-danger-button"
-              disabled={!canApply}
-              title={
-                canApply
-                  ? ""
-                  : `Tick the box and type ${CONFIRM_PHRASE} to enable the restore`
-              }
-              onClick={apply}
-            >
-              {applyPhase === "applying"
-                ? "Starting restore…"
-                : running
-                  ? "Restoring…"
-                  : "Restore now"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Stage 4: progress / outcome */}
-      {running && (
-        <p role="status" className="drp-restore-progress">
-          <span className="drp-spinner" aria-hidden="true" />
-          <span aria-hidden="true">⟳ </span>
-          {status?.state === "validating"
-            ? "Validating…"
-            : status?.state === "applying"
-              ? "Applying the backup…"
-              : "Starting the restore…"}
-          {status?.step ? ` — ${status.step}` : ""}
-          {status?.detail ? <span className="muted"> {status.detail}</span> : null}
-          <span className="muted drp-restore-progress-note">
-            {" "}
-            The app may be briefly unavailable while this runs.
-          </span>
-        </p>
-      )}
-      {finished && (
-        <p role="status" className="settings-test-ok drp-restore-done">
-          <span aria-hidden="true">✔ </span>
-          Restore complete — reload the app.
-          {status?.detail ? <span className="muted"> {status.detail}</span> : null}
-        </p>
-      )}
-      {failed && (
-        <p role="alert" className="settings-test-fail drp-restore-failed">
-          <span aria-hidden="true">✖ </span>
-          Restore failed{status?.detail ? <>: <Ellipsis text={status.detail} /></> : "."} The system
-          was rolled back to its state before the restore.
-        </p>
-      )}
-      {applyError && (
-        <p role="alert" className="status-error">
-          {applyError}
-        </p>
-      )}
-    </div>
-  );
-}
-
 // Read-only Disaster Recovery Plan section (#368). Surfaces backup freshness + config; recovery is
 // performed on the host (this never runs backups or exposes secrets). The backup-history window and
 // the recovery-drill panel are added under the status/config (backup/DRP hardening epic).
 function DrpSection() {
   const [drp, setDrp] = useState<DrpStatusResponse | null>(null);
   const [err, setErr] = useState(false);
-  // DRP status is readable for every admin; backup/drill/restore ACTIONS are platform-only
-  // (#658, ADR-0025) - the backend enforces with 403, we just don't offer them.
-  const platform = isPlatformAdmin();
-  // Bumped to force the history + drill children to re-fetch immediately (e.g. right after a drill
-  // is triggered) without waiting for their own 45s/10s poll.
-  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -926,14 +225,6 @@ function DrpSection() {
       clearInterval(id);
     };
   }, []);
-
-  // Force an immediate status refresh + bump the history/drill refresh key (used after a drill).
-  const refreshNow = () => {
-    fetchDrpStatus()
-      .then((d) => (setDrp(d), setErr(false)))
-      .catch(() => setErr(true));
-    setRefreshKey((k) => k + 1);
-  };
 
   // restic snapshot ids are long hex hashes — show the short form (like git) but keep the full id
   // in the tooltip. pgBackRest labels (e.g. 20260625-120000F) are already short, so leave them.
@@ -1049,20 +340,13 @@ function DrpSection() {
               <span className="muted">{yn(drp.config.azure_credentials_configured)}</span>
             </div>
           </div>
-          {platform && <RecoveryDrill drill={drp.status.drill} onTriggered={refreshNow} />}
         </>
       )}
-      {platform ? (
-        <>
-          <PortableBackup />
-          <PortableRestore />
-        </>
-      ) : (
-        <p className="muted settings-platform-hint">
-          Backup export and restore are managed by platform admins (and on the host console).
-        </p>
-      )}
-      <BackupHistory refreshKey={refreshKey} />
+      <p className="muted settings-platform-hint">
+        Backup export, restore, and drills run on the host console (scripts) - this view is
+        monitoring only.
+      </p>
+      <BackupHistory refreshKey={0} />
     </div>
   );
 }
@@ -1440,23 +724,9 @@ function PurposeEditor({
   );
 }
 
-// True when the purpose's CURRENT selection is a remote option under no-egress (locally computable
-// from the catalog, so it covers a persisted-remote choice loaded while the policy is on). Used to
-// disable Save without auto-rewriting the saved choice — the backend 422 is the lock behind it.
-function selectionBlocked(
-  options: ModelOption[],
-  value: AiPurposeSettings,
-  noEgress: boolean,
-): boolean {
-  if (!noEgress) return false;
-  const opt = options.find((o) => o.provider === value.provider && o.model === value.model);
-  return !!opt?.requires_egress;
-}
-
 export function SettingsPanel() {
-  // Platform-only surfaces (ADR-0025): model-stack writes + DRP actions. The backend enforces with
-  // 403; here we just don't offer the controls to tenant admins (#658).
-  const platform = isPlatformAdmin();
+  // Model stack and DRP are READ-ONLY here (#700): writes happen on the host console (scripts /
+  // the static host token); the UI shows current values, system defaults, and health.
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
   // Snapshot of the loaded settings = the server defaults (until the backend exposes per-tenant
@@ -1467,17 +737,7 @@ export function SettingsPanel() {
   const [serverDefaultsOcr, setServerDefaultsOcr] = useState<OcrSettings | null>(null);
   const [ocrRec, setOcrRec] = useState<OcrRecommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [openaiKey, setOpenaiKey] = useState("");
-  const [openaiTesting, setOpenaiTesting] = useState(false);
-  const [openaiTest, setOpenaiTest] = useState<{ ok: boolean; detail: string } | null>(null);
   const [tab, setTab] = useState<"settings" | "models" | "drp">("settings");
-  // No-egress save rejection (422): the form-level message + the per-purpose inline violations.
-  const [egressError, setEgressError] = useState<string | null>(null);
-  const [violations, setViolations] = useState<Partial<Record<AiPurpose, EgressViolation>>>({});
-  // A 422 `no_egress_locked` rejection (host-locked posture): a form-level message, no violations.
-  const [lockedError, setLockedError] = useState<string | null>(null);
   // One-shot per-purpose health probe shown on the Model stack tab (cached for a minute).
   const [health, setHealth] = useState<Record<string, PurposeHealth> | null>(
     modelHealthCache?.results ?? null,
@@ -1560,84 +820,9 @@ export function SettingsPanel() {
     };
   }, [tab, ai]);
 
-  // Turning the no-egress toggle OFF (allowing egress) is a security downgrade — confirm first so it
-  // is never a one-click accident. Turning it back ON needs no confirmation. The change is staged in
-  // local state and persisted with the rest of the form on Save.
-  function toggleNoEgress(next: boolean) {
-    if (!ai) return;
-    if (!next) {
-      const ok = window.confirm(
-        "Allow remote models? Document content and chat context may be sent to external services " +
-          "such as OpenAI, leaving this host. You can turn this back on at any time.",
-      );
-      if (!ok) return;
-    }
-    setLockedError(null);
-    setAi({ ...ai, no_egress: next });
-  }
-
-  function save() {
-    if (!ai || !ocr) return;
-    setSaving(true);
-    setNotice("");
-    setError(null);
-    setEgressError(null);
-    setViolations({});
-    setLockedError(null);
-    // Persist AI + OCR together. The AI model applies immediately for chat/RAG; OCR parallelism is
-    // live-reloaded by the worker within ~15s. Send the OpenAI key only if the user typed one.
-    // `no_egress` is sent only when the backend exposed it (omitted otherwise = leave unchanged).
-    Promise.all([
-      putAiSettings({
-        pipeline: ai.pipeline,
-        rag: ai.rag,
-        ner: ai.ner,
-        keg: ai.keg,
-        rerank: ai.rerank,
-        embedding: ai.embedding,
-        openai_api_key: openaiKey || null,
-        no_egress: ai.no_egress,
-      }),
-      putOcrSettings(ocr),
-    ])
-      .then(([savedAi, savedOcr]) => {
-        setAi(savedAi);
-        setOcr(savedOcr);
-        setOpenaiKey("");
-        setNotice("Saved. Chat/RAG model applied now; OCR parallelism applies within ~15s.");
-      })
-      .catch((err: unknown) => {
-        // A no-egress policy rejection carries a structured detail (object, not a string): show the
-        // message at the form level and pin each violation to its purpose field. Anything else is a
-        // generic save error.
-        if (err instanceof EgressNotPermittedError) {
-          setEgressError(err.message);
-          const byPurpose: Partial<Record<AiPurpose, EgressViolation>> = {};
-          for (const v of err.violations) byPurpose[v.purpose] = v;
-          setViolations(byPurpose);
-        } else if (err instanceof NoEgressLockedError) {
-          // The host hard-locked the posture (the toggle should already be disabled; handle it
-          // defensively). Surface the server message at the form level without crashing.
-          setLockedError(err.message);
-        } else {
-          setError(err instanceof Error ? err.message : "could not save");
-        }
-      })
-      .finally(() => setSaving(false));
-  }
-
-  // The active no-egress policy gates the model pickers (greys out remote options) and, when a
-  // persisted remote selection is loaded while the policy is on, blocks Save without rewriting it.
-  // Driven by the editable AI posture (the toggle) so flipping it re-gates the pickers immediately
-  // and after Save; falls back to the catalog mirror for a pre-upgrade settings payload.
+  // The active no-egress policy greys out remote options in the (read-only) model pickers and
+  // drives the privacy indicator; falls back to the catalog mirror for a pre-upgrade payload.
   const noEgress = ai?.no_egress ?? catalog?.no_egress ?? false;
-  const saveBlocked =
-    !!catalog &&
-    !!ai &&
-    (selectionBlocked(catalog.pipeline, ai.pipeline, noEgress) ||
-      selectionBlocked(catalog.rag, ai.rag, noEgress) ||
-      selectionBlocked(catalog.ner ?? [], ai.ner, noEgress) ||
-      selectionBlocked(catalog.keg ?? [], ai.keg, noEgress));
 
   const paneTitle =
     tab === "models"
@@ -1645,45 +830,6 @@ export function SettingsPanel() {
       : tab === "drp"
         ? "DRP"
         : "Settings";
-
-  const saveBar = (
-    <>
-      {egressError && (
-        <p role="alert" className="status-error egress-form-error">
-          {egressError}
-        </p>
-      )}
-      <div className="settings-actions">
-        <button
-          type="button"
-          className="settings-save"
-          onClick={save}
-          disabled={saving || saveBlocked}
-          title={
-            saveBlocked
-              ? "A selected model is blocked by no-egress. Choose a local model, or set DOKTOK_NO_EGRESS=false on the host."
-              : undefined
-          }
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-        {notice && (
-          <span role="status" className="muted">
-            {notice}
-          </span>
-        )}
-      </div>
-    </>
-  );
-
-  // Writes are platform-only (#658): tenant admins get the hint instead of the save bar.
-  const saveSection = platform ? (
-    saveBar
-  ) : (
-    <p className="muted settings-platform-hint">
-      Only platform admins can change these deployment defaults.
-    </p>
-  );
 
   return (
     <section className="panel settings-page" aria-label="Settings">
@@ -1729,64 +875,15 @@ export function SettingsPanel() {
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section">
-          <fieldset className="settings-fieldset" disabled={!platform}>
           <div className="settings-purpose">
             <h4>OpenAI</h4>
             <p className="muted">
               Required only if you pick an OpenAI model above. Selecting OpenAI sends document text to
               api.openai.com (an explicit exception to the local-first / no-egress default). The key
-              is stored and never shown again.
-              {ai.openai_api_key_set ? " A key is currently configured." : ""}
+              is managed on the host console and never shown here.
+              {ai.openai_api_key_set ? " A key is currently configured." : " No key is configured."}
             </p>
-            <div className="settings-row">
-              <label>
-                API key{" "}
-                <input
-                  type="password"
-                  aria-label="OpenAI API key"
-                  value={openaiKey}
-                  onChange={(e) => {
-                    setOpenaiKey(e.target.value);
-                    setOpenaiTest(null);
-                  }}
-                  placeholder={ai.openai_api_key_set ? "configured - type to replace" : "Enter key"}
-                />
-              </label>
-              <button
-                type="button"
-                className="settings-test"
-                disabled={openaiTesting || (!openaiKey && !ai.openai_api_key_set)}
-                onClick={async () => {
-                  setOpenaiTesting(true);
-                  setOpenaiTest(null);
-                  try {
-                    const r = await testOpenAiKey(openaiKey || null);
-                    setOpenaiTest({ ok: r.ok, detail: r.detail });
-                  } catch (e) {
-                    setOpenaiTest({
-                      ok: false,
-                      detail: e instanceof Error ? e.message : "test failed",
-                    });
-                  } finally {
-                    setOpenaiTesting(false);
-                  }
-                }}
-              >
-                {openaiTesting ? "Testing…" : "Test"}
-              </button>
-              {openaiTest && (
-                <span
-                  role="status"
-                  className={openaiTest.ok ? "settings-test-ok" : "settings-test-fail"}
-                >
-                  {openaiTest.ok ? "Valid" : "Failed"} — {openaiTest.detail}
-                </span>
-              )}
-            </div>
           </div>
-          </fieldset>
-
-          {saveSection}
         </div>
         ))}
 
@@ -1797,7 +894,7 @@ export function SettingsPanel() {
           <div className="settings-section settings-section--wide">
             {/* Host data-egress posture spans both cards; it gates every model picker below. */}
             {ai.no_egress !== undefined && (
-              <fieldset className="settings-fieldset" disabled={!platform}>
+              <fieldset className="settings-fieldset" disabled>
               <div className="egress-control model-stack-egress">
                 <p
                   role="status"
@@ -1819,27 +916,15 @@ export function SettingsPanel() {
                     type="checkbox"
                     role="switch"
                     checked={ai.no_egress}
-                    disabled={!!ai.no_egress_locked}
-                    aria-describedby={ai.no_egress_locked ? "egress-lock-note" : undefined}
-                    title={
-                      ai.no_egress_locked
-                        ? "Enforced by the host (DOKTOK_NO_EGRESS_LOCK) — cannot be changed here"
-                        : undefined
-                    }
-                    onChange={(e) => toggleNoEgress(e.target.checked)}
+                    disabled
+                    title="Changed on the host console"
                   />{" "}
                   <span>Keep data on this host (no-egress)</span>
                 </label>
-                {ai.no_egress_locked && (
-                  <span id="egress-lock-note" className="muted egress-lock-note">
-                    Enforced by the host — cannot be changed here.
-                  </span>
-                )}
-                {lockedError && (
-                  <p role="alert" className="status-error egress-form-error">
-                    {lockedError}
-                  </p>
-                )}
+                <span className="muted egress-lock-note">
+                  Changed on the host console (scripts / the static host token).
+                  {ai.no_egress_locked ? " Enforced by the host." : ""}
+                </span>
               </div>
               </fieldset>
             )}
@@ -2005,14 +1090,13 @@ export function SettingsPanel() {
                   </div>
                 </div>
               </div>
-              <fieldset className="settings-fieldset" disabled={!platform}>
+              <fieldset className="settings-fieldset" disabled>
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
-                  Your overrides{" "}
-                  <InfoHint label="Your overrides">
-                    Choose the local (or remote) model used for each AI purpose. The chat/RAG model
-                    applies immediately on Save; the pipeline model applies on the next worker
-                    reconcile.
+                  Current configuration{" "}
+                  <InfoHint label="Current configuration">
+                    The model used for each AI purpose. Changed on the host console (scripts / the
+                    static host token); this view is read-only.
                   </InfoHint>
                 </h4>
                 <PurposeEditor
@@ -2026,7 +1110,6 @@ export function SettingsPanel() {
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.pipeline}
-                  violation={violations.pipeline}
                   onChange={(pipeline) => setAi({ ...ai, pipeline })}
                 />
                 <PurposeEditor
@@ -2040,7 +1123,6 @@ export function SettingsPanel() {
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.rag}
-                  violation={violations.rag}
                   onChange={(rag) => setAi({ ...ai, rag })}
                 />
                 <PurposeEditor
@@ -2054,7 +1136,6 @@ export function SettingsPanel() {
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.ner}
-                  violation={violations.ner}
                   onChange={(ner) => setAi({ ...ai, ner })}
                 />
                 <PurposeEditor
@@ -2068,7 +1149,6 @@ export function SettingsPanel() {
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.keg}
-                  violation={violations.keg}
                   onChange={(keg) => setAi({ ...ai, keg })}
                 />
                 <div className="settings-purpose">
@@ -2101,7 +1181,6 @@ export function SettingsPanel() {
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.rerank}
-                  violation={violations.rerank}
                   onChange={(rerank) => setAi({ ...ai, rerank })}
                 />
                 <div className="settings-purpose">
@@ -2162,7 +1241,6 @@ export function SettingsPanel() {
               </div>
               </fieldset>
             </div>
-            {saveSection}
             {healthAt && (
               <p className="muted model-stack-checked">
                 Checked {new Date(healthAt).toLocaleString()}

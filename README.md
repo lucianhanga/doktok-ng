@@ -177,7 +177,7 @@ make run-backend
 #    The API is versioned under /api/v1 and needs a token (from .env):
 #    curl -H "Authorization: Bearer dev-token-default" http://localhost:8000/api/v1/ingestion/jobs
 
-# 4. In another terminal, run the UI (http://localhost:5173).
+# 4. In another terminal, run the UI (http://localhost:5174).
 #    Use the make target so the dev proxy injects the bearer token for you.
 make run-ui
 
@@ -200,7 +200,7 @@ make db   # = docker compose up -d (starts both the db and gotenberg services)
 make run-backend
 # 5. Terminal B - ingestion worker (auto-resumes its backlog)
 make run-worker
-# 6. Terminal C - UI dev server (http://localhost:5173)
+# 6. Terminal C - UI dev server (http://localhost:5174)
 make run-ui
 ```
 

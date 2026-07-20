@@ -453,11 +453,11 @@ def test_preview_passphrase_min_length_is_12(tmp_path: Path) -> None:
 JWT_SECRET = "restore-binding-secret"  # pragma: allowlist secret
 
 
-def _make_client_with_platform_users(
+def _make_client_with_two_host_tokens(
     tmp_path: Path,
 ) -> tuple[TestClient, Path]:
     from doktok_contracts.ports import TenantRegistry
-    from doktok_contracts.schemas import Tenant, User
+    from doktok_contracts.schemas import Tenant
     from doktok_core.security.inmemory import InMemoryTenantRegistry
 
     export_dir = tmp_path / "exports"
@@ -466,16 +466,7 @@ def _make_client_with_platform_users(
     files_root.mkdir(parents=True)
     reg = InMemoryTenantRegistry()
     reg.create_tenant(Tenant(id="tenant-a", name="Tenant A"))
-    for uid in ("pa_a", "pa_b"):
-        reg.create_user(
-            User(
-                id=uid,
-                tenant_id="tenant-a",
-                email=f"{uid}@x.com",
-                role="admin",
-                is_platform_admin=True,
-            )
-        )
+    reg.create_tenant(Tenant(id="tenant-b", name="Tenant B"))
     audit = InMemoryAuditLogRepository()
     registry = build_registry()
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
@@ -483,8 +474,7 @@ def _make_client_with_platform_users(
     registry.register(TenantRegistry, reg)  # type: ignore[type-abstract]
     settings = Settings(  # type: ignore[call-arg]
         env="test",
-        tenant_tokens=TOKENS,
-        auth_jwt_secret=JWT_SECRET,
+        tenant_tokens={"tok-a": "tenant-a", "tok-b": "tenant-b"},
         files_root=str(files_root),
         backup_dir=str(backup_dir),
         backup_export_dir=str(export_dir),
@@ -494,38 +484,31 @@ def _make_client_with_platform_users(
     return TestClient(create_app(settings=settings, registry=registry)), export_dir
 
 
-def _bearer(user_id: str) -> dict[str, str]:
-    from doktok_core.security.sessions import issue_access_token
-
-    token = issue_access_token(
-        tenant_id="tenant-a", user_id=user_id, secret=JWT_SECRET, ttl_seconds=3600
-    )
-    return {"Authorization": f"Bearer {token}"}
-
-
-def test_apply_by_another_platform_admin_is_refused(tmp_path: Path) -> None:
+def test_apply_by_another_host_credential_is_refused(tmp_path: Path) -> None:
     # F-34: within the staged tree's TTL, possession of the staged_id alone must NOT be enough -
-    # the destructive apply is bound to the operator who validated the preview.
+    # the destructive apply is bound to the operator (host credential) who validated the preview.
+    # Platform surfaces are host-token-only now (#700), so the cross-actor case is exercised with
+    # two different tenants' host credentials.
     import json
 
-    client, export_dir = _make_client_with_platform_users(tmp_path)
+    client, export_dir = _make_client_with_two_host_tokens(tmp_path)
     staged_id = "staged-by-a"
     sdir = restore_mod.staging_dir(export_dir, staged_id)
     (sdir / "extracted").mkdir(parents=True, exist_ok=True)
-    sdir.joinpath(".validated").write_text(json.dumps({"actor": "pa_a"}), encoding="utf-8")
+    sdir.joinpath(".validated").write_text(json.dumps({"actor": "tenant-a"}), encoding="utf-8")
 
     refused = client.post(
         f"/api/v1/settings/backup/restore/{staged_id}/apply",
         json={"confirm": True},
-        headers=_bearer("pa_b"),
+        headers={"Authorization": "Bearer tok-b"},
     )
     assert refused.status_code == 403
 
-    # The operator who validated the preview can apply.
+    # The credential that validated the preview can apply.
     accepted = client.post(
         f"/api/v1/settings/backup/restore/{staged_id}/apply",
         json={"confirm": True},
-        headers=_bearer("pa_a"),
+        headers={"Authorization": "Bearer tok-a"},
     )
     assert accepted.status_code == 200
     assert accepted.json()["accepted"] is True

@@ -101,12 +101,10 @@ def require_tenant(
     # while that user is active. This is the authoritative revocation lever - it blocks a
     # deactivated (or not-yet-accepted 'invited') user's session JWT AND api-tokens immediately,
     # regardless of token TTL. Tenant-scoped tokens (no user) and registry-less deployments skip it.
-    #
-    # Platform-owner tier (#613, ADR-0025): host-provisioned static tokens are platform admins; a
-    # user-bound credential (session JWT / user api token) inherits the user's is_platform_admin
-    # flag from the SAME fetch used for the deactivation check (no extra query). A DB-minted
-    # user-less api token is a tenant admin but NEVER a platform admin (any tenant admin can mint
-    # those, so they must not reach deployment-spanning surfaces).
+    # Platform tier (#700): the flag is True ONLY for host-provisioned static tokens - the
+    # platform surfaces are host-console territory (scripts use the static token); a user-bound
+    # credential (session JWT / user api token) never is, so the deactivation check below is the
+    # only use of the fetched user row.
     platform_admin = resolution.via == "static"
     if resolution.user_id is not None and registry is not None:
         user = registry.get_user(resolution.tenant_id, resolution.user_id)
@@ -116,7 +114,6 @@ def require_tenant(
                 detail="user is not active",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        platform_admin = user.is_platform_admin
     from doktok_core.logging_setup import tenant_id_var
 
     tenant_id_var.set(resolution.tenant_id)  # correlate log lines by tenant (APP-12)

@@ -28,16 +28,14 @@ DEV_TENANT_NAME = "Dev"
 # One account per role so RBAC is actually exercisable from the UI.
 DEV_USERS: tuple[tuple[str, str], ...] = (
     ("dev-admin@doktok.local", "admin"),
-    ("dev-manager@doktok.local", "admin"),  # tenant admin WITHOUT the platform flag (#620)
+    ("dev-manager@doktok.local", "admin"),
     ("dev-editor@doktok.local", "editor"),
     ("dev-viewer@doktok.local", "viewer"),
 )
 
-# The dev admin doubles as the platform-owner persona (#613, ADR-0025): it can reach the
-# platform-gated surfaces (backup export/restore, DRP) in UI/dev flows. The manager/editor/viewer
-# stay non-platform so the denial paths are exercisable with the same seed; the manager in
-# particular exercises the restricted tenant-admin view (#620).
-DEV_PLATFORM_ADMINS = frozenset({"dev-admin@doktok.local"})
+# There is no platform-admin persona anymore (#700): every seeded user is a plain tenant
+# identity. Platform surfaces in dev are exercised with the static host token
+# (DOKTOK_TENANT_TOKENS) - the console credential - not by logging in.
 
 # Length floor for a seeded password (kept in step with the API password policy).
 MIN_SEED_PASSWORD_LENGTH = 12
@@ -99,7 +97,6 @@ def seed_dev(
                     display_name=email.split("@")[0],
                     role=role,
                     status="active",
-                    is_platform_admin=email in DEV_PLATFORM_ADMINS,
                     password_hash=hash_password(password),
                 )
             )
@@ -110,7 +107,6 @@ def seed_dev(
             password = password_for(email)
             registry.set_user_password(DEV_TENANT_ID, existing.id, hash_password(password))
             registry.set_user_role(DEV_TENANT_ID, existing.id, role)
-            registry.set_platform_admin(DEV_TENANT_ID, existing.id, email in DEV_PLATFORM_ADMINS)
             results.append(
                 SeededAccount(email, role, created=False, password_set=True, password=password)
             )

@@ -26,11 +26,9 @@ from doktok_core.security.inmemory import InMemoryTenantRegistry
 from doktok_core.settings.inmemory import InMemoryAppSettingsRepository
 from fastapi.testclient import TestClient
 
-STATIC = {"Authorization": "Bearer tok-static"}  # host-provisioned static token -> platform admin
+STATIC = {"Authorization": "Bearer tok-static"}  # the host credential (console)
 USERLESS = {"Authorization": "Bearer tok-userless"}  # DB api token, no user -> tenant admin only
-ADMIN = {"Authorization": "Bearer tok-admin"}  # user, admin role, no flag -> tenant admin only
-PADMIN = {"Authorization": "Bearer tok-padmin"}  # user, admin role + flag -> platform admin
-PVIEWER = {"Authorization": "Bearer tok-pviewer"}  # user, viewer role + flag -> NOT enough
+ADMIN = {"Authorization": "Bearer tok-admin"}  # user, admin role -> tenant admin only
 
 _REAL_RUN = subprocess.run
 
@@ -56,26 +54,13 @@ def _fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
 def _tenant_registry() -> InMemoryTenantRegistry:
     mem = InMemoryTenantRegistry()
     mem.create_tenant(Tenant(id="tenant-b", name="B"))
-    for uid, role, flag in (
-        ("admin-b", "admin", False),
-        ("padmin", "admin", True),
-        ("pviewer", "viewer", True),
-    ):
+    for uid, role in (("admin-b", "admin"),):
         mem.create_user(
-            User(
-                id=uid,
-                tenant_id="tenant-b",
-                email=f"{uid}@b.example",
-                role=role,
-                status="active",
-                is_platform_admin=flag,
-            )
+            User(id=uid, tenant_id="tenant-b", email=f"{uid}@b.example", role=role, status="active")
         )
     token_pairs: list[tuple[str, str | None]] = [
         ("tok-userless", None),
         ("tok-admin", "admin-b"),
-        ("tok-padmin", "padmin"),
-        ("tok-pviewer", "pviewer"),
     ]
     for token, owner in token_pairs:
         mem.create_api_token(
@@ -116,17 +101,6 @@ def test_db_userless_token_is_not_platform_admin(tmp_path: Path) -> None:
 def test_tenant_admin_without_flag_is_not_platform_admin(tmp_path: Path) -> None:
     client = _make_client(tmp_path)
     assert client.post("/api/v1/settings/backup/export", headers=ADMIN).status_code == 403
-
-
-def test_platform_flagged_admin_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(export_mod.subprocess, "run", _fake_run)
-    client = _make_client(tmp_path)
-    assert client.post("/api/v1/settings/backup/export", headers=PADMIN).status_code == 200
-
-
-def test_platform_flag_without_admin_role_is_not_enough(tmp_path: Path) -> None:
-    client = _make_client(tmp_path)
-    assert client.post("/api/v1/settings/backup/export", headers=PVIEWER).status_code == 403
 
 
 def test_export_status_read_is_platform_gated(tmp_path: Path) -> None:

@@ -270,9 +270,11 @@ everything works exactly as before:
    make seed-dev
    ```
 
-   This creates `dev-admin@doktok.local` (admin), `dev-editor@doktok.local` (editor), and
-   `dev-viewer@doktok.local` (viewer). Passwords come from `DOKTOK_DEV_SEED_PASSWORD` in `.env`
-   (min 12 chars, reproducible logins) or are generated and printed **once** - save them.
+   This creates `dev-admin@doktok.local` (admin), `dev-manager@doktok.local` (admin),
+   `dev-editor@doktok.local` (editor), and `dev-viewer@doktok.local` (viewer) - all plain tenant
+   users (there is no platform-admin persona; the static `DOKTOK_TENANT_TOKENS` entry is the
+   console credential for platform operations). Passwords come from `DOKTOK_DEV_SEED_PASSWORD` in
+   `.env` (min 12 chars, reproducible logins) or are generated and printed **once** - save them.
    `make seed-dev ARGS=--reset` rotates the passwords.
 
 3. `make run-ui`, open http://localhost:5174 - the SPA sees login enabled (`GET /auth/config`) and

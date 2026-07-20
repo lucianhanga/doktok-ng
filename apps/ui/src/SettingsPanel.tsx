@@ -780,7 +780,7 @@ export function SettingsPanel() {
   const [serverDefaultsOcr, setServerDefaultsOcr] = useState<OcrSettings | null>(null);
   const [ocrRec, setOcrRec] = useState<OcrRecommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"settings" | "models" | "drp">("settings");
+  const [tab, setTab] = useState<"models" | "drp">("models");
   // Editable draft of the tenant's stack: pickers mutate it; Save diffs it against the
   // tenant-effective settings and writes only genuine overrides (epic #708).
   const [draft, setDraft] = useState<AiSettings | null>(null);
@@ -878,12 +878,7 @@ export function SettingsPanel() {
   // privacy indicator; the DRAFT's value (edited in place) is what Save writes as the override.
   const noEgress = draft?.no_egress ?? ai?.no_egress ?? catalog?.no_egress ?? false;
 
-  const paneTitle =
-    tab === "models"
-      ? "Model stack"
-      : tab === "drp"
-        ? "DRP"
-        : "Settings";
+  const paneTitle = tab === "models" ? "Model stack" : "DRP";
 
   const _samePurpose = (a: AiPurposeSettings, b: AiPurposeSettings) =>
     a.provider === b.provider &&
@@ -990,15 +985,6 @@ export function SettingsPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "settings"}
-            className={tab === "settings" ? "active" : ""}
-            onClick={() => setTab("settings")}
-          >
-            Settings
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={tab === "drp"}
             className={tab === "drp" ? "active" : ""}
             onClick={() => setTab("drp")}
@@ -1013,28 +999,6 @@ export function SettingsPanel() {
               {error}
             </p>
           )}
-      {tab === "settings" &&
-        (!catalog || !ai || !ocr ? (
-          <p role="status">Loading settings…</p>
-        ) : (
-          <div className="settings-section">
-          <div className="settings-purpose">
-            <h4>OpenAI</h4>
-            <p className="muted">
-              Required only if you pick an OpenAI model in your tenant override (Model stack tab).
-              Selecting OpenAI sends document text to api.openai.com (an explicit exception to the
-              local-first / no-egress default). Your tenant's own key is set on the Model stack
-              card and never shown; the deployment key is managed on the host console.
-              {ai.tenant_openai_api_key_set
-                ? " Your tenant has its own key configured."
-                : ai.openai_api_key_set
-                  ? " A deployment key is currently configured."
-                  : " No key is configured."}
-            </p>
-          </div>
-        </div>
-        ))}
-
       {tab === "models" &&
         (!catalog || !ai || !ocr || !draft || !tenantDefaults ? (
           <p role="status">Loading settings…</p>

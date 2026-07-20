@@ -42,7 +42,7 @@ def _stage(tmp_path: Path, repo: InMemoryDocumentRepository) -> ExtractStage:
     files_root = str(tmp_path / "files")
     FilesystemLayout(files_root, "t1").ensure()
 
-    def extractor(mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
+    def extractor(tenant_id: str, mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
         return _result()
 
     return ExtractStage(repo, LocalFileStorage(), files_root, extractor)

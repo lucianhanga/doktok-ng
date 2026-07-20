@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -324,20 +325,31 @@ class NerFeature:
         self,
         document_repo: DocumentRepository,
         file_storage: FileStorage,
-        ner_extractor: EntityNerExtractor,
+        ner_extractor: Callable[[str], EntityNerExtractor],
         entity_repo: EntityRepository,
     ) -> None:
         self._documents = document_repo
         self._files = file_storage
-        self._ner = ner_extractor
+        # Per-tenant resolution (epic #708): the extractor is a tenant accessor, not a fixed
+        # client - the tenant's own model stack applies to its documents.
+        self._ner_for = ner_extractor
         self._repo = entity_repo
+        self._last_tenant = ""
+
+    def _ner(self, tenant_id: str) -> EntityNerExtractor:
+        self._last_tenant = tenant_id
+        return self._ner_for(tenant_id)
 
     def get_last_usage(self) -> LlmUsage | None:
-        return _delegate_usage(self._ner)
+        if not self._last_tenant:
+            return None
+        return _delegate_usage(self._ner(self._last_tenant))
 
     @property
     def model(self) -> str:
-        return _provider_model(self._ner)
+        if not self._last_tenant:
+            return ""
+        return _provider_model(self._ner(self._last_tenant))
 
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
@@ -387,7 +399,7 @@ class NerFeature:
                 metadata=dict(metadata or {}),
             )
 
-        for occ in self._ner.extract(text):
+        for occ in self._ner(tenant_id).extract(text):
             # PLZ-place split (#528): a German address line "80287 München" arrives as ONE place
             # mention, so every distinct postal code minted its own city node. Peel the code off:
             # the place row keeps just the city (all variants collapse to one node) and the code
@@ -526,22 +538,32 @@ class RelationExtractFeature:
         self,
         document_repo: DocumentRepository,
         file_storage: FileStorage,
-        extractor: RelationExtractor,
+        extractor: Callable[[str], RelationExtractor],
         entity_repo: EntityRepository,
         knowledge_graph_repo: KnowledgeGraphRepository,
     ) -> None:
         self._documents = document_repo
         self._files = file_storage
-        self._extractor = extractor
+        # Per-tenant resolution (epic #708): the tenant's own model stack applies.
+        self._extractor_for = extractor
         self._entities = entity_repo
         self._kg = knowledge_graph_repo
+        self._last_tenant = ""
+
+    def _extractor(self, tenant_id: str) -> RelationExtractor:
+        self._last_tenant = tenant_id
+        return self._extractor_for(tenant_id)
 
     def get_last_usage(self) -> LlmUsage | None:
-        return _delegate_usage(self._extractor)
+        if not self._last_tenant:
+            return None
+        return _delegate_usage(self._extractor(self._last_tenant))
 
     @property
     def model(self) -> str:
-        return _provider_model(self._extractor)
+        if not self._last_tenant:
+            return ""
+        return _provider_model(self._extractor(self._last_tenant))
 
     def process(self, tenant_id: str, document_id: str) -> None:
         # 1. Load doc text
@@ -574,7 +596,7 @@ class RelationExtractFeature:
         entity_list = list(entity_set.items())
 
         # 4. Extract raw triples
-        raw_triples = self._extractor.extract(content, entity_list)
+        raw_triples = self._extractor(tenant_id).extract(content, entity_list)
 
         # 5. Circuit-breaker validation
         valid_triples = []
@@ -745,18 +767,28 @@ class DocMetadataFeature:
         self,
         document_repo: DocumentRepository,
         file_storage: FileStorage,
-        metadata_extractor: MetadataExtractor,
+        metadata_extractor: Callable[[str], MetadataExtractor],
     ) -> None:
         self._documents = document_repo
         self._files = file_storage
-        self._extractor = metadata_extractor
+        # Per-tenant resolution (epic #708): the tenant's own model stack applies.
+        self._extractor_for = metadata_extractor
+        self._last_tenant = ""
+
+    def _extractor(self, tenant_id: str) -> MetadataExtractor:
+        self._last_tenant = tenant_id
+        return self._extractor_for(tenant_id)
 
     def get_last_usage(self) -> LlmUsage | None:
-        return _delegate_usage(self._extractor)
+        if not self._last_tenant:
+            return None
+        return _delegate_usage(self._extractor(self._last_tenant))
 
     @property
     def model(self) -> str:
-        return _provider_model(self._extractor)
+        if not self._last_tenant:
+            return ""
+        return _provider_model(self._extractor(self._last_tenant))
 
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
@@ -773,7 +805,7 @@ class DocMetadataFeature:
         # The title/date/location/summary are determined by the opening pages; feed only those to
         # the LLM (#311) - the unidentifiable check above still uses the full content.
         head = _head_pages(self._files, document.storage_path, _META_HEAD_PAGES, _META_HEAD_CHARS)
-        meta = normalize_metadata(self._extractor.extract(head))
+        meta = normalize_metadata(self._extractor(tenant_id).extract(head))
         self._documents.set_metadata(
             tenant_id,
             document_id,
@@ -802,20 +834,30 @@ class DocClassifyFeature:
         self,
         document_repo: DocumentRepository,
         file_storage: FileStorage,
-        classifier: CategoryClassifier,
+        classifier: Callable[[str], CategoryClassifier],
         category_repo: CategoryRepository,
     ) -> None:
         self._documents = document_repo
         self._files = file_storage
-        self._classifier = classifier
+        # Per-tenant resolution (epic #708): the tenant's own model stack applies.
+        self._classifier_for = classifier
         self._categories = category_repo
+        self._last_tenant = ""
+
+    def _classifier(self, tenant_id: str) -> CategoryClassifier:
+        self._last_tenant = tenant_id
+        return self._classifier_for(tenant_id)
 
     def get_last_usage(self) -> LlmUsage | None:
-        return _delegate_usage(self._classifier)
+        if not self._last_tenant:
+            return None
+        return _delegate_usage(self._classifier(self._last_tenant))
 
     @property
     def model(self) -> str:
-        return _provider_model(self._classifier)
+        if not self._last_tenant:
+            return ""
+        return _provider_model(self._classifier(self._last_tenant))
 
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
@@ -833,7 +875,7 @@ class DocClassifyFeature:
         if not head.strip():
             return
         existing = [c.name for c in self._categories.list_active(tenant_id)]
-        labels = self._classifier.classify(head, existing)
+        labels = self._classifier(tenant_id).classify(head, existing)
         category_ids: list[str] = []
         for label in labels:
             if len(category_ids) >= MAX_CATEGORIES_PER_DOCUMENT:
@@ -876,21 +918,29 @@ class StructuredRecordsFeature:
         self,
         document_repo: DocumentRepository,
         file_storage: FileStorage,
-        record_extractor: RecordExtractor,
+        record_extractor: Callable[[str], RecordExtractor],
         record_repo: RecordRepository,
     ) -> None:
         self._documents = document_repo
         self._files = file_storage
-        self._extractor = record_extractor
+        # Per-tenant resolution (epic #708): the tenant's own model stack applies.
+        self._extractor_for = record_extractor
         self._records = record_repo
         self._last_usage: LlmUsage | None = None
+        self._last_tenant = ""
+
+    def _extractor(self, tenant_id: str) -> RecordExtractor:
+        self._last_tenant = tenant_id
+        return self._extractor_for(tenant_id)
 
     def get_last_usage(self) -> LlmUsage | None:
         return self._last_usage
 
     @property
     def model(self) -> str:
-        return _provider_model(self._extractor)
+        if not self._last_tenant:
+            return ""
+        return _provider_model(self._extractor(self._last_tenant))
 
     def process(self, tenant_id: str, document_id: str) -> None:
         self._last_usage = None
@@ -906,10 +956,11 @@ class StructuredRecordsFeature:
         per_window: list[list[ExtractedRecord]] = []
         usages: list[LlmUsage] = []
         raw_rows = 0
+        extractor = self._extractor(tenant_id)
         for window in windows:
-            rows = self._extractor.extract(window)
+            rows = extractor.extract(window)
             raw_rows += len(rows)
-            usage = _delegate_usage(self._extractor)
+            usage = _delegate_usage(extractor)
             if usage is not None:
                 usages.append(usage)
             per_window.append(

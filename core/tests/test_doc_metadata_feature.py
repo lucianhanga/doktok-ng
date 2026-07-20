@@ -60,7 +60,7 @@ def test_writes_normalized_metadata_to_document() -> None:
             summary="Acme's annual financial report.",
         )
     )
-    DocMetadataFeature(repo, files, extractor).process("t1", "d1")
+    DocMetadataFeature(repo, files, lambda _t: extractor).process("t1", "d1")
 
     doc = repo.get("t1", "d1")
     assert doc is not None
@@ -75,6 +75,6 @@ def test_skips_when_no_content() -> None:
     repo = InMemoryDocumentRepository()
     repo.add(_doc())
     extractor = FakeExtractor(ExtractedMetadata("x", None, None, "y"))
-    DocMetadataFeature(repo, FakeFileStorage({}), extractor).process("t1", "d1")
+    DocMetadataFeature(repo, FakeFileStorage({}), lambda _t: extractor).process("t1", "d1")
     assert extractor.seen is None  # never called the model
     assert repo.get("t1", "d1").summary is None  # type: ignore[union-attr]

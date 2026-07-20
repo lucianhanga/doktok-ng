@@ -97,7 +97,7 @@ def _build(
     feature = RelationExtractFeature(
         docs,  # type: ignore[arg-type]
         FakeFileStorage(content),
-        FakeRelationExtractor(triples),
+        lambda _t: FakeRelationExtractor(triples),
         entity_repo,
         kg,
     )
@@ -315,7 +315,7 @@ def test_cross_document_edges() -> None:
     feature = RelationExtractFeature(
         docs,  # type: ignore[arg-type]
         FakeFileStorage(b"text"),
-        FakeRelationExtractor([triple]),
+        lambda _t: FakeRelationExtractor([triple]),
         entity_repo,
         kg,
     )
@@ -363,14 +363,14 @@ def test_tenant_isolation() -> None:
     feature_a = RelationExtractFeature(
         docs_a,  # type: ignore[arg-type]
         FakeFileStorage(b"text"),
-        FakeRelationExtractor([triple]),
+        lambda _t: FakeRelationExtractor([triple]),
         entity_repo_a,
         kg,
     )
     feature_b = RelationExtractFeature(
         docs_b,  # type: ignore[arg-type]
         FakeFileStorage(b"text"),
-        FakeRelationExtractor([triple]),
+        lambda _t: FakeRelationExtractor([triple]),
         entity_repo_b,
         kg,
     )

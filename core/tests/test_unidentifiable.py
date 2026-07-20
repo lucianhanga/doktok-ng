@@ -62,7 +62,7 @@ def test_doc_metadata_sets_the_unidentifiable_flag() -> None:
     repo = InMemoryDocumentRepository()
     repo.add(_doc())
     DocMetadataFeature(
-        repo, FakeFiles({"/store/d1/content.md": GARBAGE.encode()}), FakeExtractor()
+        repo, FakeFiles({"/store/d1/content.md": GARBAGE.encode()}), lambda _t: FakeExtractor()
     ).process("t1", "d1")
     assert repo.get("t1", "d1").unidentifiable is True  # type: ignore[union-attr]
 
@@ -78,7 +78,10 @@ def test_doc_classify_suppresses_and_clears_categories_for_unidentifiable() -> N
     categories.set_document_categories("t1", "d1", [inv.id])  # a spurious pre-existing category
 
     DocClassifyFeature(
-        repo, FakeFiles({"/store/d1/content.md": GARBAGE.encode()}), FakeClassifier(), categories
+        repo,
+        FakeFiles({"/store/d1/content.md": GARBAGE.encode()}),
+        lambda _t: FakeClassifier(),
+        categories,
     ).process("t1", "d1")
 
     # Flagged -> no categories assigned, and the pre-existing one is cleared.
@@ -90,6 +93,9 @@ def test_doc_classify_still_classifies_identifiable_docs() -> None:
     repo.add(_doc())  # unidentifiable is None
     categories = InMemoryCategoryRepository()
     DocClassifyFeature(
-        repo, FakeFiles({"/store/d1/content.md": PROSE.encode()}), FakeClassifier(), categories
+        repo,
+        FakeFiles({"/store/d1/content.md": PROSE.encode()}),
+        lambda _t: FakeClassifier(),
+        categories,
     ).process("t1", "d1")
     assert {c.name for c in categories.list_for_document("t1", "d1")} == {"Invoices", "Contracts"}

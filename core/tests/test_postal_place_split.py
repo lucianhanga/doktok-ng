@@ -99,7 +99,7 @@ def _run_ner(content: bytes, occurrences: list[ExtractedEntity]) -> InMemoryEnti
     docs.add(_doc())
     files = FakeFileStorage({"/store/d1/content.md": content})
     shared = InMemoryEntityRepository()
-    NerFeature(docs, files, FakeNer(occurrences), shared).process("t1", "d1")
+    NerFeature(docs, files, lambda _t: FakeNer(occurrences), shared).process("t1", "d1")
     return shared
 
 
@@ -231,7 +231,9 @@ def test_ner_rerun_is_idempotent_and_keeps_libpostal_postal_rows() -> None:
     files = FakeFileStorage({"/store/d1/content.md": b"80287 M\xc3\xbcnchen"})
     shared = InMemoryEntityRepository()
     shared.add_entities([_libpostal_row()])
-    feature = NerFeature(docs, files, FakeNer([_occ("80287 München", EntityType.GPE)]), shared)
+    feature = NerFeature(
+        docs, files, lambda _t: FakeNer([_occ("80287 München", EntityType.GPE)]), shared
+    )
     feature.process("t1", "d1")
     feature.process("t1", "d1")  # re-run: replaces its own postal rows, no duplicates
 
@@ -266,12 +268,12 @@ def test_pipeline_one_city_node_many_postal_nodes_and_edges() -> None:
     shared = InMemoryEntityRepository()
     kg = InMemoryKnowledgeGraphRepository()
     ner = FakeNer([_occ("80287 München", EntityType.GPE), _occ("80333 München", EntityType.GPE)])
-    NerFeature(docs, files, ner, shared).process("t1", "d1")
+    NerFeature(docs, files, lambda _t: ner, shared).process("t1", "d1")
     EntityGraphFeature(shared, kg).process("t1", "d1")
     RelationExtractFeature(
         docs,
         files,
-        FakeRelationExtractor(),
+        lambda _t: FakeRelationExtractor(),
         shared,
         kg,
     ).process("t1", "d1")
@@ -307,14 +309,14 @@ def test_relations_rerun_keeps_postal_edges_idempotent() -> None:
     files = FakeFileStorage({"/store/d1/content.md": b"80287 M\xc3\xbcnchen"})
     shared = InMemoryEntityRepository()
     kg = InMemoryKnowledgeGraphRepository()
-    NerFeature(docs, files, FakeNer([_occ("80287 München", EntityType.GPE)]), shared).process(
-        "t1", "d1"
-    )
+    NerFeature(
+        docs, files, lambda _t: FakeNer([_occ("80287 München", EntityType.GPE)]), shared
+    ).process("t1", "d1")
     EntityGraphFeature(shared, kg).process("t1", "d1")
     relations = RelationExtractFeature(
         docs,
         files,
-        FakeRelationExtractor(),
+        lambda _t: FakeRelationExtractor(),
         shared,
         kg,
     )
@@ -370,7 +372,7 @@ def test_model_claimed_has_postal_code_triple_is_dropped() -> None:
     RelationExtractFeature(
         docs,
         files,
-        FakeRelationExtractor([triple]),
+        lambda _t: FakeRelationExtractor([triple]),
         shared,
         kg,
     ).process("t1", "d1")

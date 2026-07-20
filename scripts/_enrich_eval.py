@@ -86,30 +86,23 @@ def main() -> int:
     )
 
     file_storage = LocalFileStorage()
-    metadata = DocMetadataFeature(
-        document_repo,
-        file_storage,
-        OllamaMetadataExtractor(
-            settings.default_model,
-            # JSON-repair reuses the same configured model (MoE-safe per the provider).
-            settings.default_model,
-            settings.ollama_base_url,
-            think=settings.enrich_think,
-        ),
+    metadata_extractor = OllamaMetadataExtractor(
+        settings.default_model,
+        # JSON-repair reuses the same configured model (MoE-safe per the provider).
+        settings.default_model,
+        settings.ollama_base_url,
+        think=settings.enrich_think,
     )
+    metadata = DocMetadataFeature(document_repo, file_storage, lambda _t: metadata_extractor)
     category_repo = PostgresCategoryRepository(db)
-    classify = DocClassifyFeature(
-        document_repo,
-        file_storage,
-        OllamaCategoryClassifier(
-            settings.default_model,
-            # JSON-repair reuses the same configured model (MoE-safe per the provider).
-            settings.default_model,
-            settings.ollama_base_url,
-            think=settings.enrich_think,
-        ),
-        category_repo,
+    classifier = OllamaCategoryClassifier(
+        settings.default_model,
+        # JSON-repair reuses the same configured model (MoE-safe per the provider).
+        settings.default_model,
+        settings.ollama_base_url,
+        think=settings.enrich_think,
     )
+    classify = DocClassifyFeature(document_repo, file_storage, lambda _t: classifier, category_repo)
 
     cases = [
         EnrichCase(**c) for c in json.loads((ROOT / "eval" / "golden_enrichment.json").read_text())

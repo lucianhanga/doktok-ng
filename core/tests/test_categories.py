@@ -53,7 +53,7 @@ def _run(labels: list[str], cats: InMemoryCategoryRepository, doc_id: str = "d1"
     docs = InMemoryDocumentRepository()
     docs.add(_doc(doc_id))
     files = FakeFileStorage(b"some document content")
-    DocClassifyFeature(docs, files, FakeClassifier(labels), cats).process("t1", doc_id)
+    DocClassifyFeature(docs, files, lambda _t: FakeClassifier(labels), cats).process("t1", doc_id)
     return [c.name for c in cats.list_for_document("t1", doc_id)]
 
 

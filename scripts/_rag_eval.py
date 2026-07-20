@@ -288,9 +288,11 @@ def _build_knowledge_graph(
             entity_repo,
             lexical_terms_limit=settings.lexical_terms_limit,  # type: ignore[attr-defined]
         ),
-        NerFeature(document_repo, file_storage, ner, entity_repo),
+        NerFeature(document_repo, file_storage, lambda _t: ner, entity_repo),
         EntityGraphFeature(entity_repo, kg_repo),
-        RelationExtractFeature(document_repo, file_storage, relation, entity_repo, kg_repo),
+        RelationExtractFeature(
+            document_repo, file_storage, lambda _t: relation, entity_repo, kg_repo
+        ),
     ]
     print(f"{YELLOW}Building the knowledge graph over {len(document_ids)} documents...{NC}")
     for document_id in document_ids:

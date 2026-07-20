@@ -43,7 +43,6 @@ from doktok_core.ingestion.pipeline import IngestionServices
 from doktok_core.knowledge_graph.alias import resolve_tenant_aliases
 from doktok_core.security.egress import (
     EgressBlocked,
-    effective_no_egress,
     openai_egress_allowed,
     purpose_requires_egress,
     url_requires_egress,
@@ -51,6 +50,7 @@ from doktok_core.security.egress import (
 from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_core.settings.bootstrap import seed_ai_settings
 from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
+from doktok_core.settings.effective import effective_ai_settings, effective_tenant_no_egress
 from doktok_core.visualizations.service import ProjectionRunner, ProjectionService
 from doktok_modalities_files import (
     DirectTextExtractor,
@@ -293,6 +293,26 @@ class _AiClients:
     description: str
 
 
+class TenantClientResolver[C]:
+    """Per-tenant enrichment client sets (epic #708, T2): builds + caches clients per tenant, so
+    every tenant's documents are enriched with THEIR model stack and gated by THEIR egress
+    posture. ``clear()`` forces a rebuild everywhere (the periodic settings reload)."""
+
+    def __init__(self, build: Callable[[str], C]) -> None:
+        self._build = build
+        self._cache: dict[str, C] = {}
+
+    def clients_for(self, tenant_id: str) -> C:
+        clients = self._cache.get(tenant_id)
+        if clients is None:
+            clients = self._build(tenant_id)
+            self._cache[tenant_id] = clients
+        return clients
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+
 def build_services(
     settings: Settings,
 ) -> tuple[
@@ -337,10 +357,15 @@ def build_services(
     seed_ai_settings(app_settings, settings)
     heartbeat = app_settings.set_worker_heartbeat  # liveness signal for the backend probe (APP-5)
     is_quiesced = app_settings.get_maintenance_mode  # quiesce gate read each loop (APP-C3)
-    pipeline = app_settings.get_ai_settings().pipeline
+    # Startup pipeline values for the concurrency heuristic + the warning below (the enrichment
+    # clients themselves are built per tenant in build_ai_clients, epic #708). Resolve for the
+    # first watched tenant; with none watched the heuristic is moot anyway.
+    pipeline = (
+        effective_ai_settings(app_settings, watched_tenants[0], settings).pipeline
+        if watched_tenants
+        else app_settings.get_ai_settings().pipeline
+    )
     # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
-    # (These startup values drive the reconciler concurrency + the warning below; the enrichment
-    # clients themselves are (re)built from the *current* settings in build_ai_clients, M13 #371.)
     openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
     # OCR parallelism comes from the Settings DB (live-reloaded by the worker), env is the fallback
     # default. This is the number of OCR worker processes directly - if more documents ingest at
@@ -350,11 +375,11 @@ def build_services(
     # OCR engine: the Settings DB value wins, env (DOKTOK_OCR_ENGINE) is the fallback (M17 #375).
     # An engine change applies on the next worker restart (the pool/extractor is built once here).
     ocr_engine = _ocr_settings.engine or settings.ocr_engine
-    # Effective no-egress posture at startup (the in-app toggle / env default / host lock). The
-    # live build_ai_clients re-resolves it per reconcile; this startup copy gates the one-time path
-    # selection below, so a toggle change to it applies on the next worker restart.
-    no_egress_startup = effective_no_egress(
-        app_settings.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
+    # Startup egress posture for the heuristic (the per-tenant sink is the actual gate).
+    no_egress_startup = (
+        effective_tenant_no_egress(app_settings, watched_tenants[0], settings)
+        if watched_tenants
+        else True
     )
     use_openai_pipeline = pipeline.provider == "openai" and openai_egress_allowed(
         key=openai_key, no_egress=no_egress_startup
@@ -458,22 +483,18 @@ def build_services(
     record_repo = PostgresRecordRepository(db)
 
     # The enrichment clients (embedding, judge, and the metadata/category/record/NER extractors) and
-    # the processors that wrap them are rebuilt from the *current* AI settings on demand (M13 #371),
-    # so a Settings change (model/provider/per-purpose Ollama URL) applies without a worker restart.
-    # ``signature`` captures every field that affects a client; ai_reload() rebuilds only on change.
-    def build_ai_clients() -> _AiClients:
-        ai = app_settings.get_ai_settings()
+    # the processors that wrap them are built PER TENANT from that tenant's effective model stack
+    # (epic #708, T2): tenant override -> console global -> env defaults. ``signature`` captures
+    # every field that affects a client; the resolver caches per (tenant, signature).
+    def build_ai_clients(tenant_id: str) -> _AiClients:
+        ai = effective_ai_settings(app_settings, tenant_id, settings)
         pl = ai.pipeline
         pl_url = pl.ollama_base_url or settings.ollama_base_url  # per-purpose override (M13 #369)
         emb_url = ai.embedding.ollama_base_url or settings.ollama_base_url
         key = app_settings.get_openai_api_key() or settings.openai_api_key
-        # Effective no-egress posture: the in-app toggle (Settings > AI), or the env default, or
-        # forced on by a host lock. Live-reloaded with the AI settings (it is in the signature).
-        no_egress = effective_no_egress(
-            app_settings.get_no_egress(),
-            env_default=settings.no_egress,
-            lock=settings.no_egress_lock,
-        )
+        # The tenant's egress posture: tenant stored -> global stored -> env default; the host
+        # lock keeps the global kill switch. One tenant's flag never affects another's.
+        no_egress = effective_tenant_no_egress(app_settings, tenant_id, settings)
         use_openai = pl.provider == "openai" and openai_egress_allowed(key=key, no_egress=no_egress)
         # Defense-in-depth (the PUT boundary already rejects these, but no_egress can be flipped on
         # AFTER a remote config was saved): if a purpose's destination is off-host while no-egress
@@ -648,9 +669,18 @@ def build_services(
             description=description,
         )
 
-    def build_processors(clients: _AiClients) -> list[FeatureProcessor]:
+    def build_processors(resolver: TenantClientResolver[_AiClients]) -> list[FeatureProcessor]:
+        # Embedding stays deployment-global (index dimension); every other LLM client resolves
+        # per document's tenant at process time (epic #708, T2).
+        embedding = resolver.clients_for(watched_tenants[0] if watched_tenants else "").embedding
         procs: list[FeatureProcessor] = [
-            ChunkEmbedFeature(document_repo, file_storage, chunker, clients.embedding, chunk_repo),
+            ChunkEmbedFeature(
+                document_repo,
+                file_storage,
+                chunker,
+                embedding,
+                chunk_repo,
+            ),
             EntitiesFeature(
                 document_repo,
                 file_storage,
@@ -659,24 +689,43 @@ def build_services(
                 entity_repo,
                 lexical_terms_limit=settings.lexical_terms_limit,
             ),
-            NerFeature(document_repo, file_storage, clients.ner, entity_repo),
+            NerFeature(
+                document_repo,
+                file_storage,
+                lambda tid: resolver.clients_for(tid).ner,
+                entity_repo,
+            ),
             EntityGraphFeature(entity_repo, knowledge_graph_repo),
             RelationExtractFeature(
                 document_repo,
                 file_storage,
-                clients.relation,
+                lambda tid: resolver.clients_for(tid).relation,
                 entity_repo,
                 knowledge_graph_repo,
             ),
-            DocMetadataFeature(document_repo, file_storage, clients.metadata),
-            DocClassifyFeature(document_repo, file_storage, clients.category, category_repo),
-            StructuredRecordsFeature(document_repo, file_storage, clients.record, record_repo),
+            DocMetadataFeature(
+                document_repo,
+                file_storage,
+                lambda tid: resolver.clients_for(tid).metadata,
+            ),
+            DocClassifyFeature(
+                document_repo,
+                file_storage,
+                lambda tid: resolver.clients_for(tid).category,
+                category_repo,
+            ),
+            StructuredRecordsFeature(
+                document_repo,
+                file_storage,
+                lambda tid: resolver.clients_for(tid).record,
+                record_repo,
+            ),
             ThumbnailFeature(document_repo, file_storage, thumbnailer),
         ]
 
         # Staged ingestion (ADR-0015): the `extract` stage runs OCR/extraction + activation in the
-        # reconciler. The judge model it uses is rebuilt here too, so it tracks AI settings.
-        def _extract(mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
+        # reconciler. Its judge follows the tenant's pipeline like the extractors above.
+        def _extract(tenant_id: str, mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
             return extract_document(
                 mime,
                 path,
@@ -688,7 +737,7 @@ def build_services(
                 classifier=pdf_classifier,
                 ocr_image_coverage=settings.ocr_image_coverage,
                 ocr_min_text_quality=settings.ocr_min_text_quality,
-                chat_model=clients.judge,
+                chat_model=resolver.clients_for(tenant_id).judge,
                 max_pages=settings.max_pages,
                 ocr_concurrency=ocr_concurrency,
                 ocr_dpi=settings.ocr_dpi,
@@ -701,15 +750,13 @@ def build_services(
             )
         return procs
 
-    ai_clients = build_ai_clients()
-    processors = build_processors(ai_clients)
-    ai_signature = ai_clients.signature
-    logger.info("pipeline extraction: %s", ai_clients.description)
+    resolver = TenantClientResolver(build_ai_clients)
+    processors = build_processors(resolver)
     stage_ledger = [(p.name, p.version) for p in processors]
 
     # Fan the reconciler wider when the pipeline is remote (OpenAI): its enrichment features are
     # network-bound and the API parallelizes well, whereas the local Ollama path thrashes a single
-    # GPU. (Concurrency is set at startup; a live provider switch keeps this value - see ai_reload.)
+    # GPU. (Concurrency is set at startup; a live provider switch keeps this value.)
     reconcile_concurrency = (
         settings.openai_reconcile_concurrency
         if use_openai_pipeline
@@ -727,20 +774,11 @@ def build_services(
         audit_log=audit_log,
     )
 
-    # Live AI-settings reload (M13 #371): between reconcile passes (no feature in flight), rebuild
-    # the enrichment clients if the AI settings changed, so model/provider/Ollama-URL edits apply
-    # without a worker restart. Cheap when unchanged (only a settings read + a signature compare).
+    # Settings reload: between reconcile passes (no feature in flight), drop the per-tenant client
+    # cache so the next pass rebuilds every client from the current settings (model/provider/URL
+    # edits and tenant overrides apply without a worker restart; a clear is nearly free).
     def ai_reload() -> None:
-        nonlocal ai_signature
-        clients = build_ai_clients()
-        if clients.signature != ai_signature:
-            reconciler.set_processors(build_processors(clients))
-            ai_signature = clients.signature
-            logger.info(
-                "AI settings changed; rebuilt enrichment clients live (no restart) - "
-                "pipeline extraction: %s",
-                clients.description,
-            )
+        resolver.clear()
 
     # KAG alias folding: a tenant-level, cross-document maintenance pass run by the worker after the
     # per-document features drain. It folds entity surface variants into one canonical node and is
@@ -794,10 +832,11 @@ def build_services(
             max_pages=settings.max_pages,
             ocr_concurrency=ocr_concurrency,
             ocr_dpi=settings.ocr_dpi,
-            chat_model=ai_clients.judge,
+            # Per-tenant model stack (epic #708, T2): this tenant's judge + embeddings.
+            chat_model=resolver.clients_for(tenant_id).judge,
             audit_log=audit_log,
             chunker=chunker,
-            embedding_provider=ai_clients.embedding,
+            embedding_provider=resolver.clients_for(tenant_id).embedding,
             chunk_repo=chunk_repo,
             entity_extractor=entity_extractor,
             entity_repo=entity_repo,

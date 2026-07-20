@@ -75,8 +75,9 @@ def _run(rows: list[ExtractedTransaction]) -> InMemoryRecordRepository:
     docs = InMemoryDocumentRepository()
     docs.add(_doc())
     records = InMemoryRecordRepository()
+    fake = FakeRecordExtractor(rows)
     feature = StructuredRecordsFeature(
-        docs, FakeFileStorage(b"statement text"), FakeRecordExtractor(rows), records
+        docs, FakeFileStorage(b"statement text"), lambda _t: fake, records
     )
     feature.process("t1", "d1")
     return records
@@ -105,7 +106,9 @@ def _run_extractor(
     docs = InMemoryDocumentRepository()
     docs.add(_doc())
     records = InMemoryRecordRepository()
-    feature = StructuredRecordsFeature(docs, FakeFileStorage(content), extractor, records)
+    feature = StructuredRecordsFeature(
+        docs, FakeFileStorage(content), lambda _t: extractor, records
+    )
     feature.process("t1", "d1")
     return records, feature
 

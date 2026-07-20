@@ -42,11 +42,11 @@ from doktok_contracts.schemas import TenantContext
 from doktok_core.security.auth import resolve_credential
 from doktok_core.security.egress import (
     EgressBlocked,
-    effective_no_egress,
     openai_egress_allowed,
     purpose_requires_egress,
 )
 from doktok_core.security.roles import Role, parse_role, role_at_least
+from doktok_core.settings.effective import effective_ai_settings, effective_tenant_no_egress
 from fastapi import Depends, Header, HTTPException, Request, status
 
 if TYPE_CHECKING:
@@ -334,18 +334,18 @@ def get_retriever(request: Request) -> Retriever:
 
 
 def _build_rag_chat_model(request: Request) -> ChatModelProvider:
-    """The chat model for the RAG/interrogation purpose (Settings tab > AI), built per its provider.
-    Shared by the RAG answerer and the chat aggregation router so both use the configured model."""
+    """The chat model for the RAG/interrogation purpose, built for the CALLER'S tenant (epic #708,
+    T2): tenant override -> console global -> env defaults. Shared by the RAG answerer and the chat
+    aggregation router so both use the tenant's configured model."""
     from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
 
     settings = request.app.state.settings
     app_settings = get_app_settings_repository(request)
-    rag = app_settings.get_ai_settings().rag
+    tenant = require_tenant(request, request.headers.get("authorization"))
+    rag = effective_ai_settings(app_settings, tenant.tenant_id, settings).rag
     # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
     openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
-    no_egress = effective_no_egress(
-        app_settings.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
-    )
+    no_egress = effective_tenant_no_egress(app_settings, tenant.tenant_id, settings)
     use_openai = openai_egress_allowed(key=openai_key, no_egress=no_egress)
     model_provider: ChatModelProvider
     # Defense-in-depth: if the RAG destination is off-host while no-egress is on (OpenAI, or a
@@ -395,9 +395,9 @@ def get_chat_model(request: Request) -> ChatModelProvider:
     registry = request.app.state.registry
     if registry.is_registered(ChatModelProvider):
         return cast(ChatModelProvider, registry.resolve(ChatModelProvider))
-    model = _build_rag_chat_model(request)
-    registry.register(ChatModelProvider, model)
-    return model
+    # No cross-request caching: the model is tenant-specific now (epic #708), so a cached build
+    # would leak one tenant's stack into another's. Building a provider wrapper is cheap.
+    return _build_rag_chat_model(request)
 
 
 def get_rag_answerer(request: Request) -> RagAnswerer:
@@ -409,14 +409,14 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
     from doktok_core.rag.reranker import LlmReranker
 
     settings = request.app.state.settings
-    # Effective RAG model selection (Settings tab > AI section), persisted; applied at startup.
+    # The caller's tenant-effective model stack (epic #708): tenant override -> console global ->
+    # env defaults, and the tenant's own egress posture.
     app_settings = get_app_settings_repository(request)
-    ai_settings = app_settings.get_ai_settings()
+    tenant = require_tenant(request, request.headers.get("authorization"))
+    ai_settings = effective_ai_settings(app_settings, tenant.tenant_id, settings)
     rag = ai_settings.rag
     openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
-    no_egress = effective_no_egress(
-        app_settings.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
-    )
+    no_egress = effective_tenant_no_egress(app_settings, tenant.tenant_id, settings)
     use_openai = openai_egress_allowed(key=openai_key, no_egress=no_egress)
     chat_model = _build_rag_chat_model(request)
     rerank_model: ChatModelProvider
@@ -471,7 +471,8 @@ def get_rag_answerer(request: Request) -> RagAnswerer:
         rerank_min_relevance=settings.rerank_min_relevance,
         graph_retriever=graph_retriever,
     )
-    registry.register(RagAnswerer, answerer)
+    # No registry cache: the answerer is tenant-specific (epic #708), so a cached build would leak
+    # one tenant's model into another tenant's chat. Provider wrappers are cheap to rebuild.
     return answerer
 
 
@@ -689,13 +690,12 @@ def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator 
 
     settings = request.app.state.settings
     app_settings = get_app_settings_repository(request)
-    ai = app_settings.get_ai_settings()
+    tenant = require_tenant(request, request.headers.get("authorization"))
+    ai = effective_ai_settings(app_settings, tenant.tenant_id, settings)
     pl = ai.pipeline
     pl_url: str = pl.ollama_base_url or settings.ollama_base_url
     openai_key: str = app_settings.get_openai_api_key() or settings.openai_api_key
-    no_egress = effective_no_egress(
-        app_settings.get_no_egress(), env_default=settings.no_egress, lock=settings.no_egress_lock
-    )
+    no_egress = effective_tenant_no_egress(app_settings, tenant.tenant_id, settings)
     pipeline_egress_blocked = no_egress and purpose_requires_egress(
         pl.provider, pl.ollama_base_url, default_url=settings.ollama_base_url
     )

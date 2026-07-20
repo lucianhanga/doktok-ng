@@ -22,7 +22,7 @@ from doktok_core.extraction.service import ExtractionResult
 from doktok_core.ingestion.layout import FilesystemLayout
 
 # (ExtractionResult, normalized_searchable_pdf | None) for a given (mime, source_path).
-ContentExtractor = Callable[[str, str], tuple[ExtractionResult, bytes | None]]
+ContentExtractor = Callable[[str, str, str], tuple[ExtractionResult, bytes | None]]
 
 _DETECTOR = "libmagic"  # records which MIME detector produced detected_mime (mirrors the pipeline)
 
@@ -55,7 +55,7 @@ class ExtractStage:
             raise ValueError(f"processing document {document_id} has no staged source path")
 
         layout = FilesystemLayout(self._files_root, tenant_id)
-        result, normalized_pdf = self._extract(document.detected_mime or "", str(source))
+        result, normalized_pdf = self._extract(tenant_id, document.detected_mime or "", str(source))
         language = detect_language(result.content_md)
         artifacts = write_document_artifacts(
             self._files,

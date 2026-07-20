@@ -87,7 +87,7 @@ def test_stores_named_entities_with_frequency() -> None:
         ]
     )
     shared = InMemoryEntityRepository()
-    NerFeature(repo, files, ner, shared).process("t1", "d1")
+    NerFeature(repo, files, lambda _t: ner, shared).process("t1", "d1")
 
     stored = {(e.entity_type, e.normalized_value): e for e in shared.list_for_document("t1", "d1")}
     assert (EntityType.PERSON, "angela merkel") in stored
@@ -112,7 +112,7 @@ def test_replaces_only_ner_types_leaving_rule_based_entities() -> None:
         ]
     )
     ner = FakeNer([_occ("Bob", EntityType.PERSON), _occ("IBM", EntityType.ORG)])
-    NerFeature(repo, files, ner, shared).process("t1", "d1")
+    NerFeature(repo, files, lambda _t: ner, shared).process("t1", "d1")
 
     by_type = {e.entity_type for e in shared.list_for_document("t1", "d1")}
     values = {(e.entity_type, e.normalized_value) for e in shared.list_for_document("t1", "d1")}
@@ -155,7 +155,7 @@ def test_job_titles_flow_into_document_entities_and_are_ner_owned() -> None:
             _occ("Senior  Software Engineer", EntityType.JOB_TITLE),  # ragged whitespace
         ]
     )
-    NerFeature(repo, files, ner, shared).process("t1", "d1")
+    NerFeature(repo, files, lambda _t: ner, shared).process("t1", "d1")
 
     values = {(e.entity_type, e.normalized_value) for e in shared.list_for_document("t1", "d1")}
     # multilingual titles stored, normalized via normalize_ner_name (casefold + collapse spaces)
@@ -173,7 +173,7 @@ def test_skips_when_no_content_but_clears_stale_ner() -> None:
     shared = InMemoryEntityRepository()
     shared.add_entities([_entity("d1", "Ghost", EntityType.PERSON)])
     ner = FakeNer([_occ("ShouldNotBeUsed", EntityType.PERSON)])
-    NerFeature(repo, FakeFileStorage({}), ner, shared).process("t1", "d1")
+    NerFeature(repo, FakeFileStorage({}), lambda _t: ner, shared).process("t1", "d1")
 
     assert ner.seen is None  # model never called on empty content
     assert shared.list_for_document("t1", "d1") == []  # stale NER cleared

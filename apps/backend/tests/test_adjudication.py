@@ -853,7 +853,7 @@ def test_adjudicator_uses_the_interactive_timeout(monkeypatch: pytest.MonkeyPatc
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
     settings = Settings(  # type: ignore[call-arg]
         env="test",
-        tenant_tokens={},
+        tenant_tokens={"tok-a": "tenant-a"},
         ollama_timeout_seconds=600,
         rag_timeout_seconds=123,
         _env_file=None,
@@ -864,7 +864,7 @@ def test_adjudicator_uses_the_interactive_timeout(monkeypatch: pytest.MonkeyPatc
     scope = {
         "type": "http",
         "app": app,
-        "headers": [],
+        "headers": [(b"authorization", b"Bearer tok-a")],
         "method": "GET",
         "path": "/",
         "query_string": b"",

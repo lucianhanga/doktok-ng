@@ -83,6 +83,7 @@ from doktok_contracts.schemas import (
     SortDir,
     StatsSummary,
     Tenant,
+    TenantAiSettings,
     TokenMatch,
     TokenResolution,
     TokenSuggestion,
@@ -255,6 +256,20 @@ class AppSettingsRepository(Protocol):
     def set_no_egress(self, value: bool) -> None: ...
     def get_ocr_settings(self) -> OcrSettings: ...
     def set_ocr_settings(self, settings: OcrSettings) -> None: ...
+
+    def get_tenant_ai_settings(self, tenant_id: str) -> TenantAiSettings | None:
+        """A tenant's PARTIAL model-stack override (epic #708), or None when the tenant has not
+        overridden anything (the global/env layers apply)."""
+        ...
+
+    def set_tenant_ai_settings(self, tenant_id: str, settings: TenantAiSettings) -> None:
+        """Write (replace) a tenant's partial model-stack override."""
+        ...
+
+    def delete_tenant_ai_settings(self, tenant_id: str) -> None:
+        """Remove a tenant's override entirely (reset to the global/env default layers)."""
+        ...
+
     def set_worker_heartbeat(self) -> None:
         """Stamp the worker liveness timestamp (APP-5). Called periodically by the worker so an
         external probe (the backend /ready) can detect a dead or stuck worker."""

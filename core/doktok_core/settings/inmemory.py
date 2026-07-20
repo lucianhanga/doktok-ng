@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from doktok_contracts.schemas import AiSettings, OcrSettings
+from doktok_contracts.schemas import AiSettings, OcrSettings, TenantAiSettings
 
 
 class InMemoryAppSettingsRepository:
@@ -14,6 +14,7 @@ class InMemoryAppSettingsRepository:
         self._ai = AiSettings()
         self._ai_set = False
         self._ocr = OcrSettings()
+        self._tenant_ai: dict[str, TenantAiSettings] = {}
         self._openai_key = ""
         self._no_egress: bool | None = None
         self._heartbeat: datetime | None = None
@@ -53,6 +54,16 @@ class InMemoryAppSettingsRepository:
 
     def set_ocr_settings(self, settings: OcrSettings) -> None:
         self._ocr = settings.model_copy(deep=True)
+
+    def get_tenant_ai_settings(self, tenant_id: str) -> TenantAiSettings | None:
+        override = self._tenant_ai.get(tenant_id)
+        return override.model_copy(deep=True) if override is not None else None
+
+    def set_tenant_ai_settings(self, tenant_id: str, settings: TenantAiSettings) -> None:
+        self._tenant_ai[tenant_id] = settings.model_copy(deep=True)
+
+    def delete_tenant_ai_settings(self, tenant_id: str) -> None:
+        self._tenant_ai.pop(tenant_id, None)
 
     def set_worker_heartbeat(self) -> None:
         self._heartbeat = datetime.now(UTC)

@@ -63,6 +63,7 @@ from doktok_contracts.schemas import (
     SortDir,
     StatsSummary,
     Tenant,
+    TenantAiSettings,
     TokenMatch,
     TokenResolution,
     TokenSuggestion,
@@ -2893,6 +2894,26 @@ class PostgresAppSettingsRepository:
 
     def set_ocr_settings(self, settings: OcrSettings) -> None:
         self._set("ocr_settings", settings.model_dump())
+
+    def get_tenant_ai_settings(self, tenant_id: str) -> TenantAiSettings | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT value FROM tenant_ai_settings WHERE tenant_id=%s", (tenant_id,)
+            ).fetchone()
+        return TenantAiSettings.model_validate(row["value"]) if row else None
+
+    def set_tenant_ai_settings(self, tenant_id: str, settings: TenantAiSettings) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO tenant_ai_settings (tenant_id, value) VALUES (%s, %s) "
+                "ON CONFLICT (tenant_id) DO UPDATE SET value=EXCLUDED.value, updated_at=now()",
+                (tenant_id, Json(settings.model_dump(mode="json"))),
+            )
+
+    def delete_tenant_ai_settings(self, tenant_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute("DELETE FROM tenant_ai_settings WHERE tenant_id=%s", (tenant_id,))
 
     def set_worker_heartbeat(self) -> None:
         self._set("worker_heartbeat", datetime.now(UTC).isoformat())

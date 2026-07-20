@@ -1449,6 +1449,20 @@ class AiSettings(BaseModel):
     embedding: AiEmbeddingSettings = Field(default_factory=AiEmbeddingSettings)
 
 
+class TenantAiSettings(BaseModel):
+    """A tenant's PARTIAL model-stack override (epic #708): any purpose set here wins over the
+    global saved settings, which win over the env defaults; unset purposes fall through to the
+    layers below. ``no_egress`` is tri-state (None = inherit). Embedding and OCR are not
+    tenant-overridable (index dimension / host worker pool)."""
+
+    pipeline: AiPurposeSettings | None = None
+    ner: AiPurposeSettings | None = None
+    keg: AiPurposeSettings | None = None
+    rerank: AiPurposeSettings | None = None
+    rag: AiPurposeSettings | None = None
+    no_egress: bool | None = None
+
+
 class OcrSettings(BaseModel):
     """OCR processing settings (Settings tab > OCR, M7.6 / M17 #375).
 

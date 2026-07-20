@@ -59,12 +59,30 @@ Quick health check once the backend is up:
 curl http://localhost:8000/health
 ```
 
+### Reaching the dev stack from other LAN devices
+
+By default both dev servers bind loopback only. To open them to the local network (e.g. to try the
+UI from a phone or another machine on the same network):
+
+1. Set `DOKTOK_BIND_HOST=0.0.0.0` in `.env` and restart the backend (or pass it as a make variable:
+   `make run-backend DOKTOK_BIND_HOST=0.0.0.0`; an env-prefix like `DOKTOK_BIND_HOST=0.0.0.0 make
+   run-backend` does NOT work because the Makefile includes `.env`, and file values beat environment
+   values in make). The vite dev server already listens on all interfaces (`server.host: "0.0.0.0"`
+   in `apps/ui/vite.config.ts`); only the backend needs the opt-in.
+2. From the other device, open `http://<host-ip>:5174` (get the host IP with
+   `ipconfig getifaddr en0` on macOS). The UI talks to the API same-origin through the dev proxy,
+   so no CORS or extra backend config is needed.
+
+Every API endpoint still requires a bearer token, so exposing the port does not open the data. Both
+surfaces are dev-only (uvicorn `--reload` server and the vite dev server) - do not use this setup as
+a production deployment.
+
 ### What each command does
 
 | Command | Process | Notes |
 |---|---|---|
 | `make db` | `docker compose up -d` (containers `doktok-db`, `doktok-gotenberg`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5433`, so another local Postgres keeps `5432`); Gotenberg (office -> PDF) on `DOKTOK_GOTENBERG_PORT` (default `3000`). |
-| `make run-backend` | `uvicorn doktok_api.main:app --reload --port 8000` | Foreground. Runs the backend model-stack preflight first (see below), then serves `/api/v1` (token-protected) and public `/health`. |
+| `make run-backend` | `uvicorn doktok_api.main:app --reload --port 8000 --host ${DOKTOK_BIND_HOST:-127.0.0.1}` | Foreground. Runs the backend model-stack preflight first (see below), then serves `/api/v1` (token-protected) and public `/health`. Binds loopback unless `DOKTOK_BIND_HOST` says otherwise (see the LAN note above). |
 | `make run-worker` | `uv run doktok-worker` | Foreground. Runs the worker model-stack preflight first (see below), then watches each tenant's `ingest/` folder and runs the pipeline. |
 | `make run-ui` | `pnpm --filter @doktok/ui dev` | Foreground. Vite dev server; the dev proxy injects the bearer token. |
 

@@ -47,8 +47,8 @@ preflight-backend: ## Provision all local model-stack resources the backend may 
 preflight-worker: ## Provision all local model-stack resources the worker may select (idempotent; DOKTOK_SKIP_PREFLIGHT=1 to skip)
 	@bash scripts/preflight.sh worker
 
-run-backend: preflight-backend ## Run the FastAPI backend locally (preflight provisions models first; DOKTOK_SKIP_PREFLIGHT=1 to skip)
-	uv run uvicorn doktok_api.main:app --reload --port 8000
+run-backend: preflight-backend ## Run the FastAPI backend locally (preflight provisions models first; DOKTOK_SKIP_PREFLIGHT=1 to skip; DOKTOK_BIND_HOST=0.0.0.0 exposes it to the LAN)
+	uv run uvicorn doktok_api.main:app --reload --port 8000 --host $${DOKTOK_BIND_HOST:-127.0.0.1}
 
 run-worker: preflight-worker ## Run the ingestion worker (preflight provisions models first; watches each tenant's ingest folder)
 	uv run doktok-worker

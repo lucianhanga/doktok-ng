@@ -220,6 +220,10 @@ def _response(
     status = _purpose_statuses(
         ai, no_egress=no_egress, default_url=settings.ollama_base_url, key_set=key_set
     )
+    env_defaults = env_default_ai_settings(settings)
+    # The tenant's default layer (#721): console-global saved settings over env, WITHOUT the
+    # tenant's override - the per-purpose "Use default" target.
+    tenant_defaults = (repo.get_ai_settings() if repo.has_ai_settings() else None) or env_defaults
     return AiSettingsResponse(
         **ai.model_dump(),
         openai_api_key_set=bool(repo.get_openai_api_key()),
@@ -231,7 +235,8 @@ def _response(
         no_egress_locked=locked,
         purpose_status=status,
         # The "original system values" for the Model stack defaults card (#696).
-        defaults=env_default_ai_settings(settings),
+        defaults=env_defaults,
+        tenant_defaults=tenant_defaults,
         # The tenant's own override layer (None when nothing is overridden).
         override=repo.get_tenant_ai_settings(tenant.tenant_id),
         egress_active=any(s.requires_egress and s.usable for s in status.values()),

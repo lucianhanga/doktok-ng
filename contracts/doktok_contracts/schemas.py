@@ -1542,6 +1542,10 @@ class AiSettingsResponse(AiSettings):
     # would start from (schema defaults + env-requested providers). The Model stack defaults card
     # shows these; they never change with saved settings.
     defaults: AiSettings = Field(default_factory=AiSettings)
+    # The tenant's DEFAULT layer (#721): console-global saved settings over the env defaults -
+    # what applies to this tenant when no purpose is overridden; the per-purpose "Use default"
+    # target. Distinct from ``defaults`` (the env "original system values").
+    tenant_defaults: AiSettings = Field(default_factory=AiSettings)
     # The caller's own tenant override (epic #708): the partial layer the tenant admin edits.
     # None when the tenant has not overridden anything (effective = global/env layers).
     override: TenantAiSettings | None = None

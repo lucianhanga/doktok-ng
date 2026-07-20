@@ -9,7 +9,14 @@ from pathlib import Path
 import pytest
 from doktok_api.main import create_app
 from doktok_contracts.ports import AppSettingsRepository, AuditLogRepository, TenantRegistry
-from doktok_contracts.schemas import AuditEventType, Tenant, TenantAiSettings, User
+from doktok_contracts.schemas import (
+    AiPurposeSettings,
+    AiSettings,
+    AuditEventType,
+    Tenant,
+    TenantAiSettings,
+    User,
+)
 from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.config import Settings
 from doktok_core.registry import build_registry
@@ -84,6 +91,8 @@ def test_get_returns_effective_defaults_and_override(tmp_path: Path) -> None:
     assert body["override"]["rag"] is None  # partial: unset purposes stay unset
     assert body["defaults"]["pipeline"]["provider"] == "ollama"  # env defaults block
     assert body["no_egress"] is True  # default posture
+    # No console-global saved settings here: the tenant's default layer IS the env defaults.
+    assert body["tenant_defaults"]["pipeline"]["provider"] == "ollama"
 
 
 def test_put_requires_admin_role(tmp_path: Path) -> None:
@@ -128,6 +137,27 @@ def test_delete_resets_to_the_default_layers(tmp_path: Path) -> None:
     assert body["override"] is None
     assert body["pipeline"]["model"] != "tenant-model"
     assert body["no_egress"] is True  # back to the default posture
+
+
+def test_tenant_defaults_is_the_layer_below_the_override(tmp_path: Path) -> None:
+    """#721: the picker's \"Use default\" target is the tenant's default layer - console-global
+    saved settings over env defaults, WITHOUT the tenant's own override."""
+    client, app_settings = _client(tmp_path)
+    app_settings.set_ai_settings(
+        AiSettings(
+            pipeline=AiPurposeSettings(provider="ollama", model="global-model", num_ctx=8192)
+        )
+    )
+    client.put(
+        "/api/v1/settings/ai/override",
+        json={"pipeline": PURPOSE, "ner": PURPOSE},
+        headers=ADMIN,
+    )
+    body = client.get("/api/v1/settings/ai", headers=ADMIN).json()
+    assert body["pipeline"]["model"] == "tenant-model"  # effective = the tenant's override
+    assert body["tenant_defaults"]["pipeline"]["model"] == "global-model"  # the layer below
+    # An untouched purpose: the global layer shows through both.
+    assert body["tenant_defaults"]["rag"]["provider"] == body["rag"]["provider"]
 
 
 # --- per-tenant OpenAI API key (#719) ---

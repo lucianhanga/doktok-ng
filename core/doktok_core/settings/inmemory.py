@@ -23,6 +23,8 @@ class InMemoryAppSettingsRepository:
         # strings) exactly as the host appends them, so the in-memory reader exercises the same
         # parse/chain logic as the file-backed Postgres reader. None = no history source available.
         self.backup_history_lines: list[str] | None = None
+        # F-41 (#653): the anchored history head (mirrors the Postgres app_settings KV anchor).
+        self.history_anchor: dict[str, object] | None = None
 
     def get_ai_settings(self) -> AiSettings:
         return self._ai.model_copy(deep=True)
@@ -88,6 +90,14 @@ class InMemoryAppSettingsRepository:
             if claimed != actual:
                 integrity_ok = False
                 break
+        # F-41 (#653): the sha chain covers only this window - the anchored head catches a fully
+        # rewritten file (head inevitably changes) and a silently deleted tail (head regresses).
+        from doktok_core.backup.history_anchor import anchor_check
+
+        anchor_ok, new_anchor = anchor_check(lines, self.history_anchor)
+        if anchor_ok and integrity_ok:
+            self.history_anchor = new_anchor
+        integrity_ok = integrity_ok and anchor_ok
         events: list[dict[str, object]] = []
         for ln in lines:
             try:

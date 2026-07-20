@@ -689,6 +689,19 @@ export interface AiSettings {
   // Read-only (#696): the "original system values" (schema defaults + env-requested providers) -
   // what the Model stack defaults card shows. Optional for pre-upgrade backends.
   defaults?: AiSettings;
+  // The tenant's own override layer (epic #708); null when nothing is overridden.
+  override?: TenantAiSettings | null;
+}
+
+/** A tenant's PARTIAL model-stack override (epic #708): purposes set here win over the
+ * console/env layers; null = inherit. no_egress is tri-state (null = inherit). */
+export interface TenantAiSettings {
+  pipeline?: AiPurposeSettings | null;
+  ner?: AiPurposeSettings | null;
+  keg?: AiPurposeSettings | null;
+  rerank?: AiPurposeSettings | null;
+  rag?: AiPurposeSettings | null;
+  no_egress?: boolean | null;
 }
 
 /** Body for PUT /settings/ai. Each field is optional: omit to leave it unchanged. `no_egress` sets
@@ -724,6 +737,17 @@ export interface ModelCatalog {
 
 export function fetchAiSettings(signal?: AbortSignal): Promise<AiSettings> {
   return getJson<AiSettings>("/api/v1/settings/ai", signal);
+}
+
+/** Write the caller's tenant model-stack override (epic #708): per-purpose partial; validated
+ * against the tenant's resulting egress posture (422 egress_not_permitted / no_egress_locked). */
+export function putTenantAiOverride(body: TenantAiSettings): Promise<AiSettings> {
+  return sendJson<AiSettings>("/api/v1/settings/ai/override", "PUT", body);
+}
+
+/** Reset the tenant to the console/env default layers (epic #708). */
+export function deleteTenantAiOverride(): Promise<AiSettings> {
+  return sendJson<AiSettings>("/api/v1/settings/ai/override", "DELETE");
 }
 
 export function fetchModelCatalog(signal?: AbortSignal): Promise<ModelCatalog> {

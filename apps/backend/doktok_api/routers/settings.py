@@ -51,6 +51,8 @@ from doktok_contracts.schemas import (
     RestorePreview,
     RestoreResult,
     RestoreStatus,
+    TenantAiSettings,
+    TenantContext,
 )
 from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.backup.export import ExportPaths
@@ -61,6 +63,7 @@ from doktok_core.security.egress import (
 )
 from doktok_core.settings.bootstrap import env_default_ai_settings
 from doktok_core.settings.catalog import MODEL_CATALOG
+from doktok_core.settings.effective import effective_ai_settings, effective_tenant_no_egress
 from doktok_core.settings.ocr_recommend import recommend_ocr
 from doktok_core.settings.runtime import local_ollama_needed
 from fastapi import (
@@ -80,6 +83,7 @@ from pydantic import BaseModel
 from pydantic import Field as PydField
 
 from doktok_api.dependencies import (
+    AdminUser,
     PlatformAdmin,
     Tenant,
     get_app_settings_repository,
@@ -195,9 +199,16 @@ def _refuse_egress_probe(repo: AppSettingsRepository, settings: Any, *, remote: 
         )
 
 
-def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> AiSettingsResponse:
+def _response(
+    repo: AppSettingsRepository, tenant: TenantContext, request: Request
+) -> AiSettingsResponse:
+    """The tenant-effective AI settings response (epic #708, T3): the caller's tenant's resolved
+    stack (override -> console global -> env), the env defaults block, the tenant's own override,
+    and the tenant's egress posture."""
     settings = request.app.state.settings
-    no_egress, locked = _resolve_no_egress(repo, settings)
+    ai = effective_ai_settings(repo, tenant.tenant_id, settings)
+    no_egress = effective_tenant_no_egress(repo, tenant.tenant_id, settings)
+    locked = bool(settings.no_egress_lock)
     key_set = bool(repo.get_openai_api_key() or settings.openai_api_key)
     status = _purpose_statuses(
         ai, no_egress=no_egress, default_url=settings.ollama_base_url, key_set=key_set
@@ -213,6 +224,8 @@ def _response(repo: AppSettingsRepository, ai: AiSettings, request: Request) -> 
         purpose_status=status,
         # The "original system values" for the Model stack defaults card (#696).
         defaults=env_default_ai_settings(settings),
+        # The tenant's own override layer (None when nothing is overridden).
+        override=repo.get_tenant_ai_settings(tenant.tenant_id),
         egress_active=any(s.requires_egress and s.usable for s in status.values()),
     )
 
@@ -240,9 +253,9 @@ def ai_model_catalog(request: Request, tenant: Tenant, repo: Repo) -> ModelCatal
 
 @router.get("/ai", response_model=AiSettingsResponse)
 def get_ai_settings(request: Request, tenant: Tenant, repo: Repo) -> AiSettingsResponse:
-    """Current AI model selection (the OpenAI key is never returned, only whether it is set)."""
-    _ = tenant
-    return _response(repo, repo.get_ai_settings(), request)
+    """The caller's tenant-effective AI model selection + env defaults + the tenant's own
+    override (epic #708). The OpenAI key is never returned, only whether it is set."""
+    return _response(repo, tenant, request)
 
 
 @router.get("/ollama-status", response_model=OllamaStatus)
@@ -356,7 +369,7 @@ def put_ai_settings(
         description=summary,
         details={"setting": "ai"},
     )
-    response = _response(repo, ai, request)
+    response = _response(repo, tenant, request)
     # Audit the security-significant opt-in: egress went off->on (content now leaves the host).
     if response.egress_active and not prior_active:
         leaving = [p for p, s in response.purpose_status.items() if s.requires_egress and s.usable]
@@ -371,6 +384,91 @@ def put_ai_settings(
             details={"purposes": sorted(leaving)},
         )
     return response
+
+
+_OVERRIDE_PURPOSES = ("pipeline", "rag", "ner", "keg", "rerank")
+
+
+@router.put("/ai/override", response_model=AiSettingsResponse)
+def put_tenant_ai_override(
+    update: TenantAiSettings, request: Request, tenant: AdminUser, repo: Repo, audit: Audit
+) -> AiSettingsResponse:
+    """Write the caller's TENANT model-stack override (epic #708, T3): a per-purpose partial -
+    unset purposes fall through to the console/env layers. Validated against the tenant's
+    RESULTING egress posture; the host lock forbids turning no-egress off here."""
+    settings = request.app.state.settings
+    if settings.no_egress_lock and update.no_egress is False:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "no_egress_locked",
+                "message": "No-egress is enforced by the host (DOKTOK_NO_EGRESS_LOCK).",
+            },
+        )
+    for purpose in _OVERRIDE_PURPOSES:
+        candidate = getattr(update, purpose)
+        if candidate is not None:
+            _validate_ollama_url(candidate.ollama_base_url, f"{purpose}.ollama_base_url")
+    # Validate the RESULTING stack against the tenant's RESULTING posture (the sinks re-check at
+    # runtime; this is the same boundary shape the console's global PUT uses).
+    current = effective_ai_settings(repo, tenant.tenant_id, settings)
+    merged = AiSettings(
+        pipeline=update.pipeline or current.pipeline,
+        rag=update.rag or current.rag,
+        ner=update.ner or current.ner,
+        keg=update.keg or current.keg,
+        rerank=update.rerank or current.rerank,
+        embedding=current.embedding,
+    )
+    new_posture = (
+        update.no_egress
+        if update.no_egress is not None
+        else effective_tenant_no_egress(repo, tenant.tenant_id, settings)
+    )
+    violations = _egress_violations(
+        merged, no_egress=new_posture, default_url=settings.ollama_base_url
+    )
+    if violations:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "egress_not_permitted",
+                "message": (
+                    "No-egress is on for your tenant; these selections would send document "
+                    "content off-host. Turn no-egress off to allow remote models."
+                ),
+                "violations": violations,
+            },
+        )
+    repo.set_tenant_ai_settings(tenant.tenant_id, update)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.SETTINGS_CHANGED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        description="Tenant AI override saved",
+        details={"setting": "tenant_ai_override"},
+    )
+    return _response(repo, tenant, request)
+
+
+@router.delete("/ai/override", response_model=AiSettingsResponse)
+def delete_tenant_ai_override(
+    request: Request, tenant: AdminUser, repo: Repo, audit: Audit
+) -> AiSettingsResponse:
+    """Reset the tenant to the console/env default layers (epic #708)."""
+    repo.delete_tenant_ai_settings(tenant.tenant_id)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.SETTINGS_CHANGED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        description="Tenant AI override removed (back to defaults)",
+        details={"setting": "tenant_ai_override"},
+    )
+    return _response(repo, tenant, request)
 
 
 def _probe_ollama(url: str) -> tuple[bool, str, list[str]]:

@@ -1678,6 +1678,13 @@ tr.row-selected {
   opacity: 0.45;
   cursor: default;
 }
+/* Tenant model-stack override save bar (epic #708): actions under the two cards. */
+.settings-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
 /* Pre-save Ollama reachability test (M13). */
 .settings-test {
   background: none;

@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     # Allowed CORS origins (APP-10). Loopback dev origins by default; set to your UI origin(s) for a
     # deployed UI served from another host. JSON list in env, e.g. '["https://docs.example.com"]'.
     cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+        default_factory=lambda: ["http://localhost:5174", "http://127.0.0.1:5174"]
     )
     # Reject request bodies over this many MB with 413 (APP-10). Also the PER-FILE upload cap: a
     # single uploaded file over this is rejected on its own.

@@ -49,7 +49,7 @@ make run-backend
 # 5. Terminal B - ingestion worker (auto-resumes; see below)
 make run-worker
 
-# 6. Terminal C - UI dev server (http://localhost:5173)
+# 6. Terminal C - UI dev server (http://localhost:5174)
 make run-ui
 ```
 
@@ -275,7 +275,7 @@ everything works exactly as before:
    (min 12 chars, reproducible logins) or are generated and printed **once** - save them.
    `make seed-dev ARGS=--reset` rotates the passwords.
 
-3. `make run-ui`, open http://localhost:5173 - the SPA sees login enabled (`GET /auth/config`) and
+3. `make run-ui`, open http://localhost:5174 - the SPA sees login enabled (`GET /auth/config`) and
    shows the login screen. Sign in with tenant `dev` and one of the emails above. A signed-in bar
    shows your identity and role. Try the viewer (read-only: content writes are 403, no Admin tab
    access), the editor (can ingest/edit, still no admin), then the admin. Log out (or close the

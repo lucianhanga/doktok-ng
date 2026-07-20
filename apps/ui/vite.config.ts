@@ -28,7 +28,10 @@ const backend: ProxyOptions = {
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    // Dev UI always on 5174 (5173 stays free for other projects; strict so it fails loudly
+    // rather than silently drifting to a random port).
+    port: 5174,
+    strictPort: true,
     // Proxy backend calls to the FastAPI server during local development.
     proxy: {
       "/health": backend,

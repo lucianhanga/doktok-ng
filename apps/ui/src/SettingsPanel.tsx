@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { InfoHint } from "./InfoHint";
 import {
+  deleteTenantAiOverride,
   fetchAiSettings,
   fetchDrpHistory,
   fetchDrpStatus,
@@ -9,14 +10,15 @@ import {
   fetchOcrRecommendation,
   fetchOcrSettings,
   formatDuration,
+  putTenantAiOverride,
   testOllamaUrl,
   testOpenAiKey,
   warmupOllama,
-  OCR_ENGINES,
   type AiPurposeSettings,
   type AiSettings,
   type EgressViolation,
   type PurposeEgressStatus,
+  type TenantAiSettings,
   type BackupEvent,
   type BackupLegStatus,
   type DrpHistoryResponse,
@@ -595,7 +597,7 @@ function PurposeEditor({
   description: string;
   options: ModelOption[];
   value: AiPurposeSettings;
-  // The server default for this purpose; selecting "Use server default" resets to it.
+  // The default this purpose falls back to (the tenant-effective value); "Use default" resets to it.
   defaultValue?: AiPurposeSettings;
   // Result of the one-shot health probe for this purpose (tick/cross next to the title).
   health?: PurposeHealth;
@@ -647,7 +649,7 @@ function PurposeEditor({
               onChange({ ...value, provider, model, num_ctx });
             }}
           >
-            {defaultValue && <option value={USE_DEFAULT}>Use server default</option>}
+            {defaultValue && <option value={USE_DEFAULT}>Use default</option>}
             {options.map((o) => {
               // A remote option under no-egress is disabled in place (greyed), not hidden, and the
               // reason rides in the visible text + title so it never depends on colour/state alone.
@@ -692,7 +694,7 @@ function PurposeEditor({
               })
             }
           >
-            {defaultValue && <option value={USE_DEFAULT}>Use server default</option>}
+            {defaultValue && <option value={USE_DEFAULT}>Use default</option>}
             {reasoningLevels.map((r) => (
               <option key={r} value={r}>
                 {r}
@@ -725,12 +727,11 @@ function PurposeEditor({
 }
 
 export function SettingsPanel() {
-  // Model stack and DRP are READ-ONLY here (#700): writes happen on the host console (scripts /
-  // the static host token); the UI shows current values, system defaults, and health.
+  // The tenant card edits the TENANT override (epic #708); the console owns the default layers
+  // (Server defaults card, read-only) and the global stack + OCR (console-only).
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
-  // Snapshot of the loaded settings = the server defaults (until the backend exposes per-tenant
-  // overrides separately). Drives the read-only card and the "Use server default" picker entry.
+  // Env-resolved "original system values" for the read-only Server defaults card (#696).
   const [serverDefaults, setServerDefaults] = useState<AiSettings | null>(null);
   const [ocr, setOcr] = useState<OcrSettings | null>(null);
   // Snapshot of the loaded OCR settings = the server default shown in the read-only card.
@@ -738,6 +739,12 @@ export function SettingsPanel() {
   const [ocrRec, setOcrRec] = useState<OcrRecommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"settings" | "models" | "drp">("settings");
+  // Editable draft of the tenant's stack: pickers mutate it; Save diffs it against the
+  // tenant-effective settings and writes only genuine overrides (epic #708).
+  const [draft, setDraft] = useState<AiSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
   // One-shot per-purpose health probe shown on the Model stack tab (cached for a minute).
   const [health, setHealth] = useState<Record<string, PurposeHealth> | null>(
     modelHealthCache?.results ?? null,
@@ -754,8 +761,7 @@ export function SettingsPanel() {
       .then(([cat, s, o]) => {
         setCatalog(cat);
         setAi(s);
-        // The Model stack defaults card shows the "original system values" (#696): the
-        // env-resolved defaults, never the saved settings (fall back for older backends).
+        setDraft(s);
         setServerDefaults(s.defaults ?? s);
         setOcr(o);
         setServerDefaultsOcr(o.defaults ?? o);
@@ -820,9 +826,9 @@ export function SettingsPanel() {
     };
   }, [tab, ai]);
 
-  // The active no-egress policy greys out remote options in the (read-only) model pickers and
-  // drives the privacy indicator; falls back to the catalog mirror for a pre-upgrade payload.
-  const noEgress = ai?.no_egress ?? catalog?.no_egress ?? false;
+  // The active no-egress policy greys out remote options in the model pickers and drives the
+  // privacy indicator; the DRAFT's value (edited in place) is what Save writes as the override.
+  const noEgress = draft?.no_egress ?? ai?.no_egress ?? catalog?.no_egress ?? false;
 
   const paneTitle =
     tab === "models"
@@ -830,6 +836,56 @@ export function SettingsPanel() {
       : tab === "drp"
         ? "DRP"
         : "Settings";
+
+  const _samePurpose = (a: AiPurposeSettings, b: AiPurposeSettings) =>
+    a.provider === b.provider &&
+    a.model === b.model &&
+    a.num_ctx === b.num_ctx &&
+    a.reasoning === b.reasoning &&
+    (a.ollama_base_url ?? null) === (b.ollama_base_url ?? null);
+
+  // Save the tenant override: send ONLY purposes that genuinely differ from the tenant-effective
+  // stack (a purpose equal to the effective value means "no override", epic #708). no_egress
+  // goes explicitly (the toggle IS the tenant's posture choice).
+  async function saveOverride() {
+    if (!ai || !draft) return;
+    setSaving(true);
+    setSaveError(null);
+    setNotice("");
+    const body: TenantAiSettings = { no_egress: draft.no_egress };
+    for (const p of ["pipeline", "rag", "ner", "keg", "rerank"] as const) {
+      body[p] = _samePurpose(draft[p], ai[p]) ? null : draft[p];
+    }
+    try {
+      const saved = await putTenantAiOverride(body);
+      setAi(saved);
+      setDraft(saved);
+      setServerDefaults(saved.defaults ?? saved);
+      setNotice("Saved for your tenant.");
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "could not save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Reset to the console/env default layers: the whole override goes.
+  async function resetOverride() {
+    setSaving(true);
+    setSaveError(null);
+    setNotice("");
+    try {
+      const saved = await deleteTenantAiOverride();
+      setAi(saved);
+      setDraft(saved);
+      setServerDefaults(saved.defaults ?? saved);
+      setNotice("Back to the deployment defaults.");
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "could not reset");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <section className="panel settings-page" aria-label="Settings">
@@ -888,42 +944,48 @@ export function SettingsPanel() {
         ))}
 
       {tab === "models" &&
-        (!catalog || !ai || !ocr ? (
+        (!catalog || !ai || !ocr || !draft ? (
           <p role="status">Loading settings…</p>
         ) : (
           <div className="settings-section settings-section--wide">
-            {/* Host data-egress posture spans both cards; it gates every model picker below. */}
-            {ai.no_egress !== undefined && (
-              <fieldset className="settings-fieldset" disabled>
+            {/* Tenant data-egress posture spans both cards; it gates every model picker below.
+                The host lock forces it on and disables the toggle. */}
+            {draft.no_egress !== undefined && (
+              <fieldset className="settings-fieldset">
               <div className="egress-control model-stack-egress">
                 <p
                   role="status"
                   className={`egress-posture ${
-                    ai.no_egress ? "egress-posture-secure" : "egress-posture-open"
+                    draft.no_egress ? "egress-posture-secure" : "egress-posture-open"
                   }`}
                 >
-                  {ai.no_egress ? "Data stays on this host" : "Remote models permitted"}
+                  {draft.no_egress ? "Data stays on this host" : "Remote models permitted"}
                   <InfoHint label="Data-egress posture">
-                    Controls whether this host may use <strong>remote</strong> AI providers. When{" "}
-                    <strong>on</strong> (no-egress), every stage must use a <strong>local</strong>{" "}
-                    model and no document text leaves this machine. When <strong>off</strong>,
-                    stages set to remote providers (e.g. OpenAI) may{" "}
-                    <strong>send document text off this host</strong>.
+                    Controls whether <strong>your tenant</strong> may use <strong>remote</strong> AI
+                    providers. When <strong>on</strong> (no-egress), every stage must use a{" "}
+                    <strong>local</strong> model and no document text leaves this machine. When{" "}
+                    <strong>off</strong>, stages set to remote providers (e.g. OpenAI) may{" "}
+                    <strong>send document text off this host</strong>. Applies on Save.
                   </InfoHint>
                 </p>
                 <label className="egress-toggle">
                   <input
                     type="checkbox"
                     role="switch"
-                    checked={ai.no_egress}
-                    disabled
-                    title="Changed on the host console"
+                    checked={draft.no_egress}
+                    disabled={ai.no_egress_locked}
+                    onChange={(e) => setDraft({ ...draft, no_egress: e.target.checked })}
+                    title={
+                      ai.no_egress_locked
+                        ? "Enforced by the host (DOKTOK_NO_EGRESS_LOCK)"
+                        : "Your tenant's posture; applies on Save"
+                    }
                   />{" "}
                   <span>Keep data on this host (no-egress)</span>
                 </label>
                 <span className="muted egress-lock-note">
-                  Changed on the host console (scripts / the static host token).
-                  {ai.no_egress_locked ? " Enforced by the host." : ""}
+                  Applies to your tenant on Save.
+                  {ai.no_egress_locked ? " Enforced by the host; you cannot turn it off." : ""}
                 </span>
               </div>
               </fieldset>
@@ -1090,66 +1152,69 @@ export function SettingsPanel() {
                   </div>
                 </div>
               </div>
-              <fieldset className="settings-fieldset" disabled>
+              <fieldset className="settings-fieldset">
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
-                  Current configuration{" "}
-                  <InfoHint label="Current configuration">
-                    The model used for each AI purpose. Changed on the host console (scripts / the
-                    static host token); this view is read-only.
+                  Your tenant override{" "}
+                  <InfoHint label="Your tenant override">
+                    The model used for each AI purpose in <strong>your tenant</strong>. A stage left
+                    at "Use default" follows the deployment defaults on the left; anything you pick
+                    here overrides them for your tenant only. <strong>Save</strong> writes the
+                    override; <strong>Reset to defaults</strong> drops it entirely. Embedding and
+                    OCR are deployment-global and cannot be overridden per tenant.
                   </InfoHint>
                 </h4>
                 <PurposeEditor
                   title="Data pipeline"
                   description={STAGE_INFO.pipeline}
                   options={catalog.pipeline}
-                  value={ai.pipeline}
-                  defaultValue={serverDefaults?.pipeline}
+                  value={draft.pipeline}
+                  defaultValue={ai.pipeline}
                   health={health?.pipeline}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.pipeline}
-                  onChange={(pipeline) => setAi({ ...ai, pipeline })}
+                  onChange={(pipeline) => setDraft({ ...draft, pipeline })}
                 />
                 <PurposeEditor
                   title="Document interrogation"
                   description={STAGE_INFO.rag}
                   options={catalog.rag}
-                  value={ai.rag}
-                  defaultValue={serverDefaults?.rag}
+                  value={draft.rag}
+                  defaultValue={ai.rag}
                   health={health?.rag}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.rag}
-                  onChange={(rag) => setAi({ ...ai, rag })}
+                  onChange={(rag) => setDraft({ ...draft, rag })}
                 />
                 <PurposeEditor
                   title="Entity recognition (NER)"
                   description={STAGE_INFO.ner}
                   options={catalog.ner ?? []}
-                  value={ai.ner}
-                  defaultValue={serverDefaults?.ner}
+                  value={draft.ner}
+                  defaultValue={ai.ner}
                   health={health?.ner}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.ner}
-                  onChange={(ner) => setAi({ ...ai, ner })}
+                  onChange={(ner) => setDraft({ ...draft, ner })}
                 />
                 <PurposeEditor
                   title="Knowledge graph (relations)"
                   description={STAGE_INFO.keg}
                   options={catalog.keg ?? []}
-                  value={ai.keg}
-                  defaultValue={serverDefaults?.keg}
+                  value={draft.keg}
+                  defaultValue={ai.keg}
                   health={health?.keg}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.keg}
-                  onChange={(keg) => setAi({ ...ai, keg })}
+                  onChange={(keg) => setDraft({ ...draft, keg })}
                 />
                 <div className="settings-purpose">
                   <h4>
@@ -1166,6 +1231,7 @@ export function SettingsPanel() {
                         value={ai.embedding_model ?? ""}
                         readOnly
                         disabled
+                        title="Deployment-global; not overridable per tenant"
                       />
                     </label>
                   </div>
@@ -1174,14 +1240,14 @@ export function SettingsPanel() {
                   title="Reranker"
                   description={STAGE_INFO.rerank}
                   options={catalog.rerank}
-                  value={ai.rerank}
-                  defaultValue={serverDefaults?.rerank}
+                  value={draft.rerank}
+                  defaultValue={ai.rerank}
                   health={health?.rerank}
                   reasoningLevels={catalog.reasoning_levels}
                   ollamaUrlDefault={ai.ollama_base_url_default ?? ""}
                   noEgress={noEgress}
                   status={ai.purpose_status?.rerank}
-                  onChange={(rerank) => setAi({ ...ai, rerank })}
+                  onChange={(rerank) => setDraft({ ...draft, rerank })}
                 />
                 <div className="settings-purpose">
                   <h4>
@@ -1190,57 +1256,51 @@ export function SettingsPanel() {
                   <div className="settings-row">
                     <label>
                       Engine{" "}
-                      <select
-                        aria-label="OCR engine"
-                        value={ocr.engine ?? ""}
-                        onChange={(e) => setOcr({ ...ocr, engine: e.target.value })}
-                      >
-                        <option value="">(server default)</option>
-                        {OCR_ENGINES.map((en) => (
-                          <option key={en} value={en}>
-                            {en}
-                          </option>
-                        ))}
-                      </select>
+                      <span className="model-stack-readonly">
+                        {ocr.engine || ocrRec?.engine || "(server default)"}
+                      </span>
                     </label>
                   </div>
                   <div className="settings-row">
                     <label>
                       Parallel OCR processes{" "}
-                      <input
-                        type="number"
-                        aria-label="Parallel OCR processes"
-                        min={1}
-                        max={32}
-                        value={ocr.ocr_concurrency}
-                        onChange={(e) =>
-                          setOcr({
-                            ...ocr,
-                            ocr_concurrency: Math.max(1, Math.min(32, Number(e.target.value) || 1)),
-                          })
-                        }
-                      />
+                      <span className="model-stack-readonly">{ocr.ocr_concurrency}</span>
                     </label>
                   </div>
                   {ocrRec && (
                     <p className="ocr-recommendation" role="note">
                       <strong>Recommended for this device:</strong> {ocrRec.engine} @{" "}
                       {ocrRec.concurrency} parallel — {ocrRec.reason}
-                      {ocr.ocr_concurrency !== ocrRec.concurrency && (
-                        <button
-                          type="button"
-                          className="settings-reset"
-                          onClick={() => setOcr({ ocr_concurrency: ocrRec.concurrency })}
-                        >
-                          Use {ocrRec.concurrency}
-                        </button>
-                      )}
                     </p>
                   )}
                 </div>
               </div>
               </fieldset>
             </div>
+            <div className="settings-save-bar">
+              <button
+                type="button"
+                className="settings-save"
+                disabled={saving}
+                onClick={() => void saveOverride()}
+              >
+                {saving ? "Saving…" : "Save for this tenant"}
+              </button>
+              <button
+                type="button"
+                className="settings-reset"
+                disabled={saving || !ai.override}
+                onClick={() => void resetOverride()}
+              >
+                Reset to defaults
+              </button>
+              {notice && <span className="muted">{notice}</span>}
+            </div>
+            {saveError && (
+              <p role="alert" className="status-error">
+                {saveError}
+              </p>
+            )}
             {healthAt && (
               <p className="muted model-stack-checked">
                 Checked {new Date(healthAt).toLocaleString()}

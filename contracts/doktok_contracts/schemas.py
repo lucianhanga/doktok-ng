@@ -1531,6 +1531,9 @@ class AiSettingsResponse(AiSettings):
     # would start from (schema defaults + env-requested providers). The Model stack defaults card
     # shows these; they never change with saved settings.
     defaults: AiSettings = Field(default_factory=AiSettings)
+    # The caller's own tenant override (epic #708): the partial layer the tenant admin edits.
+    # None when the tenant has not overridden anything (effective = global/env layers).
+    override: TenantAiSettings | None = None
     # True when any purpose actually moves content off-host right now (requires egress AND usable).
     # Drives a non-dismissable privacy indicator in the UI (APP-11). Covers OpenAI AND a remote
     # (non-loopback) Ollama URL, not just OpenAI.

@@ -171,11 +171,15 @@ let restoreStatusResponder: () => Response = () =>
 let catalogResponse: unknown = CATALOG;
 let aiResponse: unknown = AI;
 let aiPutResponder: ((body: string | undefined) => Response) | null = null;
+// Tenant override endpoints (epic #708): per-test responder; defaults to echoing aiResponse.
+let overrideResponder: (method: string, body: string | undefined) => Response = () =>
+  new Response(JSON.stringify(aiResponse), { status: 200 });
 
 function mockApi() {
   catalogResponse = CATALOG;
   aiResponse = AI;
   aiPutResponder = null;
+  overrideResponder = () => new Response(JSON.stringify(aiResponse), { status: 200 });
   historyResponse = HISTORY;
   drillResponder = () =>
     new Response(
@@ -256,6 +260,8 @@ function mockApi() {
           JSON.stringify({ ok: true, detail: "valid - 50 models available" }),
           { status: 200 },
         );
+      if (url.endsWith("/settings/ai/override") && (method === "PUT" || method === "DELETE"))
+        return overrideResponder(method, init?.body as string | undefined);
       if (url.endsWith("/settings/ai") && method === "GET")
         return new Response(JSON.stringify(aiResponse), { status: 200 });
       if (url.endsWith("/settings/ocr/recommendation"))
@@ -293,7 +299,7 @@ test("renders AI model selectors from the catalog and current settings", async (
   await gotoModelStack();
   await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
   expect(screen.getByLabelText("Document interrogation model")).toBeInTheDocument();
-  // An unmodified override equals the server default, so the pickers show "Use server default".
+  // An unmodified override equals the effective value, so the pickers show "Use default".
   expect(screen.getByLabelText("Data pipeline reasoning")).toHaveValue("__default__");
   expect(screen.getByLabelText("Data pipeline model")).toHaveValue("__default__");
 });
@@ -435,8 +441,8 @@ test("under no-egress, an OpenAI option in the pipeline picker is disabled and l
     name: /GPT-5 nano \(blocked by no-egress\)/i,
   });
   expect(blocked).toBeDisabled();
-  // The whole picker is read-only in the UI (#700) - the local option shows, equally disabled.
-  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 27B" })).toBeDisabled();
+  // The picker itself stays editable (#708) - only the remote option is blocked.
+  expect(within(pipeline).getByRole("option", { name: "Qwen3.6 27B" })).not.toBeDisabled();
 });
 
 test("a pipeline blocked_reason of openai_selected shows the red block, not the key-missing message", async () => {
@@ -493,27 +499,91 @@ test("the posture badge reflects no_egress on and off", async () => {
 
 // ---- No-egress toggle (user-configurable posture) ----
 
-test("the no-egress toggle is always disabled and points at the console (#700)", async () => {
+test("the no-egress toggle edits the tenant posture; the host lock disables it (#708)", async () => {
   mockApi();
   aiResponse = { ...AI, no_egress: true };
-  render(<SettingsPanel />);
+  const { unmount } = render(<SettingsPanel />);
   await gotoModelStack();
   const toggle = await screen.findByRole("switch", { name: /Keep data on this host/i });
   expect(toggle).toBeChecked();
-  expect(toggle).toBeDisabled();
-  expect(screen.getByText(/Changed on the host console/i)).toBeInTheDocument();
-});
+  expect(toggle).not.toBeDisabled();
+  unmount();
 
-test("the model stack is read-only for everyone - no save bar, controls disabled (#700)", async () => {
-  mockApi();
-  aiResponse = { ...AI, no_egress: true };
+  // When the host enforces no-egress the toggle is locked on and says so.
+  aiResponse = { ...AI, no_egress: true, no_egress_locked: true };
   render(<SettingsPanel />);
   await gotoModelStack();
-  await waitFor(() => expect(screen.getByLabelText("Data pipeline model")).toBeInTheDocument());
-  expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Data pipeline model")).toBeDisabled();
-  expect(screen.getByLabelText("OCR engine")).toBeDisabled();
-  expect(screen.getByText(/Changed on the host console/i)).toBeInTheDocument();
+  const locked = await screen.findByRole("switch", { name: /Keep data on this host/i });
+  expect(locked).toBeChecked();
+  expect(locked).toBeDisabled();
+  expect(screen.getByText(/Enforced by the host/i)).toBeInTheDocument();
+});
+
+// ---- Tenant model-stack override (epic #708) ----
+
+test("the tenant override card is editable; embedding and OCR stay deployment-global (#708)", async () => {
+  mockApi();
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const pipeline = await screen.findByLabelText("Data pipeline model");
+  expect(pipeline).not.toBeDisabled();
+  expect(screen.getByRole("button", { name: /Save for this tenant/i })).toBeInTheDocument();
+  expect(screen.getByLabelText("Embedding model")).toBeDisabled();
+  // OCR is shown read-only (deployment-global) - no engine picker.
+  expect(screen.queryByLabelText("OCR engine")).not.toBeInTheDocument();
+});
+
+test("Save writes only the purposes that differ from the effective stack (#708)", async () => {
+  const calls = mockApi();
+  catalogResponse = {
+    ...CATALOG,
+    pipeline: [
+      ...CATALOG.pipeline,
+      {
+        provider: "ollama",
+        model: "qwen3.6:8b",
+        label: "Qwen3.6 8B",
+        contexts: [8192],
+        supports_reasoning: true,
+      },
+    ],
+  };
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  const picker = await screen.findByLabelText("Data pipeline model");
+  fireEvent.change(picker, { target: { value: "ollama:qwen3.6:8b" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save for this tenant/i }));
+  await waitFor(() => expect(screen.getByText(/Saved for your tenant/i)).toBeInTheDocument());
+
+  const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/settings/ai/override"));
+  expect(put).toBeDefined();
+  const body = JSON.parse(put!.body!);
+  expect(body.pipeline).toEqual({
+    provider: "ollama",
+    model: "qwen3.6:8b",
+    num_ctx: 8192,
+    reasoning: "off",
+  });
+  // Untouched purposes go as null (= inherit the layers below).
+  expect(body.rag).toBeNull();
+  expect(body.ner).toBeNull();
+  expect(body.keg).toBeNull();
+  expect(body.rerank).toBeNull();
+});
+
+test("Reset to defaults DELETEs the tenant override (#708)", async () => {
+  const calls = mockApi();
+  aiResponse = { ...AI, override: { pipeline: AI.pipeline } };
+  render(<SettingsPanel />);
+  await gotoModelStack();
+  await screen.findByLabelText("Data pipeline model");
+  fireEvent.click(screen.getByRole("button", { name: /Reset to defaults/i }));
+  await waitFor(() =>
+    expect(screen.getByText(/Back to the deployment defaults/i)).toBeInTheDocument(),
+  );
+  expect(
+    calls.some((c) => c.method === "DELETE" && c.url.endsWith("/settings/ai/override")),
+  ).toBe(true);
 });
 
 test("DRP shows status and history but no drill/export/restore actions (#700)", async () => {

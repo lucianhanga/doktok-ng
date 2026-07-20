@@ -18,7 +18,7 @@ import {
   type AiSettings,
   type EgressViolation,
   type PurposeEgressStatus,
-  type TenantAiSettings,
+  type TenantAiSettingsUpdate,
   type BackupEvent,
   type BackupLegStatus,
   type DrpHistoryResponse,
@@ -497,7 +497,8 @@ function EgressStatusNote({ status }: { status?: PurposeEgressStatus }) {
     return (
       <p role="status" className="settings-test-warn egress-status">
         <span aria-hidden="true">⚠ </span>
-        <strong>Needs an OpenAI API key</strong> — add one in the OpenAI section below.
+        <strong>Needs an OpenAI API key</strong> — add your tenant's key in the OpenAI API key
+        section of this card (below).
       </p>
     );
   }
@@ -745,6 +746,12 @@ export function SettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  // The tenant's own OpenAI key (#719): write-only — the input is never pre-filled (the key is
+  // never returned); "Remove" marks it for clearing on Save. Test probes the typed key first.
+  const [keyInput, setKeyInput] = useState("");
+  const [keyClear, setKeyClear] = useState(false);
+  const [keyTest, setKeyTest] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [keyTesting, setKeyTesting] = useState(false);
   // One-shot per-purpose health probe shown on the Model stack tab (cached for a minute).
   const [health, setHealth] = useState<Record<string, PurposeHealth> | null>(
     modelHealthCache?.results ?? null,
@@ -846,21 +853,27 @@ export function SettingsPanel() {
 
   // Save the tenant override: send ONLY purposes that genuinely differ from the tenant-effective
   // stack (a purpose equal to the effective value means "no override", epic #708). no_egress
-  // goes explicitly (the toggle IS the tenant's posture choice).
+  // goes explicitly (the toggle IS the tenant's posture choice). The OpenAI key goes only when
+  // touched: a typed value sets it, "Remove" clears it (#719).
   async function saveOverride() {
     if (!ai || !draft) return;
     setSaving(true);
     setSaveError(null);
     setNotice("");
-    const body: TenantAiSettings = { no_egress: draft.no_egress };
+    const body: TenantAiSettingsUpdate = { no_egress: draft.no_egress };
     for (const p of ["pipeline", "rag", "ner", "keg", "rerank"] as const) {
       body[p] = _samePurpose(draft[p], ai[p]) ? null : draft[p];
     }
+    if (keyClear) body.openai_api_key = "";
+    else if (keyInput.trim()) body.openai_api_key = keyInput.trim();
     try {
       const saved = await putTenantAiOverride(body);
       setAi(saved);
       setDraft(saved);
       setServerDefaults(saved.defaults ?? saved);
+      setKeyInput("");
+      setKeyClear(false);
+      setKeyTest(null);
       setNotice("Saved for your tenant.");
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "could not save");
@@ -869,7 +882,7 @@ export function SettingsPanel() {
     }
   }
 
-  // Reset to the console/env default layers: the whole override goes.
+  // Reset to the console/env default layers: the whole override goes (the tenant key with it).
   async function resetOverride() {
     setSaving(true);
     setSaveError(null);
@@ -879,11 +892,29 @@ export function SettingsPanel() {
       setAi(saved);
       setDraft(saved);
       setServerDefaults(saved.defaults ?? saved);
+      setKeyInput("");
+      setKeyClear(false);
+      setKeyTest(null);
       setNotice("Back to the deployment defaults.");
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "could not reset");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Probe the typed OpenAI key before saving it (the backend refuses under the tenant's
+  // no-egress posture - the probe itself is an egress call).
+  async function testKey() {
+    setKeyTesting(true);
+    setKeyTest(null);
+    try {
+      const r = await testOpenAiKey(keyInput.trim());
+      setKeyTest({ ok: r.ok, detail: r.ok ? `✓ ${r.detail}` : `✖ ${r.detail}` });
+    } catch (e) {
+      setKeyTest({ ok: false, detail: e instanceof Error ? e.message : "test failed" });
+    } finally {
+      setKeyTesting(false);
     }
   }
 
@@ -934,10 +965,15 @@ export function SettingsPanel() {
           <div className="settings-purpose">
             <h4>OpenAI</h4>
             <p className="muted">
-              Required only if you pick an OpenAI model above. Selecting OpenAI sends document text to
-              api.openai.com (an explicit exception to the local-first / no-egress default). The key
-              is managed on the host console and never shown here.
-              {ai.openai_api_key_set ? " A key is currently configured." : " No key is configured."}
+              Required only if you pick an OpenAI model in your tenant override (Model stack tab).
+              Selecting OpenAI sends document text to api.openai.com (an explicit exception to the
+              local-first / no-egress default). Your tenant's own key is set on the Model stack
+              card and never shown; the deployment key is managed on the host console.
+              {ai.tenant_openai_api_key_set
+                ? " Your tenant has its own key configured."
+                : ai.openai_api_key_set
+                  ? " A deployment key is currently configured."
+                  : " No key is configured."}
             </p>
           </div>
         </div>
@@ -999,9 +1035,9 @@ export function SettingsPanel() {
             )}
             <div className="settings-cards-row model-stack">
               {/* Subgrid pairing: BOTH cards must stay DIRECT children of this grid, with the same
-                  children in the same order (head + one block per stage) — a wrapper here breaks
-                  the per-stage row alignment (the wrapper lands in row 1 and pushes the other
-                  card's stages below it; #659 regression, fixed now). */}
+                  children in the same order (head + one block per stage + the OpenAI key block) —
+                  a wrapper here breaks the per-stage row alignment (the wrapper lands in row 1 and
+                  pushes the other card's stages below it; #659 regression, fixed in #718). */}
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
                   Server defaults (read-only){" "}
@@ -1155,6 +1191,24 @@ export function SettingsPanel() {
                     </label>
                   </div>
                 </div>
+                <div className="settings-purpose">
+                  <h4>
+                    OpenAI API key{" "}
+                    <InfoHint label="OpenAI API key">
+                      Needed only when a stage uses an OpenAI model. The deployment key is managed
+                      on the host console and applies to every tenant without its own key. It is
+                      write-only and never shown.
+                    </InfoHint>
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Deployment key{" "}
+                      <span className="model-stack-readonly">
+                        {ai.openai_api_key_set ? "configured (host console)" : "not configured"}
+                      </span>
+                    </label>
+                  </div>
+                </div>
               </div>
               <div className="settings-card model-stack-card">
                 <h4 className="model-stack-head">
@@ -1274,6 +1328,76 @@ export function SettingsPanel() {
                     <p className="ocr-recommendation" role="note">
                       <strong>Recommended for this device:</strong> {ocrRec.engine} @{" "}
                       {ocrRec.concurrency} parallel — {ocrRec.reason}
+                    </p>
+                  )}
+                </div>
+                <div className="settings-purpose">
+                  <h4>
+                    OpenAI API key{" "}
+                    <InfoHint label="OpenAI API key (tenant)">
+                      Needed only when a stage above uses an OpenAI model. Your tenant's key wins
+                      over the deployment key on the left; it is stored encrypted and{" "}
+                      <strong>never shown</strong> (write-only). Selecting OpenAI sends document
+                      text to api.openai.com.
+                    </InfoHint>
+                  </h4>
+                  <div className="settings-row">
+                    <label>
+                      Key{" "}
+                      <input
+                        type="password"
+                        aria-label="Tenant OpenAI API key"
+                        autoComplete="off"
+                        placeholder={
+                          ai.tenant_openai_api_key_set
+                            ? "configured — enter to replace"
+                            : ai.openai_api_key_set
+                              ? "using the deployment key"
+                              : "no key configured"
+                        }
+                        value={keyInput}
+                        onChange={(e) => {
+                          setKeyInput(e.target.value);
+                          setKeyClear(false);
+                          setKeyTest(null);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <div className="settings-row">
+                    <button
+                      type="button"
+                      className="settings-test"
+                      disabled={keyTesting || !keyInput.trim()}
+                      onClick={() => void testKey()}
+                    >
+                      {keyTesting ? "Testing…" : "Test"}
+                    </button>
+                    {(ai.tenant_openai_api_key_set ?? false) && !keyClear && (
+                      <button
+                        type="button"
+                        className="settings-reset"
+                        onClick={() => {
+                          setKeyClear(true);
+                          setKeyInput("");
+                          setKeyTest(null);
+                        }}
+                      >
+                        Remove tenant key
+                      </button>
+                    )}
+                    {keyClear && (
+                      <span className="muted">
+                        Tenant key removed on Save (back to the deployment key).
+                      </span>
+                    )}
+                  </div>
+                  {keyTest && (
+                    <p
+                      role="status"
+                      className={keyTest.ok ? "settings-test-ok" : "settings-test-fail"}
+                    >
+                      {keyTest.detail}
                     </p>
                   )}
                 </div>

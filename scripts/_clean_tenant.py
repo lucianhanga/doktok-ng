@@ -27,6 +27,7 @@ _TENANT_TABLES = [
     "audit_events",
     "documents",
     "ingestion_jobs",
+    "tenant_ai_settings",  # the tenant's model-stack override (#708)
 ]
 
 
@@ -48,6 +49,12 @@ def main() -> int:
                 ).fetchone()[0]
                 conn.execute(f"DELETE FROM {table} WHERE tenant_id=%s", (tenant,))
                 deleted[table] = int(count)
+            # Tenant-scoped secrets in the global KV store (#719: the tenant's own OpenAI key).
+            key_count = conn.execute(
+                "SELECT count(*) FROM app_settings WHERE key LIKE %s", (f"tenant:{tenant}:%",)
+            ).fetchone()[0]
+            conn.execute("DELETE FROM app_settings WHERE key LIKE %s", (f"tenant:{tenant}:%",))
+            deleted["app_settings(tenant:*)"] = int(key_count)
     finally:
         db.close()
 

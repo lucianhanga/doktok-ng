@@ -2841,6 +2841,11 @@ class PostgresRecordRepository:
         )
 
 
+def _tenant_key(tenant_id: str) -> str:
+    """The app_settings KV name for a tenant's own OpenAI API key (#719)."""
+    return f"tenant:{tenant_id}:openai_api_key"
+
+
 class PostgresAppSettingsRepository:
     """Global app settings backed by the ``app_settings`` key -> JSON table (not tenant-scoped)."""
 
@@ -2914,6 +2919,16 @@ class PostgresAppSettingsRepository:
     def delete_tenant_ai_settings(self, tenant_id: str) -> None:
         with self._db.connection() as conn:
             conn.execute("DELETE FROM tenant_ai_settings WHERE tenant_id=%s", (tenant_id,))
+            # A full reset drops the tenant's own OpenAI key too (#719).
+            conn.execute("DELETE FROM app_settings WHERE key=%s", (_tenant_key(tenant_id),))
+
+    def get_tenant_openai_api_key(self, tenant_id: str) -> str:
+        raw = self._get(_tenant_key(tenant_id))
+        return decrypt_secret(str(raw), self._secrets_key) if raw else ""
+
+    def set_tenant_openai_api_key(self, tenant_id: str, key: str) -> None:
+        # Same at-rest encryption as the console-global key (APP-8), tenant-scoped KV name.
+        self._set(_tenant_key(tenant_id), encrypt_secret(key, self._secrets_key))
 
     def set_worker_heartbeat(self) -> None:
         self._set("worker_heartbeat", datetime.now(UTC).isoformat())

@@ -50,7 +50,11 @@ from doktok_core.security.egress import (
 from doktok_core.security.policy import DefaultSecurityPolicy
 from doktok_core.settings.bootstrap import seed_ai_settings
 from doktok_core.settings.catalog import ollama_think_for, openai_reasoning_effort
-from doktok_core.settings.effective import effective_ai_settings, effective_tenant_no_egress
+from doktok_core.settings.effective import (
+    effective_ai_settings,
+    effective_openai_api_key,
+    effective_tenant_no_egress,
+)
 from doktok_core.visualizations.service import ProjectionRunner, ProjectionService
 from doktok_modalities_files import (
     DirectTextExtractor,
@@ -365,8 +369,13 @@ def build_services(
         if watched_tenants
         else app_settings.get_ai_settings().pipeline
     )
-    # DB value (Settings UI) wins; fall back to the env key for headless/bootstrap deploys (APP-7).
-    openai_key = app_settings.get_openai_api_key() or settings.openai_api_key
+    # Startup key for the heuristic below, resolved for the same tenant as ``pipeline`` (#719:
+    # tenant key -> console global -> env; APP-7 keeps headless deploys working).
+    openai_key = (
+        effective_openai_api_key(app_settings, watched_tenants[0], settings)
+        if watched_tenants
+        else (app_settings.get_openai_api_key() or settings.openai_api_key)
+    )
     # OCR parallelism comes from the Settings DB (live-reloaded by the worker), env is the fallback
     # default. This is the number of OCR worker processes directly - if more documents ingest at
     # once than this, their pages just share the pool (the process pool queues the extra work).
@@ -491,7 +500,8 @@ def build_services(
         pl = ai.pipeline
         pl_url = pl.ollama_base_url or settings.ollama_base_url  # per-purpose override (M13 #369)
         emb_url = ai.embedding.ollama_base_url or settings.ollama_base_url
-        key = app_settings.get_openai_api_key() or settings.openai_api_key
+        # The tenant's effective key chain (#719): tenant key -> console global -> env.
+        key = effective_openai_api_key(app_settings, tenant_id, settings)
         # The tenant's egress posture: tenant stored -> global stored -> env default; the host
         # lock keeps the global kill switch. One tenant's flag never affects another's.
         no_egress = effective_tenant_no_egress(app_settings, tenant_id, settings)

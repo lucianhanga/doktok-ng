@@ -31,3 +31,23 @@ def test_tenant_ai_settings_round_trip_and_delete(db: Database) -> None:
     assert repo.get_tenant_ai_settings("test-other") is None
     repo.delete_tenant_ai_settings("test-tai")
     assert repo.get_tenant_ai_settings("test-tai") is None
+
+
+def test_tenant_openai_key_round_trip_encrypted_and_deleted(db: Database) -> None:
+    PostgresTenantRegistry(db).create_tenant(Tenant(id="test-tak", name="TAK"))
+    repo = PostgresAppSettingsRepository(db, secrets_key="test-master-key")
+    assert repo.get_tenant_openai_api_key("test-tak") == ""
+
+    repo.set_tenant_openai_api_key("test-tak", "sk-tenant-secret")
+    assert repo.get_tenant_openai_api_key("test-tak") == "sk-tenant-secret"
+    # Encrypted at rest (APP-8): the raw app_settings value is not the plaintext key.
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key=%s", ("tenant:test-tak:openai_api_key",)
+        ).fetchone()
+    assert row is not None and "sk-tenant-secret" not in str(row[0])
+
+    # Tenant isolation + resetting the override drops the key too.
+    assert repo.get_tenant_openai_api_key("test-other") == ""
+    repo.delete_tenant_ai_settings("test-tak")
+    assert repo.get_tenant_openai_api_key("test-tak") == ""

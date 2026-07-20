@@ -112,11 +112,12 @@ each with a reasoning-density control (`off|low|medium|high`). Resolution is **p
 layers (epic #708): the tenant override (`PUT`/`DELETE /api/v1/settings/ai/override`) wins over the
 console-global saved settings (`PUT /api/v1/settings/ai`, host token only), which win over the env
 defaults; changes apply live (the backend resolves per request, the worker re-resolves on a short
-interval). The OpenAI API key is **write-only** (set or cleared via the API, never read back).
-Selecting an OpenAI model is an explicit, opt-in exception to the local-first / no-egress default
-(ADR-0006, ADR-0014); the Ollama-only defaults keep everything local, each tenant's `no_egress`
-posture is overridable in the same card, and the host `DOKTOK_NO_EGRESS_LOCK` forces no-egress on
-for everyone as a floor.
+interval). The OpenAI API key is **write-only and per tenant** (#719): a tenant sets its own key on
+the Model stack card (stored encrypted, never read back; it wins over the console's deployment
+key, which wins over the env var). Selecting an OpenAI model is an explicit, opt-in exception to
+the local-first / no-egress default (ADR-0006, ADR-0014); the Ollama-only defaults keep everything
+local, each tenant's `no_egress` posture is overridable in the same card, and the host
+`DOKTOK_NO_EGRESS_LOCK` forces no-egress on for everyone as a floor.
 
 The Settings AI section also shows a **read-only "Embedding (index)"** display (the embedding model
 and its context window). The embedding model is intentionally **not** user-selectable: changing it

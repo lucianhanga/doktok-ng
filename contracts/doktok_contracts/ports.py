@@ -267,7 +267,17 @@ class AppSettingsRepository(Protocol):
         ...
 
     def delete_tenant_ai_settings(self, tenant_id: str) -> None:
-        """Remove a tenant's override entirely (reset to the global/env default layers)."""
+        """Remove a tenant's override entirely (reset to the global/env default layers). Also
+        drops the tenant's own OpenAI key (#719) - a full reset back to the layers below."""
+        ...
+
+    def get_tenant_openai_api_key(self, tenant_id: str) -> str:
+        """The tenant's own OpenAI API key (#719), decrypted, or "" when the tenant has none
+        (the console-global key / env var then apply)."""
+        ...
+
+    def set_tenant_openai_api_key(self, tenant_id: str, key: str) -> None:
+        """Store the tenant's own OpenAI API key, encrypted at rest (APP-8)."""
         ...
 
     def set_worker_heartbeat(self) -> None:

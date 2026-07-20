@@ -54,3 +54,11 @@ def effective_tenant_no_egress(repo: AppSettingsRepository, tenant_id: str, env:
     if override is not None and override.no_egress is not None:
         return override.no_egress
     return effective_no_egress(repo.get_no_egress(), env_default=env.no_egress, lock=False)
+
+
+def effective_openai_api_key(repo: AppSettingsRepository, tenant_id: str, env: Settings) -> str:
+    """The OpenAI key for a tenant's requests (#719): the tenant's own key when set, else the
+    console-global stored key, else the env var; "" when no layer provides one."""
+    return (
+        repo.get_tenant_openai_api_key(tenant_id) or repo.get_openai_api_key() or env.openai_api_key
+    )

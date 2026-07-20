@@ -15,6 +15,7 @@ class InMemoryAppSettingsRepository:
         self._ai_set = False
         self._ocr = OcrSettings()
         self._tenant_ai: dict[str, TenantAiSettings] = {}
+        self._tenant_openai_keys: dict[str, str] = {}
         self._openai_key = ""
         self._no_egress: bool | None = None
         self._heartbeat: datetime | None = None
@@ -64,6 +65,13 @@ class InMemoryAppSettingsRepository:
 
     def delete_tenant_ai_settings(self, tenant_id: str) -> None:
         self._tenant_ai.pop(tenant_id, None)
+        self._tenant_openai_keys.pop(tenant_id, None)  # a full reset drops the tenant key (#719)
+
+    def get_tenant_openai_api_key(self, tenant_id: str) -> str:
+        return self._tenant_openai_keys.get(tenant_id, "")
+
+    def set_tenant_openai_api_key(self, tenant_id: str, key: str) -> None:
+        self._tenant_openai_keys[tenant_id] = key
 
     def set_worker_heartbeat(self) -> None:
         self._heartbeat = datetime.now(UTC)

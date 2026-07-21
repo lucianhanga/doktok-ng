@@ -6836,3 +6836,52 @@ tr.row-selected {
 .settings-fieldset:disabled {
   opacity: 0.65;
 }
+
+/* Document Activity subtab (#539): richer table + expandable detail rows. */
+.activity-table {
+  width: 100%;
+  table-layout: auto;
+}
+.activity-table th,
+.activity-table td {
+  text-align: left;
+  vertical-align: top;
+}
+.activity-time {
+  white-space: nowrap;
+}
+.activity-severity {
+  text-transform: capitalize;
+}
+.activity-detail-row > td {
+  background: var(--surface-alt, rgba(127, 127, 127, 0.06));
+  padding: 0.6rem 0.9rem;
+}
+.activity-detail-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 0.8rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+.activity-detail-fields dt {
+  color: var(--muted);
+}
+.activity-detail-fields dd {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+.activity-detail-head {
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+}
+.activity-detail-json {
+  margin: 0;
+  max-height: 16rem;
+  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -604,3 +604,66 @@ test("an unknown entity type falls back to its raw label (#538)", async () => {
   expect(screen.getByText("WEIRD_NEW_TYPE")).toBeInTheDocument();
   expect(screen.getByText("xy-42")).toBeInTheDocument();
 });
+
+// ---- Activity subtab (#539) ----
+
+function openActivityTab() {
+  fireEvent.click(screen.getByRole("button", { name: /Activity/ }));
+}
+
+test("the Activity subtab renders a table with type, actor, severity and description (#539)", async () => {
+  mockDetail();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openActivityTab();
+  for (const col of ["Time", "Type", "Actor", "Severity", "Description"]) {
+    expect(screen.getByRole("columnheader", { name: col })).toBeInTheDocument();
+  }
+  expect(screen.getByText("document.activated")).toBeInTheDocument();
+  expect(screen.getByText(/worker/)).toBeInTheDocument();
+  expect(screen.getByText("info")).toBeInTheDocument(); // missing severity defaults to info
+  expect(screen.getByText("Parsed plain text")).toBeInTheDocument();
+});
+
+test("an activity row expands to show metadata, and collapses again (#539)", async () => {
+  mockDetail();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openActivityTab();
+  const expander = screen.getByRole("button", { name: "Expand activity details" });
+  expect(expander).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(expander);
+  expect(screen.getByRole("button", { name: "Collapse activity details" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  // The pretty-printed metadata is visible.
+  expect(screen.getByText(/"summary": "Parsed plain text"/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Collapse activity details" }));
+  expect(screen.queryByText(/"summary": "Parsed plain text"/)).not.toBeInTheDocument();
+});
+
+test("an error-severity activity row gets the error tint class (#539)", async () => {
+  mockDetail([], {}, {
+    recent_activity: [
+      {
+        id: "e1",
+        event_type: "feature.failed",
+        actor: "worker",
+        actor_kind: "worker",
+        severity: "error",
+        document_id: "d1",
+        job_id: "j1",
+        timestamp: "2026-06-10T00:00:00Z",
+        metadata: { error_message: "boom" },
+      },
+    ],
+  });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openActivityTab();
+  expect(screen.getByText("boom")).toBeInTheDocument();
+  expect(screen.getByText("error")).toBeInTheDocument();
+  const row = screen.getByText("feature.failed").closest("tr");
+  expect(row?.className).toContain("timeline-entry--error");
+});

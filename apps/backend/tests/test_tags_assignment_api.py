@@ -188,3 +188,12 @@ def test_list_filters_by_tags_all_and_any(tmp_path: Path) -> None:
     # The ids endpoint (bulk 'select all matching') honors the same filter.
     ids = client.get("/api/v1/documents/ids?tag=t1&tag_match=any", headers=VIEWER).json()
     assert sorted(ids["ids"]) == ["d1", "d2"]
+
+
+def test_list_response_carries_the_tags_sidecar(tmp_path: Path) -> None:
+    client, _, tags, _ = _client(tmp_path)
+    tags.link("tenant-a", "d1", "t1")
+    tags.link("tenant-a", "d1", "t2")
+    page = client.get("/api/v1/documents", headers=VIEWER).json()
+    assert [t["name"] for t in page["tags"]["d1"]] == ["Receipts", "Rome"]
+    assert page["tags"].get("d2") in (None, [])

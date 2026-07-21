@@ -106,3 +106,18 @@ def test_document_tag_cap_trigger(db: Database) -> None:
     repo.create_tag(_tag("cap-20", "tag 20", normalized="tag 20"))
     with pytest.raises(Exception):  # noqa: B017 - the 21st tag on one document hits the cap
         repo.link(TENANT, "d-cap", "cap-20")
+
+
+def test_tags_for_documents_batched(db: Database) -> None:
+    PostgresDocumentRepository(db).add(_doc("d1"))
+    PostgresDocumentRepository(db).add(_doc("d2"))
+    repo = PostgresTagRepository(db)
+    repo.create_tag(_tag("t1", "Rome"))
+    repo.create_tag(_tag("t2", "Receipts"))
+    repo.link(TENANT, "d1", "t1")
+    repo.link(TENANT, "d1", "t2")
+    repo.link(TENANT, "d2", "t1")
+    by_doc = repo.tags_for_documents(TENANT, ["d1", "d2", "d3"])
+    assert [t.name for t in by_doc["d1"]] == ["Receipts", "Rome"]  # name-ordered
+    assert [t.name for t in by_doc["d2"]] == ["Rome"]
+    assert "d3" not in by_doc

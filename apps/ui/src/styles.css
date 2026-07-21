@@ -7163,3 +7163,45 @@ tr.row-selected {
   max-height: 12rem;
   overflow: auto;
 }
+
+/* Tag chips in the documents list/cards + the toolbar tag filter (#549). */
+.doc-tag-chips {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.tag-chip-btn {
+  cursor: pointer;
+}
+.tag-chip-btn:hover {
+  filter: brightness(1.15);
+}
+.tag-more {
+  font-size: 0.75rem;
+}
+.doc-card-tags {
+  margin: 0.15rem 0 0;
+}
+.docs-tag-filter {
+  position: relative;
+  display: inline-block;
+}
+.docs-tag-filter-pop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 0.6rem 0.8rem;
+  margin-top: 0.2rem;
+  min-width: 16rem;
+}
+.docs-tag-match {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}

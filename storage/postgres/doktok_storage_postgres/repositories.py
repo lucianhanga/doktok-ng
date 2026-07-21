@@ -31,6 +31,9 @@ from doktok_contracts.schemas import (
     DocumentEntity,
     DocumentFeature,
     DocumentRecordSummary,
+    DocumentRelationEntity,
+    DocumentRelations,
+    DocumentRelationTriple,
     DocumentSort,
     DocumentStatus,
     EmbeddingProjection,
@@ -1115,6 +1118,52 @@ class PostgresKnowledgeGraphRepository:
 
     def __init__(self, db: Database) -> None:
         self._db = db
+
+    def relations_for_document(self, tenant_id: str, document_id: str) -> DocumentRelations:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            entity_rows = cur.execute(
+                "SELECT m.normalized_value AS mention_value, m.entity_type, n.id AS node_id, "
+                "n.normalized_value AS node_label "
+                "FROM kg_entity_mentions m JOIN kg_entities n ON n.id = m.canonical_entity_id "
+                "WHERE m.tenant_id=%s AND m.document_id=%s "
+                "ORDER BY m.entity_type, m.normalized_value",
+                (tenant_id, document_id),
+            ).fetchall()
+            node_ids = sorted({r["node_id"] for r in entity_rows})
+            relation_rows: list[dict[str, Any]] = []
+            if node_ids:
+                relation_rows = cur.execute(
+                    "SELECT s.normalized_value AS subject, e.predicate, "
+                    "o.normalized_value AS object, e.evidence_count "
+                    "FROM kg_edges e "
+                    "JOIN kg_entities s ON s.id = e.src_entity_id "
+                    "JOIN kg_entities o ON o.id = e.dst_entity_id "
+                    "WHERE e.tenant_id=%s "
+                    "AND (e.src_entity_id = ANY(%s) OR e.dst_entity_id = ANY(%s)) "
+                    "ORDER BY e.evidence_count DESC, subject, e.predicate, object LIMIT 50",
+                    (tenant_id, node_ids, node_ids),
+                ).fetchall()
+        return DocumentRelations(
+            entities=[
+                DocumentRelationEntity(
+                    mention_value=r["mention_value"],
+                    entity_type=r["entity_type"],
+                    node_id=r["node_id"],
+                    node_label=r["node_label"],
+                )
+                for r in entity_rows
+            ],
+            relations=[
+                DocumentRelationTriple(
+                    subject=r["subject"],
+                    predicate=r["predicate"],
+                    object=r["object"],
+                    evidence_count=int(r["evidence_count"]),
+                )
+                for r in relation_rows
+            ],
+        )
 
     def upsert_entities(self, entities: list[KgEntity]) -> None:
         if not entities:

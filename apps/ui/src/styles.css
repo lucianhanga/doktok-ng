@@ -6920,3 +6920,29 @@ tr.row-selected {
   flex: 0 0 auto;
   font-size: 0.78rem;
 }
+
+/* Document Relations (#731): the KG footprint inside the Entities tab. */
+.doc-relations {
+  border-top: 1px solid var(--border);
+  padding-top: 0.7rem;
+}
+.doc-relations h4 {
+  margin: 0 0 0.4rem;
+}
+.doc-relations-canonical {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+}
+.doc-relations-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.doc-relation-predicate {
+  color: var(--accent, #3b82f6);
+  font-size: 0.85em;
+  text-transform: lowercase;
+}

@@ -446,6 +446,33 @@ class SimilarDocument(BaseModel):
     score: float
 
 
+class DocumentRelationEntity(BaseModel):
+    """One entity mention of a document resolved to its canonical knowledge-graph node (#731)."""
+
+    mention_value: str
+    entity_type: str
+    node_id: str
+    node_label: str
+
+
+class DocumentRelationTriple(BaseModel):
+    """A knowledge-graph relation edge touching at least one of the document's entity nodes
+    (#731), with both endpoints shown by their canonical node label."""
+
+    subject: str
+    predicate: str
+    object: str
+    evidence_count: int = 0
+
+
+class DocumentRelations(BaseModel):
+    """The document's footprint in the knowledge graph (#731): its entity mentions resolved to
+    canonical nodes, and the relation edges touching those nodes."""
+
+    entities: list[DocumentRelationEntity] = Field(default_factory=list)
+    relations: list[DocumentRelationTriple] = Field(default_factory=list)
+
+
 class DocumentEntity(BaseModel):
     id: str
     tenant_id: str

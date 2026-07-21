@@ -1476,6 +1476,27 @@ export function fetchSimilarDocuments(id: string): Promise<SimilarDocument[]> {
   return getJson<SimilarDocument[]>(`/api/v1/documents/${encodeURIComponent(id)}/similar`);
 }
 
+/** The document's knowledge-graph footprint (#731). */
+export interface DocumentRelations {
+  entities: {
+    mention_value: string;
+    entity_type: string;
+    node_id: string;
+    node_label: string;
+  }[];
+  relations: {
+    subject: string;
+    predicate: string;
+    object: string;
+    evidence_count: number;
+  }[];
+}
+
+/** The document's entity mentions resolved to canonical KG nodes + the edges touching them. */
+export function fetchDocumentRelations(id: string): Promise<DocumentRelations> {
+  return getJson<DocumentRelations>(`/api/v1/documents/${encodeURIComponent(id)}/relations`);
+}
+
 /** Delete a document and its files. */
 export async function deleteDocument(id: string): Promise<void> {
   const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, { method: "DELETE" });

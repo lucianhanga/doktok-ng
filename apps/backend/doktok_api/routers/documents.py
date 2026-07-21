@@ -38,6 +38,7 @@ from doktok_contracts.schemas import (
     DocumentListPage,
     DocumentListStats,
     DocumentRecordPage,
+    DocumentRelations,
     DocumentSort,
     DocumentStatus,
     EntityType,
@@ -355,6 +356,18 @@ def get_document_content(document_id: str, tenant: Tenant, repo: Repo) -> Docume
         if path.exists():
             content = path.read_text(encoding="utf-8")
     return DocumentContent(document_id=document_id, content=content)
+
+
+@router.get("/{document_id}/relations", response_model=DocumentRelations)
+def get_document_relations(
+    document_id: str, tenant: Tenant, repo: Repo, kg: Kg
+) -> DocumentRelations:
+    """The document's knowledge-graph footprint (#731): its entity mentions resolved to their
+    canonical nodes (label + type), and the relation edges touching at least one of those nodes."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return kg.relations_for_document(tenant.tenant_id, document_id)
 
 
 @router.get("/{document_id}/similar", response_model=list[SimilarDocument])

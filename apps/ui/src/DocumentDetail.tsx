@@ -8,6 +8,7 @@ import {
   fetchDocumentDetail,
   fetchDocumentEntities,
   fetchDocumentRecords,
+  fetchDocumentRelations,
   fetchSimilarDocuments,
   formatDuration,
   formatMoneyMinor,
@@ -22,6 +23,7 @@ import {
   type DocEntity,
   type DocumentDetailData,
   type DocumentRecordSummary,
+  type DocumentRelations,
   type ExtractedRecord,
   type ProcessingStep,
   type ProcessingTelemetry,
@@ -827,6 +829,8 @@ export function DocumentDetail({
   const [fullEntities, setFullEntities] = useState<DocEntity[] | null>(null);
   // Semantic neighbors (#730): null = loading/not requested, [] = none (section stays hidden).
   const [similar, setSimilar] = useState<SimilarDocument[] | null>(null);
+  // KG footprint (#731): the document's canonical entities + relation triples (hidden when empty).
+  const [relations, setRelations] = useState<DocumentRelations | null>(null);
   // Inline title rename (#537): editing state + in-flight save + per-attempt error.
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -865,6 +869,22 @@ export function DocumentDetail({
       })
       .catch(() => {
         if (!cancelled) setSimilar([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  // KG footprint (#731): fetched once per document, best-effort like the neighbors above.
+  useEffect(() => {
+    setRelations(null);
+    let cancelled = false;
+    fetchDocumentRelations(id)
+      .then((r) => {
+        if (!cancelled) setRelations(r);
+      })
+      .catch(() => {
+        if (!cancelled) setRelations({ entities: [], relations: [] });
       });
     return () => {
       cancelled = true;
@@ -1244,6 +1264,40 @@ export function DocumentDetail({
                     )}
                   </>
                 )}
+                {relations !== null &&
+                  (relations.entities.length > 0 || relations.relations.length > 0) && (
+                    <section className="entity-group doc-relations">
+                      <h4>Relations</h4>
+                      {relations.entities.some((e) => e.mention_value !== e.node_label) && (
+                        <p className="muted doc-relations-canonical">
+                          Canonical names:{" "}
+                          {relations.entities
+                            .filter((e) => e.mention_value !== e.node_label)
+                            .map((e) => `${e.mention_value} → ${e.node_label}`)
+                            .join(" · ")}
+                        </p>
+                      )}
+                      {relations.relations.length > 0 && (
+                        <ul className="doc-relations-list">
+                          {relations.relations.map((r, i) => (
+                            <li key={`${r.subject}:${r.predicate}:${r.object}:${i}`}>
+                              <strong>{r.subject}</strong>{" "}
+                              <span className="doc-relation-predicate">
+                                {r.predicate.toLowerCase().replace(/_/g, " ")}
+                              </span>{" "}
+                              <strong>{r.object}</strong>
+                              {r.evidence_count > 1 && (
+                                <span className="tag-count muted">
+                                  {" "}
+                                  ×{r.evidence_count.toLocaleString()}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  )}
               </div>
             )}
 

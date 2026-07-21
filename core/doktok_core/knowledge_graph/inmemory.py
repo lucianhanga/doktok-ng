@@ -14,6 +14,9 @@ from typing import Any
 
 from doktok_contracts.schemas import (
     AliasFold,
+    DocumentRelationEntity,
+    DocumentRelations,
+    DocumentRelationTriple,
     EntityType,
     EntityTypeCount,
     KgAdjudicationVerdict,
@@ -107,6 +110,50 @@ class InMemoryKnowledgeGraphRepository:
             for m in self._mentions.values()
             if m.tenant_id == tenant_id and m.document_id == document_id
         ]
+
+    def relations_for_document(self, tenant_id: str, document_id: str) -> DocumentRelations:
+        """Same contract as the Postgres two-query version (#731): mentions resolved through the
+        canonical chain, edges touching at least one of the document's nodes."""
+        mentions = [
+            m
+            for m in self._mentions.values()
+            if m.tenant_id == tenant_id and m.document_id == document_id
+        ]
+        entities: list[DocumentRelationEntity] = []
+        node_ids: set[str] = set()
+        for m in sorted(mentions, key=lambda x: (x.entity_type.value, x.normalized_value)):
+            node = self.get_entity(tenant_id, m.canonical_entity_id)
+            if node is None:
+                continue
+            node_ids.add(node.id)
+            entities.append(
+                DocumentRelationEntity(
+                    mention_value=m.normalized_value,
+                    entity_type=m.entity_type.value,
+                    node_id=node.id,
+                    node_label=node.normalized_value,
+                )
+            )
+        relations: list[DocumentRelationTriple] = []
+        for e in self._edges.values():
+            if e.tenant_id != tenant_id or (
+                e.src_entity_id not in node_ids and e.dst_entity_id not in node_ids
+            ):
+                continue
+            src = self.get_entity(tenant_id, e.src_entity_id)
+            dst = self.get_entity(tenant_id, e.dst_entity_id)
+            if src is None or dst is None:
+                continue
+            relations.append(
+                DocumentRelationTriple(
+                    subject=src.normalized_value,
+                    predicate=e.predicate,
+                    object=dst.normalized_value,
+                    evidence_count=e.evidence_count,
+                )
+            )
+        relations.sort(key=lambda r: (-r.evidence_count, r.subject, r.predicate, r.object))
+        return DocumentRelations(entities=entities, relations=relations[:50])
 
     def mentions_for_entity(
         self, tenant_id: str, entity_id: str, *, limit: int | None = None, offset: int = 0

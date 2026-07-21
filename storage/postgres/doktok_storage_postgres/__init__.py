@@ -19,6 +19,7 @@ from doktok_storage_postgres.repositories import (
     PostgresProjectionRequestRepository,
     PostgresRecordRepository,
     PostgresStatsRepository,
+    PostgresTagRepository,
     PostgresTenantRegistry,
     PostgresUserPreferenceRepository,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "PostgresMemoryRepository",
     "PostgresProjectionRequestRepository",
     "PostgresRecordRepository",
+    "PostgresTagRepository",
     "PostgresStatsRepository",
     "PostgresTenantRegistry",
     "PostgresUserPreferenceRepository",

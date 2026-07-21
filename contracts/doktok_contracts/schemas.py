@@ -472,6 +472,35 @@ class DocumentNote(BaseModel):
     created_at: datetime
 
 
+class Tag(BaseModel):
+    """A manual, tenant-level document tag (epic #543). ``normalized`` is the case-insensitive
+    dedup key (NFKC + casefold + trimmed + collapsed whitespace, emoji stripped); ``color`` is a
+    palette TOKEN (never freeform hex) so light+dark themes keep WCAG contrast. ``scope`` and
+    ``owner_user_id`` are the forward seam for future personal tags (v1 ships tenant scope)."""
+
+    id: str
+    tenant_id: str
+    name: str
+    normalized: str
+    description: str = ""
+    color: str = "slate"
+    status: str = "active"  # active | merged | deprecated
+    merged_into: str | None = None
+    scope: str = "tenant"  # tenant | user (future)
+    owner_user_id: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class DocumentTag(BaseModel):
+    """A document-to-tag assignment (epic #543)."""
+
+    tenant_id: str
+    document_id: str
+    tag_id: str
+    created_at: datetime | None = None
+
+
 class DocumentRelationTriple(BaseModel):
     """A knowledge-graph relation edge touching at least one of the document's entity nodes
     (#731), with both endpoints shown by their canonical node label."""

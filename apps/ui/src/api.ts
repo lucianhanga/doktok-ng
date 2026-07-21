@@ -1497,6 +1497,118 @@ export function fetchDocumentRelations(id: string): Promise<DocumentRelations> {
   return getJson<DocumentRelations>(`/api/v1/documents/${encodeURIComponent(id)}/relations`);
 }
 
+/** A tag as returned by the tags API (#545/#547): the tag plus its document count. */
+export interface TagOut {
+  id: string;
+  tenant_id: string;
+  name: string;
+  normalized: string;
+  description: string;
+  color: string;
+  status: string;
+  merged_into: string | null;
+  scope: string;
+  owner_user_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+  document_count: number;
+}
+
+export function fetchTags(q?: string): Promise<TagOut[]> {
+  return getJson<TagOut[]>(`/api/v1/tags${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+}
+
+export type CreateTagResult =
+  | { ok: true; tag: TagOut }
+  | { ok: false; code: "duplicate"; existing?: { id: string; name: string } }
+  | { ok: false; code: "similar"; similar: { id: string; name: string }[] }
+  | { ok: false; code: "error"; message: string };
+
+/** Create a tag; 409s (duplicate / near-miss) come back as typed results so the UI can warn. */
+export async function createTag(body: {
+  name: string;
+  color: string;
+  description?: string;
+  allow_similar?: boolean;
+}): Promise<CreateTagResult> {
+  const response = await fetch("/api/v1/tags", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 201) return { ok: true, tag: (await response.json()) as TagOut };
+  const payload = (await response.json().catch(() => ({}))) as {
+    detail?: { code?: string; existing?: { id: string; name: string }; similar?: { id: string; name: string }[] } | string;
+  };
+  if (response.status === 409 && typeof payload.detail === "object" && payload.detail) {
+    if (payload.detail.code === "duplicate")
+      return { ok: false, code: "duplicate", existing: payload.detail.existing };
+    if (payload.detail.code === "similar")
+      return { ok: false, code: "similar", similar: payload.detail.similar ?? [] };
+  }
+  const message =
+    typeof payload.detail === "string" ? payload.detail : `Request failed (${response.status})`;
+  return { ok: false, code: "error", message };
+}
+
+export function patchTag(
+  id: string,
+  body: { name?: string; color?: string; description?: string },
+): Promise<TagOut> {
+  return sendJson<TagOut>(`/api/v1/tags/${encodeURIComponent(id)}`, "PATCH", body);
+}
+
+export type DeleteTagResult =
+  | { ok: true }
+  | { ok: false; code: "in_use"; document_count: number }
+  | { ok: false; code: "error"; message: string };
+
+/** Delete a tag; the in-use 409 comes back as a typed result (count) so the UI can confirm. */
+export async function deleteTag(id: string, force = false): Promise<DeleteTagResult> {
+  const response = await fetch(
+    `/api/v1/tags/${encodeURIComponent(id)}${force ? "?force=true" : ""}`,
+    { method: "DELETE" },
+  );
+  if (response.status === 204) return { ok: true };
+  if (response.status === 409) {
+    const payload = (await response.json().catch(() => ({}))) as {
+      detail?: { code?: string; document_count?: number };
+    };
+    if (payload.detail?.code === "in_use")
+      return { ok: false, code: "in_use", document_count: payload.detail.document_count ?? 0 };
+  }
+  return { ok: false, code: "error", message: `Request failed (${response.status})` };
+}
+
+/** Assign a tag to a document (#548); idempotent, 204 on success. */
+export function assignDocumentTag(documentId: string, tagId: string): Promise<void> {
+  return sendJson<void>(
+    `/api/v1/documents/${encodeURIComponent(documentId)}/tags/${encodeURIComponent(tagId)}`,
+    "PUT",
+  );
+}
+
+/** Remove a tag from a document (#548); idempotent, 204 on success. */
+export function unassignDocumentTag(documentId: string, tagId: string): Promise<void> {
+  return sendJson<void>(
+    `/api/v1/documents/${encodeURIComponent(documentId)}/tags/${encodeURIComponent(tagId)}`,
+    "DELETE",
+  );
+}
+
+/** Bulk assign/unassign tag sets across documents (#548); returns {updated}. */
+export function bulkUpdateDocumentTags(
+  documentIds: string[],
+  add: string[],
+  remove: string[],
+): Promise<{ updated: number }> {
+  return sendJson<{ updated: number }>("/api/v1/documents/tags:bulk", "POST", {
+    document_ids: documentIds,
+    add,
+    remove,
+  });
+}
+
 /** A user-authored, timestamped note on a document (#736; immutable entry). */
 export interface DocumentNote {
   id: string;

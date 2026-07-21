@@ -116,17 +116,29 @@ export function DataTable<T>({
   // Header drag-to-reorder: id of the column currently being dragged.
   const [draggingCol, setDraggingCol] = useState<string | null>(null);
 
-  // Persist table layout whenever it changes (best-effort). Sorting is only persisted when the
-  // table owns it; under controlled sorting the parent (its query) is the source of truth.
+  // Persist table layout only on GENUINE CHANGES (best-effort; #522). The mount run adopts the
+  // restored envelope as the baseline WITHOUT writing it back: storage already holds it, and a
+  // stale/duplicate instance mounting with empty state must never clobber the saved layout - a
+  // write happens only when the state actually diverges from the last adopted/written one.
+  // Sorting is only persisted when the table owns it; under controlled sorting the parent (its
+  // query) is the source of truth.
+  const lastSavedLayout = useRef<string | null>(null);
   useEffect(() => {
-    if (persistKey) {
-      saveJSON(persistKey, {
-        sorting: controlledSorting ? persisted.sorting : internalSorting,
-        columnVisibility,
-        columnSizing,
-        columnOrder,
-      });
+    if (!persistKey) return;
+    const envelope = {
+      sorting: controlledSorting ? persisted.sorting : internalSorting,
+      columnVisibility,
+      columnSizing,
+      columnOrder,
+    };
+    const serialized = JSON.stringify(envelope);
+    if (lastSavedLayout.current === null) {
+      lastSavedLayout.current = serialized;
+      return;
     }
+    if (lastSavedLayout.current === serialized) return;
+    lastSavedLayout.current = serialized;
+    saveJSON(persistKey, envelope);
   }, [
     persistKey,
     controlledSorting,
@@ -137,13 +149,14 @@ export function DataTable<T>({
     columnOrder,
   ]);
 
-  // Reset to factory defaults when the parent bumps resetNonce (skip the initial render).
-  const firstReset = useRef(true);
+  // Reset to factory defaults when the parent bumps resetNonce to a NEW value. The guard compares
+  // values (not a "skip the first run" boolean): under React StrictMode every mount double-invokes
+  // the effects with refs preserved, so a boolean guard lets the reset fire on the second pass and
+  // wipe the just-restored layout (#522 root cause - dev-only, invisible without StrictMode).
+  const lastResetNonce = useRef(resetNonce);
   useEffect(() => {
-    if (firstReset.current) {
-      firstReset.current = false;
-      return;
-    }
+    if (lastResetNonce.current === resetNonce) return;
+    lastResetNonce.current = resetNonce;
     setInternalSorting([]);
     setColumnVisibility(initialVisibility ?? {});
     setColumnSizing({});

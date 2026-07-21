@@ -1024,12 +1024,42 @@ export function DocumentsPanel({
     setSelectAllTruncated(false);
   }, [category, status, needsAttention, unidentifiable, sort, dir, title, tokens, tokenMatch]);
 
-  useEffect(() => persistThumbSize(thumbSize), [thumbSize]);
-  useEffect(() => persistTileFields(tileFields), [tileFields]);
+  // Thumbnail size + tile fields persist per user; the mount run adopts the restored value
+  // without writing it back (anti-clobber guard, #522).
+  const lastSavedThumb = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastSavedThumb.current === null) {
+      lastSavedThumb.current = thumbSize;
+      return;
+    }
+    if (lastSavedThumb.current === thumbSize) return;
+    lastSavedThumb.current = thumbSize;
+    persistThumbSize(thumbSize);
+  }, [thumbSize]);
+  const lastSavedTile = useRef<string | null>(null);
+  useEffect(() => {
+    const serialized = JSON.stringify(tileFields);
+    if (lastSavedTile.current === null) {
+      lastSavedTile.current = serialized;
+      return;
+    }
+    if (lastSavedTile.current === serialized) return;
+    lastSavedTile.current = serialized;
+    persistTileFields(tileFields);
+  }, [tileFields]);
   // Persist the view mode + filter set per user (#522): restored on the next mount, synced to the
-  // server store for other devices.
+  // server store for other devices. The mount run adopts the restored prefs as baseline WITHOUT
+  // writing (same anti-clobber guard as the table layout).
+  const lastSavedUi = useRef<string | null>(null);
   useEffect(() => {
     const prefs: DocsUiPrefs = { view, category, status, needsAttention, unidentifiable, title };
+    const serialized = JSON.stringify(prefs);
+    if (lastSavedUi.current === null) {
+      lastSavedUi.current = serialized;
+      return;
+    }
+    if (lastSavedUi.current === serialized) return;
+    lastSavedUi.current = serialized;
     saveJSON(DOCS_UI_KEY, prefs);
   }, [view, category, status, needsAttention, unidentifiable, title]);
 

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, test } from "vitest";
 import type { ColumnDef, SortingState } from "@tanstack/react-table";
 
@@ -105,4 +106,19 @@ test("round-trip with the DocumentsPanel prop shape: controlled sorting, initial
   expect(nameHeader().style.width).toBe(widened);
   // initialVisibility still applies to a fresh store only: the saved envelope wins.
   expect(screen.queryByRole("columnheader", { name: /Size/ })).not.toBeInTheDocument();
+});
+
+test("column sizing survives a mount under React StrictMode (#522 root cause)", () => {
+  // The app runs in StrictMode, which double-mounts every component and re-runs mount effects
+  // with refs preserved: the reset effect's old boolean "skip first run" guard let the reset
+  // fire on the second pass, wiping the just-restored layout. The value guard must not.
+  localStorage.setItem(KEY, JSON.stringify({ columnSizing: { name: 230 } }));
+  render(
+    <StrictMode>
+      <DataTable<Row> data={DATA} columns={COLS} getRowId={(r) => r.id} persistKey={KEY} />
+    </StrictMode>,
+  );
+  expect(nameHeader().style.width).toBe("230px");
+  const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+  expect(saved.columnSizing?.name).toBe(230);
 });

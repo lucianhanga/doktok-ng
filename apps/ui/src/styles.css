@@ -6894,3 +6894,29 @@ tr.row-selected {
   color: var(--muted);
   font-size: 0.78em;
 }
+
+/* Similar documents (#730): the semantic-neighbor list in the detail aside. */
+.doc-similar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.doc-similar-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.doc-similar-list .link-button {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-similar-score {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+}

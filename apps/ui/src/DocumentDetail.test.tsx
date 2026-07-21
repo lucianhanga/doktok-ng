@@ -50,6 +50,7 @@ function mockDetail(
   docOverride: Record<string, unknown> = {},
   detailOverride: Record<string, unknown> = {},
   recordsPage: Record<string, unknown> = { items: [], total: 0, next_offset: null },
+  similar: unknown[] = [],
 ) {
   const calls: { url: string; method: string; body?: string }[] = [];
   const detail = {
@@ -104,6 +105,8 @@ function mockDetail(
           { status: 200 },
         );
       }
+      if (url.endsWith("/similar"))
+        return new Response(JSON.stringify(similar), { status: 200 });
       if (url.endsWith("/detail")) return new Response(JSON.stringify(detail), { status: 200 });
       if (url.includes("/records"))
         return new Response(JSON.stringify(recordsPage), { status: 200 });
@@ -697,4 +700,29 @@ test("the Processing summary shows chunk count + extraction method (#732)", asyn
   expect(screen.getByText("3 chunks")).toBeInTheDocument();
   expect(screen.getByText("Extraction")).toBeInTheDocument();
   expect(screen.getByText("ocr")).toBeInTheDocument();
+});
+
+// ---- Similar documents (#730) ----
+
+test("similar documents render with links and scores, and open on click (#730)", async () => {
+  mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [
+    { document_id: "d2", title: "Twin document", original_filename: "twin.pdf", score: 0.94 },
+  ]);
+  const onOpen = vi.fn();
+  render(<DocumentDetail id="d1" onClose={() => {}} onOpenDocument={onOpen} />);
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Similar documents" })).toBeInTheDocument(),
+  );
+  expect(screen.getByText("94%")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Twin document" }));
+  expect(onOpen).toHaveBeenCalledWith("d2");
+});
+
+test("the similar documents section stays hidden when there are no neighbors (#730)", async () => {
+  mockDetail();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "Similar documents" })).not.toBeInTheDocument(),
+  );
 });

@@ -1463,6 +1463,19 @@ export function resetDocumentTitle(id: string): Promise<DokDocument> {
   return sendJson<DokDocument>(`/api/v1/documents/${encodeURIComponent(id)}/title`, "DELETE");
 }
 
+/** A semantic neighbor of a document (#730), ranked by chunk-embedding cosine closeness. */
+export interface SimilarDocument {
+  document_id: string;
+  title: string | null;
+  original_filename: string;
+  score: number;
+}
+
+/** The document's most similar documents (empty when it has no neighbors). */
+export function fetchSimilarDocuments(id: string): Promise<SimilarDocument[]> {
+  return getJson<SimilarDocument[]>(`/api/v1/documents/${encodeURIComponent(id)}/similar`);
+}
+
 /** Delete a document and its files. */
 export async function deleteDocument(id: string): Promise<void> {
   const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, { method: "DELETE" });

@@ -435,6 +435,17 @@ class DocumentChunk(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SimilarDocument(BaseModel):
+    """A semantic neighbor of a document (#730): another document whose chunks are close in
+    embedding space. ``score`` is the mean of the candidate's per-chunk best cosine similarity
+    (0..1, higher = more similar)."""
+
+    document_id: str
+    title: str | None = None
+    original_filename: str
+    score: float
+
+
 class DocumentEntity(BaseModel):
     id: str
     tenant_id: str

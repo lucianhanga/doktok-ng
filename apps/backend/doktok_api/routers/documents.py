@@ -45,6 +45,7 @@ from doktok_contracts.schemas import (
     LayoutLine,
     LayoutPage,
     ListAnchor,
+    SimilarDocument,
     SortDir,
     TokenMatch,
 )
@@ -354,6 +355,36 @@ def get_document_content(document_id: str, tenant: Tenant, repo: Repo) -> Docume
         if path.exists():
             content = path.read_text(encoding="utf-8")
     return DocumentContent(document_id=document_id, content=content)
+
+
+@router.get("/{document_id}/similar", response_model=list[SimilarDocument])
+def get_similar_documents(
+    document_id: str,
+    tenant: Tenant,
+    repo: Repo,
+    chunks: Chunks,
+    limit: Annotated[int, Query(ge=1, le=20)] = 6,
+) -> list[SimilarDocument]:
+    """A document's semantic neighbors (#730): other active documents ranked by chunk-embedding
+    closeness (mean of per-chunk best cosine matches). Empty when there are no neighbors."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    similar = chunks.similar_documents(tenant.tenant_id, document_id, limit=limit)
+    # The chunk store ranks by (document_id, score); identity fields are enriched from the
+    # document repo (the InMemory store does not join documents).
+    enriched: list[SimilarDocument] = []
+    for s in similar:
+        d = repo.get(tenant.tenant_id, s.document_id)
+        enriched.append(
+            SimilarDocument(
+                document_id=s.document_id,
+                title=d.title if d is not None else s.title,
+                original_filename=d.original_filename if d is not None else s.original_filename,
+                score=s.score,
+            )
+        )
+    return enriched
 
 
 @router.get("/{document_id}/layout", response_model=DocumentLayout)

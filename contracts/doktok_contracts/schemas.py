@@ -68,6 +68,8 @@ class AuditEventType(StrEnum):
     FEATURE_RETRIED = "feature.retried"
     DOCUMENT_ROTATED = "document.rotated"
     DOCUMENT_REINGESTED = "document.reingested"
+    # A user renamed the document title (#537); details carry the old/new title, never a secret.
+    DOCUMENT_RENAMED = "document.renamed"
     DOCUMENT_DELETED = "document.deleted"
     DOCUMENT_VIEWED = "document.viewed"
     # The human upload itself (#635, F-21): the worker later logs pipeline events as "worker", so
@@ -263,6 +265,10 @@ class Document(BaseModel):
     original_filename: str
     detected_mime: str | None = None
     title: str | None = None
+    # Who owns the title (#537): 'auto' = the doc_metadata LLM feature may re-derive it on every
+    # reprocess; 'manual' = a user renamed it and the auto path must never overwrite it (mirrors
+    # the chat-thread title/title_source pattern).
+    title_source: str = "auto"
     status: DocumentStatus = DocumentStatus.PROCESSING
     storage_path: str | None = None
     created_at: datetime

@@ -103,7 +103,7 @@ def from_vector_literal(raw: str | None) -> list[float]:
 
 _DOC_COLUMNS = (
     "id, tenant_id, current_version_id, sha256, original_filename, detected_mime, "
-    "title, status, storage_path, created_at, activated_at, duplicate_of, metadata, "
+    "title, title_source, status, storage_path, created_at, activated_at, duplicate_of, metadata, "
     "ingested_at, document_date, location, summary, unidentifiable"
 )
 _DOC_COLUMNS_D = ", ".join(f"d.{c}" for c in _DOC_COLUMNS.split(", "))
@@ -118,6 +118,7 @@ def _row_to_document(row: dict[str, Any]) -> Document:
         original_filename=row["original_filename"],
         detected_mime=row["detected_mime"],
         title=row["title"],
+        title_source=row["title_source"],
         status=DocumentStatus(row["status"]),
         storage_path=row["storage_path"],
         created_at=row["created_at"],
@@ -390,6 +391,7 @@ class PostgresDocumentRepository:
                         document.original_filename,
                         document.detected_mime,
                         document.title,
+                        document.title_source,
                         document.status.value,
                         document.storage_path,
                         document.created_at,
@@ -432,9 +434,26 @@ class PostgresDocumentRepository:
     ) -> None:
         with self._db.connection() as conn:
             conn.execute(
-                "UPDATE documents SET title=COALESCE(%s, title), document_date=%s, location=%s, "
-                "summary=%s WHERE id=%s AND tenant_id=%s",
+                # The title is only overwritten on the 'auto' path: a 'manual' (user-renamed,
+                # #537) title survives every metadata re-run; other fields always update.
+                "UPDATE documents SET "
+                "title=CASE WHEN title_source = 'manual' THEN title ELSE COALESCE(%s, title) END, "
+                "document_date=%s, location=%s, summary=%s WHERE id=%s AND tenant_id=%s",
                 (title, document_date, location, summary, document_id, tenant_id),
+            )
+
+    def set_title(self, tenant_id: str, document_id: str, title: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE documents SET title=%s, title_source='manual' WHERE id=%s AND tenant_id=%s",
+                (title, document_id, tenant_id),
+            )
+
+    def clear_manual_title(self, tenant_id: str, document_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE documents SET title_source='auto' WHERE id=%s AND tenant_id=%s",
+                (document_id, tenant_id),
             )
 
     def set_unidentifiable(self, tenant_id: str, document_id: str, *, value: bool | None) -> None:

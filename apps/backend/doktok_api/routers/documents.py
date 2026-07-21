@@ -53,7 +53,7 @@ from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS_BY_ID
 from doktok_core.features.telemetry import build_processing_summary, build_processing_telemetry
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from doktok_api.dependencies import (
     Tenant,
@@ -664,6 +664,63 @@ def rotate_document(
     )
     safe_name = _purge_and_requeue(document, rotated, files_root, tenant.tenant_id, repo, jobs)
     return {"status": "queued", "filename": safe_name, "degrees": str(degrees)}
+
+
+class TitleUpdate(BaseModel):
+    """Rename request (#537): a title, trimmed, bounded."""
+
+    title: str = Field(min_length=1, max_length=200)
+
+
+@router.patch("/{document_id}/title", response_model=Document)
+def rename_document(
+    document_id: str, update: TitleUpdate, tenant: Tenant, repo: Repo, audit: Audit
+) -> Document:
+    """Rename a document (#537): the title is marked ``title_source='manual'`` so the
+    doc_metadata feature never overwrites it on reprocessing. Audited (old/new title)."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    title = update.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="title must not be empty or whitespace")
+    repo.set_title(tenant.tenant_id, document_id, title)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_RENAMED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        document_id=document_id,
+        description=f"Renamed to '{title}'",
+        details={"old_title": document.title or document.original_filename, "new_title": title},
+    )
+    updated = repo.get(tenant.tenant_id, document_id)
+    assert updated is not None  # the row existed a statement ago, same transaction scope
+    return updated
+
+
+@router.delete("/{document_id}/title", response_model=Document)
+def reset_document_title(document_id: str, tenant: Tenant, repo: Repo, audit: Audit) -> Document:
+    """Hand a renamed title back to the auto path (#537): ``title_source='auto'``; the current
+    title stays until the next doc_metadata run re-derives it."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    repo.clear_manual_title(tenant.tenant_id, document_id)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_RENAMED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        document_id=document_id,
+        description="Title reset to automatic",
+        details={"old_title": document.title or document.original_filename, "new_title": None},
+    )
+    updated = repo.get(tenant.tenant_id, document_id)
+    assert updated is not None
+    return updated
 
 
 @router.delete("/{document_id}")

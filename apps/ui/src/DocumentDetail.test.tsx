@@ -51,7 +51,7 @@ function mockDetail(
   detailOverride: Record<string, unknown> = {},
   recordsPage: Record<string, unknown> = { items: [], total: 0, next_offset: null },
 ) {
-  const calls: { url: string; method: string }[] = [];
+  const calls: { url: string; method: string; body?: string }[] = [];
   const detail = {
     document: {
       id: "d1",
@@ -90,7 +90,20 @@ function mockDetail(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
-      calls.push({ url, method: init?.method ?? "GET" });
+      calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
+      if (url.endsWith("/title")) {
+        // Rename (#537): PATCH sets title + 'manual'; DELETE resets to 'auto' (title text stays).
+        const method = init?.method ?? "GET";
+        const sent = init?.body ? (JSON.parse(init.body as string) as { title?: string }) : {};
+        return new Response(
+          JSON.stringify({
+            ...detail.document,
+            title: method === "PATCH" ? sent.title : detail.document.title,
+            title_source: method === "PATCH" ? "manual" : "auto",
+          }),
+          { status: 200 },
+        );
+      }
       if (url.endsWith("/detail")) return new Response(JSON.stringify(detail), { status: 200 });
       if (url.includes("/records"))
         return new Response(JSON.stringify(recordsPage), { status: 200 });
@@ -466,4 +479,55 @@ test("trust strip advises review when some transactions are low-confidence", asy
   const strip = await screen.findByText(/2 transactions are low-confidence/i);
   // Low-confidence-only is a calm advisory, not the amber unidentifiable treatment.
   expect(strip).not.toHaveClass("trust-strip-warning");
+});
+
+// ---- Inline title rename (#537) ----
+
+test("rename: pencil opens the editor, Save PATCHes and updates the heading (#537)", async () => {
+  const calls = mockDetail();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("A short summary.")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Rename document" }));
+  const input = screen.getByLabelText("Document title");
+  fireEvent.change(input, { target: { value: "  My own name  " } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /My own name/ })).toBeInTheDocument(),
+  );
+  const patch = calls.find((c) => c.method === "PATCH" && c.url.endsWith("/title"));
+  expect(patch).toBeDefined();
+  // The component trims before sending (and the server trims again).
+  expect(JSON.parse(patch!.body!)).toEqual({ title: "My own name" });
+  // A manual title shows the renamed marker with a reset action.
+  expect(screen.getByText("renamed")).toBeInTheDocument();
+});
+
+test("rename: Escape cancels without a request (#537)", async () => {
+  const calls = mockDetail();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("A short summary.")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Rename document" }));
+  fireEvent.keyDown(screen.getByLabelText("Document title"), { key: "Escape" });
+  expect(screen.queryByLabelText("Document title")).not.toBeInTheDocument();
+  expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+});
+
+test("rename: empty input cannot be saved (#537)", async () => {
+  const calls = mockDetail();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("A short summary.")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Rename document" }));
+  const input = screen.getByLabelText("Document title");
+  fireEvent.change(input, { target: { value: "   " } });
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+});
+
+test("reset to auto: DELETEs the manual title and drops the marker (#537)", async () => {
+  const calls = mockDetail([], { title: "My own name", title_source: "manual" });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("renamed")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "reset to auto" }));
+  await waitFor(() => expect(screen.queryByText("renamed")).not.toBeInTheDocument());
+  expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/title"))).toBe(true);
 });

@@ -223,3 +223,14 @@ def test_ai_settings_response_reports_tenant_key_flag_only() -> None:
     assert resp.tenant_openai_api_key_set is True
     # Write-only everywhere: no response model carries a key field.
     assert "openai_api_key" not in AiSettingsResponse.model_fields
+
+
+def test_document_title_source_defaults_to_auto() -> None:
+    doc = Document(
+        id="d1",
+        tenant_id="t1",
+        sha256="x",
+        original_filename="a.pdf",
+        created_at=datetime.now(UTC),
+    )
+    assert doc.title_source == "auto"

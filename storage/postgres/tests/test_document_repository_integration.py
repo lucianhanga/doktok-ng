@@ -248,3 +248,45 @@ def test_sort_by_chunks_and_cursor_round_trip(db: Database) -> None:
     )
     assert [d.id for d in page2] == ["chk0"]
     assert anchor2 is None
+
+
+def test_title_source_guards_metadata_overwrite(db: Database) -> None:
+    """#537: set_metadata (the auto/LLM path) never overwrites a manual title; set_title marks a
+    rename; clear_manual_title hands the title back to the auto path."""
+    repo = PostgresDocumentRepository(db)
+    repo.add(_doc("t537-doc", TEST_TENANT_A))
+
+    # Default: the auto path owns the title.
+    fetched = repo.get(TEST_TENANT_A, "t537-doc")
+    assert fetched is not None and fetched.title_source == "auto"
+
+    # A manual rename marks title_source and wins over the next metadata run.
+    repo.set_title(TEST_TENANT_A, "t537-doc", "My own name")
+    repo.set_metadata(
+        TEST_TENANT_A,
+        "t537-doc",
+        title="LLM title",
+        document_date=None,
+        location=None,
+        summary="new summary",
+    )
+    fetched = repo.get(TEST_TENANT_A, "t537-doc")
+    assert fetched is not None
+    assert fetched.title == "My own name"
+    assert fetched.title_source == "manual"
+    assert fetched.summary == "new summary"  # other enrichment fields still update
+
+    # Clearing hands it back: the next metadata run re-derives the title.
+    repo.clear_manual_title(TEST_TENANT_A, "t537-doc")
+    repo.set_metadata(
+        TEST_TENANT_A,
+        "t537-doc",
+        title="LLM title",
+        document_date=None,
+        location=None,
+        summary="s2",
+    )
+    fetched = repo.get(TEST_TENANT_A, "t537-doc")
+    assert fetched is not None
+    assert fetched.title_source == "auto"
+    assert fetched.title == "LLM title"

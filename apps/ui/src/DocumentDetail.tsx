@@ -8,6 +8,7 @@ import {
   fetchDocumentDetail,
   fetchDocumentEntities,
   fetchDocumentRecords,
+  fetchSimilarDocuments,
   formatDuration,
   formatMoneyMinor,
   formatSignedMoneyMinor,
@@ -24,6 +25,7 @@ import {
   type ExtractedRecord,
   type ProcessingStep,
   type ProcessingTelemetry,
+  type SimilarDocument,
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 import { entityTypeMeta } from "./entityTypes";
@@ -823,6 +825,8 @@ export function DocumentDetail({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [fullContent, setFullContent] = useState<string | null>(null);
   const [fullEntities, setFullEntities] = useState<DocEntity[] | null>(null);
+  // Semantic neighbors (#730): null = loading/not requested, [] = none (section stays hidden).
+  const [similar, setSimilar] = useState<SimilarDocument[] | null>(null);
   // Inline title rename (#537): editing state + in-flight save + per-attempt error.
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -849,6 +853,23 @@ export function DocumentDetail({
     load(c.signal);
     return () => c.abort();
   }, [load]);
+
+  // Semantic neighbors (#730): fetched once per document, best-effort (a failure just hides the
+  // section).
+  useEffect(() => {
+    setSimilar(null);
+    let cancelled = false;
+    fetchSimilarDocuments(id)
+      .then((s) => {
+        if (!cancelled) setSimilar(s);
+      })
+      .catch(() => {
+        if (!cancelled) setSimilar([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   // The Records tab only exists when the loaded document has records; if it does not (e.g. after
   // navigating to a record-less document while the tab was open), fall back to Content.
@@ -1273,6 +1294,32 @@ export function DocumentDetail({
 
             {/* Categories now lead the hero fact ribbon (top of the view), so the aside no longer
                 repeats them. */}
+
+            {similar !== null && similar.length > 0 && (
+              <section className="doc-aside-section doc-similar">
+                <h3>Similar documents</h3>
+                <ul className="doc-similar-list">
+                  {similar.map((s) => (
+                    <li key={s.document_id}>
+                      {onOpenDocument ? (
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => onOpenDocument(s.document_id)}
+                        >
+                          {s.title ?? s.original_filename}
+                        </button>
+                      ) : (
+                        <span>{s.title ?? s.original_filename}</span>
+                      )}
+                      <span className="doc-similar-score muted" title="embedding similarity">
+                        {Math.round(s.score * 100)}%
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             <section className="doc-aside-section">
               <h3>Processing</h3>

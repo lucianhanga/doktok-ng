@@ -42,6 +42,7 @@ def _client(
     *,
     cats: InMemoryCategoryRepository | None = None,
     chunks: InMemoryChunkRepository | None = None,
+    more_docs: list[Document] | None = None,
 ) -> TestClient:
     doc = Document(
         id="d1",
@@ -56,6 +57,8 @@ def _client(
     )
     doc_repo = InMemoryDocumentRepository()
     doc_repo.add(doc)
+    for extra in more_docs or []:
+        doc_repo.add(extra)
     entity_repo = InMemoryEntityRepository()
     entity_repo.add_entities(
         [
@@ -468,3 +471,53 @@ def test_detail_facts_default_without_chunks_or_content_json(tmp_path: Path) -> 
     body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
     assert body["chunk_count"] == 0
     assert body["extraction"] == {"method": "", "ocr_confidence": None}
+
+
+# ---- #730: similar documents endpoint ----
+
+
+def _vec(a: float, b: float) -> list[float]:
+    norm = (a**2 + b**2) ** 0.5
+    return [a / norm, b / norm]
+
+
+def test_similar_documents_ranked_enriched_and_self_excluded(tmp_path: Path) -> None:
+    d2 = Document(
+        id="d2",
+        tenant_id="tenant-a",
+        sha256="b" * 64,
+        original_filename="twin.pdf",
+        detected_mime="application/pdf",
+        title="Twin document",
+        status=DocumentStatus.ACTIVE,
+        storage_path=str(tmp_path / "d2"),
+        created_at=datetime.now(UTC),
+    )
+    chunks = InMemoryChunkRepository()
+    chunks.add_chunks(
+        [DocumentChunk(id="ca", tenant_id="tenant-a", document_id="d1", version_id="v1", text="a")],
+        [_vec(1.0, 0.0)],
+    )
+    chunks.add_chunks(
+        [DocumentChunk(id="cb", tenant_id="tenant-a", document_id="d2", version_id="v1", text="b")],
+        [_vec(0.95, 0.05)],  # close to d1's chunk
+    )
+    client = _client(str(tmp_path), chunks=chunks, more_docs=[d2])
+    resp = client.get("/api/v1/documents/d1/similar", headers=_auth())
+    assert resp.status_code == 200, resp.text
+    items = resp.json()
+    assert [s["document_id"] for s in items] == ["d2"]  # self excluded
+    assert items[0]["title"] == "Twin document"  # identity enriched from the document repo
+    assert items[0]["original_filename"] == "twin.pdf"
+    assert items[0]["score"] > 0.99
+
+
+def test_similar_documents_empty_and_404(tmp_path: Path) -> None:
+    chunks = InMemoryChunkRepository()
+    chunks.add_chunks(
+        [DocumentChunk(id="ca", tenant_id="tenant-a", document_id="d1", version_id="v1", text="a")],
+        [_vec(1.0, 0.0)],
+    )
+    client = _client(str(tmp_path), chunks=chunks)
+    assert client.get("/api/v1/documents/d1/similar", headers=_auth()).json() == []
+    assert client.get("/api/v1/documents/missing/similar", headers=_auth()).status_code == 404

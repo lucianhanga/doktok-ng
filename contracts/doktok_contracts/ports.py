@@ -80,6 +80,7 @@ from doktok_contracts.schemas import (
     RankedChunk,
     SearchHit,
     SecurityDecision,
+    SimilarDocument,
     SortDir,
     StatsSummary,
     Tenant,
@@ -491,6 +492,14 @@ class ChunkRepository(Protocol):
     def chunk_counts_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, int]:
         """Chunk count per document for the list sidecar, batched GROUP BY over the page's ids."""
         ...
+
+    def similar_documents(
+        self, tenant_id: str, document_id: str, *, limit: int = 6
+    ) -> list[SimilarDocument]:
+        """A document's semantic neighbors (#730): other active documents ranked by embedding
+        closeness - per candidate chunk the best cosine similarity against any of the source
+        document's chunks, averaged per candidate document. Self is excluded; empty when the
+        document has no neighbors."""
 
 
 @runtime_checkable

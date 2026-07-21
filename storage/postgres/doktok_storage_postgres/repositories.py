@@ -60,6 +60,7 @@ from doktok_contracts.schemas import (
     RankedChunk,
     RecordCurrencyRollup,
     RecordTypeCount,
+    SimilarDocument,
     SortDir,
     StatsSummary,
     Tenant,
@@ -805,6 +806,41 @@ class PostgresChunkRepository:
                 (tenant_id, list(document_ids)),
             ).fetchall()
         return {r["document_id"]: int(r["n"]) for r in rows}
+
+    def similar_documents(
+        self, tenant_id: str, document_id: str, *, limit: int = 6
+    ) -> list[SimilarDocument]:
+        """Semantic neighbors (#730): per candidate chunk the best cosine similarity against any
+        of the source document's chunks, averaged per candidate document; self + non-active
+        documents excluded."""
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "WITH src AS ("
+                "  SELECT embedding FROM document_chunks"
+                "  WHERE tenant_id=%s AND document_id=%s AND embedding IS NOT NULL"
+                "), best AS ("
+                "  SELECT c.document_id, c.id, MAX(1 - (c.embedding <=> s.embedding)) AS sim"
+                "  FROM document_chunks c CROSS JOIN src s"
+                "  WHERE c.tenant_id=%s AND c.document_id <> %s AND c.embedding IS NOT NULL"
+                "  GROUP BY c.document_id, c.id"
+                ") "
+                "SELECT b.document_id, d.title, d.original_filename, AVG(b.sim) AS score "
+                "FROM best b JOIN documents d ON d.id = b.document_id AND d.tenant_id = %s "
+                "WHERE d.status = 'active' "
+                "GROUP BY b.document_id, d.title, d.original_filename "
+                "ORDER BY score DESC LIMIT %s",
+                (tenant_id, document_id, tenant_id, document_id, tenant_id, limit),
+            ).fetchall()
+        return [
+            SimilarDocument(
+                document_id=r["document_id"],
+                title=r["title"],
+                original_filename=r["original_filename"],
+                score=float(r["score"]),
+            )
+            for r in rows
+        ]
 
 
 class PostgresEntityRepository:

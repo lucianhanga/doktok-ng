@@ -174,3 +174,54 @@ def test_list_supports_q_filter_and_tenant_isolation(tmp_path: Path) -> None:
     client.post("/api/v1/tags", json={"name": "Receipts"}, headers=EDITOR)
     filtered = client.get("/api/v1/tags?q=rom", headers=VIEWER).json()
     assert [t["name"] for t in filtered] == ["Rome Trip"]
+
+
+def test_merge_repoints_links_and_marks_the_loser(tmp_path: Path) -> None:
+    client, tags, audit = _client(tmp_path)
+    loser = client.post("/api/v1/tags", json={"name": "Trip Rome"}, headers=EDITOR).json()
+    survivor = client.post(
+        "/api/v1/tags", json={"name": "Rome Trip", "allow_similar": True}, headers=EDITOR
+    ).json()
+    tags.link("tenant-a", "d1", loser["id"])
+    tags.link("tenant-a", "d2", loser["id"])
+    tags.link("tenant-a", "d1", survivor["id"])  # d1 already has the survivor: de-duped on repoint
+
+    resp = client.post(
+        f"/api/v1/tags/{loser['id']}/merge", json={"survivor_id": survivor["id"]}, headers=EDITOR
+    )
+    assert resp.status_code == 204, resp.text
+    # The loser is merged away (not active); its documents moved to the survivor (d1 only once).
+    loser_tag = tags.get_tag("tenant-a", loser["id"])
+    assert loser_tag is not None
+    assert loser_tag.status == "merged"
+    assert loser_tag.merged_into == survivor["id"]
+    assert [t.name for t in tags.list_tags("tenant-a")] == ["Rome Trip"]
+    assert tags.document_count("tenant-a", survivor["id"]) == 2
+    assert tags.document_count("tenant-a", loser["id"]) == 0
+    merged = [e for e in audit.list_events("tenant-a", limit=10) if e.event_type == "tag.merged"]
+    assert merged
+    assert merged[0].metadata["method"] == "manual"
+    assert merged[0].metadata["documents_moved"] == 2
+
+
+def test_merge_404s_and_self_merge(tmp_path: Path) -> None:
+    client, _, _ = _client(tmp_path)
+    tag = client.post("/api/v1/tags", json={"name": "Alpha"}, headers=EDITOR).json()
+    assert (
+        client.post(
+            f"/api/v1/tags/{tag['id']}/merge", json={"survivor_id": "nope"}, headers=EDITOR
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/v1/tags/nope/merge", json={"survivor_id": tag["id"]}, headers=EDITOR
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/v1/tags/{tag['id']}/merge", json={"survivor_id": tag["id"]}, headers=EDITOR
+        ).status_code
+        == 422
+    )

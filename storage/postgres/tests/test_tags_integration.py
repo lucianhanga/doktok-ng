@@ -121,3 +121,21 @@ def test_tags_for_documents_batched(db: Database) -> None:
     assert [t.name for t in by_doc["d1"]] == ["Receipts", "Rome"]  # name-ordered
     assert [t.name for t in by_doc["d2"]] == ["Rome"]
     assert "d3" not in by_doc
+
+
+def test_merge_into_repoints_and_dedupes(db: Database) -> None:
+    PostgresDocumentRepository(db).add(_doc("d1"))
+    PostgresDocumentRepository(db).add(_doc("d2"))
+    repo = PostgresTagRepository(db)
+    repo.create_tag(_tag("t1", "Trip Rome", normalized="trip rome"))
+    repo.create_tag(_tag("t2", "Rome Trip", normalized="rome trip"))
+    repo.link(TENANT, "d1", "t1")
+    repo.link(TENANT, "d2", "t1")
+    repo.link(TENANT, "d1", "t2")  # d1 already carries the survivor: the repoint must de-dupe
+
+    moved = repo.merge_into(TENANT, "t1", "t2")
+    assert moved == 2
+    loser = repo.get_tag(TENANT, "t1")
+    assert loser is not None and loser.status == "merged" and loser.merged_into == "t2"
+    assert repo.document_count(TENANT, "t2") == 2
+    assert repo.document_count(TENANT, "t1") == 0

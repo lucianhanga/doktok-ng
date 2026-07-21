@@ -94,6 +94,22 @@ class InMemoryTagRepository:
         )
         return [t for t, score in scored[:limit] if score >= 0.6]
 
+    def merge_into(self, tenant_id: str, loser_id: str, survivor_id: str) -> int:
+        loser = self._tags.get(loser_id)
+        survivor = self._tags.get(survivor_id)
+        if loser is None or survivor is None or loser.tenant_id != tenant_id:
+            return 0
+        docs = {link[1] for link in self._links if link[0] == tenant_id and link[2] == loser_id}
+        moved = len(docs)
+        for doc_id in docs:
+            self._links.add((tenant_id, doc_id, survivor_id))
+        self._links = {
+            link for link in self._links if not (link[0] == tenant_id and link[2] == loser_id)
+        }
+        loser.status = "merged"
+        loser.merged_into = survivor_id
+        return moved
+
     def link(self, tenant_id: str, document_id: str, tag_id: str) -> None:
         self._links.add((tenant_id, document_id, tag_id))
 

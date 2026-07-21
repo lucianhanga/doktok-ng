@@ -162,3 +162,35 @@ test("delete confirms, shows the in-use count, and force-deletes", async () => {
   expect(deletes[0].url).not.toContain("force");
   expect(deletes[1].url).toContain("force=true");
 });
+
+test("merge flow: pick the survivor, near-duplicate marked, merge + list reloads (#550)", async () => {
+  const loser = { ...TAG1, id: "t1", name: "Trip Rome", normalized: "trip rome" };
+  const survivor = { ...TAG2, id: "t2", name: "Rome Trip", normalized: "rome trip" };
+  const calls: { url: string; method: string; body?: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body as string | undefined });
+      if (url === "/api/v1/tags" && method === "GET")
+        return new Response(JSON.stringify([loser, survivor]), { status: 200 });
+      if (url.endsWith("/merge") && method === "POST") return new Response(null, { status: 204 });
+      return new Response("{}", { status: 404 });
+    }),
+  );
+  render(<TagsPanel />);
+  await waitFor(() => expect(screen.getByText("Trip Rome")).toBeInTheDocument());
+  fireEvent.click(screen.getAllByRole("button", { name: "Merge" })[0]);
+  const dialog = await screen.findByRole("dialog");
+  const select = within(dialog).getByLabelText("Surviving tag");
+  // The near-duplicate survivor is marked "(similar)".
+  const option = within(select).getByRole("option", { name: /Rome Trip \(similar\)/ });
+  expect(option).toBeInTheDocument();
+  fireEvent.change(select, { target: { value: "t2" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const merge = calls.find((c) => c.method === "POST" && c.url.endsWith("/merge"));
+  expect(merge!.url).toContain("/api/v1/tags/t1/merge");
+  expect(JSON.parse(merge!.body!)).toEqual({ survivor_id: "t2" });
+});

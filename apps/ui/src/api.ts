@@ -1567,6 +1567,13 @@ export function patchTag(
   return sendJson<TagOut>(`/api/v1/tags/${encodeURIComponent(id)}`, "PATCH", body);
 }
 
+/** Merge one tag into a survivor (#550): repoints the documents and folds the loser away. */
+export function mergeTag(id: string, survivorId: string): Promise<void> {
+  return sendJson<void>(`/api/v1/tags/${encodeURIComponent(id)}/merge`, "POST", {
+    survivor_id: survivorId,
+  });
+}
+
 export type DeleteTagResult =
   | { ok: true }
   | { ok: false; code: "in_use"; document_count: number }

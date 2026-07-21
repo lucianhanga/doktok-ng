@@ -14,6 +14,7 @@ from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.tags import TAG_PALETTE, normalize_tag_name
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from psycopg.errors import IntegrityError
+from pydantic import BaseModel, Field
 
 from doktok_api.dependencies import Tenant, get_audit_repository, get_tag_repository
 
@@ -192,5 +193,46 @@ def delete_tag(
             f"Tag '{tag.name}' deleted" + (f" (in use on {count} document(s))" if count else "")
         ),
         details={"tag_id": tag_id, "document_count": count},
+    )
+    return Response(status_code=204)
+
+
+class TagMergeRequest(BaseModel):
+    """Merge request (#550): the surviving tag the loser folds into."""
+
+    survivor_id: str = Field(min_length=1)
+
+
+@router.post("/{tag_id}/merge", status_code=204)
+def merge_tag(
+    tag_id: str, payload: TagMergeRequest, tenant: TagManager, repo: Repo, audit: Audit
+) -> Response:
+    """Merge one tag into a survivor (#550): repoint the loser's document links (de-duped on the
+    PK), mark the loser merged (hidden from active lists), and write the merge log row
+    (method='manual')."""
+    loser = repo.get_tag(tenant.tenant_id, tag_id)
+    if loser is None or loser.status != "active":
+        raise HTTPException(status_code=404, detail="tag not found")
+    survivor = repo.get_tag(tenant.tenant_id, payload.survivor_id)
+    if survivor is None or survivor.status != "active":
+        raise HTTPException(status_code=404, detail="survivor tag not found")
+    if loser.id == survivor.id:
+        raise HTTPException(status_code=422, detail="a tag cannot be merged into itself")
+    moved = repo.merge_into(tenant.tenant_id, loser.id, survivor.id)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.TAG_MERGED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        description=f"Tag '{loser.name}' merged into '{survivor.name}'",
+        details={
+            "loser_id": loser.id,
+            "loser_name": loser.name,
+            "survivor_id": survivor.id,
+            "survivor_name": survivor.name,
+            "method": "manual",
+            "documents_moved": moved,
+        },
     )
     return Response(status_code=204)

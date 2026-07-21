@@ -25,6 +25,7 @@ import {
   type ProcessingTelemetry,
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
+import { entityTypeMeta } from "./entityTypes";
 
 type Tab = "content" | "entities" | "records" | "activity";
 
@@ -567,9 +568,9 @@ function RecordsTab({ id, summary }: { id: string; summary: DocumentRecordSummar
   );
 }
 
-/** Split the entity area into typed Named entities (PERSON/ORG/GPE/LOCATION/EMAIL/URL) and a separate
- * neutral, frequency-weighted Keywords (CUSTOM_TOKEN) tag set. The type label text is always present
- * so colour is never the only channel. */
+/** Split the entity area into per-type groups of Named entities (friendly labels, counts, and
+ * frequency badges, #538) and a separate neutral Keywords (CUSTOM_TOKEN) tag set. A filter field
+ * narrows all groups live; type labels are always text, so colour is never the only channel. */
 function EntitiesSplit({
   byType,
   entities,
@@ -577,30 +578,82 @@ function EntitiesSplit({
   byType: { entity_type: string; count: number }[];
   entities: DocEntity[];
 }) {
-  const namedTypeCounts = byType.filter((b) => b.entity_type !== KEYWORD_TYPE);
-  const named = entities.filter((e) => e.entity_type !== KEYWORD_TYPE);
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const typeCounts = new Map(byType.map((b) => [b.entity_type, b.count]));
   const keywords = entities.filter((e) => e.entity_type === KEYWORD_TYPE);
+
+  // Per-type groups built from the entities themselves (robust if the rollup misses a type),
+  // types ordered by their rollup count (or group size) desc, entities by frequency desc.
+  const namedTypes = [
+    ...new Set(entities.filter((e) => e.entity_type !== KEYWORD_TYPE).map((e) => e.entity_type)),
+  ];
+  const groups = namedTypes
+    .map((type) => ({
+      type,
+      count: typeCounts.get(type) ?? 0,
+      items: entities
+        .filter((e) => e.entity_type === type)
+        .filter((e) => !needle || (e.normalized_value ?? "").toLowerCase().includes(needle))
+        .sort(
+          (a, z) =>
+            z.frequency - a.frequency ||
+            (a.normalized_value ?? "").localeCompare(z.normalized_value ?? ""),
+        ),
+    }))
+    .sort(
+      (a, z) =>
+        (z.count || z.items.length) - (a.count || a.items.length) || a.type.localeCompare(z.type),
+    );
+  const visibleGroups = groups.filter((g) => !needle || g.items.length > 0);
+  const namedCount = entities.length - keywords.length;
+
   return (
     <>
-      {named.length > 0 && (
+      {namedCount > 0 && (
         <section className="entity-group">
-          <h4>Named entities</h4>
-          {namedTypeCounts.length > 0 && (
-            <p className="entity-types muted">
-              {namedTypeCounts.map((b) => (
-                <span key={b.entity_type} className="chip">
-                  {b.entity_type} {b.count.toLocaleString()}
-                </span>
-              ))}
-            </p>
+          <div className="entity-group-head">
+            <h4>Named entities</h4>
+            {entities.length > 6 && (
+              <input
+                type="search"
+                aria-label="Filter entities"
+                placeholder="Filter entities…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+            )}
+          </div>
+          {needle && visibleGroups.length === 0 && (
+            <p className="muted">No entities match “{filter.trim()}”.</p>
           )}
-          <ul className="entity-chips">
-            {named.map((e, i) => (
-              <li key={`${e.entity_type}:${e.normalized_value}:${i}`}>
-                <span className="badge">{e.entity_type}</span> {e.normalized_value}
-              </li>
-            ))}
-          </ul>
+          {visibleGroups.map((g) => (
+            <section key={g.type} className="entity-type-group">
+              <h5 className="entity-type-head">
+                <span
+                  className="entity-type-badge"
+                  style={{ backgroundColor: entityTypeMeta(g.type).color }}
+                  aria-hidden="true"
+                >
+                  {entityTypeMeta(g.type).badge}
+                </span>
+                {entityTypeMeta(g.type).label}{" "}
+                <span className="muted">
+                  ({(g.count || g.items.length).toLocaleString()})
+                </span>
+              </h5>
+              <ul className="entity-chips">
+                {g.items.map((e, i) => (
+                  <li key={`${g.type}:${e.normalized_value}:${i}`}>
+                    {e.normalized_value}
+                    {e.frequency > 1 && (
+                      <span className="tag-count muted"> ×{e.frequency.toLocaleString()}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
         </section>
       )}
       {keywords.length > 0 && (

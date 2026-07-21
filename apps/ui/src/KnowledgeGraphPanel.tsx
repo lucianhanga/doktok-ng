@@ -25,6 +25,7 @@ import {
   type KgStats,
   type KgSurnameGroup,
 } from "./api";
+import { ENTITY_TYPE_META } from "./entityTypes";
 
 // ---- Domain constants ----
 
@@ -140,22 +141,8 @@ function labelBudgetForTier(tier: LodTier): number {
   }
 }
 
-// EntityType display config (mirrors doktok_contracts/schemas.py EntityType enum)
-const KG_TYPE_META: Record<string, { color: string; badge: string; label: string }> = {
-  PERSON:       { color: "#1d6fa8", badge: "P", label: "Person" },
-  ORG:          { color: "#7c3aed", badge: "O", label: "Organization" },
-  GPE:          { color: "#0d7d7d", badge: "G", label: "Place" },
-  LOCATION:     { color: "#0f766e", badge: "L", label: "Location" },
-  POSTAL_CODE:  { color: "#0891b2", badge: "Z", label: "Postal code" },
-  EMAIL:        { color: "#c2410c", badge: "E", label: "Email" },
-  URL:          { color: "#9333ea", badge: "U", label: "Link" },
-  DATE:         { color: "#a16207", badge: "D", label: "Date" },
-  MONEY:        { color: "#16a34a", badge: "$", label: "Money" },
-  CUSTOM_TOKEN: { color: "#64748b", badge: "C", label: "Token" },
-  DOCUMENT_ID:  { color: "#475569", badge: "I", label: "Document ID" },
-  INVOICE_ID:   { color: "#374151", badge: "N", label: "Invoice ID" },
-  CONTRACT_ID:  { color: "#1e293b", badge: "K", label: "Contract ID" },
-};
+// EntityType display config lives in ./entityTypes (shared with the document Entities subtab,
+// #538); the KG-specific fallback for unknown types stays local.
 const KG_TYPE_OTHER = { color: "#555e6d", badge: "?", label: "Other" };
 
 const KG_TYPE_ORDER = [
@@ -164,7 +151,7 @@ const KG_TYPE_ORDER = [
 ];
 
 function typeMeta(entityType: string): { color: string; badge: string; label: string } {
-  return KG_TYPE_META[entityType] ?? KG_TYPE_OTHER;
+  return ENTITY_TYPE_META[entityType] ?? KG_TYPE_OTHER;
 }
 
 function typeColor(entityType: string): string {

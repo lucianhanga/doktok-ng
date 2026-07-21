@@ -531,3 +531,76 @@ test("reset to auto: DELETEs the manual title and drops the marker (#537)", asyn
   await waitFor(() => expect(screen.queryByText("renamed")).not.toBeInTheDocument());
   expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/title"))).toBe(true);
 });
+
+// ---- Entities subtab grouping (#538) ----
+
+test("named entities render grouped by type with friendly labels, counts and frequency badges (#538)", async () => {
+  mockDetail([], {}, {
+    entities: {
+      total: 3,
+      by_type: [
+        { entity_type: "PERSON", count: 2 },
+        { entity_type: "IBAN", count: 1 },
+      ],
+      top: [
+        { entity_type: "PERSON", normalized_value: "Ada Lovelace", frequency: 3 },
+        { entity_type: "PERSON", normalized_value: "Grace Hopper", frequency: 1 },
+        { entity_type: "IBAN", normalized_value: "DE89370400440532013000", frequency: 1 },
+      ],
+    },
+  });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Entities \(3\)/ }));
+  // Friendly labels with counts - never the raw type strings.
+  expect(screen.getByText("Person")).toBeInTheDocument();
+  expect(screen.getByText("(2)")).toBeInTheDocument();
+  expect(screen.getByText("IBAN")).toBeInTheDocument();
+  expect(screen.queryByText("PERSON")).not.toBeInTheDocument();
+  // Frequency badge on the frequent entity only.
+  expect(screen.getByText("×3")).toBeInTheDocument();
+});
+
+test("the entity filter narrows every group live (#538)", async () => {
+  const top = [
+    { entity_type: "PERSON", normalized_value: "Ada Lovelace", frequency: 3 },
+    { entity_type: "PERSON", normalized_value: "Grace Hopper", frequency: 1 },
+    { entity_type: "PERSON", normalized_value: "Alan Turing", frequency: 1 },
+    { entity_type: "PERSON", normalized_value: "Edsger Dijkstra", frequency: 1 },
+    { entity_type: "ORG", normalized_value: "Acme GmbH", frequency: 2 },
+    { entity_type: "ORG", normalized_value: "Globex", frequency: 1 },
+    { entity_type: "ORG", normalized_value: "Initech", frequency: 1 },
+  ];
+  mockDetail([], {}, {
+    entities: {
+      total: top.length,
+      by_type: [
+        { entity_type: "PERSON", count: 4 },
+        { entity_type: "ORG", count: 3 },
+      ],
+      top,
+    },
+  });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Entities \(7\)/ }));
+  fireEvent.change(screen.getByLabelText("Filter entities"), { target: { value: "ada" } });
+  expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+  expect(screen.queryByText("Grace Hopper")).not.toBeInTheDocument();
+  expect(screen.queryByText("Acme GmbH")).not.toBeInTheDocument();
+});
+
+test("an unknown entity type falls back to its raw label (#538)", async () => {
+  mockDetail([], {}, {
+    entities: {
+      total: 1,
+      by_type: [{ entity_type: "WEIRD_NEW_TYPE", count: 1 }],
+      top: [{ entity_type: "WEIRD_NEW_TYPE", normalized_value: "xy-42", frequency: 1 }],
+    },
+  });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Entities \(1\)/ }));
+  expect(screen.getByText("WEIRD_NEW_TYPE")).toBeInTheDocument();
+  expect(screen.getByText("xy-42")).toBeInTheDocument();
+});

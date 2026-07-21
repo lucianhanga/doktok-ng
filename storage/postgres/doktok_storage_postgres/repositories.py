@@ -30,6 +30,7 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentFeature,
+    DocumentNote,
     DocumentRecordSummary,
     DocumentRelationEntity,
     DocumentRelations,
@@ -2542,6 +2543,70 @@ def _row_to_category(row: dict[str, Any]) -> Category:
         name=row["name"],
         normalized=row["normalized"],
         status=row["status"],
+        created_at=row["created_at"],
+    )
+
+
+class PostgresDocumentNoteRepository:
+    """``DocumentNoteRepository`` on PostgreSQL (#736): immutable, timestamped notes."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def add_note(self, note: DocumentNote) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO document_notes (id, tenant_id, document_id, author_id, author_email, "
+                "body, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    note.id,
+                    note.tenant_id,
+                    note.document_id,
+                    note.author_id,
+                    note.author_email,
+                    note.body,
+                    note.created_at,
+                ),
+            )
+
+    def list_for_document(
+        self, tenant_id: str, document_id: str, *, limit: int = 100
+    ) -> list[DocumentNote]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT id, tenant_id, document_id, author_id, author_email, body, created_at "
+                "FROM document_notes WHERE tenant_id=%s AND document_id=%s "
+                "ORDER BY created_at DESC, id DESC LIMIT %s",
+                (tenant_id, document_id, limit),
+            ).fetchall()
+        return [_row_to_note(r) for r in rows]
+
+    def get_note(self, tenant_id: str, note_id: str) -> DocumentNote | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id, tenant_id, document_id, author_id, author_email, body, created_at "
+                "FROM document_notes WHERE tenant_id=%s AND id=%s",
+                (tenant_id, note_id),
+            ).fetchone()
+        return _row_to_note(row) if row else None
+
+    def delete_note(self, tenant_id: str, note_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM document_notes WHERE tenant_id=%s AND id=%s", (tenant_id, note_id)
+            )
+
+
+def _row_to_note(row: dict[str, Any]) -> DocumentNote:
+    return DocumentNote(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        document_id=row["document_id"],
+        author_id=row["author_id"],
+        author_email=row["author_email"],
+        body=row["body"],
         created_at=row["created_at"],
     )
 

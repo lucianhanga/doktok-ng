@@ -3,9 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { DocumentDetail } from "./DocumentDetail";
+import { clearSession, setSession } from "./session";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  clearSession();
 });
 
 // Build a full DocumentRecordSummary with sane defaults so tests only spell out what they exercise.
@@ -52,8 +54,10 @@ function mockDetail(
   recordsPage: Record<string, unknown> = { items: [], total: 0, next_offset: null },
   similar: unknown[] = [],
   relations: Record<string, unknown> = { entities: [], relations: [] },
+  notes: Record<string, unknown>[] = [],
 ) {
   const calls: { url: string; method: string; body?: string }[] = [];
+  const notesList = [...notes];
   const detail = {
     document: {
       id: "d1",
@@ -92,10 +96,10 @@ function mockDetail(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
-      calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body as string | undefined });
       if (url.endsWith("/title")) {
         // Rename (#537): PATCH sets title + 'manual'; DELETE resets to 'auto' (title text stays).
-        const method = init?.method ?? "GET";
         const sent = init?.body ? (JSON.parse(init.body as string) as { title?: string }) : {};
         return new Response(
           JSON.stringify({
@@ -105,6 +109,29 @@ function mockDetail(
           }),
           { status: 200 },
         );
+      }
+      if (/\/notes\/[^/]+$/.test(url) && method === "DELETE") {
+        const nid = decodeURIComponent(url.split("/").pop() ?? "");
+        const idx = notesList.findIndex((n) => (n as { id: string }).id === nid);
+        if (idx >= 0) notesList.splice(idx, 1);
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/notes")) {
+        if (method === "POST") {
+          const sent = JSON.parse((init?.body as string) ?? "{}") as { body: string };
+          const note = {
+            id: `n${notesList.length + 1}`,
+            tenant_id: "t1",
+            document_id: "d1",
+            author_id: "u1",
+            author_email: "e@x.com",
+            body: sent.body,
+            created_at: "2026-07-21T10:00:00Z",
+          };
+          notesList.unshift(note);
+          return new Response(JSON.stringify(note), { status: 201 });
+        }
+        return new Response(JSON.stringify(notesList), { status: 200 });
       }
       if (url.endsWith("/similar"))
         return new Response(JSON.stringify(similar), { status: 200 });
@@ -771,4 +798,92 @@ test("the Relations section stays hidden without a KG footprint (#731)", async (
   fireEvent.click(screen.getByRole("button", { name: /Entities \(9\)/ }));
   await waitFor(() => expect(screen.getByText("a@b.com")).toBeInTheDocument());
   expect(screen.queryByRole("heading", { name: "Relations" })).not.toBeInTheDocument();
+});
+
+// ---- Notes tab (#736) ----
+
+const NOTE1 = {
+  id: "n1",
+  tenant_id: "t1",
+  document_id: "d1",
+  author_id: "u1",
+  author_email: "e@x.com",
+  body: "second note",
+  created_at: "2026-07-21T10:00:00Z",
+};
+const NOTE2 = {
+  id: "n2",
+  tenant_id: "t1",
+  document_id: "d1",
+  author_id: "u2",
+  author_email: "e2@x.com",
+  body: "first note",
+  created_at: "2026-07-20T10:00:00Z",
+};
+
+function openNotesTab() {
+  fireEvent.click(screen.getByRole("button", { name: /Notes \(/ }));
+}
+
+test("the Notes tab lists entries newest-first with author and timestamp (#736)", async () => {
+  mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], undefined, [NOTE1, NOTE2]);
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openNotesTab();
+  await waitFor(() => expect(screen.getByText("second note")).toBeInTheDocument());
+  const bodies = screen.getAllByText(/^(second|first) note$/).map((el) => el.textContent);
+  expect(bodies).toEqual(["second note", "first note"]);
+  expect(screen.getByText("e@x.com")).toBeInTheDocument();
+  expect(screen.getByText("e2@x.com")).toBeInTheDocument();
+});
+
+test("an editor sees the composer; adding a note posts and prepends it (#736)", async () => {
+  const calls = mockDetail();
+  setSession("tok", { id: "u1", email: "e@x.com", role: "editor", tenant_id: "t1" });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openNotesTab();
+  fireEvent.change(await screen.findByLabelText("New note"), {
+    target: { value: "a fresh note" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+  await waitFor(() => expect(screen.getByText("a fresh note")).toBeInTheDocument());
+  const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/notes"));
+  expect(JSON.parse(post!.body!)).toEqual({ body: "a fresh note" });
+  expect((screen.getByLabelText("New note") as HTMLTextAreaElement).value).toBe("");
+});
+
+test("note deletion is offered to the author and to admins, not to other editors (#736)", async () => {
+  // The author (u1) sees Delete on their own note; it DELETEs and removes it.
+  const calls = mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], undefined, [
+    NOTE1,
+  ]);
+  setSession("tok", { id: "u1", email: "e@x.com", role: "editor", tenant_id: "t1" });
+  const first = render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openNotesTab();
+  const del = await screen.findByRole("button", { name: "Delete note by e@x.com" });
+  fireEvent.click(del);
+  await waitFor(() => expect(screen.queryByText("second note")).not.toBeInTheDocument());
+  expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/notes/n1"))).toBe(true);
+  first.unmount();
+
+  // Another editor (u2, not the author, not admin) does NOT get a Delete button.
+  mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], undefined, [NOTE1]);
+  setSession("tok", { id: "u2", email: "e2@x.com", role: "editor", tenant_id: "t1" });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openNotesTab();
+  await waitFor(() => expect(screen.getByText("second note")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /Delete note by/ })).not.toBeInTheDocument();
+});
+
+test("a viewer reads notes but gets no composer (#736)", async () => {
+  mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], undefined, [NOTE1]);
+  setSession("tok", { id: "u3", email: "v@x.com", role: "viewer", tenant_id: "t1" });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  openNotesTab();
+  await waitFor(() => expect(screen.getByText("second note")).toBeInTheDocument());
+  expect(screen.queryByLabelText("New note")).not.toBeInTheDocument();
 });

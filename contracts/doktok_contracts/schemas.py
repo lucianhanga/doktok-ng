@@ -70,6 +70,9 @@ class AuditEventType(StrEnum):
     DOCUMENT_REINGESTED = "document.reingested"
     # A user renamed the document title (#537); details carry the old/new title, never a secret.
     DOCUMENT_RENAMED = "document.renamed"
+    # User-authored notes (#736): addition + deletion (with a body snapshot) are both in the trail.
+    DOCUMENT_NOTE_ADDED = "document.note_added"
+    DOCUMENT_NOTE_DELETED = "document.note_deleted"
     DOCUMENT_DELETED = "document.deleted"
     DOCUMENT_VIEWED = "document.viewed"
     # The human upload itself (#635, F-21): the worker later logs pipeline events as "worker", so
@@ -453,6 +456,20 @@ class DocumentRelationEntity(BaseModel):
     entity_type: str
     node_id: str
     node_label: str
+
+
+class DocumentNote(BaseModel):
+    """A user-authored note on a document (#736): immutable and timestamped. The author identity
+    is snapshotted (``author_email``) so the note stays readable after user changes; deletions
+    are audit-logged (the audit row carries a body snapshot)."""
+
+    id: str
+    tenant_id: str
+    document_id: str
+    author_id: str
+    author_email: str
+    body: str
+    created_at: datetime
 
 
 class DocumentRelationTriple(BaseModel):

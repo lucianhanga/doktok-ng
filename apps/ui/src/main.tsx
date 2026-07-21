@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App";
 import { AuthGate } from "./AuthGate";
+import { flushPreferencesNow } from "./persist";
 import { installAuthFetch, loadSession } from "./session";
 import "./styles.css";
 
@@ -16,6 +17,12 @@ if (!rootElement) {
 // between the login screen and the app, and owns preference hydration once authenticated (#558).
 loadSession();
 installAuthFetch();
+// Don't lose the last preference change when the tab closes/backgrounds inside the 500ms batch
+// window (#522): flush pending writes as the page hides.
+window.addEventListener("pagehide", flushPreferencesNow);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushPreferencesNow();
+});
 
 createRoot(rootElement).render(
   <StrictMode>

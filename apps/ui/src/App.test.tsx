@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -146,4 +146,53 @@ test("keeps the chat conversation when opening a cited document and going back",
 
   // The conversation survived opening the document (the rail is in-chat; chat never unmounts).
   expect(screen.getByText(/The total is 42/)).toBeInTheDocument();
+});
+
+test("a resized Documents column survives navigating to Chat and back (#522)", async () => {
+  localStorage.clear();
+  const DOC = {
+    id: "d1",
+    original_filename: "report.pdf",
+    detected_mime: "application/pdf",
+    title: null,
+    status: "active",
+    created_at: "2026-06-10T00:00:00Z",
+    metadata: {},
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/stats")) {
+        return new Response(JSON.stringify({ documents: 0, jobs: {}, entities: 0 }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/health")) return new Response(JSON.stringify(HEALTH), { status: 200 });
+      if (url.includes("/api/v1/documents")) {
+        return new Response(JSON.stringify({ items: [DOC], total: 1, next_cursor: null }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+  render(<App />);
+  window.location.hash = "#/documents";
+  const procHeader = await screen.findByRole("columnheader", { name: /Processing/ });
+  const before = procHeader.style.width;
+  const resizer = within(procHeader).getByRole("separator");
+  fireEvent.mouseDown(resizer, { clientX: 500 });
+  fireEvent.mouseMove(document, { clientX: 620 });
+  fireEvent.mouseUp(document);
+  const widened = procHeader.style.width;
+  expect(widened).not.toBe(before);
+
+  window.location.hash = "#/chat";
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true"),
+  );
+  window.location.hash = "#/documents";
+  const remounted = await screen.findByRole("columnheader", { name: /Processing/ });
+  expect(remounted.style.width).toBe(widened);
 });

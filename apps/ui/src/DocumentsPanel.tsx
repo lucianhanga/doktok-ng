@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { DataTable } from "./DataTable";
 import { useInterval } from "./hooks";
+import { loadJSON, saveJSON } from "./persist";
 
 type DocsState =
   | { kind: "loading" }
@@ -63,6 +64,18 @@ const TILE_FIELDS_DEFAULT: TileFields = {
 const PAGE_SIZE = 50;
 const THUMB_SIZE_KEY = "doktok.docs.thumbSize";
 const TILE_FIELDS_KEY = "doktok.docs.tileFields";
+// Synced per-user UI prefs for the documents list (#522): view mode + the filter set, restored on
+// mount (the App's initial* deep-link props win over the stored values).
+const DOCS_UI_KEY = "doktok.docs.ui";
+
+interface DocsUiPrefs {
+  view?: View;
+  category?: string;
+  status?: string;
+  needsAttention?: boolean;
+  unidentifiable?: boolean;
+  title?: string;
+}
 
 // Server-side cap on "select all matching" (mirrors the backend); above it we select the first N and
 // tell the user the selection is partial - we never claim "all" when truncated.
@@ -77,44 +90,29 @@ export const BULK_CONCURRENCY = 6;
 type SelectionMode = "manual" | "all-matching";
 
 function readThumbSize(): ThumbSize {
-  try {
-    const v = localStorage.getItem(THUMB_SIZE_KEY);
-    return v === "s" || v === "m" || v === "l" ? v : "m";
-  } catch {
-    return "m"; // storage unavailable (e.g. test env / private mode)
-  }
+  // Via the synced preference store (#522): hydrates from the server per user. A legacy raw
+  // (unquoted) value fails JSON.parse and falls back to the default once - acceptable.
+  const v = loadJSON<string>(THUMB_SIZE_KEY, "m");
+  return v === "s" || v === "m" || v === "l" ? v : "m";
 }
 
 function persistThumbSize(size: ThumbSize): void {
-  try {
-    localStorage.setItem(THUMB_SIZE_KEY, size);
-  } catch {
-    /* storage unavailable - non-fatal */
-  }
+  saveJSON(THUMB_SIZE_KEY, size);
 }
 
 function readTileFields(): TileFields {
-  try {
-    const raw = localStorage.getItem(TILE_FIELDS_KEY);
-    if (!raw) return { ...TILE_FIELDS_DEFAULT };
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      summary: typeof parsed.summary === "boolean" ? parsed.summary : TILE_FIELDS_DEFAULT.summary,
-      authored: typeof parsed.authored === "boolean" ? parsed.authored : TILE_FIELDS_DEFAULT.authored,
-      acquired: typeof parsed.acquired === "boolean" ? parsed.acquired : TILE_FIELDS_DEFAULT.acquired,
-      filename: typeof parsed.filename === "boolean" ? parsed.filename : TILE_FIELDS_DEFAULT.filename,
-    };
-  } catch {
-    return { ...TILE_FIELDS_DEFAULT };
-  }
+  // Via the synced preference store (#522).
+  const parsed = loadJSON<Record<string, unknown>>(TILE_FIELDS_KEY, {});
+  return {
+    summary: typeof parsed.summary === "boolean" ? parsed.summary : TILE_FIELDS_DEFAULT.summary,
+    authored: typeof parsed.authored === "boolean" ? parsed.authored : TILE_FIELDS_DEFAULT.authored,
+    acquired: typeof parsed.acquired === "boolean" ? parsed.acquired : TILE_FIELDS_DEFAULT.acquired,
+    filename: typeof parsed.filename === "boolean" ? parsed.filename : TILE_FIELDS_DEFAULT.filename,
+  };
 }
 
 function persistTileFields(fields: TileFields): void {
-  try {
-    localStorage.setItem(TILE_FIELDS_KEY, JSON.stringify(fields));
-  } catch {
-    /* storage unavailable - non-fatal */
-  }
+  saveJSON(TILE_FIELDS_KEY, fields);
 }
 
 const SORT_OPTIONS: { value: DocumentSort; label: string }[] = [
@@ -919,14 +917,19 @@ export function DocumentsPanel({
 }) {
   const [state, setState] = useState<DocsState>({ kind: "loading" });
   const [categories, setCategories] = useState<CategorySummary[]>([]);
-  const [category, setCategory] = useState(initialCategory);
-  const [status, setStatus] = useState("");
-  const [needsAttention, setNeedsAttention] = useState(initialNeedsAttention);
-  const [unidentifiable, setUnidentifiable] = useState(false);
-  const [view, setView] = useState<View>("list");
+  // View mode + filters restore from the synced per-user prefs (#522); explicit App deep-link
+  // props (initialCategory/initialNeedsAttention) take precedence over the stored values.
+  const [storedUi] = useState<DocsUiPrefs>(() => loadJSON<DocsUiPrefs>(DOCS_UI_KEY, {}));
+  const [category, setCategory] = useState(initialCategory || storedUi.category || "");
+  const [status, setStatus] = useState(storedUi.status ?? "");
+  const [needsAttention, setNeedsAttention] = useState(
+    initialNeedsAttention || (storedUi.needsAttention ?? false),
+  );
+  const [unidentifiable, setUnidentifiable] = useState(storedUi.unidentifiable ?? false);
+  const [view, setView] = useState<View>(storedUi.view ?? "list");
   const [sort, setSort] = useState<DocumentSort>("acquired");
   const [dir, setDir] = useState<SortDir>("desc");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(storedUi.title ?? "");
   const [tokens, setTokens] = useState<string[]>([]);
   const [tokenMatch, setTokenMatch] = useState<TokenMatch>("all");
   const [thumbSize, setThumbSize] = useState<ThumbSize>(() => readThumbSize());
@@ -1023,6 +1026,12 @@ export function DocumentsPanel({
 
   useEffect(() => persistThumbSize(thumbSize), [thumbSize]);
   useEffect(() => persistTileFields(tileFields), [tileFields]);
+  // Persist the view mode + filter set per user (#522): restored on the next mount, synced to the
+  // server store for other devices.
+  useEffect(() => {
+    const prefs: DocsUiPrefs = { view, category, status, needsAttention, unidentifiable, title };
+    saveJSON(DOCS_UI_KEY, prefs);
+  }, [view, category, status, needsAttention, unidentifiable, title]);
 
   // Keep the bulk selection in sync with what's actually shown (filter/poll can drop documents),
   // so an action never targets a hidden/gone document and select-all stays correct. CRITICAL: in

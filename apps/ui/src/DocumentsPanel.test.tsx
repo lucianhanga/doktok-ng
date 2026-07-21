@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { BULK_CONCURRENCY, DocumentsPanel } from "./DocumentsPanel";
@@ -852,4 +852,93 @@ test("reprocess-all button confirms then calls endpoint and shows returned count
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(/Re-queued Entities & keywords for 7 documents/),
   );
+});
+
+test("a resized Processing column survives leaving and remounting the panel (#522)", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  const first = render(<DocumentsPanel />);
+  const procHeader = await screen.findByRole("columnheader", { name: /Processing/ });
+  const before = procHeader.style.width;
+  const resizer = within(procHeader).getByRole("separator");
+  fireEvent.mouseDown(resizer, { clientX: 500 });
+  fireEvent.mouseMove(document, { clientX: 620 });
+  fireEvent.mouseUp(document);
+  const widened = procHeader.style.width;
+  expect(widened).not.toBe(before);
+  // The layout was persisted before the unmount.
+  const saved = JSON.parse(localStorage.getItem("documents-table") ?? "{}");
+  expect(saved.columnSizing?.processing).toBeGreaterThan(0);
+  first.unmount();
+
+  render(<DocumentsPanel />);
+  const remounted = await screen.findByRole("columnheader", { name: /Processing/ });
+  expect(remounted.style.width).toBe(widened);
+});
+
+test("the documents view mode persists across remounts (#522)", async () => {
+  mockDocs([doc({ id: "a", original_filename: "note.txt" })]);
+  const first = render(<DocumentsPanel />);
+  await screen.findByRole("columnheader", { name: /Processing/ });
+  fireEvent.click(screen.getByRole("button", { name: "Thumbnails" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Select all loaded documents")).toBeInTheDocument(),
+  );
+  first.unmount();
+
+  render(<DocumentsPanel />);
+  // The remount restores the thumbnails view (not the list).
+  await waitFor(() =>
+    expect(screen.getByLabelText("Select all loaded documents")).toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("columnheader", { name: /Processing/ })).not.toBeInTheDocument();
+});
+
+test("the status filter persists across remounts (#522)", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "note.txt" })]);
+  const first = render(<DocumentsPanel />);
+  await screen.findByText("note.txt");
+  fireEvent.change(screen.getByLabelText(/Status/), { target: { value: "failed" } });
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([u]) => String(u).includes("status=failed")),
+    ).toBe(true),
+  );
+  first.unmount();
+
+  render(<DocumentsPanel />);
+  await screen.findByText("note.txt");
+  expect((screen.getByLabelText(/Status/) as HTMLSelectElement).value).toBe("failed");
+});
+
+test("an App deep-link (initialCategory) wins over the stored filter prefs (#522)", async () => {
+  localStorage.setItem("doktok.docs.ui", JSON.stringify({ category: "stored-cat" }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/features/groups")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/categories")) {
+        return new Response(
+          JSON.stringify([
+            { name: "stored-cat", document_count: 1 },
+            { name: "deep-cat", document_count: 2 },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          items: [doc({ id: "a", original_filename: "note.txt" })],
+          total: 1,
+          next_cursor: null,
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  render(<DocumentsPanel initialCategory="deep-cat" />);
+  await screen.findByText("note.txt");
+  expect((screen.getByLabelText(/Category/) as HTMLSelectElement).value).toBe("deep-cat");
 });

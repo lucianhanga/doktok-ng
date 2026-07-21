@@ -23,6 +23,10 @@ export function loadJSON<T>(key: string, fallback: T): T {
 }
 
 let syncEnabled = false;
+// True only after a successful server hydration: writes made BEFORE hydration must never push to
+// the server, or an app that renders ahead of hydration would clobber the server's saved prefs
+// with defaults (#522).
+let hydrated = false;
 let pending: Record<string, unknown> = {};
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -32,13 +36,24 @@ function scheduleFlush(): void {
   if (flushTimer !== null) return;
   flushTimer = setTimeout(() => {
     flushTimer = null;
-    const batch = pending;
-    pending = {};
-    if (Object.keys(batch).length === 0) return;
-    void putPreferences(batch).catch(() => {
-      /* offline / unauthorized: keep local-only, retry on the next change */
-    });
+    flushPreferencesNow();
   }, 500);
+}
+
+/** Push the pending batch NOW (pagehide/visibilitychange): the batched idle flush would otherwise
+ * lose the last change when the tab closes or is backgrounded inside the window (#522). */
+export function flushPreferencesNow(): void {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (!syncEnabled || !hydrated) return;
+  const batch = pending;
+  pending = {};
+  if (Object.keys(batch).length === 0) return;
+  void putPreferences(batch).catch(() => {
+    /* offline / unauthorized: keep local-only, retry on the next change */
+  });
 }
 
 export function saveJSON(key: string, value: unknown): void {
@@ -47,7 +62,7 @@ export function saveJSON(key: string, value: unknown): void {
   } catch {
     /* ignore: persistence is best-effort */
   }
-  if (syncEnabled) {
+  if (syncEnabled && hydrated) {
     pending[key] = value;
     scheduleFlush();
   }
@@ -63,7 +78,9 @@ export function removeKey(key: string): void {
 
 /** Seed the localStorage cache from the server store so a fresh device/browser starts with the
  * user's synced preferences before any component reads them. Best-effort: on any error the app
- * simply runs on whatever is already in localStorage. Call once, before rendering. */
+ * simply runs on whatever is already in localStorage - and, crucially, ``hydrated`` stays false
+ * so nothing local is pushed back over the server's (unread) copy (#522). Call once, before
+ * rendering. */
 export async function hydratePreferences(): Promise<void> {
   try {
     const server = await fetchPreferences();
@@ -74,8 +91,9 @@ export async function hydratePreferences(): Promise<void> {
         /* ignore individual quota errors */
       }
     }
+    hydrated = true;
   } catch {
-    /* no server / not authorized: run local-only */
+    /* no server / not authorized: run local-only, never push */
   }
 }
 

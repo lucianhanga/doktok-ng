@@ -35,16 +35,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<Mode>("loading");
   const loginRequired = useRef(false);
 
-  // Seed prefs from the (now authenticated) server, enable write-through, then show the app. If
-  // login is required but the session was cleared meanwhile (a 401 during hydrate expired it), fall
-  // back to the login screen instead of showing an app that cannot authenticate.
+  // Seed prefs from the (now authenticated) server, enable write-through, then show the app. The
+  // sync is enabled ONLY when hydration completed within a generous window: a session that starts
+  // without the server's prefs stays local-only instead of pushing default prefs over the server's
+  // saved ones (#522). If login is required but the session was cleared meanwhile (a 401 during
+  // hydrate expired it), fall back to the login screen instead of showing an app that cannot
+  // authenticate.
   const becomeReady = useCallback(() => {
-    const done = () => {
-      enablePrefSync();
+    const HYDRATE_TIMEOUT_MS = 4000;
+    const timeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), HYDRATE_TIMEOUT_MS),
+    );
+    void Promise.race([hydratePreferences().then(() => "ok" as const), timeout]).then((result) => {
+      if (result === "ok") enablePrefSync();
       setMode(!loginRequired.current || hasSession() ? "ready" : "login");
-    };
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 1500));
-    void Promise.race([hydratePreferences(), timeout]).finally(done);
+    });
   }, []);
 
   useEffect(() => {

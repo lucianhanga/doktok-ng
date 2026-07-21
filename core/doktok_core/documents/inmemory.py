@@ -36,6 +36,8 @@ class InMemoryDocumentRepository:
         self.attention_ids: set[str] = set()
         self.categories_by_doc: dict[str, set[str]] = {}
         self.tokens_by_doc: dict[str, set[tuple[str, str]]] = {}
+        # Test seam for the tag filter (#546): tag ids per document (mirrors document_tags).
+        self.tag_links: dict[str, set[str]] = {}
         # Seams for the new count sort keys (entity/chunk counts per document id).
         self.entity_counts_by_doc: dict[str, int] = {}
         self.chunk_counts_by_doc: dict[str, int] = {}
@@ -166,6 +168,15 @@ class InMemoryDocumentRepository:
             return requested <= values
         return bool(requested & values)
 
+    def _matches_tags(self, d: Document, tag_ids: tuple[str, ...], tag_match: TokenMatch) -> bool:
+        if not tag_ids:
+            return True
+        linked = self.tag_links.get(d.id, set())
+        requested = set(tag_ids)
+        if tag_match is TokenMatch.ALL:
+            return requested <= linked
+        return bool(requested & linked)
+
     def _filtered(
         self,
         tenant_id: str,
@@ -178,6 +189,8 @@ class InMemoryDocumentRepository:
         tokens: tuple[str, ...],
         token_type: EntityType | None,
         token_match: TokenMatch,
+        tag_ids: tuple[str, ...],
+        tag_match: TokenMatch,
     ) -> list[Document]:
         title_clean = title.strip().lower() if title and title.strip() else None
         return [
@@ -195,6 +208,7 @@ class InMemoryDocumentRepository:
                 or (d.unidentifiable is True if unidentifiable else d.unidentifiable is not True)
             )
             and self._matches_tokens(d, tokens, token_type, token_match)
+            and self._matches_tags(d, tag_ids, tag_match)
         ]
 
     def list_documents(
@@ -213,6 +227,8 @@ class InMemoryDocumentRepository:
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
+        tag_ids: tuple[str, ...] = (),
+        tag_match: TokenMatch = TokenMatch.ALL,
     ) -> tuple[list[Document], int, ListAnchor | None]:
         docs = self._filtered(
             tenant_id,
@@ -224,6 +240,8 @@ class InMemoryDocumentRepository:
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,
+            tag_ids=tag_ids,
+            tag_match=tag_match,
         )
 
         def cmp(a: tuple[_SortVal, str], b: tuple[_SortVal, str]) -> int:
@@ -275,6 +293,8 @@ class InMemoryDocumentRepository:
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
+        tag_ids: tuple[str, ...] = (),
+        tag_match: TokenMatch = TokenMatch.ALL,
         cap: int = 10_000,
     ) -> tuple[list[str], int, bool]:
         ids = sorted(
@@ -289,6 +309,8 @@ class InMemoryDocumentRepository:
                 tokens=tokens,
                 token_type=token_type,
                 token_match=token_match,
+                tag_ids=tag_ids,
+                tag_match=tag_match,
             )
         )
         return ids[:cap], len(ids), len(ids) > cap

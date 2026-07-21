@@ -78,6 +78,10 @@ class AuditEventType(StrEnum):
     TAG_CREATED = "tag.created"
     TAG_UPDATED = "tag.updated"
     TAG_DELETED = "tag.deleted"
+    # Tag assignment on documents (#546): single per-doc events; a bulk assign/unassign writes one
+    # summary row per call.
+    DOCUMENT_TAGGED = "document.tagged"
+    DOCUMENT_UNTAGGED = "document.untagged"
     DOCUMENT_DELETED = "document.deleted"
     DOCUMENT_VIEWED = "document.viewed"
     # The human upload itself (#635, F-21): the worker later logs pipeline events as "worker", so
@@ -1510,6 +1514,8 @@ class DocumentDetail(BaseModel):
     # obtained (method + OCR confidence when any).
     chunk_count: int = 0
     extraction: DocumentExtraction = Field(default_factory=DocumentExtraction)
+    # The document's manual tags (#546); empty when untagged.
+    tags: list[Tag] = Field(default_factory=list)
 
 
 class AiPurposeSettings(BaseModel):

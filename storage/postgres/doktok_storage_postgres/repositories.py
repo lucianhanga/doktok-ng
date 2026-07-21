@@ -319,12 +319,15 @@ def _doc_filter_sql(
     tokens: tuple[str, ...],
     token_type: EntityType | None,
     token_match: TokenMatch,
+    tag_ids: tuple[str, ...],
+    tag_match: TokenMatch,
 ) -> tuple[str, dict[str, Any]]:
     """Build the shared document-filter WHERE clause (status + category + needs-attention +
-    unidentifiable + title + tokens) and its parameters. Used by both ``list_documents`` (adds
-    keyset + order) and ``list_document_ids``. All values are parameterized; tokens go in as a
-    single ``text[]``."""
+    unidentifiable + title + tokens + tags) and its parameters. Used by both ``list_documents``
+    (adds keyset + order) and ``list_document_ids``. All values are parameterized; tokens and tag
+    ids go in as ``text[]``."""
     distinct_tokens = tuple(dict.fromkeys(tokens))  # dedupe, keep order
+    distinct_tags = tuple(dict.fromkeys(tag_ids))
     title_clean = title.strip() if title else None
     params: dict[str, Any] = {
         "tenant": tenant_id,
@@ -337,6 +340,8 @@ def _doc_filter_sql(
         "tokens": list(distinct_tokens),
         "token_type": token_type.value if token_type else None,
         "token_count": len(distinct_tokens),
+        "tags": list(distinct_tags),
+        "tag_count": len(distinct_tags),
     }
     where = (
         "d.tenant_id = %(tenant)s "
@@ -374,6 +379,21 @@ def _doc_filter_sql(
             )
         else:
             where += f" AND EXISTS ({entity_pred})"
+    if distinct_tags:
+        # Tag filter (#546): tenant-scoped document_tags; ALL counts distinct matches == requested.
+        tag_pred = (
+            "SELECT 1 FROM document_tags dt "
+            "WHERE dt.tenant_id = d.tenant_id AND dt.document_id = d.id "
+            "AND dt.tag_id = ANY(%(tags)s)"
+        )
+        if tag_match is TokenMatch.ALL:
+            where += (
+                " AND (SELECT count(DISTINCT dt.tag_id) FROM document_tags dt "
+                "WHERE dt.tenant_id = d.tenant_id AND dt.document_id = d.id "
+                "AND dt.tag_id = ANY(%(tags)s)) = %(tag_count)s"
+            )
+        else:
+            where += f" AND EXISTS ({tag_pred})"
     return where, params
 
 
@@ -528,6 +548,8 @@ class PostgresDocumentRepository:
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
+        tag_ids: tuple[str, ...] = (),
+        tag_match: TokenMatch = TokenMatch.ALL,
     ) -> tuple[list[Document], int, ListAnchor | None]:
         where, params = _doc_filter_sql(
             tenant_id,
@@ -539,6 +561,8 @@ class PostgresDocumentRepository:
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,
+            tag_ids=tag_ids,
+            tag_match=tag_match,
         )
         expr, nullable, cast = _SORT_EXPR[sort]
         cv = f"%(cur_val)s::{cast}"  # typed cursor value (Postgres can't infer it from IS NOT NULL)
@@ -597,6 +621,8 @@ class PostgresDocumentRepository:
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
+        tag_ids: tuple[str, ...] = (),
+        tag_match: TokenMatch = TokenMatch.ALL,
         cap: int = 10_000,
     ) -> tuple[list[str], int, bool]:
         where, params = _doc_filter_sql(
@@ -609,6 +635,8 @@ class PostgresDocumentRepository:
             tokens=tokens,
             token_type=token_type,
             token_match=token_match,
+            tag_ids=tag_ids,
+            tag_match=tag_match,
         )
         params["cap"] = cap
         with self._db.connection() as conn:

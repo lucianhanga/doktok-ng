@@ -73,6 +73,11 @@ class AuditEventType(StrEnum):
     # User-authored notes (#736): addition + deletion (with a body snapshot) are both in the trail.
     DOCUMENT_NOTE_ADDED = "document.note_added"
     DOCUMENT_NOTE_DELETED = "document.note_deleted"
+    # Document tags (epic #543): every tag mutation is in the trail; a forced in-use delete is a
+    # warning (it changes every user's view).
+    TAG_CREATED = "tag.created"
+    TAG_UPDATED = "tag.updated"
+    TAG_DELETED = "tag.deleted"
     DOCUMENT_DELETED = "document.deleted"
     DOCUMENT_VIEWED = "document.viewed"
     # The human upload itself (#635, F-21): the worker later logs pipeline events as "worker", so
@@ -499,6 +504,29 @@ class DocumentTag(BaseModel):
     document_id: str
     tag_id: str
     created_at: datetime | None = None
+
+
+class TagCreate(BaseModel):
+    """Create-tag request (#545). ``allow_similar`` overrides the near-miss warning."""
+
+    name: str = Field(min_length=1, max_length=50)
+    color: str = "slate"
+    description: str = Field(default="", max_length=200)
+    allow_similar: bool = False
+
+
+class TagUpdate(BaseModel):
+    """Patch-tag request (#545): any subset; a rename re-checks normalized uniqueness."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    color: str | None = None
+    description: str | None = Field(default=None, max_length=200)
+
+
+class TagOut(Tag):
+    """A tag as returned to the UI (#545): the tag plus its document count."""
+
+    document_count: int = 0
 
 
 class DocumentRelationTriple(BaseModel):

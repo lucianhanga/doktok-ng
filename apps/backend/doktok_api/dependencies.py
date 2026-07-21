@@ -36,6 +36,7 @@ from doktok_contracts.ports import (
     Reranker,
     Retriever,
     StatsRepository,
+    TagRepository,
     TenantRegistry,
     UserPreferenceRepository,
 )
@@ -273,6 +274,18 @@ def get_document_note_repository(request: Request) -> DocumentNoteRepository:
 
     repository = PostgresDocumentNoteRepository(_get_database(request))
     registry.register(DocumentNoteRepository, repository)
+    return repository
+
+
+def get_tag_repository(request: Request) -> TagRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(TagRepository):
+        return cast(TagRepository, registry.resolve(TagRepository))
+
+    from doktok_storage_postgres import PostgresTagRepository
+
+    repository = PostgresTagRepository(_get_database(request))
+    registry.register(TagRepository, repository)
     return repository
 
 

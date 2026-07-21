@@ -23,6 +23,8 @@ export interface DokDocument {
   original_filename: string;
   detected_mime: string | null;
   title: string | null;
+  // Who owns the title (#537): 'auto' (metadata may re-derive) or 'manual' (user-renamed).
+  title_source?: "auto" | "manual";
   status: string;
   created_at: string;
   ingested_at?: string | null;
@@ -1444,6 +1446,20 @@ export async function rotateDocument(id: string, degrees = 90): Promise<void> {
   }
 }
 
+/** Rename a document (#537): marks title_source='manual' so reprocessing never clobbers it. */
+export function renameDocument(id: string, title: string): Promise<DokDocument> {
+  return sendJson<DokDocument>(
+    `/api/v1/documents/${encodeURIComponent(id)}/title`,
+    "PATCH",
+    { title },
+  );
+}
+
+/** Hand a renamed title back to the auto path (#537); the next metadata run re-derives it. */
+export function resetDocumentTitle(id: string): Promise<DokDocument> {
+  return sendJson<DokDocument>(`/api/v1/documents/${encodeURIComponent(id)}/title`, "DELETE");
+}
+
 /** Delete a document and its files. */
 export async function deleteDocument(id: string): Promise<void> {
   const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -2224,7 +2240,7 @@ export function fetchAdminContext(signal?: AbortSignal): Promise<AdminContext> {
 /** POST/PUT/DELETE JSON with a shared error path; returns the parsed body (or undefined for 204). */
 async function sendJson<T>(
   url: string,
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   body?: unknown,
 ): Promise<T> {
   const response = await fetch(url, {

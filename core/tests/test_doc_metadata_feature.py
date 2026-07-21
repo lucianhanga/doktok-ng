@@ -78,3 +78,42 @@ def test_skips_when_no_content() -> None:
     DocMetadataFeature(repo, FakeFileStorage({}), lambda _t: extractor).process("t1", "d1")
     assert extractor.seen is None  # never called the model
     assert repo.get("t1", "d1").summary is None  # type: ignore[union-attr]
+
+
+def test_manual_title_survives_reprocessing() -> None:
+    """#537: a user-renamed title (title_source='manual') is never clobbered by a metadata
+    re-run; the other enrichment fields still update."""
+    repo = InMemoryDocumentRepository()
+    repo.add(_doc())
+    repo.set_title("t1", "d1", "My own name")
+    files = FakeFileStorage({"/store/d1/content.md": b"Annual report for Acme, dated 2026-01-15."})
+    extractor = FakeExtractor(
+        ExtractedMetadata(
+            title="Acme Annual Report 2026",
+            document_date="2026-01-15",
+            location="n/a",
+            summary="Acme's annual financial report.",
+        )
+    )
+    DocMetadataFeature(repo, files, lambda _t: extractor).process("t1", "d1")
+
+    doc = repo.get("t1", "d1")
+    assert doc is not None
+    assert doc.title == "My own name"  # the rename survives
+    assert doc.title_source == "manual"
+    assert doc.summary == "Acme's annual financial report."  # other fields still update
+
+
+def test_clearing_manual_title_lets_metadata_take_over_again() -> None:
+    repo = InMemoryDocumentRepository()
+    repo.add(_doc())
+    repo.set_title("t1", "d1", "My own name")
+    repo.clear_manual_title("t1", "d1")
+    files = FakeFileStorage({"/store/d1/content.md": b"Annual report for Acme."})
+    extractor = FakeExtractor(ExtractedMetadata("Acme Annual Report 2026", None, None, "s."))
+    DocMetadataFeature(repo, files, lambda _t: extractor).process("t1", "d1")
+
+    doc = repo.get("t1", "d1")
+    assert doc is not None
+    assert doc.title_source == "auto"
+    assert doc.title == "Acme Annual Report 2026"

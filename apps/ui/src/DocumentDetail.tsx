@@ -13,6 +13,8 @@ import {
   formatSignedMoneyMinor,
   formatTokens,
   reingestDocument,
+  renameDocument,
+  resetDocumentTitle,
   rotateDocument,
   retryDocumentFeature,
   type DocEntity,
@@ -636,6 +638,11 @@ export function DocumentDetail({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [fullContent, setFullContent] = useState<string | null>(null);
   const [fullEntities, setFullEntities] = useState<DocEntity[] | null>(null);
+  // Inline title rename (#537): editing state + in-flight save + per-attempt error.
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const load = useCallback(
     (signal?: AbortSignal) => {
@@ -707,6 +714,42 @@ export function DocumentDetail({
       .catch(() => undefined);
   }
 
+  // --- Inline title rename (#537) -------------------------------------------------------------
+
+  function startRename() {
+    setRenameValue(doc?.title ?? "");
+    setRenameError(null);
+    setRenaming(true);
+  }
+
+  function saveRename() {
+    const value = renameValue.trim();
+    if (!value || renameSaving) return;
+    setRenameSaving(true);
+    setRenameError(null);
+    renameDocument(id, value)
+      .then((updated) => {
+        setData((d) => (d ? { ...d, document: { ...d.document, ...updated } } : d));
+        setRenaming(false);
+      })
+      .catch((err: unknown) =>
+        setRenameError(err instanceof Error ? err.message : "could not rename"),
+      )
+      .finally(() => setRenameSaving(false));
+  }
+
+  function resetTitle() {
+    if (renameSaving) return;
+    setRenameSaving(true);
+    setRenameError(null);
+    resetDocumentTitle(id)
+      .then((updated) => setData((d) => (d ? { ...d, document: { ...d.document, ...updated } } : d)))
+      .catch((err: unknown) =>
+        setRenameError(err instanceof Error ? err.message : "could not reset the title"),
+      )
+      .finally(() => setRenameSaving(false));
+  }
+
   const doc = data?.document ?? null;
   const title = doc?.title ?? doc?.original_filename ?? id.slice(0, 8);
 
@@ -765,7 +808,63 @@ export function DocumentDetail({
         <button type="button" className="link-button doc-back" onClick={onClose}>
           &larr; Back to documents
         </button>
-        <h2 title={title}>{title}</h2>
+        {renaming ? (
+          <span className="doc-rename">
+            <input
+              aria-label="Document title"
+              value={renameValue}
+              disabled={renameSaving}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveRename();
+                if (e.key === "Escape") setRenaming(false);
+              }}
+            />
+            <button
+              type="button"
+              disabled={renameSaving || !renameValue.trim()}
+              onClick={saveRename}
+            >
+              {renameSaving ? "Saving…" : "Save"}
+            </button>
+            <button type="button" disabled={renameSaving} onClick={() => setRenaming(false)}>
+              Cancel
+            </button>
+            {renameError && (
+              <p role="alert" className="status-error">
+                {renameError}
+              </p>
+            )}
+          </span>
+        ) : (
+          <h2 title={title}>
+            {title}
+            {doc && (
+              <button
+                type="button"
+                className="doc-rename-edit"
+                aria-label="Rename document"
+                title="Rename document"
+                onClick={startRename}
+              >
+                ✎
+              </button>
+            )}
+          </h2>
+        )}
+        {doc?.title_source === "manual" && !renaming && (
+          <span className="doc-renamed muted">
+            renamed
+            <button
+              type="button"
+              className="link-button"
+              disabled={renameSaving}
+              onClick={resetTitle}
+            >
+              reset to auto
+            </button>
+          </span>
+        )}
         {doc && <span className={`badge status-pill status-${doc.status}`}>{doc.status}</span>}
         <div className="doc-actions">
           {doc && (

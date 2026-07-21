@@ -173,7 +173,19 @@ class DocumentRepository(Protocol):
         location: str | None,
         summary: str | None,
     ) -> None:
-        """Persist enrichment fields (M6.2). Idempotent overwrite."""
+        """Persist enrichment fields (M6.2). Idempotent overwrite - EXCEPT the title: when the
+        document's title_source is 'manual' (a user rename, #537), the title is left untouched
+        while the other fields still update."""
+        ...
+
+    def set_title(self, tenant_id: str, document_id: str, title: str) -> None:
+        """Rename a document (#537): sets the title AND marks title_source='manual' so later
+        metadata runs never clobber it."""
+        ...
+
+    def clear_manual_title(self, tenant_id: str, document_id: str) -> None:
+        """Hand the title back to the auto path (#537): title_source='auto' again; the current
+        title stays until the next doc_metadata run re-derives it."""
         ...
 
     def set_unidentifiable(self, tenant_id: str, document_id: str, *, value: bool | None) -> None:

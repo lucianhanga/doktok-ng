@@ -1080,6 +1080,38 @@ tr.row-selected {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Inline title rename (#537): the pencil affordance, the editor row, and the "renamed" marker. */
+.doc-rename-edit {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  padding: 0 0.3rem;
+  vertical-align: middle;
+}
+.doc-rename-edit:hover {
+  color: var(--text);
+}
+.doc-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 8rem;
+}
+.doc-rename input {
+  flex: 1;
+  min-width: 6rem;
+  font-size: 1rem;
+  padding: 0.25rem 0.5rem;
+}
+.doc-renamed {
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
 .doc-back {
   font-size: 0.85rem;
   opacity: 0.8;

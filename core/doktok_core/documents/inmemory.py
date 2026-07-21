@@ -87,11 +87,23 @@ class InMemoryDocumentRepository:
         doc = self._docs.get(document_id)
         if doc is None or doc.tenant_id != tenant_id:
             return
-        if title is not None:
+        # A 'manual' (user-renamed, #537) title is never overwritten by the auto path.
+        if title is not None and doc.title_source != "manual":
             doc.title = title
         doc.document_date = document_date
         doc.location = location
         doc.summary = summary
+
+    def set_title(self, tenant_id: str, document_id: str, title: str) -> None:
+        doc = self._docs.get(document_id)
+        if doc is not None and doc.tenant_id == tenant_id:
+            doc.title = title
+            doc.title_source = "manual"
+
+    def clear_manual_title(self, tenant_id: str, document_id: str) -> None:
+        doc = self._docs.get(document_id)
+        if doc is not None and doc.tenant_id == tenant_id:
+            doc.title_source = "auto"
 
     def set_unidentifiable(self, tenant_id: str, document_id: str, *, value: bool | None) -> None:
         doc = self._docs.get(document_id)

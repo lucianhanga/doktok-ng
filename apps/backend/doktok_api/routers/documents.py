@@ -169,6 +169,7 @@ def list_documents(
     entities: Entities,
     chunks: Chunks,
     categories: Categories,
+    tag_repo: TagRepo,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: Annotated[str | None, Query()] = None,
     category: Annotated[str | None, Query(max_length=500)] = None,
@@ -233,6 +234,8 @@ def list_documents(
         next_cursor=_encode_cursor(next_anchor),
         processing=summaries,
         stats=doc_stats,
+        # Per-document tags for the list/cards chips (#549): one batched query over the page.
+        tags=tag_repo.tags_for_documents(tenant.tenant_id, doc_ids),
     )
 
 

@@ -102,6 +102,8 @@ export interface DocumentPage {
   // Per-document processing summaries keyed by document id (sidecar map; list response only).
   // Old/absent docs are simply missing from the map - callers must tolerate `undefined`.
   processing?: Record<string, ProcessingSummary>;
+  // Per-document tags for the list/cards chips (#549); sidecar map, only on the list response.
+  tags?: Record<string, { id: string; name: string; color: string }[]>;
 }
 
 export type DocumentSort = "acquired" | "created" | "title" | "category";
@@ -117,6 +119,9 @@ export interface DocumentFilters {
   title?: string;
   tokens?: string[];
   tokenMatch?: TokenMatch;
+  /** Tag ids to filter by (rename-safe); combined per tagMatch (default all). */
+  tags?: string[];
+  tagMatch?: TokenMatch;
 }
 
 export interface DocumentQuery extends DocumentFilters {
@@ -137,6 +142,8 @@ function documentFilterParams(opts: DocumentFilters): URLSearchParams {
   if (opts.title?.trim()) params.set("title", opts.title.trim());
   if (opts.tokenMatch) params.set("token_match", opts.tokenMatch);
   (opts.tokens ?? []).forEach((t) => params.append("token", t));
+  if (opts.tagMatch) params.set("tag_match", opts.tagMatch);
+  (opts.tags ?? []).forEach((t) => params.append("tag", t));
   return params;
 }
 

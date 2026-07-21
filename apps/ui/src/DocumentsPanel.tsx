@@ -34,6 +34,7 @@ import { DataTable } from "./DataTable";
 import { useInterval } from "./hooks";
 import { loadJSON, saveJSON } from "./persist";
 import { TagChip } from "./TagsPanel";
+import { tagChipStyle, tagColor } from "./tagPalette";
 
 type DocsState =
   | { kind: "loading" }
@@ -43,6 +44,8 @@ type DocsState =
       features: Map<string, DocumentFeature[]>;
       // Per-document processing rollups for the chip tooltip (sidecar map; may be absent per doc).
       processing: Record<string, ProcessingSummary>;
+      // Per-document tags for the chips (#549; sidecar map from the list response).
+      tags: Record<string, { id: string; name: string; color: string }[]>;
       total: number;
       hasMore: boolean;
     }
@@ -79,6 +82,52 @@ interface DocsUiPrefs {
   needsAttention?: boolean;
   unidentifiable?: boolean;
   title?: string;
+  tags?: string[];
+  tagMatch?: TokenMatch;
+}
+
+/** Tag chips for a document (#549): up to `cap` chips + a "+N" overflow marker, each clickable to
+ * filter the list to that tag. Shared by the list column and the thumbnail cards. */
+function TagChipList({
+  tags,
+  onClickTag,
+  cap = 3,
+}: {
+  tags: { id: string; name: string; color: string }[];
+  onClickTag?: (tagId: string) => void;
+  cap?: number;
+}) {
+  const shown = tags.slice(0, cap);
+  const hidden = tags.length - shown.length;
+  return (
+    <span className="doc-tag-chips">
+      {shown.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          className="tag-chip tag-chip-btn"
+          style={tagChipStyle(t.color)}
+          title={`Filter by tag ${t.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClickTag?.(t.id);
+          }}
+        >
+          <span
+            className="tag-dot"
+            style={{ backgroundColor: tagColor(t.color).dot }}
+            aria-hidden="true"
+          />
+          {t.name}
+        </button>
+      ))}
+      {hidden > 0 && (
+        <span className="tag-more muted" title={tags.slice(cap).map((t) => t.name).join(", ")}>
+          +{hidden}
+        </span>
+      )}
+    </span>
+  );
 }
 
 // Server-side cap on "select all matching" (mirrors the backend); above it we select the first N and
@@ -521,6 +570,8 @@ function DocumentCard({
   thumbSize,
   tileFields,
   anySelected,
+  tags,
+  onClickTag,
 }: {
   doc: DokDocument;
   features: DocumentFeature[];
@@ -534,6 +585,8 @@ function DocumentCard({
   thumbSize: ThumbSize;
   tileFields: TileFields;
   anySelected: boolean;
+  tags: { id: string; name: string; color: string }[];
+  onClickTag?: (tagId: string) => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const cardClass = [
@@ -628,6 +681,11 @@ function DocumentCard({
       >
         {doc.title ?? doc.original_filename}
       </button>
+      {tags.length > 0 && (
+        <p className="doc-card-tags">
+          <TagChipList tags={tags} onClickTag={onClickTag} cap={thumbSize === "s" ? 2 : 3} />
+        </p>
+      )}
       {/* Enhancement 2: field chooser — render only toggled fields; summary hidden at size S. */}
       {tileFields.filename && (
         <p className="doc-card-meta doc-card-meta-filename" title={doc.original_filename}>
@@ -1031,6 +1089,12 @@ export function DocumentsPanel({
   const [title, setTitle] = useState(storedUi.title ?? "");
   const [tokens, setTokens] = useState<string[]>([]);
   const [tokenMatch, setTokenMatch] = useState<TokenMatch>("all");
+  // The tag filter (#549): selected tag ids + match mode, restored from the synced prefs; the
+  // catalog drives the popover and is hidden at zero tags (mirrors the Category select).
+  const [selectedTags, setSelectedTags] = useState<string[]>(storedUi.tags ?? []);
+  const [tagMatch, setTagMatch] = useState<TokenMatch>(storedUi.tagMatch ?? "all");
+  const [tagCatalog, setTagCatalog] = useState<TagOut[]>([]);
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const [thumbSize, setThumbSize] = useState<ThumbSize>(() => readThumbSize());
   const [tileFields, setTileFields] = useState<TileFields>(() => readTileFields());
   const [windowSize, setWindowSize] = useState(PAGE_SIZE);
@@ -1064,9 +1128,31 @@ export function DocumentsPanel({
       title: title || undefined,
       tokens,
       tokenMatch,
+      tags: selectedTags.length ? selectedTags : undefined,
+      tagMatch: selectedTags.length ? tagMatch : undefined,
     }),
-    [category, status, needsAttention, unidentifiable, title, tokens, tokenMatch],
+    [category, status, needsAttention, unidentifiable, title, tokens, tokenMatch, selectedTags, tagMatch],
   );
+
+  // The tag catalog for the filter popover (fetched once on mount).
+  useEffect(() => {
+    fetchTags()
+      .then(setTagCatalog)
+      .catch(() => undefined);
+  }, []);
+
+  // Click a tag chip anywhere (list cell or card): filter the list to that tag (#549).
+  function filterByTag(tagId: string) {
+    setSelectedTags([tagId]);
+    setTagMatch("all");
+    setWindowSize(PAGE_SIZE);
+  }
+
+  function toggleTagFilter(tagId: string) {
+    setSelectedTags((prev) =>
+      prev.includes(tagId) ? prev.filter((t) => t !== tagId) : [...prev, tagId],
+    );
+  }
 
   const load = useCallback(() => {
     const query = { ...filters, sort, dir };
@@ -1082,6 +1168,7 @@ export function DocumentsPanel({
       let cursor: string | undefined;
       let next: string | null = null;
       const processing: Record<string, ProcessingSummary> = {};
+      const tagsMap: Record<string, { id: string; name: string; color: string }[]> = {};
       do {
         const page = await fetchDocuments({ ...query, cursor, limit: PAGE_SIZE }, ctrl.signal);
         items = items.concat(page.items);
@@ -1089,6 +1176,7 @@ export function DocumentsPanel({
         next = page.next_cursor;
         cursor = next ?? undefined;
         Object.assign(processing, page.processing ?? {});
+        Object.assign(tagsMap, page.tags ?? {});
       } while (next && items.length < windowSize);
       // Scope badges to the loaded documents, not the whole tenant (whose ledger is row-capped and
       // would silently drop the newest documents' badges once a tenant has many documents).
@@ -1103,6 +1191,7 @@ export function DocumentsPanel({
         hasMore: next !== null,
         features: groupByDocument(features),
         processing,
+        tags: tagsMap,
       });
     })().catch((err: unknown) => {
       if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
@@ -1151,7 +1240,16 @@ export function DocumentsPanel({
   // writing (same anti-clobber guard as the table layout).
   const lastSavedUi = useRef<string | null>(null);
   useEffect(() => {
-    const prefs: DocsUiPrefs = { view, category, status, needsAttention, unidentifiable, title };
+    const prefs: DocsUiPrefs = {
+      view,
+      category,
+      status,
+      needsAttention,
+      unidentifiable,
+      title,
+      tags: selectedTags,
+      tagMatch,
+    };
     const serialized = JSON.stringify(prefs);
     if (lastSavedUi.current === null) {
       lastSavedUi.current = serialized;
@@ -1160,7 +1258,7 @@ export function DocumentsPanel({
     if (lastSavedUi.current === serialized) return;
     lastSavedUi.current = serialized;
     saveJSON(DOCS_UI_KEY, prefs);
-  }, [view, category, status, needsAttention, unidentifiable, title]);
+  }, [view, category, status, needsAttention, unidentifiable, title, selectedTags, tagMatch]);
 
   // Keep the bulk selection in sync with what's actually shown (filter/poll can drop documents),
   // so an action never targets a hidden/gone document and select-all stays correct. CRITICAL: in
@@ -1676,7 +1774,21 @@ export function DocumentsPanel({
         accessorFn: (d) => d.created_at,
         cell: ({ getValue }) => formatDate(getValue<string>()),
       },
-      // 8. Processing chips — not hideable, not sortable
+      // 8. Tag chips (#549) — palette-colored, clickable to filter; not sortable
+      {
+        id: "tags",
+        header: "Tags",
+        enableSorting: false,
+        size: 160,
+        minSize: 90,
+        accessorFn: (d) => d.id,
+        cell: ({ row }) => {
+          const docTags = state.kind === "ok" ? (state.tags[row.original.id] ?? []) : [];
+          if (docTags.length === 0) return null;
+          return <TagChipList tags={docTags} onClickTag={filterByTag} />;
+        },
+      },
+      // 9. Processing chips — not hideable, not sortable
       {
         id: "processing",
         header: "Processing",
@@ -1755,6 +1867,55 @@ export function DocumentsPanel({
               ))}
             </select>
           </label>
+        )}
+        {tagCatalog.length > 0 && (
+          <span className="docs-tag-filter">
+            <button
+              type="button"
+              aria-expanded={tagFilterOpen}
+              onClick={() => setTagFilterOpen((v) => !v)}
+            >
+              Tags{selectedTags.length > 0 ? ` (${selectedTags.length})` : ""} ▾
+            </button>
+            {tagFilterOpen && (
+              <div className="docs-tag-filter-pop" role="dialog" aria-label="Filter by tags">
+                <div role="radiogroup" aria-label="Tag match mode" className="docs-tag-match">
+                  <label>
+                    <input
+                      type="radio"
+                      name="tag-match"
+                      checked={tagMatch === "all"}
+                      onChange={() => setTagMatch("all")}
+                    />{" "}
+                    All
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="tag-match"
+                      checked={tagMatch === "any"}
+                      onChange={() => setTagMatch("any")}
+                    />{" "}
+                    Any
+                  </label>
+                </div>
+                <ul className="bulk-tag-list">
+                  {tagCatalog.map((t) => (
+                    <li key={t.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={selectedTags.includes(t.id)}
+                          onChange={() => toggleTagFilter(t.id)}
+                        />{" "}
+                        <TagChip name={t.name} color={t.color} />
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </span>
         )}
         <label title="Documents with a failed feature (red badge) - not ones still processing">
           <input
@@ -2049,6 +2210,8 @@ export function DocumentsPanel({
                 thumbSize={thumbSize}
                 tileFields={tileFields}
                 anySelected={selected.size > 0}
+                tags={state.tags[doc.id] ?? []}
+                onClickTag={filterByTag}
               />
             ))}
           </div>

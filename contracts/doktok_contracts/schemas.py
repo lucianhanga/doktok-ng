@@ -328,6 +328,9 @@ class DocumentListPage(BaseModel):
     processing: dict[str, ProcessingSummary] = Field(default_factory=dict)
     # Per-document entity/chunk counts and primary category for the Documents table columns.
     stats: dict[str, DocumentListStats] = Field(default_factory=dict)
+    # Per-document tags for the list/cards tag chips (#549), keyed by document id (one batched
+    # query over the page's ids, no N+1). Only populated on the list response.
+    tags: dict[str, list[Tag]] = Field(default_factory=dict)
 
 
 class DocumentSort(StrEnum):

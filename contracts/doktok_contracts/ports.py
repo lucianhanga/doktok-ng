@@ -735,6 +735,11 @@ class TagRepository(Protocol):
         """Tag count per document (batched GROUP BY), for list sidecars."""
         ...
 
+    def tags_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, list[Tag]]:
+        """The tags per document (one batched query over the page's ids), for the list/cards
+        tag chips (#549)."""
+        ...
+
     def document_count(self, tenant_id: str, tag_id: str) -> int: ...
     def tag_counts(self, tenant_id: str) -> dict[str, int]:
         """Document count per tag id, for the management UI."""

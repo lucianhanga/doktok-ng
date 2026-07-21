@@ -113,6 +113,16 @@ class InMemoryTagRepository:
                 counts[doc_id] = counts.get(doc_id, 0) + 1
         return counts
 
+    def tags_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, list[Tag]]:
+        wanted = set(document_ids)
+        result: dict[str, list[Tag]] = {}
+        for tid, doc_id, tag_id in self._links:
+            if tid == tenant_id and doc_id in wanted and tag_id in self._tags:
+                result.setdefault(doc_id, []).append(self._tags[tag_id].model_copy(deep=True))
+        for doc_tags in result.values():
+            doc_tags.sort(key=lambda t: t.name)
+        return result
+
     def document_count(self, tenant_id: str, tag_id: str) -> int:
         return sum(1 for link in self._links if link[0] == tenant_id and link[2] == tag_id)
 

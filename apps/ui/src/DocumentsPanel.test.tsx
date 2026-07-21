@@ -50,7 +50,7 @@ function mockSelectAll(opts: {
   return { fetchMock, deleted };
 }
 
-function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknown[] = [], groups: unknown[] = []) {
+function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknown[] = [], groups: unknown[] = [], tagsMap: Record<string, unknown[]> = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/api/v1/features/catalog")) {
@@ -68,7 +68,7 @@ function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknow
     }
     // The documents list is a keyset-paginated envelope (single page in tests).
     return new Response(
-      JSON.stringify({ items: docs, total: docs.length, next_cursor: null }),
+      JSON.stringify({ items: docs, total: docs.length, next_cursor: null, tags: tagsMap }),
       { status: 200 },
     );
   });
@@ -1002,4 +1002,80 @@ test("the bulk Tags dialog assigns the picked tags to the selection (#548)", asy
   expect(body.add).toEqual(["t1"]);
   expect(body.remove).toEqual([]);
   expect(body.document_ids.sort()).toEqual(["a", "b"]);
+});
+
+// ---- Tag chips + tag filter (#549) ----
+
+const TAG_A_549 = {
+  id: "t1",
+  tenant_id: "t1",
+  name: "Rome Trip",
+  normalized: "rome trip",
+  description: "",
+  color: "teal",
+  status: "active",
+  merged_into: null,
+  scope: "tenant",
+  owner_user_id: null,
+  created_at: "2026-07-21T00:00:00Z",
+  updated_at: null,
+  document_count: 0,
+};
+
+test("tag chips render in the list and clicking one filters to that tag (#549)", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "a.txt" })], [], [], [], {
+    a: [{ id: "t1", name: "Rome Trip", color: "teal" }],
+  });
+  render(<DocumentsPanel />);
+  const chip = await screen.findByRole("button", { name: "Rome Trip" });
+  fireEvent.click(chip);
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([u]) => String(u).includes("tag=t1")),
+    ).toBe(true),
+  );
+});
+
+test("tag chips render on the thumbnail cards (#549)", async () => {
+  mockDocs([doc({ id: "a", original_filename: "a.txt" })], [], [], [], {
+    a: [{ id: "t1", name: "Rome Trip", color: "teal" }],
+  });
+  render(<DocumentsPanel />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+  expect(await screen.findByRole("button", { name: "Rome Trip" })).toBeInTheDocument();
+});
+
+test("the toolbar tag filter narrows the query with the match mode and persists (#549)", async () => {
+  const calls: { url: string; method: string; body?: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
+      if (url === "/api/v1/tags") return new Response(JSON.stringify([TAG_A_549]), { status: 200 });
+      if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+      return new Response(
+        JSON.stringify({
+          items: [doc({ id: "a", original_filename: "a.txt" })],
+          total: 1,
+          next_cursor: null,
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  render(<DocumentsPanel />);
+  fireEvent.click(await screen.findByRole("button", { name: /Tags/ }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Rome Trip/ }));
+  fireEvent.click(screen.getByRole("radio", { name: "Any" }));
+  await waitFor(() =>
+    expect(
+      calls.some((c) => c.url.includes("tag=t1") && c.url.includes("tag_match=any")),
+    ).toBe(true),
+  );
+  // The selection persists via the synced per-user prefs.
+  const prefs = JSON.parse(localStorage.getItem("doktok.docs.ui") ?? "{}");
+  expect(prefs.tags).toEqual(["t1"]);
+  expect(prefs.tagMatch).toBe("any");
 });

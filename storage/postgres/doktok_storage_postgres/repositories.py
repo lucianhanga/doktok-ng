@@ -2812,6 +2812,23 @@ class PostgresTagRepository:
             ).fetchall()
         return {r["document_id"]: int(r["n"]) for r in rows}
 
+    def tags_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, list[Tag]]:
+        if not document_ids:
+            return {}
+        cols = ", ".join(f"t.{c}" for c in _TAG_COLUMNS.split(", "))
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT dt.document_id, {cols} FROM document_tags dt "
+                "JOIN tags t ON t.id = dt.tag_id "
+                "WHERE dt.tenant_id=%s AND dt.document_id = ANY(%s) ORDER BY t.name",
+                (tenant_id, list(document_ids)),
+            ).fetchall()
+        result: dict[str, list[Tag]] = {}
+        for r in rows:
+            result.setdefault(r["document_id"], []).append(_row_to_tag(r))
+        return result
+
     def document_count(self, tenant_id: str, tag_id: str) -> int:
         with self._db.connection() as conn:
             row = conn.execute(

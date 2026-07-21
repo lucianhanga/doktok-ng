@@ -2774,6 +2774,32 @@ class PostgresTagRepository:
         )
         return [t for t, score in scored[:limit] if score >= 0.6]
 
+    def merge_into(self, tenant_id: str, loser_id: str, survivor_id: str) -> int:
+        with self._db.connection() as conn, conn.transaction():
+            count_row = conn.execute(
+                "SELECT COUNT(DISTINCT document_id) FROM document_tags "
+                "WHERE tenant_id=%s AND tag_id=%s",
+                (tenant_id, loser_id),
+            ).fetchone()
+            moved = int(count_row[0]) if count_row else 0
+            # Repoint the loser's links to the survivor; the PK de-dupes docs carrying both.
+            conn.execute(
+                "INSERT INTO document_tags (tenant_id, document_id, tag_id) "
+                "SELECT tenant_id, document_id, %s FROM document_tags "
+                "WHERE tenant_id=%s AND tag_id=%s ON CONFLICT DO NOTHING",
+                (survivor_id, tenant_id, loser_id),
+            )
+            conn.execute(
+                "DELETE FROM document_tags WHERE tenant_id=%s AND tag_id=%s",
+                (tenant_id, loser_id),
+            )
+            conn.execute(
+                "UPDATE tags SET status='merged', merged_into=%s, updated_at=now() "
+                "WHERE tenant_id=%s AND id=%s",
+                (survivor_id, tenant_id, loser_id),
+            )
+        return moved
+
     def link(self, tenant_id: str, document_id: str, tag_id: str) -> None:
         with self._db.connection() as conn:
             conn.execute(

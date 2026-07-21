@@ -78,6 +78,8 @@ class AuditEventType(StrEnum):
     TAG_CREATED = "tag.created"
     TAG_UPDATED = "tag.updated"
     TAG_DELETED = "tag.deleted"
+    # A tag merged into a survivor (#550): details carry loser/survivor + method='manual'.
+    TAG_MERGED = "tag.merged"
     # Tag assignment on documents (#546): single per-doc events; a bulk assign/unassign writes one
     # summary row per call.
     DOCUMENT_TAGGED = "document.tagged"

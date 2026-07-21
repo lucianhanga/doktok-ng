@@ -4,10 +4,21 @@ import {
   createTag,
   deleteTag,
   fetchTags,
+  mergeTag,
   patchTag,
   type TagOut,
 } from "./api";
 import { TAG_PALETTE_TOKENS, tagChipStyle, tagColor } from "./tagPalette";
+
+/** Token-set Jaccard over normalized tag names (#550): pins near-duplicates in the merge dialog. */
+function tokenJaccard(a: string, b: string): number {
+  const ta = new Set(a.split(" "));
+  const tb = new Set(b.split(" "));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter += 1;
+  return inter / (ta.size + tb.size - inter);
+}
 
 /** A tag badge: rounded pill + colored dot + low-alpha tint (#547 design, distinct from category chips). */
 export function TagChip({ name, color }: { name: string; color: string }) {
@@ -211,6 +222,78 @@ function DeleteConfirm({
   );
 }
 
+function MergeDialog({
+  tag,
+  others,
+  onDone,
+  onCancel,
+}: {
+  tag: TagOut;
+  others: TagOut[];
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [survivorId, setSurvivorId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Near-duplicates of the loser (token-set similarity) pinned to the top of the survivor list.
+  const candidates = others
+    .map((t) => ({ t, sim: tokenJaccard(tag.normalized, t.normalized) }))
+    .sort((a, b) => b.sim - a.sim);
+
+  async function confirm() {
+    if (!survivorId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await mergeTag(tag.id, survivorId);
+      onDone();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "could not merge");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="tag-delete-confirm" role="dialog" aria-label={`Merge tag ${tag.name}`}>
+      <p>
+        Merge <strong>{tag.name}</strong> ({tag.document_count} doc
+        {tag.document_count === 1 ? "" : "s"}) into:
+      </p>
+      <label>
+        Surviving tag{" "}
+        <select
+          aria-label="Surviving tag"
+          value={survivorId}
+          onChange={(e) => setSurvivorId(e.target.value)}
+        >
+          <option value="">Pick the surviving tag…</option>
+          {candidates.map(({ t, sim }) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+              {sim >= 0.6 ? " (similar)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && (
+        <p role="alert" className="status-error">
+          {error}
+        </p>
+      )}
+      <div className="tag-editor-actions">
+        <button type="button" disabled={!survivorId || busy} onClick={() => void confirm()}>
+          {busy ? "Merging…" : "Merge"}
+        </button>
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The Tags management panel (Insights → Tags, #547): list, create/edit with the curated palette,
  * delete with the in-use confirm. */
 export function TagsPanel() {
@@ -218,6 +301,7 @@ export function TagsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<"create" | TagOut | null>(null);
   const [deleting, setDeleting] = useState<TagOut | null>(null);
+  const [merging, setMerging] = useState<TagOut | null>(null);
 
   const load = useCallback(() => {
     fetchTags()
@@ -258,6 +342,11 @@ export function TagsPanel() {
               <button type="button" className="link-button" onClick={() => setEditor(t)}>
                 Edit
               </button>
+              {tags.length > 1 && (
+                <button type="button" className="link-button" onClick={() => setMerging(t)}>
+                  Merge
+                </button>
+              )}
               <button type="button" className="link-button" onClick={() => setDeleting(t)}>
                 Delete
               </button>
@@ -283,6 +372,17 @@ export function TagsPanel() {
             load();
           }}
           onCancel={() => setDeleting(null)}
+        />
+      )}
+      {merging !== null && (
+        <MergeDialog
+          tag={merging}
+          others={(tags ?? []).filter((t) => t.id !== merging.id)}
+          onDone={() => {
+            setMerging(null);
+            load();
+          }}
+          onCancel={() => setMerging(null)}
         />
       )}
     </div>

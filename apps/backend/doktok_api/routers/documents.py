@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import shutil
+import uuid
 from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from doktok_contracts.ports import (
     AuditLogRepository,
     CategoryRepository,
     ChunkRepository,
+    DocumentNoteRepository,
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
@@ -37,6 +39,7 @@ from doktok_contracts.schemas import (
     DocumentLayout,
     DocumentListPage,
     DocumentListStats,
+    DocumentNote,
     DocumentRecordPage,
     DocumentRelations,
     DocumentSort,
@@ -54,6 +57,7 @@ from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
 from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS_BY_ID
 from doktok_core.features.telemetry import build_processing_summary, build_processing_telemetry
+from doktok_core.security.roles import Role
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
@@ -63,17 +67,21 @@ from doktok_api.dependencies import (
     get_audit_repository,
     get_category_repository,
     get_chunk_repository,
+    get_document_note_repository,
     get_document_repository,
     get_entity_repository,
     get_feature_repository,
     get_job_repository,
     get_knowledge_graph_repository,
     get_record_repository,
+    get_tenant_registry,
+    resolve_caller_role,
 )
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 Repo = Annotated[DocumentRepository, Depends(get_document_repository)]
+Notes = Annotated[DocumentNoteRepository, Depends(get_document_note_repository)]
 Entities = Annotated[EntityRepository, Depends(get_entity_repository)]
 Chunks = Annotated[ChunkRepository, Depends(get_chunk_repository)]
 Features = Annotated[FeatureRepository, Depends(get_feature_repository)]
@@ -786,6 +794,100 @@ def reset_document_title(document_id: str, tenant: Tenant, repo: Repo, audit: Au
     updated = repo.get(tenant.tenant_id, document_id)
     assert updated is not None
     return updated
+
+
+# --- Document notes (#736): immutable, timestamped entries; deletions are audit-logged. ---
+
+
+class NoteCreate(BaseModel):
+    """Add-note request (#736): free text, trimmed, bounded."""
+
+    body: str = Field(min_length=1, max_length=2000)
+
+
+@router.get("/{document_id}/notes", response_model=list[DocumentNote])
+def list_document_notes(
+    document_id: str, tenant: Tenant, repo: Repo, notes: Notes
+) -> list[DocumentNote]:
+    """The document's notes, newest first (#736). Any authenticated reader of the tenant."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return notes.list_for_document(tenant.tenant_id, document_id)
+
+
+@router.post("/{document_id}/notes", response_model=DocumentNote, status_code=201)
+def add_document_note(
+    document_id: str,
+    payload: NoteCreate,
+    request: Request,
+    tenant: Tenant,
+    repo: Repo,
+    notes: Notes,
+    audit: Audit,
+) -> DocumentNote:
+    """Add a note (#736, editor role via the router write guard). The author is the session user
+    (the static host token records the console identity); the addition is audited."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="note body must not be empty or whitespace")
+    registry = get_tenant_registry(request)
+    user = registry.get_user(tenant.tenant_id, tenant.user_id) if tenant.user_id else None
+    note = DocumentNote(
+        id=uuid.uuid4().hex,
+        tenant_id=tenant.tenant_id,
+        document_id=document_id,
+        author_id=tenant.user_id or tenant.tenant_id,
+        author_email=user.email if user else actor_identity(tenant),
+        body=body,
+        created_at=datetime.now(UTC),
+    )
+    notes.add_note(note)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_NOTE_ADDED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        document_id=document_id,
+        description=f"Note added by {note.author_email}",
+        details={"note_id": note.id},
+    )
+    return note
+
+
+@router.delete("/{document_id}/notes/{note_id}", status_code=204)
+def delete_document_note(
+    document_id: str,
+    note_id: str,
+    request: Request,
+    tenant: Tenant,
+    notes: Notes,
+    audit: Audit,
+) -> Response:
+    """Delete a note (#736): only its author or an admin. The deletion is audited WITH a body
+    snapshot, so the trail outlives the note."""
+    note = notes.get_note(tenant.tenant_id, note_id)
+    if note is None or note.document_id != document_id:
+        raise HTTPException(status_code=404, detail="note not found")
+    role = resolve_caller_role(request, tenant)
+    if note.author_id != tenant.user_id and role is not Role.ADMIN:
+        raise HTTPException(status_code=403, detail="only the author or an admin can delete a note")
+    notes.delete_note(tenant.tenant_id, note_id)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_NOTE_DELETED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        document_id=document_id,
+        description=f"Note by {note.author_email} deleted by {actor_identity(tenant)}",
+        details={"note_id": note_id, "note_author": note.author_email, "body": note.body},
+    )
+    return Response(status_code=204)
 
 
 @router.delete("/{document_id}")

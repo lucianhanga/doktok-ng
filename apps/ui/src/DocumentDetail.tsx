@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState, Fragment } from "react";
 
 import {
+  addDocumentNote,
   confidenceLevel,
+  deleteDocumentNote,
   documentFileUrl,
   documentThumbnailUrl,
   fetchDocumentContent,
   fetchDocumentDetail,
   fetchDocumentEntities,
+  fetchDocumentNotes,
   fetchDocumentRecords,
   fetchDocumentRelations,
   fetchSimilarDocuments,
@@ -22,6 +25,7 @@ import {
   type AuditEvent,
   type DocEntity,
   type DocumentDetailData,
+  type DocumentNote,
   type DocumentRecordSummary,
   type DocumentRelations,
   type ExtractedRecord,
@@ -31,8 +35,9 @@ import {
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 import { entityTypeMeta } from "./entityTypes";
+import { currentUser } from "./session";
 
-type Tab = "content" | "entities" | "records" | "activity";
+type Tab = "content" | "entities" | "records" | "activity" | "notes";
 
 // Named-entity types (PERSON/ORG/GPE/LOCATION/EMAIL/URL) get typed chips; CUSTOM_TOKEN is the
 // keyword/tag set. Anything that is NOT a keyword is treated as a named entity, so an unexpected new
@@ -831,6 +836,11 @@ export function DocumentDetail({
   const [similar, setSimilar] = useState<SimilarDocument[] | null>(null);
   // KG footprint (#731): the document's canonical entities + relation triples (hidden when empty).
   const [relations, setRelations] = useState<DocumentRelations | null>(null);
+  // Notes (#736): null = loading; the composer is editor-only, delete is author-or-admin.
+  const [notes, setNotes] = useState<DocumentNote[] | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
   // Inline title rename (#537): editing state + in-flight save + per-attempt error.
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -890,6 +900,48 @@ export function DocumentDetail({
       cancelled = true;
     };
   }, [id]);
+
+  // Notes (#736): fetched once per document; the list is the source of truth for the tab.
+  useEffect(() => {
+    setNotes(null);
+    let cancelled = false;
+    fetchDocumentNotes(id)
+      .then((n) => {
+        if (!cancelled) setNotes(n);
+      })
+      .catch(() => {
+        if (!cancelled) setNotes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  // --- Notes (#736) ---------------------------------------------------------------
+
+  function addNote() {
+    const body = noteDraft.trim();
+    if (!body || noteSaving) return;
+    setNoteSaving(true);
+    setNoteError(null);
+    addDocumentNote(id, body)
+      .then((n) => {
+        setNotes((cur) => [n, ...(cur ?? [])]);
+        setNoteDraft("");
+      })
+      .catch((e: unknown) =>
+        setNoteError(e instanceof Error ? e.message : "could not add the note"),
+      )
+      .finally(() => setNoteSaving(false));
+  }
+
+  function removeNote(noteId: string) {
+    deleteDocumentNote(id, noteId)
+      .then(() => setNotes((cur) => (cur ?? []).filter((n) => n.id !== noteId)))
+      .catch((e: unknown) =>
+        setNoteError(e instanceof Error ? e.message : "could not delete the note"),
+      );
+  }
 
   // The Records tab only exists when the loaded document has records; if it does not (e.g. after
   // navigating to a record-less document while the tab was open), fall back to Content.
@@ -978,6 +1030,8 @@ export function DocumentDetail({
 
   const doc = data?.document ?? null;
   const title = doc?.title ?? doc?.original_filename ?? id.slice(0, 8);
+  // The session user drives the notes composer (editor/admin) and per-note delete (author/admin).
+  const user = currentUser();
 
   // Structured-records rollup is eager on the detail payload; optional for pre-records backends, so
   // a missing/empty summary means "no Records tab" rather than a crash.
@@ -1226,6 +1280,14 @@ export function DocumentDetail({
               >
                 Activity
               </button>
+              <button
+                type="button"
+                className={tab === "notes" ? "active" : ""}
+                aria-pressed={tab === "notes"}
+                onClick={() => setTab("notes")}
+              >
+                Notes ({notes?.length ?? 0})
+              </button>
             </nav>
 
             {tab === "content" && (
@@ -1311,6 +1373,63 @@ export function DocumentDetail({
                   <p className="empty">No activity recorded.</p>
                 ) : (
                   <ActivityTable events={data.recent_activity} />
+                )}
+              </div>
+            )}
+
+            {tab === "notes" && (
+              <div className="doc-section doc-notes">
+                {(user?.role === "editor" || user?.role === "admin") && (
+                  <div className="doc-note-composer">
+                    <textarea
+                      aria-label="New note"
+                      placeholder="Add a note about this document…"
+                      rows={3}
+                      value={noteDraft}
+                      onChange={(e) => setNoteDraft(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      disabled={noteSaving || !noteDraft.trim()}
+                      onClick={addNote}
+                    >
+                      {noteSaving ? "Adding…" : "Add note"}
+                    </button>
+                  </div>
+                )}
+                {noteError && (
+                  <p role="alert" className="status-error">
+                    {noteError}
+                  </p>
+                )}
+                {notes === null ? (
+                  <p role="status">Loading notes…</p>
+                ) : notes.length === 0 ? (
+                  <p className="empty">No notes yet.</p>
+                ) : (
+                  <ul className="doc-notes-list">
+                    {notes.map((n) => (
+                      <li key={n.id} className="doc-note">
+                        <p className="doc-note-head muted">
+                          <strong>{n.author_email}</strong> ·{" "}
+                          <time dateTime={n.created_at} title={n.created_at}>
+                            {new Date(n.created_at).toLocaleString()}
+                          </time>
+                          {(user?.id === n.author_id || user?.role === "admin") && (
+                            <button
+                              type="button"
+                              className="link-button doc-note-delete"
+                              aria-label={`Delete note by ${n.author_email}`}
+                              onClick={() => removeNote(n.id)}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </p>
+                        <p className="doc-note-body">{n.body}</p>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
             )}

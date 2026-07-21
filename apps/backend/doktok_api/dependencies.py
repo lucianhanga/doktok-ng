@@ -20,6 +20,7 @@ from doktok_contracts.ports import (
     ChatModelProvider,
     ChatThreadRepository,
     ChunkRepository,
+    DocumentNoteRepository,
     DocumentRepository,
     EmbeddingProjectionRepository,
     EmbeddingProvider,
@@ -260,6 +261,18 @@ def get_document_repository(request: Request) -> DocumentRepository:
 
     repository = PostgresDocumentRepository(_get_database(request))
     registry.register(DocumentRepository, repository)
+    return repository
+
+
+def get_document_note_repository(request: Request) -> DocumentNoteRepository:
+    registry = request.app.state.registry
+    if registry.is_registered(DocumentNoteRepository):
+        return cast(DocumentNoteRepository, registry.resolve(DocumentNoteRepository))
+
+    from doktok_storage_postgres import PostgresDocumentNoteRepository
+
+    repository = PostgresDocumentNoteRepository(_get_database(request))
+    registry.register(DocumentNoteRepository, repository)
     return repository
 
 

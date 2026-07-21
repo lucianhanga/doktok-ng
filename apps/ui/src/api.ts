@@ -1497,6 +1497,37 @@ export function fetchDocumentRelations(id: string): Promise<DocumentRelations> {
   return getJson<DocumentRelations>(`/api/v1/documents/${encodeURIComponent(id)}/relations`);
 }
 
+/** A user-authored, timestamped note on a document (#736; immutable entry). */
+export interface DocumentNote {
+  id: string;
+  tenant_id: string;
+  document_id: string;
+  author_id: string;
+  author_email: string;
+  body: string;
+  created_at: string;
+}
+
+/** The document's notes, newest first (any authenticated reader). */
+export function fetchDocumentNotes(id: string): Promise<DocumentNote[]> {
+  return getJson<DocumentNote[]>(`/api/v1/documents/${encodeURIComponent(id)}/notes`);
+}
+
+/** Add a note (editor role). Returns the created entry. */
+export function addDocumentNote(id: string, body: string): Promise<DocumentNote> {
+  return sendJson<DocumentNote>(`/api/v1/documents/${encodeURIComponent(id)}/notes`, "POST", {
+    body,
+  });
+}
+
+/** Delete a note (author or admin); 204 on success. */
+export function deleteDocumentNote(id: string, noteId: string): Promise<void> {
+  return sendJson<void>(
+    `/api/v1/documents/${encodeURIComponent(id)}/notes/${encodeURIComponent(noteId)}`,
+    "DELETE",
+  );
+}
+
 /** Delete a document and its files. */
 export async function deleteDocument(id: string): Promise<void> {
   const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, { method: "DELETE" });

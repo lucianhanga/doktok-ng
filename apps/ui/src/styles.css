@@ -6946,3 +6946,49 @@ tr.row-selected {
   font-size: 0.85em;
   text-transform: lowercase;
 }
+
+/* Document Notes (#736): composer + timestamped note entries. */
+.doc-note-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+.doc-note-composer textarea {
+  resize: vertical;
+  min-height: 3.5rem;
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+}
+.doc-note-composer button {
+  align-self: flex-start;
+}
+.doc-notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.doc-note {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+}
+.doc-note-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0 0 0.25rem;
+  font-size: 0.82rem;
+}
+.doc-note-delete {
+  margin-left: auto;
+  font-size: 0.8rem;
+}
+.doc-note-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

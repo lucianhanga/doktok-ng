@@ -48,6 +48,7 @@ from doktok_contracts.schemas import (
     DocumentChunk,
     DocumentEntity,
     DocumentFeature,
+    DocumentNote,
     DocumentRecordSummary,
     DocumentRelations,
     DocumentSort,
@@ -678,6 +679,21 @@ class RecordRepository(Protocol):
         intent (merchant fuzzy-match, type, direction, currency, date range). Money is summed per
         currency, never across them."""
         ...
+
+
+@runtime_checkable
+class DocumentNoteRepository(Protocol):
+    """User-authored notes on documents (#736): immutable, timestamped, tenant-scoped."""
+
+    def add_note(self, note: DocumentNote) -> None: ...
+    def list_for_document(
+        self, tenant_id: str, document_id: str, *, limit: int = 100
+    ) -> list[DocumentNote]:
+        """Newest first."""
+        ...
+
+    def get_note(self, tenant_id: str, note_id: str) -> DocumentNote | None: ...
+    def delete_note(self, tenant_id: str, note_id: str) -> None: ...
 
 
 @runtime_checkable

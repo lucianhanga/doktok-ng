@@ -9,6 +9,7 @@ from typing import Any
 from doktok_contracts.errors import DuplicateActiveDocumentError
 from doktok_contracts.schemas import (
     Document,
+    DocumentNote,
     DocumentSort,
     DocumentStatus,
     EntityType,
@@ -296,3 +297,35 @@ class InMemoryDocumentRepository:
         doc = self._docs.get(document_id)
         if doc is not None and doc.tenant_id == tenant_id:
             del self._docs[document_id]
+
+
+class InMemoryDocumentNoteRepository:
+    """In-memory document notes store (#736, mirrors the Postgres contract)."""
+
+    def __init__(self) -> None:
+        self._notes: dict[str, DocumentNote] = {}
+
+    def add_note(self, note: DocumentNote) -> None:
+        self._notes[note.id] = note.model_copy(deep=True)
+
+    def list_for_document(
+        self, tenant_id: str, document_id: str, *, limit: int = 100
+    ) -> list[DocumentNote]:
+        rows = [
+            n.model_copy(deep=True)
+            for n in self._notes.values()
+            if n.tenant_id == tenant_id and n.document_id == document_id
+        ]
+        rows.sort(key=lambda n: (n.created_at, n.id), reverse=True)
+        return rows[:limit]
+
+    def get_note(self, tenant_id: str, note_id: str) -> DocumentNote | None:
+        note = self._notes.get(note_id)
+        if note is None or note.tenant_id != tenant_id:
+            return None
+        return note.model_copy(deep=True)
+
+    def delete_note(self, tenant_id: str, note_id: str) -> None:
+        note = self._notes.get(note_id)
+        if note is not None and note.tenant_id == tenant_id:
+            del self._notes[note_id]

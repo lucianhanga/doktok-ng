@@ -538,6 +538,9 @@ export interface DocumentDetailData {
   // Structured-records rollup (additive; optional so a pre-records payload degrades to "no Records
   // tab" rather than a crash). Default-empty for record-less documents.
   records?: DocumentRecordSummary;
+  // Index + extraction facts (#732); optional for pre-upgrade backends.
+  chunk_count?: number;
+  extraction?: { method: string; ocr_confidence: number | null };
 }
 
 /** Format a millisecond duration compactly: <1s -> "NNNms", <60s -> "N.Ns", >=60s -> "Nm Ns".

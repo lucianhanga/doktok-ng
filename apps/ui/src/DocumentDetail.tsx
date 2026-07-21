@@ -232,14 +232,24 @@ function ProcStepRow({ step, onRetry }: { step: ProcessingStep; onRetry?: (featu
 function ProcessingTelemetrySection({
   telemetry,
   onRetry,
+  chunkCount,
+  extractionMethod,
 }: {
   telemetry: ProcessingTelemetry;
   onRetry: (feature: string) => void;
+  // Index + extraction facts (#732), from the detail payload (not the telemetry).
+  chunkCount?: number;
+  extractionMethod?: string;
 }) {
   const ingested = telemetry.activated_at ?? telemetry.received_at;
   const totalTime = formatDuration(telemetry.total_duration_ms);
   const totalTokens = formatTokens(telemetry.total_tokens);
-  const hasSummary = !!ingested || !!totalTime || !!totalTokens;
+  const hasSummary =
+    !!ingested ||
+    !!totalTime ||
+    !!totalTokens ||
+    (chunkCount ?? 0) > 0 ||
+    !!extractionMethod;
 
   const steps = telemetry.steps.slice().sort((a, b) => {
     const r = stepRank(a.feature) - stepRank(b.feature);
@@ -278,6 +288,20 @@ function ProcessingTelemetrySection({
             <>
               <dt>Total tokens</dt>
               <dd>{totalTokens}</dd>
+            </>
+          )}
+          {(chunkCount ?? 0) > 0 && (
+            <>
+              <dt>Indexed</dt>
+              <dd>
+                {chunkCount!.toLocaleString()} chunk{chunkCount === 1 ? "" : "s"}
+              </dd>
+            </>
+          )}
+          {extractionMethod && (
+            <>
+              <dt>Extraction</dt>
+              <dd>{extractionMethod}</dd>
             </>
           )}
         </dl>
@@ -935,11 +959,12 @@ export function DocumentDetail({
   }
 
   // Fact ribbon chips for the hero band: a quick-glance line of category / date / location /
-  // entities / per-currency financial net / pages. Each is only added when known.
+  // entities / per-currency financial net / pages. Each is only added when known. Categories come
+  // rank-ordered from the backend: the first is the primary one (#732).
   const pageCount = data?.processing?.page_count ?? (doc?.metadata?.page_count as number | undefined);
-  const factChips: { key: string; label: string }[] = [];
-  for (const c of data?.categories ?? []) {
-    factChips.push({ key: `cat:${c.id}`, label: c.name });
+  const factChips: { key: string; label: string; primary?: boolean }[] = [];
+  for (const [idx, c] of (data?.categories ?? []).entries()) {
+    factChips.push({ key: `cat:${c.id}`, label: c.name, primary: idx === 0 });
   }
   if (doc?.document_date) factChips.push({ key: "date", label: `Dated ${doc.document_date}` });
   if (doc?.location) factChips.push({ key: "loc", label: doc.location });
@@ -1106,8 +1131,9 @@ export function DocumentDetail({
                 {factChips.length > 0 && (
                   <ul className="fact-ribbon" aria-label="Key facts">
                     {factChips.map((f) => (
-                      <li key={f.key} className="chip">
+                      <li key={f.key} className={f.primary ? "chip chip-primary" : "chip"}>
                         {f.label}
+                        {f.primary && <span className="chip-primary-mark"> · primary</span>}
                       </li>
                     ))}
                   </ul>
@@ -1255,7 +1281,12 @@ export function DocumentDetail({
                   is ever absent we fall back to the plain feature list so the section is never empty;
                   the two are never rendered together. */}
               {data.processing ? (
-                <ProcessingTelemetrySection telemetry={data.processing} onRetry={retry} />
+                <ProcessingTelemetrySection
+                  telemetry={data.processing}
+                  onRetry={retry}
+                  chunkCount={data.chunk_count}
+                  extractionMethod={data.extraction?.method || undefined}
+                />
               ) : (
                 <ul className="proc-list">
                   {data.features.map((f) => (

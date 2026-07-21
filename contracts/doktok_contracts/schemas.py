@@ -1368,6 +1368,14 @@ class DocumentRecordPage(BaseModel):
     next_offset: int | None = None
 
 
+class DocumentExtraction(BaseModel):
+    """How the document's text was extracted (#732): the method (``pdf_text`` | ``ocr`` | ...)
+    and the OCR confidence when the path produced one (None e.g. for ``pdf_text``)."""
+
+    method: str = ""
+    ocr_confidence: float | None = None
+
+
 class DocumentDetail(BaseModel):
     """One-round-trip aggregate for the document detail view's eager fold (review follow-up).
 
@@ -1386,6 +1394,10 @@ class DocumentDetail(BaseModel):
     recent_activity: list[AuditEvent] = Field(default_factory=list)
     # Structured-records rollup (additive; default-empty for record-less documents - today's look).
     records: DocumentRecordSummary = Field(default_factory=DocumentRecordSummary)
+    # Index + extraction facts (#732): how much of the document is indexed, and how its text was
+    # obtained (method + OCR confidence when any).
+    chunk_count: int = 0
+    extraction: DocumentExtraction = Field(default_factory=DocumentExtraction)
 
 
 class AiPurposeSettings(BaseModel):

@@ -133,6 +133,8 @@ class DocumentRepository(Protocol):
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
+        tag_ids: tuple[str, ...] = (),
+        tag_match: TokenMatch = TokenMatch.ALL,
     ) -> tuple[list[Document], int, ListAnchor | None]:
         """Keyset-paginated documents ordered by ``sort``/``direction`` with ``id`` as tie-breaker.
 
@@ -158,6 +160,8 @@ class DocumentRepository(Protocol):
         tokens: tuple[str, ...] = (),
         token_type: EntityType | None = None,
         token_match: TokenMatch = TokenMatch.ALL,
+        tag_ids: tuple[str, ...] = (),
+        tag_match: TokenMatch = TokenMatch.ALL,
         cap: int = 10_000,
     ) -> tuple[list[str], int, bool]:
         """All document ids matching the filters (same filters as ``list_documents``, no paging),

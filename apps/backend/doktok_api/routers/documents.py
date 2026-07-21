@@ -23,6 +23,7 @@ from doktok_contracts.ports import (
     IngestionJobRepository,
     KnowledgeGraphRepository,
     RecordRepository,
+    TagRepository,
 )
 from doktok_contracts.schemas import (
     AuditEventType,
@@ -51,6 +52,7 @@ from doktok_contracts.schemas import (
     ListAnchor,
     SimilarDocument,
     SortDir,
+    Tag,
     TokenMatch,
 )
 from doktok_core.audit.logger import actor_identity, record_activity
@@ -74,6 +76,7 @@ from doktok_api.dependencies import (
     get_job_repository,
     get_knowledge_graph_repository,
     get_record_repository,
+    get_tag_repository,
     get_tenant_registry,
     resolve_caller_role,
 )
@@ -82,6 +85,7 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 Repo = Annotated[DocumentRepository, Depends(get_document_repository)]
 Notes = Annotated[DocumentNoteRepository, Depends(get_document_note_repository)]
+TagRepo = Annotated[TagRepository, Depends(get_tag_repository)]
 Entities = Annotated[EntityRepository, Depends(get_entity_repository)]
 Chunks = Annotated[ChunkRepository, Depends(get_chunk_repository)]
 Features = Annotated[FeatureRepository, Depends(get_feature_repository)]
@@ -177,6 +181,8 @@ def list_documents(
     token: Annotated[list[str] | None, Query()] = None,
     token_type: Annotated[EntityType | None, Query()] = None,
     token_match: Annotated[TokenMatch, Query()] = TokenMatch.ALL,
+    tag: Annotated[list[str] | None, Query()] = None,
+    tag_match: Annotated[TokenMatch, Query()] = TokenMatch.ALL,
 ) -> DocumentListPage:
     tokens = _validated_tokens(token)
     items, total, next_anchor = repo.list_documents(
@@ -193,6 +199,8 @@ def list_documents(
         tokens=tokens,
         token_type=token_type,
         token_match=token_match,
+        tag_ids=tuple(tag or ()),
+        tag_match=tag_match,
     )
     doc_ids = [d.id for d in items]
     # Per-document processing summary for the list tooltip. The metadata-derived fields are free
@@ -247,6 +255,8 @@ def list_document_ids(
     token: Annotated[list[str] | None, Query()] = None,
     token_type: Annotated[EntityType | None, Query()] = None,
     token_match: Annotated[TokenMatch, Query()] = TokenMatch.ALL,
+    tag: Annotated[list[str] | None, Query()] = None,
+    tag_match: Annotated[TokenMatch, Query()] = TokenMatch.ALL,
 ) -> DocumentIdSelection:
     """All document ids matching the filters (for 'select all matching' bulk actions)."""
     ids, total, truncated = repo.list_document_ids(
@@ -259,6 +269,8 @@ def list_document_ids(
         tokens=_validated_tokens(token),
         token_type=token_type,
         token_match=token_match,
+        tag_ids=tuple(tag or ()),
+        tag_match=tag_match,
     )
     return DocumentIdSelection(ids=ids, total=total, truncated=truncated)
 
@@ -282,6 +294,7 @@ def get_document_detail(
     audit: Audit,
     records: Records,
     chunks: Chunks,
+    tag_repo: TagRepo,
 ) -> DocumentDetail:
     """One aggregate for the detail card: document, processing, categories, an entity summary, a
     content excerpt, a structured-records rollup, and recent activity. The unbounded payloads - the
@@ -350,6 +363,7 @@ def get_document_detail(
         records=records.record_summary(tenant.tenant_id, document_id),
         chunk_count=chunk_count,
         extraction=extraction,
+        tags=tag_repo.list_for_document(tenant.tenant_id, document_id),
     )
 
 
@@ -888,6 +902,135 @@ def delete_document_note(
         details={"note_id": note_id, "note_author": note.author_email, "body": note.body},
     )
     return Response(status_code=204)
+
+
+# --- Document tag assignment (#546): single idempotent assign/unassign + bounded bulk. ---
+
+
+@router.get("/{document_id}/tags", response_model=list[Tag])
+def list_document_tags(
+    document_id: str, tenant: Tenant, repo: Repo, tag_repo: TagRepo
+) -> list[Tag]:
+    """The document's tags (#546). Any authenticated reader of the tenant."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return tag_repo.list_for_document(tenant.tenant_id, document_id)
+
+
+@router.put("/{document_id}/tags/{tag_id}", status_code=204)
+def assign_document_tag(
+    document_id: str, tag_id: str, tenant: Tenant, repo: Repo, tag_repo: TagRepo, audit: Audit
+) -> Response:
+    """Assign a tag to a document (#546, editor via the router write guard). Idempotent; audited
+    per document."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    tag = tag_repo.get_tag(tenant.tenant_id, tag_id)
+    if tag is None or tag.status != "active":
+        raise HTTPException(status_code=404, detail="tag not found")
+    already = any(t.id == tag_id for t in tag_repo.list_for_document(tenant.tenant_id, document_id))
+    if already:
+        return Response(status_code=204)  # idempotent no-op: no audit row for a non-change
+    tag_repo.link(tenant.tenant_id, document_id, tag_id)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_TAGGED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        document_id=document_id,
+        description=f"Tagged with '{tag.name}'",
+        details={"tag_id": tag_id, "tag_name": tag.name},
+    )
+    return Response(status_code=204)
+
+
+@router.delete("/{document_id}/tags/{tag_id}", status_code=204)
+def unassign_document_tag(
+    document_id: str, tag_id: str, tenant: Tenant, repo: Repo, tag_repo: TagRepo, audit: Audit
+) -> Response:
+    """Remove a tag from a document (#546). Idempotent; audited per document."""
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    tag = tag_repo.get_tag(tenant.tenant_id, tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="tag not found")
+    already = any(t.id == tag_id for t in tag_repo.list_for_document(tenant.tenant_id, document_id))
+    if not already:
+        return Response(status_code=204)  # idempotent no-op: nothing to remove
+    tag_repo.unlink(tenant.tenant_id, document_id, tag_id)
+    record_activity(
+        audit,
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_UNTAGGED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        document_id=document_id,
+        description=f"Tag '{tag.name}' removed",
+        details={"tag_id": tag_id, "tag_name": tag.name},
+    )
+    return Response(status_code=204)
+
+
+class BulkTagUpdate(BaseModel):
+    """Bulk assign/unassign (#546): add and remove tag sets over a bounded document-id set."""
+
+    document_ids: list[str] = Field(min_length=1, max_length=500)
+    add: list[str] = Field(default_factory=list)
+    remove: list[str] = Field(default_factory=list)
+
+
+@router.post("/tags:bulk")
+def bulk_update_document_tags(
+    payload: BulkTagUpdate, tenant: Tenant, repo: Repo, tag_repo: TagRepo, audit: Audit
+) -> dict[str, int]:
+    """Assign/unassign tags across up to 500 documents (#546): set semantics (add is idempotent,
+    remove of an unlinked tag is a no-op), ONE summary audit row per direction."""
+    for tag_id in {*payload.add, *payload.remove}:
+        if tag_repo.get_tag(tenant.tenant_id, tag_id) is None:
+            raise HTTPException(status_code=404, detail=f"tag not found: {tag_id}")
+    docs = repo.get_many(tenant.tenant_id, payload.document_ids)
+    by_id = {d.id for d in docs}
+    # Unknown ids are skipped silently (the set may be a stale UI snapshot); the rest is updated.
+    for document_id in payload.document_ids:
+        if document_id not in by_id:
+            continue
+        for tag_id in payload.add:
+            tag_repo.link(tenant.tenant_id, document_id, tag_id)
+        for tag_id in payload.remove:
+            tag_repo.unlink(tenant.tenant_id, document_id, tag_id)
+    if payload.add:
+        record_activity(
+            audit,
+            tenant.tenant_id,
+            AuditEventType.DOCUMENT_TAGGED,
+            actor=actor_identity(tenant),
+            actor_kind="user",
+            description=f"Tagged {len(by_id)} document(s) with {len(payload.add)} tag(s)",
+            details={
+                "document_ids": sorted(by_id),
+                "tag_ids": payload.add,
+                "document_count": len(by_id),
+            },
+        )
+    if payload.remove:
+        record_activity(
+            audit,
+            tenant.tenant_id,
+            AuditEventType.DOCUMENT_UNTAGGED,
+            actor=actor_identity(tenant),
+            actor_kind="user",
+            description=f"Removed {len(payload.remove)} tag(s) from {len(by_id)} document(s)",
+            details={
+                "document_ids": sorted(by_id),
+                "tag_ids": payload.remove,
+                "document_count": len(by_id),
+            },
+        )
+    return {"updated": len(by_id)}
 
 
 @router.delete("/{document_id}")

@@ -6992,3 +6992,94 @@ tr.row-selected {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Tags (#547): the tag chip (rounded pill + dot + tint) and the Tags management panel. */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 0.08rem 0.55rem 0.08rem 0.35rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.tag-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.tags-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+.tags-head h3 {
+  margin: 0;
+}
+.tags-list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.tags-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.tags-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tags-count {
+  margin-left: auto;
+  font-size: 0.78rem;
+}
+.tag-editor,
+.tag-delete-confirm {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  margin-top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 30rem;
+}
+.tag-swatches {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.tag-swatches legend {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 0;
+}
+.tag-swatches > div {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.3rem;
+}
+.tag-swatch {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.tag-swatch.selected {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.tag-editor-actions {
+  display: flex;
+  gap: 0.5rem;
+}

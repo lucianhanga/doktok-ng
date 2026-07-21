@@ -4,10 +4,11 @@ import { CategoriesPanel } from "./CategoriesPanel";
 import { EmbeddingMapPanel } from "./EmbeddingMapPanel";
 import { KnowledgeGraphPanel } from "./KnowledgeGraphPanel";
 import { MemoryPanel } from "./MemoryPanel";
+import { TagsPanel } from "./TagsPanel";
 import { WordCloudPanel } from "./WordCloudPanel";
 import { loadJSON, saveJSON } from "./persist";
 
-type InsightsSub = "memory" | "graph" | "map" | "cloud" | "categories";
+type InsightsSub = "memory" | "graph" | "map" | "cloud" | "categories" | "tags";
 
 const SUB_TABS: { id: InsightsSub; label: string }[] = [
   { id: "memory", label: "Memory" },
@@ -15,6 +16,7 @@ const SUB_TABS: { id: InsightsSub; label: string }[] = [
   { id: "map", label: "Embedding Map" },
   { id: "cloud", label: "Word Cloud" },
   { id: "categories", label: "Categories" },
+  { id: "tags", label: "Tags" },
 ];
 
 const SUB_IDS = new Set<string>(SUB_TABS.map((t) => t.id));
@@ -29,6 +31,7 @@ const SUB_INITIALS: Record<InsightsSub, string> = {
   map: "EM",
   cloud: "WC",
   categories: "C",
+  tags: "T",
 };
 
 /** Extract the insights sub-tab from the current hash, e.g. "#/insights/map" -> "map".
@@ -135,6 +138,7 @@ export function InsightsPanel({
           {sub === "categories" && (
             <CategoriesPanel onFilterByCategory={onFilterByCategory} />
           )}
+          {sub === "tags" && <TagsPanel />}
         </div>
       </div>
     </section>

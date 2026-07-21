@@ -10,6 +10,7 @@ from doktok_contracts.ports import (
     ChunkRepository,
     DocumentRepository,
     EntityRepository,
+    KnowledgeGraphRepository,
 )
 from doktok_contracts.schemas import (
     Document,
@@ -18,12 +19,17 @@ from doktok_contracts.schemas import (
     DocumentStatus,
     EntityType,
     ExtractedRecord,
+    KgEdge,
+    KgEdgeProvenance,
+    KgEntity,
+    KgEntityMention,
 )
 from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.entities.inmemory import InMemoryEntityRepository
 from doktok_core.indexing.inmemory import InMemoryChunkRepository
+from doktok_core.knowledge_graph.inmemory import InMemoryKnowledgeGraphRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -43,6 +49,7 @@ def _client(
     cats: InMemoryCategoryRepository | None = None,
     chunks: InMemoryChunkRepository | None = None,
     more_docs: list[Document] | None = None,
+    kg: InMemoryKnowledgeGraphRepository | None = None,
 ) -> TestClient:
     doc = Document(
         id="d1",
@@ -81,6 +88,8 @@ def _client(
         registry.register(CategoryRepository, cats)  # type: ignore[type-abstract]
     if chunks is not None:
         registry.register(ChunkRepository, chunks)  # type: ignore[type-abstract]
+    if kg is not None:
+        registry.register(KnowledgeGraphRepository, kg)  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -521,3 +530,98 @@ def test_similar_documents_empty_and_404(tmp_path: Path) -> None:
     client = _client(str(tmp_path), chunks=chunks)
     assert client.get("/api/v1/documents/d1/similar", headers=_auth()).json() == []
     assert client.get("/api/v1/documents/missing/similar", headers=_auth()).status_code == 404
+
+
+# ---- #731: document relations endpoint ----
+
+
+def _seed_kg() -> InMemoryKnowledgeGraphRepository:
+    kg = InMemoryKnowledgeGraphRepository()
+    person = KgEntity(
+        id="n-person",
+        tenant_id="tenant-a",
+        entity_type=EntityType.PERSON,
+        normalized_value="Ada Lovelace",
+    )
+    org = KgEntity(
+        id="n-org",
+        tenant_id="tenant-a",
+        entity_type=EntityType.ORG,
+        normalized_value="Analytical Engine Co",
+    )
+    kg.upsert_entities([person, org])
+    kg.replace_mentions_for_document(
+        "tenant-a",
+        "d1",
+        [
+            KgEntityMention(
+                mention_id="m1",
+                tenant_id="tenant-a",
+                canonical_entity_id="n-person",
+                document_id="d1",
+                entity_type=EntityType.PERSON,
+                normalized_value="Ada Lovelace",
+            ),
+            KgEntityMention(
+                mention_id="m2",
+                tenant_id="tenant-a",
+                canonical_entity_id="n-org",
+                document_id="d1",
+                entity_type=EntityType.ORG,
+                normalized_value="Analytical Engine Co",
+            ),
+        ],
+    )
+    kg.add_edges(
+        [
+            KgEdge(
+                id="e1",
+                tenant_id="tenant-a",
+                src_entity_id="n-person",
+                predicate="WORKS_FOR",
+                dst_entity_id="n-org",
+            )
+        ],
+        [
+            KgEdgeProvenance(
+                id="p1",
+                tenant_id="tenant-a",
+                edge_id="e1",
+                document_id="d1",
+                chunk_id=None,
+                evidence="Ada Lovelace works for Analytical Engine Co.",
+            )
+        ],
+    )
+    return kg
+
+
+def test_relations_returns_entities_and_triples(tmp_path: Path) -> None:
+    client = _client(str(tmp_path), kg=_seed_kg())
+    resp = client.get("/api/v1/documents/d1/relations", headers=_auth())
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    by_value = {e["mention_value"]: e for e in body["entities"]}
+    assert by_value["Ada Lovelace"] == {
+        "mention_value": "Ada Lovelace",
+        "entity_type": "PERSON",
+        "node_id": "n-person",
+        "node_label": "Ada Lovelace",
+    }
+    assert body["relations"] == [
+        {
+            "subject": "Ada Lovelace",
+            "predicate": "WORKS_FOR",
+            "object": "Analytical Engine Co",
+            "evidence_count": 1,
+        }
+    ]
+
+
+def test_relations_empty_and_404(tmp_path: Path) -> None:
+    client = _client(str(tmp_path), kg=InMemoryKnowledgeGraphRepository())
+    assert client.get("/api/v1/documents/d1/relations", headers=_auth()).json() == {
+        "entities": [],
+        "relations": [],
+    }
+    assert client.get("/api/v1/documents/missing/relations", headers=_auth()).status_code == 404

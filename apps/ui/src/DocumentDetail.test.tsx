@@ -51,6 +51,7 @@ function mockDetail(
   detailOverride: Record<string, unknown> = {},
   recordsPage: Record<string, unknown> = { items: [], total: 0, next_offset: null },
   similar: unknown[] = [],
+  relations: Record<string, unknown> = { entities: [], relations: [] },
 ) {
   const calls: { url: string; method: string; body?: string }[] = [];
   const detail = {
@@ -107,6 +108,8 @@ function mockDetail(
       }
       if (url.endsWith("/similar"))
         return new Response(JSON.stringify(similar), { status: 200 });
+      if (url.endsWith("/relations"))
+        return new Response(JSON.stringify(relations), { status: 200 });
       if (url.endsWith("/detail")) return new Response(JSON.stringify(detail), { status: 200 });
       if (url.includes("/records"))
         return new Response(JSON.stringify(recordsPage), { status: 200 });
@@ -725,4 +728,47 @@ test("the similar documents section stays hidden when there are no neighbors (#7
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Similar documents" })).not.toBeInTheDocument(),
   );
+});
+
+// ---- Relations section (#731) ----
+
+test("the Relations section renders triples and canonical-name hints (#731)", async () => {
+  mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], {
+    entities: [
+      {
+        mention_value: "A. Lovelace",
+        entity_type: "PERSON",
+        node_id: "n1",
+        node_label: "Ada Lovelace",
+      },
+    ],
+    relations: [
+      {
+        subject: "Ada Lovelace",
+        predicate: "WORKS_FOR",
+        object: "Analytical Engine Co",
+        evidence_count: 2,
+      },
+    ],
+  });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Entities \(9\)/ }));
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Relations" })).toBeInTheDocument(),
+  );
+  expect(screen.getByText(/A\. Lovelace → Ada Lovelace/)).toBeInTheDocument();
+  expect(screen.getByText("works for")).toBeInTheDocument();
+  expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+  expect(screen.getByText("Analytical Engine Co")).toBeInTheDocument();
+  expect(screen.getByText("×2")).toBeInTheDocument();
+});
+
+test("the Relations section stays hidden without a KG footprint (#731)", async () => {
+  mockDetail();
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("the excerpt text")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Entities \(9\)/ }));
+  await waitFor(() => expect(screen.getByText("a@b.com")).toBeInTheDocument());
+  expect(screen.queryByRole("heading", { name: "Relations" })).not.toBeInTheDocument();
 });

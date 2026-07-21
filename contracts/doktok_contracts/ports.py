@@ -49,6 +49,7 @@ from doktok_contracts.schemas import (
     DocumentEntity,
     DocumentFeature,
     DocumentRecordSummary,
+    DocumentRelations,
     DocumentSort,
     DocumentStatus,
     DocumentVersion,
@@ -945,6 +946,11 @@ class KnowledgeGraphRepository(Protocol):
     def get_entity(self, tenant_id: str, entity_id: str) -> KgEntity | None: ...
 
     def mentions_for_document(self, tenant_id: str, document_id: str) -> list[KgEntityMention]: ...
+
+    def relations_for_document(self, tenant_id: str, document_id: str) -> DocumentRelations:
+        """The document's KG footprint (#731): its entity mentions resolved to canonical nodes
+        (label + type), and the relation edges touching at least one of those nodes."""
+        ...
 
     def mentions_for_entity(
         self, tenant_id: str, entity_id: str, *, limit: int | None = None, offset: int = 0

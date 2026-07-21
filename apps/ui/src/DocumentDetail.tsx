@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, Fragment } from "react";
 
 import {
   confidenceLevel,
@@ -17,6 +17,7 @@ import {
   resetDocumentTitle,
   rotateDocument,
   retryDocumentFeature,
+  type AuditEvent,
   type DocEntity,
   type DocumentDetailData,
   type DocumentRecordSummary,
@@ -676,6 +677,113 @@ function EntitiesSplit({
   );
 }
 
+/** The Activity subtab (#539): a real table (time / type / actor / severity / description) with
+ * expandable rows exposing everything the audit event carries - phase, job + record ids, the full
+ * timestamp, and the pretty-printed metadata (attempts, duration, error code/message, evidence).
+ * Severity tints the row like the Activity tab / overview rows; expanders are real buttons with
+ * aria-expanded for keyboard + screen-reader access. */
+function ActivityTable({ events }: { events: AuditEvent[] }) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  return (
+    <table className="jobs activity-table">
+      <thead>
+        <tr>
+          <th aria-label="Expand" className="datatable-expander-col" />
+          <th>Time</th>
+          <th>Type</th>
+          <th>Actor</th>
+          <th>Severity</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {events.map((ev) => {
+          const isOpen = !!expanded[ev.id];
+          const severity = ev.severity ?? "info";
+          const description =
+            ev.description ||
+            String(ev.metadata?.summary ?? ev.metadata?.error_message ?? "") ||
+            "—";
+          return (
+            <Fragment key={ev.id}>
+              <tr
+                className={
+                  severity === "error"
+                    ? "timeline-entry--error"
+                    : severity === "warning"
+                      ? "timeline-entry--warning"
+                      : undefined
+                }
+              >
+                <td>
+                  <button
+                    type="button"
+                    className="datatable-expander"
+                    aria-expanded={isOpen}
+                    aria-label={isOpen ? "Collapse activity details" : "Expand activity details"}
+                    onClick={() => setExpanded((x) => ({ ...x, [ev.id]: !isOpen }))}
+                  >
+                    {isOpen ? "▾" : "▸"}
+                  </button>
+                </td>
+                <td className="activity-time">
+                  <time dateTime={ev.timestamp} title={ev.timestamp}>
+                    {new Date(ev.timestamp).toLocaleString()}
+                  </time>
+                </td>
+                <td>
+                  <span className="badge">{ev.event_type}</span>
+                </td>
+                <td>
+                  {ev.actor}
+                  {ev.actor_kind ? <span className="muted"> · {ev.actor_kind}</span> : null}
+                </td>
+                <td className="activity-severity">{severity}</td>
+                <td className="activity-desc">{description}</td>
+              </tr>
+              {isOpen && (
+                <tr className="activity-detail-row">
+                  <td colSpan={6}>
+                    <dl className="activity-detail-fields">
+                      {ev.phase && (
+                        <>
+                          <dt>Phase</dt>
+                          <dd>{ev.phase}</dd>
+                        </>
+                      )}
+                      {ev.job_id && (
+                        <>
+                          <dt>Job</dt>
+                          <dd>{ev.job_id}</dd>
+                        </>
+                      )}
+                      {ev.record_kind && (
+                        <>
+                          <dt>Record</dt>
+                          <dd>
+                            {ev.record_kind}
+                            {ev.record_id ? ` · ${ev.record_id}` : ""}
+                          </dd>
+                        </>
+                      )}
+                      <dt>Timestamp</dt>
+                      <dd>{ev.timestamp}</dd>
+                    </dl>
+                    <h5 className="activity-detail-head">Metadata</h5>
+                    <pre className="activity-detail-json">
+                      {JSON.stringify(ev.metadata ?? {}, null, 2)}
+                    </pre>
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 export function DocumentDetail({
   id,
   onClose,
@@ -1101,17 +1209,7 @@ export function DocumentDetail({
                 {data.recent_activity.length === 0 ? (
                   <p className="empty">No activity recorded.</p>
                 ) : (
-                  <ul className="timeline">
-                    {data.recent_activity.map((ev) => (
-                      <li key={ev.id}>
-                        <time className="muted" dateTime={ev.timestamp} title={ev.timestamp}>
-                          {new Date(ev.timestamp).toLocaleString()}
-                        </time>{" "}
-                        <span className="badge">{ev.event_type}</span>{" "}
-                        {String(ev.metadata?.summary ?? ev.metadata?.error_message ?? "")}
-                      </li>
-                    ))}
-                  </ul>
+                  <ActivityTable events={data.recent_activity} />
                 )}
               </div>
             )}

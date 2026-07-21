@@ -31,6 +31,7 @@ from doktok_contracts.schemas import (
     DocumentDetail,
     DocumentEntity,
     DocumentEntitySummary,
+    DocumentExtraction,
     DocumentFeature,
     DocumentIdSelection,
     DocumentLayout,
@@ -270,6 +271,7 @@ def get_document_detail(
     entities: Entities,
     audit: Audit,
     records: Records,
+    chunks: Chunks,
 ) -> DocumentDetail:
     """One aggregate for the detail card: document, processing, categories, an entity summary, a
     content excerpt, a structured-records rollup, and recent activity. The unbounded payloads - the
@@ -309,6 +311,23 @@ def get_document_detail(
     content = DocumentContentMeta(length=len(text), excerpt=text[:_EXCERPT_CHARS])
 
     feature_rows = features.list_for_document(tenant.tenant_id, document_id)
+    # Index + extraction facts (#732): the chunk count from the chunk store, and the extraction
+    # method/OCR confidence read from the document's content.json (defaults when missing).
+    chunk_count = chunks.chunk_counts_for_documents(tenant.tenant_id, [document_id]).get(
+        document_id, 0
+    )
+    extraction = DocumentExtraction()
+    if document.storage_path:
+        meta_path = Path(document.storage_path) / "content.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                extraction = DocumentExtraction(
+                    method=str(meta.get("extraction_method") or ""),
+                    ocr_confidence=meta.get("ocr_confidence"),
+                )
+            except (OSError, ValueError):
+                pass  # a corrupt artifact never breaks the detail card
     return DocumentDetail(
         document=document,
         # Built from the document metadata + the already-loaded feature rows (no extra query).
@@ -319,6 +338,8 @@ def get_document_detail(
         content=content,
         recent_activity=audit.list_events(tenant.tenant_id, document_id=document_id, limit=10),
         records=records.record_summary(tenant.tenant_id, document_id),
+        chunk_count=chunk_count,
+        extraction=extraction,
     )
 
 

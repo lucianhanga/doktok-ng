@@ -6885,3 +6885,12 @@ tr.row-selected {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Primary category chip marker (#732): the first (rank 0) category in the hero fact ribbon. */
+.chip-primary {
+  border-color: var(--accent, #3b82f6);
+}
+.chip-primary-mark {
+  color: var(--muted);
+  font-size: 0.78em;
+}

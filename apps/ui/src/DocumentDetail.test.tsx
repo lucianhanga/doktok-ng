@@ -667,3 +667,34 @@ test("an error-severity activity row gets the error tint class (#539)", async ()
   const row = screen.getByText("feature.failed").closest("tr");
   expect(row?.className).toContain("timeline-entry--error");
 });
+
+// ---- Detail facts (#732) ----
+
+test("the first (rank 0) category chip is marked primary, the rest are not (#732)", async () => {
+  mockDetail([], {}, {
+    categories: [
+      { id: "c1", name: "Zeta" },
+      { id: "c2", name: "Alpha" },
+    ],
+  });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Zeta")).toBeInTheDocument());
+  expect(screen.getByText("· primary")).toBeInTheDocument();
+  // Only one primary mark, on the first chip.
+  expect(screen.getAllByText("· primary")).toHaveLength(1);
+  expect(screen.getByText("Zeta").closest("li")!.className).toContain("chip-primary");
+  expect(screen.getByText("Alpha").closest("li")!.className).not.toContain("chip-primary");
+});
+
+test("the Processing summary shows chunk count + extraction method (#732)", async () => {
+  mockDetail([], {}, {
+    processing: { steps: [], page_count: 1 },
+    chunk_count: 3,
+    extraction: { method: "ocr", ocr_confidence: 0.91 },
+  });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Indexed")).toBeInTheDocument());
+  expect(screen.getByText("3 chunks")).toBeInTheDocument();
+  expect(screen.getByText("Extraction")).toBeInTheDocument();
+  expect(screen.getByText("ocr")).toBeInTheDocument();
+});

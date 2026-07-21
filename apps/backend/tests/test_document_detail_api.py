@@ -1,20 +1,29 @@
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from doktok_api.main import create_app
-from doktok_contracts.ports import DocumentRepository, EntityRepository
+from doktok_contracts.ports import (
+    CategoryRepository,
+    ChunkRepository,
+    DocumentRepository,
+    EntityRepository,
+)
 from doktok_contracts.schemas import (
     Document,
+    DocumentChunk,
     DocumentEntity,
     DocumentStatus,
     EntityType,
     ExtractedRecord,
 )
+from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.entities.inmemory import InMemoryEntityRepository
+from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.registry import build_registry
 from fastapi.testclient import TestClient
 
@@ -28,7 +37,12 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
-def _client(storage_path: str) -> TestClient:
+def _client(
+    storage_path: str,
+    *,
+    cats: InMemoryCategoryRepository | None = None,
+    chunks: InMemoryChunkRepository | None = None,
+) -> TestClient:
     doc = Document(
         id="d1",
         tenant_id="tenant-a",
@@ -60,6 +74,10 @@ def _client(storage_path: str) -> TestClient:
     registry = build_registry()
     registry.register(DocumentRepository, doc_repo)  # type: ignore[type-abstract]
     registry.register(EntityRepository, entity_repo)  # type: ignore[type-abstract]
+    if cats is not None:
+        registry.register(CategoryRepository, cats)  # type: ignore[type-abstract]
+    if chunks is not None:
+        registry.register(ChunkRepository, chunks)  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -405,3 +423,48 @@ def test_detail_view_is_deduped_within_window(
     body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
     viewed = [e for e in body["recent_activity"] if e["event_type"] == "document.viewed"]
     assert len(viewed) == 1
+
+
+# ---- #732: detail facts (category rank, chunk count, extraction) ----
+
+
+def test_detail_categories_follow_rank_order(tmp_path: Path) -> None:
+    """#732: the detail payload's categories come rank-ordered (primary first), not alphabetical."""
+    cats = InMemoryCategoryRepository()
+    zeta = cats.create("tenant-a", "Zeta", "zeta")
+    alpha = cats.create("tenant-a", "Alpha", "alpha")
+    assert zeta is not None and alpha is not None
+    # Zeta assigned first (rank 0 = primary): alphabetical order would flip them.
+    cats.set_document_categories("tenant-a", "d1", [zeta.id, alpha.id])
+    client = _client(str(tmp_path), cats=cats)
+    body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    assert [c["name"] for c in body["categories"]] == ["Zeta", "Alpha"]
+
+
+def test_detail_reports_chunk_count_and_extraction(tmp_path: Path) -> None:
+    """#732: chunk_count from the chunk store; extraction method + OCR confidence read from
+    content.json."""
+    (tmp_path / "content.json").write_text(
+        json.dumps({"extraction_method": "ocr", "ocr_confidence": 0.91}), encoding="utf-8"
+    )
+    chunks = InMemoryChunkRepository()
+    chunks.add_chunks(
+        [
+            DocumentChunk(
+                id=f"c{i}", tenant_id="tenant-a", document_id="d1", version_id="v1", text=f"t{i}"
+            )
+            for i in range(3)
+        ],
+        [[0.1] * 4] * 3,
+    )
+    client = _client(str(tmp_path), chunks=chunks)
+    body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    assert body["chunk_count"] == 3
+    assert body["extraction"] == {"method": "ocr", "ocr_confidence": 0.91}
+
+
+def test_detail_facts_default_without_chunks_or_content_json(tmp_path: Path) -> None:
+    client = _client(str(tmp_path))
+    body = client.get("/api/v1/documents/d1/detail", headers=_auth()).json()
+    assert body["chunk_count"] == 0
+    assert body["extraction"] == {"method": "", "ocr_confidence": None}

@@ -2555,7 +2555,7 @@ class PostgresCategoryRepository:
             rows = cur.execute(
                 f"SELECT {', '.join('c.' + c for c in _CAT_COLUMNS.split(', '))} FROM categories c "
                 "JOIN document_category_links l ON l.category_id = c.id "
-                "WHERE l.tenant_id=%s AND l.document_id=%s ORDER BY c.name",
+                "WHERE l.tenant_id=%s AND l.document_id=%s ORDER BY l.rank, c.name",
                 (tenant_id, document_id),
             ).fetchall()
         return [_row_to_category(r) for r in rows]

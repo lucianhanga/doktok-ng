@@ -37,6 +37,7 @@ from doktok_api.routers import (
     preferences,
     search,
     stats,
+    tags,
     tokens,
     visualizations,
 )
@@ -595,6 +596,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
     app.include_router(stats.router, dependencies=editor_writes)
     app.include_router(chat.router, dependencies=editor_writes)
     app.include_router(tokens.router, dependencies=editor_writes)
+    app.include_router(tags.router, dependencies=editor_writes)
     app.include_router(features.router, dependencies=editor_writes)
     app.include_router(categories.router, dependencies=editor_writes)
     app.include_router(aggregate.router, dependencies=editor_writes)

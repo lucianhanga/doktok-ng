@@ -67,6 +67,7 @@ from doktok_contracts.schemas import (
     SimilarDocument,
     SortDir,
     StatsSummary,
+    Tag,
     Tenant,
     TenantAiSettings,
     TokenMatch,
@@ -2609,6 +2610,197 @@ def _row_to_note(row: dict[str, Any]) -> DocumentNote:
         body=row["body"],
         created_at=row["created_at"],
     )
+
+
+def _row_to_tag(row: dict[str, Any]) -> Tag:
+    return Tag(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        name=row["name"],
+        normalized=row["normalized"],
+        description=row["description"],
+        color=row["color"],
+        status=row["status"],
+        merged_into=row["merged_into"],
+        scope=row["scope"],
+        owner_user_id=row["owner_user_id"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+_TAG_COLUMNS = (
+    "id, tenant_id, name, normalized, description, color, status, merged_into, scope, "
+    "owner_user_id, created_at, updated_at"
+)
+
+
+def _token_jaccard(a: str, b: str) -> float:
+    """Token-set Jaccard similarity over normalized keys: 'rome trip' == 'trip rome' (1.0)."""
+    ta, tb = set(a.split()), set(b.split())
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+class PostgresTagRepository:
+    """``TagRepository`` on PostgreSQL (epic #543, #544): manual, tenant-level tags."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def create_tag(self, tag: Tag) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                f"INSERT INTO tags ({_TAG_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                "%s, %s, %s)",
+                (
+                    tag.id,
+                    tag.tenant_id,
+                    tag.name,
+                    tag.normalized,
+                    tag.description,
+                    tag.color,
+                    tag.status,
+                    tag.merged_into,
+                    tag.scope,
+                    tag.owner_user_id,
+                    tag.created_at,
+                    tag.updated_at or tag.created_at,
+                ),
+            )
+
+    def get_tag(self, tenant_id: str, tag_id: str) -> Tag | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                f"SELECT {_TAG_COLUMNS} FROM tags WHERE tenant_id=%s AND id=%s",
+                (tenant_id, tag_id),
+            ).fetchone()
+        return _row_to_tag(row) if row else None
+
+    def find_by_normalized(self, tenant_id: str, normalized: str) -> Tag | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                f"SELECT {_TAG_COLUMNS} FROM tags WHERE tenant_id=%s AND normalized=%s "
+                "AND status='active'",
+                (tenant_id, normalized),
+            ).fetchone()
+        return _row_to_tag(row) if row else None
+
+    def list_tags(self, tenant_id: str, *, status: str = "active") -> list[Tag]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_TAG_COLUMNS} FROM tags WHERE tenant_id=%s AND status=%s ORDER BY name",
+                (tenant_id, status),
+            ).fetchall()
+        return [_row_to_tag(r) for r in rows]
+
+    def update_tag(
+        self,
+        tenant_id: str,
+        tag_id: str,
+        *,
+        name: str | None = None,
+        normalized: str | None = None,
+        description: str | None = None,
+        color: str | None = None,
+    ) -> Tag | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                f"UPDATE tags SET name=COALESCE(%s, name), "
+                "normalized=COALESCE(%s, normalized), "
+                "description=COALESCE(%s, description), color=COALESCE(%s, color), "
+                f"updated_at=now() WHERE tenant_id=%s AND id=%s RETURNING {_TAG_COLUMNS}",
+                (name, normalized, description, color, tenant_id, tag_id),
+            ).fetchone()
+        return _row_to_tag(row) if row else None
+
+    def set_tag_status(
+        self, tenant_id: str, tag_id: str, status: str, *, merged_into: str | None = None
+    ) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE tags SET status=%s, merged_into=%s, updated_at=now() "
+                "WHERE tenant_id=%s AND id=%s",
+                (status, merged_into, tenant_id, tag_id),
+            )
+
+    def delete_tag(self, tenant_id: str, tag_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM document_tags WHERE tenant_id=%s AND tag_id=%s", (tenant_id, tag_id)
+            )
+            conn.execute("DELETE FROM tags WHERE tenant_id=%s AND id=%s", (tenant_id, tag_id))
+
+    def find_similar(self, tenant_id: str, normalized: str, *, limit: int = 3) -> list[Tag]:
+        # ~100 active tags max: scoring in Python keeps the InMemory parity exact.
+        candidates = self.list_tags(tenant_id)
+        scored = sorted(
+            ((t, _token_jaccard(normalized, t.normalized)) for t in candidates),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        return [t for t, score in scored[:limit] if score >= 0.6]
+
+    def link(self, tenant_id: str, document_id: str, tag_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO document_tags (tenant_id, document_id, tag_id) VALUES (%s, %s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (tenant_id, document_id, tag_id),
+            )
+
+    def unlink(self, tenant_id: str, document_id: str, tag_id: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM document_tags WHERE tenant_id=%s AND document_id=%s AND tag_id=%s",
+                (tenant_id, document_id, tag_id),
+            )
+
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[Tag]:
+        cols = ", ".join(f"t.{c}" for c in _TAG_COLUMNS.split(", "))
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {cols} FROM tags t JOIN document_tags dt ON dt.tag_id = t.id "
+                "WHERE dt.tenant_id=%s AND dt.document_id=%s ORDER BY t.name",
+                (tenant_id, document_id),
+            ).fetchall()
+        return [_row_to_tag(r) for r in rows]
+
+    def count_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, int]:
+        if not document_ids:
+            return {}
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT document_id, COUNT(*) AS n FROM document_tags "
+                "WHERE tenant_id=%s AND document_id = ANY(%s) GROUP BY document_id",
+                (tenant_id, list(document_ids)),
+            ).fetchall()
+        return {r["document_id"]: int(r["n"]) for r in rows}
+
+    def document_count(self, tenant_id: str, tag_id: str) -> int:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM document_tags WHERE tenant_id=%s AND tag_id=%s",
+                (tenant_id, tag_id),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def tag_counts(self, tenant_id: str) -> dict[str, int]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                "SELECT tag_id, COUNT(*) AS n FROM document_tags WHERE tenant_id=%s "
+                "GROUP BY tag_id",
+                (tenant_id,),
+            ).fetchall()
+        return {r["tag_id"]: int(r["n"]) for r in rows}
 
 
 class PostgresCategoryRepository:

@@ -85,6 +85,7 @@ from doktok_contracts.schemas import (
     SimilarDocument,
     SortDir,
     StatsSummary,
+    Tag,
     Tenant,
     TenantAiSettings,
     TokenMatch,
@@ -694,6 +695,46 @@ class DocumentNoteRepository(Protocol):
 
     def get_note(self, tenant_id: str, note_id: str) -> DocumentNote | None: ...
     def delete_note(self, tenant_id: str, note_id: str) -> None: ...
+
+
+@runtime_checkable
+class TagRepository(Protocol):
+    """Manual, tenant-level document tags (epic #543): CRUD + assignment, tenant-scoped."""
+
+    def create_tag(self, tag: Tag) -> None: ...
+    def get_tag(self, tenant_id: str, tag_id: str) -> Tag | None: ...
+    def find_by_normalized(self, tenant_id: str, normalized: str) -> Tag | None: ...
+    def list_tags(self, tenant_id: str, *, status: str = "active") -> list[Tag]: ...
+    def update_tag(
+        self,
+        tenant_id: str,
+        tag_id: str,
+        *,
+        name: str | None = None,
+        normalized: str | None = None,
+        description: str | None = None,
+        color: str | None = None,
+    ) -> Tag | None: ...
+    def set_tag_status(
+        self, tenant_id: str, tag_id: str, status: str, *, merged_into: str | None = None
+    ) -> None: ...
+    def delete_tag(self, tenant_id: str, tag_id: str) -> None: ...
+    def find_similar(self, tenant_id: str, normalized: str, *, limit: int = 3) -> list[Tag]:
+        """Active tags near the given normalized key (token-set / trigram), for the create-time
+        near-miss warning - the exact match is blocked separately via ``find_by_normalized``."""
+        ...
+
+    def link(self, tenant_id: str, document_id: str, tag_id: str) -> None: ...
+    def unlink(self, tenant_id: str, document_id: str, tag_id: str) -> None: ...
+    def list_for_document(self, tenant_id: str, document_id: str) -> list[Tag]: ...
+    def count_for_documents(self, tenant_id: str, document_ids: list[str]) -> dict[str, int]:
+        """Tag count per document (batched GROUP BY), for list sidecars."""
+        ...
+
+    def document_count(self, tenant_id: str, tag_id: str) -> int: ...
+    def tag_counts(self, tenant_id: str) -> dict[str, int]:
+        """Document count per tag id, for the management UI."""
+        ...
 
 
 @runtime_checkable

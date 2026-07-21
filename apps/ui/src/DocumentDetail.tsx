@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState, Fragment } from "react";
 
 import {
   addDocumentNote,
+  assignDocumentTag,
   confidenceLevel,
+  createTag,
   deleteDocumentNote,
   documentFileUrl,
   documentThumbnailUrl,
@@ -13,6 +15,7 @@ import {
   fetchDocumentRecords,
   fetchDocumentRelations,
   fetchSimilarDocuments,
+  fetchTags,
   formatDuration,
   formatMoneyMinor,
   formatSignedMoneyMinor,
@@ -22,6 +25,7 @@ import {
   resetDocumentTitle,
   rotateDocument,
   retryDocumentFeature,
+  unassignDocumentTag,
   type AuditEvent,
   type DocEntity,
   type DocumentDetailData,
@@ -32,10 +36,12 @@ import {
   type ProcessingStep,
   type ProcessingTelemetry,
   type SimilarDocument,
+  type TagOut,
 } from "./api";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 import { entityTypeMeta } from "./entityTypes";
 import { currentUser } from "./session";
+import { tagChipStyle, tagColor } from "./tagPalette";
 
 type Tab = "content" | "entities" | "records" | "activity" | "notes";
 
@@ -817,6 +823,166 @@ function ActivityTable({ events }: { events: AuditEvent[] }) {
   );
 }
 
+/** The document's tag row (#548): chips with remove (editor/admin), an add type-ahead over
+ * existing tags, and create-new-inline (the duplicate path assigns the existing tag). Updates
+ * are optimistic with rollback on error. Keyed by doc id so a doc change remounts it. */
+function DocumentTagsRow({
+  docId,
+  initialTags,
+}: {
+  docId: string;
+  initialTags: { id: string; name: string; color: string }[];
+}) {
+  const user = currentUser();
+  const canEdit = user?.role === "editor" || user?.role === "admin";
+  const [tags, setTags] = useState(initialTags);
+  const [allTags, setAllTags] = useState<TagOut[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  // The full tag catalog is fetched lazily the first time the picker opens.
+  useEffect(() => {
+    if (adding && allTags === null) {
+      fetchTags()
+        .then(setAllTags)
+        .catch(() => setAllTags([]));
+    }
+  }, [adding, allTags]);
+
+  const assigned = new Set(tags.map((t) => t.id));
+  const needle = draft.trim().toLowerCase();
+  const suggestions = (allTags ?? []).filter(
+    (t) => !assigned.has(t.id) && (!needle || t.name.toLowerCase().includes(needle)),
+  );
+  const isNew =
+    needle.length > 0 &&
+    !tags.some((t) => t.name.toLowerCase() === needle) &&
+    !(allTags ?? []).some((t) => t.name.toLowerCase() === needle);
+
+  function removeTag(tag: { id: string; name: string }) {
+    const prev = tags;
+    setTags((cur) => cur.filter((t) => t.id !== tag.id));
+    setError(null);
+    unassignDocumentTag(docId, tag.id).catch((e: unknown) => {
+      setTags(prev);
+      setError(e instanceof Error ? e.message : "could not remove the tag");
+    });
+  }
+
+  async function addTag(tag: { id: string; name: string; color: string }) {
+    const prev = tags;
+    setTags((cur) => [...cur, { id: tag.id, name: tag.name, color: tag.color }]);
+    setDraft("");
+    setAdding(false);
+    setError(null);
+    try {
+      await assignDocumentTag(docId, tag.id);
+    } catch (e) {
+      setTags(prev);
+      setError(e instanceof Error ? e.message : "could not add the tag");
+    }
+  }
+
+  async function createAndAdd(name: string) {
+    const result = await createTag({ name, color: "slate" });
+    if (result.ok) {
+      await addTag(result.tag);
+    } else if (result.code === "duplicate" && result.existing) {
+      // Already exists (normalization dedup): assign the existing tag instead.
+      const existing = (allTags ?? []).find((t) => t.id === result.existing!.id);
+      await addTag({
+        id: result.existing.id,
+        name: result.existing.name,
+        color: existing?.color ?? "slate",
+      });
+    } else {
+      setError(result.code === "error" ? result.message : "could not create the tag");
+    }
+  }
+
+  return (
+    <div className="doc-tags-row" aria-label="Document tags">
+      <span className="muted">Tags</span>
+      {tags.map((t) => (
+        <span key={t.id} className="tag-chip" style={tagChipStyle(t.color)}>
+          <span
+            className="tag-dot"
+            style={{ backgroundColor: tagColor(t.color).dot }}
+            aria-hidden="true"
+          />
+          {t.name}
+          {canEdit && (
+            <button
+              type="button"
+              className="tag-remove"
+              aria-label={`Remove tag ${t.name}`}
+              onClick={() => removeTag(t)}
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      {tags.length === 0 && <span className="muted">—</span>}
+      {canEdit && !adding && (
+        <button type="button" className="link-button" onClick={() => setAdding(true)}>
+          + tag
+        </button>
+      )}
+      {canEdit && adding && (
+        <span className="doc-tags-add">
+          <input
+            aria-label="Add tag"
+            placeholder="Add tag…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          {(suggestions.length > 0 || isNew) && (
+            <ul className="doc-tags-suggestions" role="listbox" aria-label="Tag suggestions">
+              {suggestions.map((t) => (
+                <li key={t.id} role="option" aria-selected="false">
+                  <button type="button" onClick={() => void addTag(t)}>
+                    <span className="tag-chip" style={tagChipStyle(t.color)}>
+                      <span
+                        className="tag-dot"
+                        style={{ backgroundColor: tagColor(t.color).dot }}
+                        aria-hidden="true"
+                      />
+                      {t.name}
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {isNew && (
+                <li>
+                  <button type="button" onClick={() => void createAndAdd(draft.trim())}>
+                    Create “{draft.trim()}”
+                  </button>
+                </li>
+              )}
+            </ul>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setAdding(false);
+              setDraft("");
+            }}
+          >
+            Cancel
+          </button>
+        </span>
+      )}
+      {error && (
+        <p role="alert" className="status-error">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function DocumentDetail({
   id,
   onClose,
@@ -1233,6 +1399,7 @@ export function DocumentDetail({
                     ))}
                   </ul>
                 )}
+                {doc && <DocumentTagsRow key={doc.id} docId={doc.id} initialTags={data.tags ?? []} />}
                 {trustMessages.length > 0 && (
                   <p
                     role="status"

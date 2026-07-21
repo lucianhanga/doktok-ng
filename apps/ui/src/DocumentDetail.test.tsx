@@ -55,6 +55,8 @@ function mockDetail(
   similar: unknown[] = [],
   relations: Record<string, unknown> = { entities: [], relations: [] },
   notes: Record<string, unknown>[] = [],
+  tags: Record<string, unknown>[] = [],
+  catalog: Record<string, unknown>[] = [],
 ) {
   const calls: { url: string; method: string; body?: string }[] = [];
   const notesList = [...notes];
@@ -90,6 +92,7 @@ function mockDetail(
       },
     ],
     // Spread last so a test's detailOverride wins over the defaults (e.g. a custom `entities`).
+    tags,
     ...detailOverride,
   };
   vi.stubGlobal(
@@ -109,6 +112,23 @@ function mockDetail(
           }),
           { status: 200 },
         );
+      }
+      if (/\/tags\/[^/]+$/.test(url) && (method === "PUT" || method === "DELETE")) {
+        // Tag assignment (#548): PUT/DELETE /documents/{id}/tags/{tag_id} -> 204.
+        return new Response(null, { status: 204 });
+      }
+      if (url === "/api/v1/tags") {
+        if (method === "POST") {
+          const sent = JSON.parse((init?.body as string) ?? "{}") as { name: string; color: string };
+          const created = {
+            ...TAG_B,
+            id: `new-${sent.name.toLowerCase().replace(/\s+/g, "-")}`,
+            name: sent.name,
+            color: sent.color,
+          };
+          return new Response(JSON.stringify(created), { status: 201 });
+        }
+        return new Response(JSON.stringify(catalog), { status: 200 });
       }
       if (/\/notes\/[^/]+$/.test(url) && method === "DELETE") {
         const nid = decodeURIComponent(url.split("/").pop() ?? "");
@@ -886,4 +906,71 @@ test("a viewer reads notes but gets no composer (#736)", async () => {
   openNotesTab();
   await waitFor(() => expect(screen.getByText("second note")).toBeInTheDocument());
   expect(screen.queryByLabelText("New note")).not.toBeInTheDocument();
+});
+
+// ---- Document tag assignment (#548) ----
+
+const TAG_A = {
+  id: "t1",
+  tenant_id: "t1",
+  name: "Rome Trip",
+  normalized: "rome trip",
+  description: "",
+  color: "teal",
+  status: "active",
+  merged_into: null,
+  scope: "tenant",
+  owner_user_id: null,
+  created_at: "2026-07-21T00:00:00Z",
+  updated_at: null,
+  document_count: 0,
+};
+const TAG_B = { ...TAG_A, id: "t2", name: "Receipts", color: "amber" };
+
+test("the document's tags render with a remove button (editor) that unassigns (#548)", async () => {
+  const calls = mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], undefined, [], [
+    TAG_A,
+  ]);
+  setSession("tok", { id: "u1", email: "e@x.com", role: "editor", tenant_id: "t1" });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Rome Trip")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Remove tag Rome Trip" }));
+  await waitFor(() => expect(screen.queryByText("Rome Trip")).not.toBeInTheDocument());
+  expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/documents/d1/tags/t1"))).toBe(
+    true,
+  );
+});
+
+test("the add type-ahead assigns an existing tag (#548)", async () => {
+  const calls = mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], undefined, [], [
+    TAG_A,
+  ], [TAG_A, TAG_B]);
+  setSession("tok", { id: "u1", email: "e@x.com", role: "editor", tenant_id: "t1" });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Rome Trip")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "+ tag" }));
+  fireEvent.change(await screen.findByLabelText("Add tag"), { target: { value: "recei" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Receipts" }));
+  await waitFor(() => expect(screen.getByText("Receipts")).toBeInTheDocument());
+  expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/documents/d1/tags/t2"))).toBe(
+    true,
+  );
+});
+
+test("create-new-inline creates the tag then assigns it (#548)", async () => {
+  const calls = mockDetail([], {}, {}, { items: [], total: 0, next_offset: null }, [], undefined, [], [
+    TAG_A,
+  ], [TAG_A]);
+  setSession("tok", { id: "u1", email: "e@x.com", role: "editor", tenant_id: "t1" });
+  render(<DocumentDetail id="d1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("Rome Trip")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "+ tag" }));
+  fireEvent.change(await screen.findByLabelText("Add tag"), { target: { value: "Audit 2026" } });
+  fireEvent.click(await screen.findByRole("button", { name: /Create “Audit 2026”/ }));
+  await waitFor(() => expect(screen.getByText("Audit 2026")).toBeInTheDocument());
+  const post = calls.find((c) => c.method === "POST" && c.url === "/api/v1/tags");
+  expect(JSON.parse(post!.body!)).toEqual({ name: "Audit 2026", color: "slate" });
+  expect(
+    calls.some((c) => c.method === "PUT" && c.url.includes("/documents/d1/tags/")),
+  ).toBe(true);
 });

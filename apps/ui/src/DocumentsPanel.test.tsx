@@ -942,3 +942,64 @@ test("an App deep-link (initialCategory) wins over the stored filter prefs (#522
   await screen.findByText("note.txt");
   expect((screen.getByLabelText(/Category/) as HTMLSelectElement).value).toBe("deep-cat");
 });
+
+test("the bulk Tags dialog assigns the picked tags to the selection (#548)", async () => {
+  const TAG_A = {
+    id: "t1",
+    tenant_id: "t1",
+    name: "Rome Trip",
+    normalized: "rome trip",
+    description: "",
+    color: "teal",
+    status: "active",
+    merged_into: null,
+    scope: "tenant",
+    owner_user_id: null,
+    created_at: "2026-07-21T00:00:00Z",
+    updated_at: null,
+    document_count: 0,
+  };
+  const TAG_B = { ...TAG_A, id: "t2", name: "Receipts", color: "amber" };
+  const calls: { url: string; method: string; body?: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body as string | undefined });
+      if (url === "/api/v1/tags")
+        return new Response(JSON.stringify([TAG_A, TAG_B]), { status: 200 });
+      if (url.endsWith("/documents/tags:bulk"))
+        return new Response(JSON.stringify({ updated: 2 }), { status: 200 });
+      if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/features/groups")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+      return new Response(
+        JSON.stringify({
+          items: [
+            doc({ id: "a", original_filename: "a.txt" }),
+            doc({ id: "b", original_filename: "b.txt" }),
+          ],
+          total: 2,
+          next_cursor: null,
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  render(<DocumentsPanel />);
+  await screen.findByText("a.txt");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Tags…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Bulk tag update" });
+  fireEvent.click(within(dialog).getByRole("checkbox", { name: /Rome Trip/ }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(screen.getByText(/2 document\(s\) updated/)).toBeInTheDocument());
+  const bulk = calls.find((c) => c.url.endsWith("/documents/tags:bulk"));
+  const body = JSON.parse(bulk!.body!);
+  expect(body.add).toEqual(["t1"]);
+  expect(body.remove).toEqual([]);
+  expect(body.document_ids.sort()).toEqual(["a", "b"]);
+});

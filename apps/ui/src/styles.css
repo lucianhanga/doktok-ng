@@ -7083,3 +7083,83 @@ tr.row-selected {
   display: flex;
   gap: 0.5rem;
 }
+
+/* Document tag assignment (#548): the tag row + type-ahead on the detail page. */
+.doc-tags-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+}
+.tag-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 0 0 0.15rem;
+  opacity: 0.7;
+}
+.tag-remove:hover {
+  opacity: 1;
+}
+.doc-tags-add {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  position: relative;
+}
+.doc-tags-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0.3rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+.doc-tags-suggestions button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.1rem 0.2rem;
+  text-align: left;
+}
+
+/* Bulk tag update dialog (#548). */
+.bulk-tag-dialog {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 32rem;
+}
+.bulk-tag-dialog [role="radiogroup"] {
+  display: flex;
+  gap: 1rem;
+}
+.bulk-tag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  max-height: 12rem;
+  overflow: auto;
+}

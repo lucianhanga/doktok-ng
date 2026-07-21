@@ -541,6 +541,8 @@ export interface DocumentDetailData {
   // Index + extraction facts (#732); optional for pre-upgrade backends.
   chunk_count?: number;
   extraction?: { method: string; ocr_confidence: number | null };
+  // The document's manual tags (#546); empty when untagged.
+  tags?: { id: string; name: string; color: string }[];
 }
 
 /** Format a millisecond duration compactly: <1s -> "NNNms", <60s -> "N.Ns", >=60s -> "Nm Ns".

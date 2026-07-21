@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ColumnDef, type SortingState } from "@tanstack/react-table";
 
 import {
+  bulkUpdateDocumentTags,
   deleteDocument,
   documentThumbnailUrl,
   fetchCategories,
@@ -11,6 +12,7 @@ import {
   fetchFeatureCatalog,
   fetchFeatureGroups,
   fetchFeatures,
+  fetchTags,
   processingRollup,
   reingestDocument,
   reprocessAllFeature,
@@ -25,11 +27,13 @@ import {
   type FeatureGroup,
   type ProcessingSummary,
   type SortDir,
+  type TagOut,
   type TokenMatch,
 } from "./api";
 import { DataTable } from "./DataTable";
 import { useInterval } from "./hooks";
 import { loadJSON, saveJSON } from "./persist";
+import { TagChip } from "./TagsPanel";
 
 type DocsState =
   | { kind: "loading" }
@@ -906,6 +910,101 @@ function TitleFilterBar({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
+/** Bulk tag update dialog (#548): add or remove a picked set of tags across the selected
+ * documents (radio mode + tag checkboxes, then POST /documents/tags:bulk). */
+function BulkTagDialog({
+  count,
+  applying,
+  onApply,
+  onClose,
+}: {
+  count: number;
+  applying: boolean;
+  onApply: (add: string[], remove: string[]) => void;
+  onClose: () => void;
+}) {
+  const [tags, setTags] = useState<TagOut[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<"add" | "remove">("add");
+
+  useEffect(() => {
+    fetchTags()
+      .then(setTags)
+      .catch(() => setTags([]));
+  }, []);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <div className="bulk-tag-dialog" role="dialog" aria-label="Bulk tag update">
+      <p>
+        {count.toLocaleString()} document{count === 1 ? "" : "s"} selected
+      </p>
+      <div role="radiogroup" aria-label="Tag action">
+        <label>
+          <input
+            type="radio"
+            name="bulk-tag-mode"
+            checked={mode === "add"}
+            onChange={() => setMode("add")}
+          />{" "}
+          Add tags
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="bulk-tag-mode"
+            checked={mode === "remove"}
+            onChange={() => setMode("remove")}
+          />{" "}
+          Remove tags
+        </label>
+      </div>
+      {tags === null ? (
+        <p role="status">Loading tags…</p>
+      ) : tags.length === 0 ? (
+        <p className="muted">No tags yet — create them under Insights → Tags.</p>
+      ) : (
+        <ul className="bulk-tag-list">
+          {tags.map((t) => (
+            <li key={t.id}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={selected.has(t.id)}
+                  onChange={() => toggle(t.id)}
+                />{" "}
+                <TagChip name={t.name} color={t.color} />
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="tag-editor-actions">
+        <button
+          type="button"
+          disabled={applying || selected.size === 0}
+          onClick={() =>
+            onApply(mode === "add" ? [...selected] : [], mode === "remove" ? [...selected] : [])
+          }
+        >
+          {applying ? "Applying…" : "Apply"}
+        </button>
+        <button type="button" disabled={applying} onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function DocumentsPanel({
   onOpenDocument,
   initialNeedsAttention = false,
@@ -1234,6 +1333,33 @@ export function DocumentsPanel({
     void runBulk((id) => retryDocumentFeature(id, value), `Reprocess ${spec.label}`);
     setReprocessFeature("");
     reprocessAutoPicked.current = false;
+  }
+
+  // Bulk tag update (#548): add/remove the picked tag set across the selection in ONE request
+  // (not the per-document fan-out), then refresh and clear.
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [bulkTagApplying, setBulkTagApplying] = useState(false);
+
+  async function applyBulkTags(add: string[], remove: string[]) {
+    setBulkTagApplying(true);
+    setNotice("");
+    try {
+      const result = await bulkUpdateDocumentTags([...selected], add, remove);
+      const what = [
+        add.length > 0 ? `+${add.length} tag(s)` : "",
+        remove.length > 0 ? `-${remove.length} tag(s)` : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
+      setNotice(`Tags (${what}): ${result.updated} document(s) updated.`);
+      clearSelection();
+      setBulkTagOpen(false);
+      load();
+    } catch (err: unknown) {
+      setNotice(`Could not update tags: ${err instanceof Error ? err.message : "error"}`);
+    } finally {
+      setBulkTagApplying(false);
+    }
   }
 
   // Toolbar "Reprocess all documents": the chosen value is either a group (group:<id>, which runs
@@ -1711,6 +1837,13 @@ export function DocumentsPanel({
           <button
             type="button"
             disabled={busy}
+            onClick={() => setBulkTagOpen(true)}
+          >
+            Tags…
+          </button>
+          <button
+            type="button"
+            disabled={busy}
             onClick={() => {
               if (
                 window.confirm(
@@ -1793,6 +1926,15 @@ export function DocumentsPanel({
         </div>
       )}
 
+      {bulkTagOpen && (
+        <BulkTagDialog
+          count={selected.size}
+          applying={bulkTagApplying}
+          onApply={(add, remove) => void applyBulkTags(add, remove)}
+          onClose={() => setBulkTagOpen(false)}
+        />
+      )}
+
       {showSelectAllBanner && (
         <div
           className="bulk-bar select-all-banner"
@@ -1800,8 +1942,7 @@ export function DocumentsPanel({
           aria-label="Select all matching"
           aria-live="polite"
         >
-          {offerSelectAll ? (
-            <>
+          {offerSelectAll ? (            <>
               <span>All {docs.length.toLocaleString()} on this page are selected.</span>
               <button type="button" disabled={busy} onClick={() => void selectAllMatching()}>
                 Select all {total.toLocaleString()} matching

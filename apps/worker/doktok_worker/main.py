@@ -73,6 +73,83 @@ def repair(*, dry_run: bool, check_hashes: bool = False) -> int:
     return 1 if problems else 0
 
 
+def rebuild_registry(*, tenant: str | None, dry_run: bool) -> int:
+    """Re-register documents from surviving files_root manifests (#749 files-ahead-of-DB recovery),
+    re-queuing ONLY the enrichment features (extract counts as done - the artifacts are on disk, so
+    OCR never re-runs). Builds only the DB repos (no OCR pools)."""
+    import json
+    from pathlib import Path
+    from typing import Any
+
+    from doktok_core.documents.rebuild_registry import rebuild_registry as _rebuild
+    from doktok_core.features.processors import ENRICHMENT_STAGES
+    from doktok_storage_postgres import (
+        Database,
+        PostgresDocumentRepository,
+        PostgresFeatureRepository,
+    )
+
+    from doktok_worker.composition import tenant_ids
+
+    log = logging.getLogger("doktok.worker")
+    settings = get_settings()
+    db = Database(settings.database_url)
+    root = Path(settings.files_root)
+    problems = 0
+    try:
+        doc_repo = PostgresDocumentRepository(db)
+        feat_repo = PostgresFeatureRepository(db)
+        with db.connection() as conn:
+            known_tenants = {row[0] for row in conn.execute("select id from tenants").fetchall()}
+
+        def load(tenant_id: str) -> list[tuple[str, dict[str, Any] | None]]:
+            base = root / tenant_id / "docs.active"
+            if not base.is_dir():
+                return []
+            out: list[tuple[str, dict[str, Any] | None]] = []
+            for entry in sorted(base.iterdir()):
+                if not entry.is_dir():
+                    continue
+                try:
+                    out.append(
+                        (str(entry), json.loads((entry / "manifest.json").read_text("utf-8")))
+                    )
+                except (OSError, json.JSONDecodeError):
+                    out.append((str(entry), None))
+            return out
+
+        for tid in [tenant] if tenant else tenant_ids(settings):
+            if tid not in known_tenants:
+                log.warning(
+                    "rebuild-registry[%s]: tenant not in the DB - skipping (create it first)", tid
+                )
+                problems += 1
+                continue
+            report = _rebuild(
+                document_repo=doc_repo,
+                feature_repo=feat_repo,
+                load_manifests=load,
+                tenant_id=tid,
+                stages=ENRICHMENT_STAGES,
+                dry_run=dry_run,
+            )
+            log.info(
+                "rebuild-registry[%s]%s %s", tid, " (dry-run)" if dry_run else "", report.summary()
+            )
+            if report.orphans:
+                problems += len(report.orphans)
+                log.warning(
+                    "rebuild-registry[%s]: %d dir(s) WITHOUT a usable manifest: %s",
+                    tid,
+                    len(report.orphans),
+                    ", ".join(report.orphans),
+                )
+    finally:
+        db.close()
+    # Non-zero exit if anything is orphaned/unknown, so an operator/automation notices.
+    return 1 if problems else 0
+
+
 def quiesce(*, enabled: bool) -> int:
     """Toggle maintenance/quiesce mode (APP-C3): the running worker stops starting new ingestion +
     reconcile work while on. Use around a backup: `quiesce` -> snapshot -> `quiesce --off`."""
@@ -101,6 +178,9 @@ def main() -> None:
         raise SystemExit(
             repair(dry_run="--dry-run" in sys.argv, check_hashes="--check-hashes" in sys.argv)
         )
+    if command == "rebuild-registry":
+        tenant = sys.argv[sys.argv.index("--tenant") + 1] if "--tenant" in sys.argv else None
+        raise SystemExit(rebuild_registry(tenant=tenant, dry_run="--dry-run" in sys.argv))
     if command == "quiesce":
         raise SystemExit(quiesce(enabled="--off" not in sys.argv))
     _install_sigterm_handler()

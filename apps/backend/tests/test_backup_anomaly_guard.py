@@ -110,3 +110,13 @@ def test_backup_scripts_record_doc_count_baseline() -> None:
     assert "backup_anomaly_guard" in backup_sh
     assert "doc_count" in backup_sh
     assert "doc_count" in backup_pg_sh
+
+
+def test_pg_wal_freshness_honours_compose_overrides() -> None:
+    """The WAL-freshness stamp must run on the dev box too (#745): compose files/env overridable
+    like backup.sh, never hardcoded to prod files."""
+    text = (REPO_ROOT / "deploy" / "pg-wal-freshness.sh").read_text(encoding="utf-8")
+    assert "DOKTOK_COMPOSE_FILES" in text
+    assert "DOKTOK_COMPOSE_ENV_FILE" in text
+    # and never the hardcoded prod pair again
+    assert "docker-compose.prod.yml --env-file .env.production" not in text

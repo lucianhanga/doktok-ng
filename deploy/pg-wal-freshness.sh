@@ -31,7 +31,15 @@ sql="SELECT COALESCE(EXTRACT(EPOCH FROM last_archived_time)::bigint, 0)
   FROM pg_stat_archiver;"
 
 if [ "$mode" = "compose" ]; then
-    compose=(docker compose -f docker-compose.prod.yml --env-file .env.production)
+    # Compose files/env overridable like backup.sh (#745): the dev override passes
+    # "docker-compose.yml,docker-compose.dev.yml" + .env, so the SAME script runs on the Mac dev box.
+    COMPOSE_FILES="${DOKTOK_COMPOSE_FILES:-docker-compose.prod.yml}"
+    COMPOSE_ENV_FILE="${DOKTOK_COMPOSE_ENV_FILE:-.env.production}"
+    compose=(docker compose)
+    for f in ${COMPOSE_FILES//,/ }; do
+        compose+=(-f "$f")
+    done
+    compose+=(--env-file "$COMPOSE_ENV_FILE")
     row="$("${compose[@]}" exec -T db psql -U doktok -d doktok -tAc "$sql" 2>/dev/null | tr -d '[:space:]' || true)"
 else
     row="$(psql "$DATABASE_URL" -tAc "$sql" 2>/dev/null | tr -d '[:space:]' || true)"

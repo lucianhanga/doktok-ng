@@ -118,6 +118,10 @@ dev-backup: ## Back up files_root + Postgres on the dev box (compose mode, same 
 dev-backup-pg-logical: ## Logical pg_dump safety-net into ./backups/pg/logical
 	./deploy/backup-pg-logical.sh
 
+dev-pg-wal-freshness: ## Stamp the pg sentinel with the WAL recovery point (prod runs this every minute via systemd; schedule it in dev via cron for continuous DRP freshness)
+	DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env \
+		./deploy/pg-wal-freshness.sh
+
 dev-restore: ## Restore Postgres + files_root from the local repo (DESTRUCTIVE; usage: make dev-restore FILES_TARGET=./storage/files [PITR="YYYY-MM-DD HH:MM:SS+00"])
 	DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env \
 		./deploy/restore.sh $(FILES_TARGET) $(if $(PITR),"$(PITR)",)

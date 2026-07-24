@@ -161,7 +161,14 @@ timers on the box; launchd/cron on a Mac) and manually by the system administrat
   pgBackRest at all.
 
 DRP freshness is read-only in the UI (Settings → DRP): each leg's last run + age, from the
-sentinels the scripts write into the backup dir.
+sentinels the scripts write into the backup dir. The **pg leg also flags a stuck WAL archiver**:
+`deploy/pg-wal-freshness.sh` (every minute in prod via `doktok-pg-wal-freshness.timer`) stamps the
+sentinel with the last archived WAL time and marks the leg failed when the most recent archive
+attempt failed. On the Mac dev box run it as `make dev-pg-wal-freshness` — schedule it every
+minute in cron for continuous freshness (`* * * * * cd <repo> && make dev-pg-wal-freshness`).
+Note: after wiping a bind-mounted backups dir, restart the db container so the mount re-resolves
+(`rm -rf` of a mount point leaves a stale deleted inode inside the container and pgbackrest
+crashes until the restart).
 
 ### Incident freeze (first response to data loss)
 

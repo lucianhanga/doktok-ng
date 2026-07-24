@@ -5,6 +5,7 @@ import { AdminPanel } from "./AdminPanel";
 import { ChatPanel } from "./ChatPanel";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsPanel } from "./DocumentsPanel";
+import { GlobalDropOverlay } from "./GlobalDropOverlay";
 import { InsightsPanel } from "./InsightsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SettingsPanel } from "./SettingsPanel";
@@ -224,6 +225,7 @@ export default function App() {
       </main>
 
       <StatusBar />
+      <GlobalDropOverlay />
     </div>
   );
 }

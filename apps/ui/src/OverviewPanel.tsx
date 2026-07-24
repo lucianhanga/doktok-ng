@@ -9,6 +9,7 @@ import {
   type CategorySummary,
   type Stats,
 } from "./api";
+import { INGEST_FILES_EVENT } from "./GlobalDropOverlay";
 import { useInterval } from "./hooks";
 
 // Max files per upload; mirrors the backend DOKTOK_MAX_UPLOAD_FILES so a too-large drop is refused
@@ -48,6 +49,19 @@ function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
       setBusy(false);
     }
   }
+
+  // Files forwarded by the GlobalDropOverlay (a drop anywhere in the app) land here, so they go
+  // through the exact same path as a drop on this dropzone.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    function onIngest(e: Event) {
+      const files = (e as CustomEvent<{ files?: File[] }>).detail?.files;
+      if (files?.length) void sendRef.current(files);
+    }
+    window.addEventListener(INGEST_FILES_EVENT, onIngest);
+    return () => window.removeEventListener(INGEST_FILES_EVENT, onIngest);
+  }, []);
 
   return (
     <div

@@ -1882,6 +1882,35 @@ tr.row-selected {
   border-color: var(--accent);
   background: var(--selected-fill);
 }
+
+/* Global drag-anywhere overlay: files dragged over any tab switch to Overview and land here; the
+   drop is forwarded to the regular dropzone above (single upload path). */
+.global-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  backdrop-filter: blur(2px);
+}
+.global-drop-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  text-align: center;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 2.5rem 3rem;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.3);
+}
+.global-drop-overlay-card .muted {
+  font-size: 0.85rem;
+}
 .upload-dropzone .muted {
   font-size: 0.85rem;
 }

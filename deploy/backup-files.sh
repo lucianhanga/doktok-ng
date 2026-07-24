@@ -39,8 +39,10 @@ echo "snapshotting $FILES_ROOT -> $FILES_REPO"
 out="$(restic backup "$FILES_ROOT" --tag files_root --host doktok \
     --exclude ".DS_Store" --exclude "Thumbs.db" --exclude "desktop.ini" --exclude ".localized" 2>&1)"
 printf '%s\n' "$out"
-# Keep a sensible history; prune unreferenced data so the local repo stays small.
-restic forget --tag files_root --keep-daily 14 --keep-weekly 8 --keep-monthly 6 --prune >/dev/null
+# Keep a sensible history; prune unreferenced data so the local repo stays small. --keep-last guards
+# intra-day history: without it, keep-daily collapses all same-day snapshots into the newest one -
+# which, after a disaster, would be the post-disaster snapshot (#747).
+restic forget --tag files_root --keep-last 7 --keep-daily 14 --keep-weekly 8 --keep-monthly 6 --prune >/dev/null
 log_event prune prune true "restic forget --prune (files)"
 
 # Parse restic's summary for the DRP metrics (M12 #380; no jq dependency).

@@ -25,7 +25,10 @@ conf="${BACKUP_DIR}/pgbackrest.conf"
 cat >"$conf" <<CONF
 [global]
 repo1-path=$(cd "$PG_DIR" && pwd)
-repo1-retention-full=${DOKTOK_PG_RETENTION_FULL:-2}
+# Time-based retention (#747): count-based retention lets N post-disaster runs expire the last good
+# full; 30 days of fulls + WAL survive regardless of how many backups run after an incident.
+repo1-retention-full-type=${DOKTOK_PG_RETENTION_TYPE:-time}
+repo1-retention-full=${DOKTOK_PG_RETENTION_FULL:-30}
 repo1-cipher-type=aes-256-cbc
 repo1-cipher-pass=${DOKTOK_PGBACKREST_CIPHER_PASS}
 compress-type=lz4
@@ -44,11 +47,20 @@ pgbackrest --config="$conf" --stanza=doktok check
 pgbackrest --config="$conf" --stanza=doktok backup --type="$type"
 # Capture pg metrics (db size, backup label) for the DRP (M12 #380); best-effort.
 pg_extra="$(pgbackrest --config="$conf" --stanza=doktok info --output=json 2>/dev/null | pg_backup_extra || true)"
+# Record the live document count as the anomaly guard's next baseline (#747); best-effort.
+if command -v psql >/dev/null 2>&1; then
+    cur_docs="$(psql "$DATABASE_URL" -tAc 'select count(*) from documents' 2>/dev/null \
+        | tr -d '[:space:]' || true)"
+    case "$cur_docs" in
+        ''|*[!0-9]*) ;;
+        *) pg_extra="${pg_extra:+${pg_extra},}\"doc_count\":${cur_docs}" ;;
+    esac
+fi
 write_status pg true "pgbackrest ${type}" "$pg_extra"
 pg_dur=0
 [ "${pg_t0:-0}" -gt 0 ] && pg_dur="$(( $(date +%s%3N 2>/dev/null || echo 0) - pg_t0 ))"
 log_event pg success true "pgbackrest ${type}" "${pg_extra:+${pg_extra},}\"duration_ms\":${pg_dur}"
 # pgBackRest applies repo1-retention-full as part of the backup; record it as a prune event.
-log_event prune prune true "pgbackrest retention (full=${DOKTOK_PG_RETENTION_FULL:-2})"
+log_event prune prune true "pgbackrest retention (${DOKTOK_PG_RETENTION_TYPE:-time}=${DOKTOK_PG_RETENTION_FULL:-30})"
 ok "pgBackRest ${type} backup complete -> ${PG_DIR}"
 pgbackrest --config="$conf" --stanza=doktok info

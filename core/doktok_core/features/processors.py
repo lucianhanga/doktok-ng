@@ -1021,3 +1021,21 @@ class ThumbnailFeature:
         source = base / str(rel) if rel else base / document.original_filename
         data = self._thumbnailer.thumbnail(str(source))
         self._files.write_bytes(str(base / THUMBNAIL_REL), data)
+
+
+# The enrichment stages every active document runs, in the reconciler's dependency order - single
+# source of truth for name/version so recovery tooling (#749 rebuild-registry) can re-seed exactly
+# these stages without instantiating the processors. ``extract`` is deliberately absent: it is the
+# DAG root driven only for PROCESSING documents, and rebuild-registry marks it done from the
+# surviving on-disk artifacts.
+ENRICHMENT_STAGES: list[tuple[str, int]] = [
+    (ChunkEmbedFeature.name, ChunkEmbedFeature.version),
+    (EntitiesFeature.name, EntitiesFeature.version),
+    (NerFeature.name, NerFeature.version),
+    (EntityGraphFeature.name, EntityGraphFeature.version),
+    (RelationExtractFeature.name, RelationExtractFeature.version),
+    (DocMetadataFeature.name, DocMetadataFeature.version),
+    (DocClassifyFeature.name, DocClassifyFeature.version),
+    (StructuredRecordsFeature.name, StructuredRecordsFeature.version),
+    (ThumbnailFeature.name, ThumbnailFeature.version),
+]

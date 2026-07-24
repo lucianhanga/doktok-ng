@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
+import { INGEST_FILES_EVENT } from "./GlobalDropOverlay";
 import { OverviewPanel } from "./OverviewPanel";
 
 afterEach(() => {
@@ -208,4 +209,38 @@ test("refuses a batch over the file-count limit without uploading", async () => 
   await waitFor(() => expect(screen.getByText(/At most 101 files per upload/i)).toBeInTheDocument());
   // The oversized drop never hit the upload endpoint.
   expect(calls.some((u) => u.includes("/api/v1/ingestion/upload"))).toBe(false);
+});
+
+test("files forwarded by the global overlay go through the same upload path", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      if (url.includes("/api/v1/ingestion/upload")) {
+        return new Response(JSON.stringify({ accepted: ["b.pdf"], rejected: [] }), { status: 200 });
+      }
+      if (url.includes("/api/v1/stats")) {
+        return new Response(
+          JSON.stringify({
+            documents: 0,
+            jobs: {},
+            entities: 0,
+            pending_ingest: 0,
+            documents_pending_features: 0,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+  render(<OverviewPanel />);
+  const file = new File(["hello"], "b.pdf", { type: "application/pdf" });
+  window.dispatchEvent(
+    new CustomEvent(INGEST_FILES_EVENT, { detail: { files: [file] } }),
+  );
+  await waitFor(() => expect(screen.getByText(/queued for ingestion/i)).toBeInTheDocument());
+  expect(calls.some((u) => u.includes("/api/v1/ingestion/upload"))).toBe(true);
 });

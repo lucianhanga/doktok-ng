@@ -1,0 +1,67 @@
+# Dev backup/restore parity (issue #745): the db container gains the SAME pgbackrest wiring as
+# prod (archive_command + cipher env + config mount + repo volume), and the backup-runner service
+# (restic + deploy scripts) becomes available via the "tools" profile. Backend/worker stay on the
+# host for debugging. Use:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# or simply `make backup` (which passes both files for you).
+services:
+  db:
+    # The prod db image: pgvector pg17 + pgBackRest (deploy/docker/db.Dockerfile) - the stock
+    # pgvector image has no pgbackrest, and archive_command must run inside this container.
+    build:
+      context: .
+      dockerfile: deploy/docker/db.Dockerfile
+    image: doktok-ng-db:dev
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=doktok archive-push %p
+      - -c
+      # Force a WAL segment switch at least every 60s so an idle DB still ships WAL on the ~60s pg
+      # RPO (same as prod, keeps the DRP pg leg fresh).
+      - archive_timeout=60
+      - -c
+      - max_wal_size=2GB
+    environment:
+      POSTGRES_USER: doktok
+      POSTGRES_PASSWORD: doktok
+      POSTGRES_DB: doktok
+      # Repo encryption pass (never committed); set it in .env, store it off the box.
+      PGBACKREST_REPO1_CIPHER_PASS: ${DOKTOK_PGBACKREST_CIPHER_PASS:?set DOKTOK_PGBACKREST_CIPHER_PASS in .env}
+    volumes:
+      - doktok-pgdata:/var/lib/postgresql/data
+      - ./storage/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ./deploy/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      # The pg backup repo (base + WAL archive), also visible to the host for the DRP + offsite sync.
+      - ${DOKTOK_BACKUP_DIR:-./backups}/pg:/var/lib/doktok/pg
+
+  # restic + the deploy scripts in a tiny container (same image as prod): the files leg of
+  # backup/restore runs here, exactly as on the prod box. Start on demand with the tools profile:
+  #   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm backup-runner deploy/backup-files.sh
+  backup-runner:
+    build:
+      context: .
+      dockerfile: deploy/docker/backup-runner.Dockerfile
+    image: doktok-ng-backup-runner:dev
+    profiles: ["tools"]
+    environment:
+      DOKTOK_BACKUP_DIR: /backups
+      DOKTOK_FILES_ROOT: /data/files
+      # Workaround for a Docker Desktop macOS virtiofs bug (docker/for-mac#6812): restic sets
+      # O_NOATIME via fcntl on source files and every subsequent read() returns EIO. So in dev the
+      # live tree is mounted at /host/files and backup-files.sh/restore-files.sh stage it through
+      # /data/files (a VM-local named volume) where restic reads/writes normally. Prod (Linux) is
+      # unaffected and reads the bind mount directly.
+      DOKTOK_FILES_STAGE_SRC: /host/files
+      DOKTOK_RESTIC_PASSWORD: ${DOKTOK_RESTIC_PASSWORD:?set DOKTOK_RESTIC_PASSWORD in .env}
+    volumes:
+      - ./storage/files:/host/files
+      - doktok-files-staging:/data/files
+      - ${DOKTOK_BACKUP_DIR:-./backups}:/backups
+
+volumes:
+  doktok-files-staging:

@@ -139,6 +139,30 @@ levers:
 Changing it makes the stored (encrypted) OpenAI key undecryptable. After rotating, re-enter the
 OpenAI key via Settings (or re-seed) so it is re-encrypted under the new master key.
 
+## Backup and recovery operations
+
+The same `deploy/backup.sh` / `deploy/restore.sh` run everywhere, both on a schedule (systemd
+timers on the box; launchd/cron on a Mac) and manually by the system administrator on the machine:
+
+- **Prod (docker-compose)**: `DOKTOK_DEPLOY_MODE=compose ./deploy/backup.sh` — files_root via the
+  backup-runner (restic), Postgres via pgBackRest inside the db container (base + WAL archive for
+  PITR). `deploy/restore.sh` restores both (DESTRUCTIVE; stops the db, restores from a one-off
+  container sharing the volumes).
+- **Mac dev (#745)**: the db container gets the prod pgbackrest wiring through
+  `docker-compose.dev.yml` (db built from `deploy/docker/db.Dockerfile`; the backup-runner service
+  under the `tools` profile). Use the Make targets, which pass the dev compose files for you:
+  `make backup` (or `TYPE=full make backup`), `make backup-pg-logical` (pg_dump safety net), and
+  `make restore FILES_TARGET=./storage/files` (destructive). Requires `DOKTOK_RESTIC_PASSWORD` and
+  `DOKTOK_PGBACKREST_CIPHER_PASS` in `.env` (store them OFF the box; `DOKTOK_BACKUP_DIR` defaults
+  to `./backups`). Backend/worker stay on the host for debugging.
+- **No-container alternative (any box with the API up)**: the portable export/import via the
+  settings API with the static host token (`POST /settings/backup/export`, download the encrypted
+  archive, `POST /settings/backup/restore/preview` + `/apply`). That path needs no restic or
+  pgBackRest at all.
+
+DRP freshness is read-only in the UI (Settings → DRP): each leg's last run + age, from the
+sentinels the scripts write into the backup dir.
+
 ## Observability
 
 - **Health**: `GET /health` (liveness) and `GET /ready` (dependency-aware: DB + Ollama hard,

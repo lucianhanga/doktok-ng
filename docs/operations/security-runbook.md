@@ -151,10 +151,10 @@ timers on the box; launchd/cron on a Mac) and manually by the system administrat
 - **Mac dev (#745)**: the db container gets the prod pgbackrest wiring through
   `docker-compose.dev.yml` (db built from `deploy/docker/db.Dockerfile`; the backup-runner service
   under the `tools` profile). Use the Make targets, which pass the dev compose files for you:
-  `make backup` (or `TYPE=full make backup`), `make backup-pg-logical` (pg_dump safety net), and
-  `make restore FILES_TARGET=./storage/files` (destructive). Requires `DOKTOK_RESTIC_PASSWORD` and
-  `DOKTOK_PGBACKREST_CIPHER_PASS` in `.env` (store them OFF the box; `DOKTOK_BACKUP_DIR` defaults
-  to `./backups`). Backend/worker stay on the host for debugging.
+  `make dev-backup` (or `make dev-backup TYPE=full`), `make dev-backup-pg-logical` (pg_dump safety
+  net), and `make dev-restore FILES_TARGET=./storage/files` (destructive). Requires
+  `DOKTOK_RESTIC_PASSWORD` and `DOKTOK_PGBACKREST_CIPHER_PASS` in `.env` (store them OFF the box;
+  `DOKTOK_BACKUP_DIR` defaults to `./backups`). Backend/worker stay on the host for debugging.
 - **No-container alternative (any box with the API up)**: the portable export/import via the
   settings API with the static host token (`POST /settings/backup/export`, download the encrypted
   archive, `POST /settings/backup/restore/preview` + `/apply`). That path needs no restic or
@@ -162,6 +162,30 @@ timers on the box; launchd/cron on a Mac) and manually by the system administrat
 
 DRP freshness is read-only in the UI (Settings → DRP): each leg's last run + age, from the
 sentinels the scripts write into the backup dir.
+
+### Incident freeze (first response to data loss)
+
+Post-disaster backups are poison: they snapshot the wreckage and prune the good history
+(count-based retention on the pg leg, same-day collapse on the files leg). The anomaly guard
+(#747) refuses to back up a database whose document count collapsed, and retention is time-based —
+but when you notice data loss, do this FIRST:
+
+1. **Stop the schedule**: `sudo systemctl stop doktok-backup.timer` (prod) or disable the cron /
+   launchd entry. Every further backup makes things worse.
+2. **Preserve the repo**: `cp -a backups backups.frozen-$(date +%Y%m%d-%H%M)` before any tool gets
+   another chance to expire/prune it.
+3. **Assess recovery points**: `pgbackrest --stanza=doktok info` (surviving backups + WAL range)
+   and `restic snapshots` (in the backup-runner). Pick the newest point BEFORE the incident.
+4. **Restore**: Postgres to that point-in-time (`make dev-restore FILES_TARGET=./storage/files
+   PITR="YYYY-MM-DD HH:MM:SS+00"`, or `deploy/restore.sh` on prod) and files_root from the
+   pre-disaster snapshot. **Always PITR for logical disasters** (DROP/DELETE): restoring "latest"
+   replays the archived WAL including the destructive statement itself.
+5. **Verify, then re-enable** the schedule.
+
+Two rules, learned the hard way (2026-07-24 dev drill): never run a backup between the disaster
+and the recovery; never restore "latest" for a logical disaster. If the DB recovery point is
+behind the files tree (or lost entirely), reconcile with `doktok-worker rebuild-registry` (files
+→ DB direction) after the tenant/users are back.
 
 ## Observability
 

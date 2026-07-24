@@ -36,6 +36,29 @@ require() {
     }
 }
 
+# backup_anomaly_guard <current-doc-count> - refuse to back up a database that looks destroyed
+# (#747). If the previous pg sentinel recorded a doc_count and the live count dropped below half of
+# it, return 1 so a post-disaster run can't overwrite/expire the last good backup history. Escape
+# hatch: DOKTOK_BACKUP_FORCE=1 (intentional clean-slate rebuilds). No sentinel/no field -> pass
+# (first run simply records the baseline).
+backup_anomaly_guard() {
+    local cur="$1" prev="" sentinel="${STATUS_DIR}/pg.json"
+    [ -f "$sentinel" ] || return 0
+    prev="$(sed -n 's/.*"doc_count": *\([0-9][0-9]*\).*/\1/p' "$sentinel" | head -1)"
+    [ -n "$prev" ] || return 0
+    [ "$prev" -gt 0 ] || return 0
+    if [ "$((cur * 2))" -lt "$prev" ]; then
+        if [ "${DOKTOK_BACKUP_FORCE:-0}" = "1" ]; then
+            warn "anomaly guard: documents dropped $prev -> $cur; continuing (DOKTOK_BACKUP_FORCE=1)"
+            return 0
+        fi
+        err "anomaly guard: documents dropped $prev -> $cur - the database looks destroyed."
+        err "refusing to overwrite good backup history. Restore first, or re-run with DOKTOK_BACKUP_FORCE=1 if this is intentional."
+        return 1
+    fi
+    return 0
+}
+
 # pg_backup_extra - read `pgbackrest info --output=json` from stdin and emit a JSON metric fragment
 # (size + backup_id) for write_status's 4th arg (M12 #380). Parsed with python3 (always on the host;
 # the db container has none, so this runs host-side). Prints nothing if parsing fails.

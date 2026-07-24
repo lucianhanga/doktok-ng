@@ -26,6 +26,22 @@ for f in ${COMPOSE_FILES//,/ }; do
 done
 compose+=(--env-file "$COMPOSE_ENV_FILE")
 
+# Anomaly guard (#747): count live documents and refuse to back up a database that looks destroyed,
+# so a post-disaster run can't overwrite/expire the last good backup history. A guard that can't
+# count (db down, no psql) never blocks the backup - it only warns.
+cur_docs=""
+if [ "$mode" = "compose" ]; then
+    cur_docs="$("${compose[@]}" exec -T db psql -U doktok -d doktok -tAc \
+        'select count(*) from documents' 2>/dev/null | tr -d '[:space:]' || true)"
+elif command -v psql >/dev/null 2>&1; then
+    cur_docs="$(psql "$DATABASE_URL" -tAc 'select count(*) from documents' 2>/dev/null \
+        | tr -d '[:space:]' || true)"
+fi
+case "$cur_docs" in
+    ''|*[!0-9]*) warn "anomaly guard: could not count documents - continuing without the guard" ;;
+    *) backup_anomaly_guard "$cur_docs" || exit 1 ;;
+esac
+
 if [ "$mode" = "compose" ]; then
     # Containerized (staging/prod/dev): same scripts, run where the tools + data are (M12 #377). Files
     # run in the backup-runner (restic + mounts); pg runs inside the db container (pgbackrest lives
@@ -39,6 +55,11 @@ if [ "$mode" = "compose" ]; then
     # JSON; parse it on the host (the db image has no python). Best-effort: empty extra on any failure.
     pg_extra="$("${compose[@]}" exec -u postgres -T db pgbackrest --stanza=doktok info --output=json 2>/dev/null \
         | pg_backup_extra || true)"
+    # Record the live document count as the anomaly guard's next baseline (#747).
+    case "$cur_docs" in
+        ''|*[!0-9]*) ;;
+        *) pg_extra="${pg_extra:+${pg_extra},}\"doc_count\":${cur_docs}" ;;
+    esac
     "${compose[@]}" run --rm backup-runner deploy/write-status.sh pg true "pgbackrest $type" "$pg_extra"
     # Record the pg leg into the append-only history too (M12 DRP hardening), from the runner that
     # has the shared backup dir mounted. The files leg logs its own history inside backup-files.sh.

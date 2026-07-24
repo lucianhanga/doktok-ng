@@ -104,6 +104,24 @@ db: ## Start local Postgres + pgvector and Gotenberg (docker compose)
 db-down: ## Stop local Postgres (keep volume)
 	docker compose down
 
+# Backup/restore on the dev box, the SAME scripts as prod (#745): the db container gets the prod
+# pgbackrest wiring via docker-compose.dev.yml, the files leg runs in the backup-runner service.
+DEV_COMPOSE_FILES=docker-compose.yml,docker-compose.dev.yml
+
+db-dev-backup-image: ## Build the dev db image (pg17 + pgvector + pgBackRest) for backups
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build db
+
+dev-backup: ## Back up files_root + Postgres on the dev box (compose mode, same as prod)
+	DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env \
+		./deploy/backup.sh $(TYPE)
+
+dev-backup-pg-logical: ## Logical pg_dump safety-net into ./backups/pg/logical
+	./deploy/backup-pg-logical.sh
+
+dev-restore: ## Restore Postgres + files_root from the local repo (DESTRUCTIVE; usage: make dev-restore FILES_TARGET=./storage/files [PITR="YYYY-MM-DD HH:MM:SS+00"])
+	DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env \
+		./deploy/restore.sh $(FILES_TARGET) $(if $(PITR),"$(PITR)",)
+
 js-install: ## Install JS workspace dependencies
 	pnpm install
 

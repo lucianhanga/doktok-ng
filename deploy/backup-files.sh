@@ -24,8 +24,20 @@ if ! restic cat config >/dev/null 2>&1; then
     restic init >/dev/null
 fi
 
+# Optional staging (dev-on-macOS workaround, #745): when DOKTOK_FILES_STAGE_SRC is set, the real
+# files_root lives at that path and $FILES_ROOT is a container-local staging dir. Docker Desktop's
+# virtiofs returns EIO on reads after restic sets O_NOATIME via fcntl, so restic must not read the
+# bind mount directly; the plain cp below is unaffected. Prod never sets this and backs up in place.
+if [ -n "${DOKTOK_FILES_STAGE_SRC:-}" ]; then
+    echo "staging $DOKTOK_FILES_STAGE_SRC -> $FILES_ROOT (virtiofs O_NOATIME workaround)"
+    find "$FILES_ROOT" -mindepth 1 -delete
+    cp -a "$DOKTOK_FILES_STAGE_SRC/." "$FILES_ROOT/"
+fi
+
 echo "snapshotting $FILES_ROOT -> $FILES_REPO"
-out="$(restic backup "$FILES_ROOT" --tag files_root --host doktok 2>&1)"
+# Exclude OS junk metadata - none of it belongs in a backup.
+out="$(restic backup "$FILES_ROOT" --tag files_root --host doktok \
+    --exclude ".DS_Store" --exclude "Thumbs.db" --exclude "desktop.ini" --exclude ".localized" 2>&1)"
 printf '%s\n' "$out"
 # Keep a sensible history; prune unreferenced data so the local repo stays small.
 restic forget --tag files_root --keep-daily 14 --keep-weekly 8 --keep-monthly 6 --prune >/dev/null

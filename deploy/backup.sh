@@ -15,11 +15,21 @@ warn "backups are secret-bearing (encrypted) - store the repo + keys off the box
 type="${1:-incr}"
 mode="${DOKTOK_DEPLOY_MODE:-host}"
 
+# Compose files/env for the containerized path: prod defaults; the dev override passes
+# "docker-compose.yml,docker-compose.dev.yml" + .env (issue #745), so the SAME scripts run
+# identically on the Mac dev box and on the prod host.
+COMPOSE_FILES="${DOKTOK_COMPOSE_FILES:-docker-compose.prod.yml}"
+COMPOSE_ENV_FILE="${DOKTOK_COMPOSE_ENV_FILE:-.env.production}"
+compose=(docker compose)
+for f in ${COMPOSE_FILES//,/ }; do
+    compose+=(-f "$f")
+done
+compose+=(--env-file "$COMPOSE_ENV_FILE")
+
 if [ "$mode" = "compose" ]; then
-    # Containerized (staging/prod): same scripts, run where the tools + data are (M12 #377). Files
+    # Containerized (staging/prod/dev): same scripts, run where the tools + data are (M12 #377). Files
     # run in the backup-runner (restic + mounts); pg runs inside the db container (pgbackrest lives
     # there), then the runner records the pg sentinel into the shared backup dir.
-    compose=(docker compose -f docker-compose.prod.yml --env-file .env.production)
     "${compose[@]}" run --rm backup-runner deploy/backup-files.sh
     # Run pgbackrest as the postgres user (the WAL archive_command runs as that uid), so the repo
     # files - notably archive.info - stay owned by postgres and remain readable by archive-push.

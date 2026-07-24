@@ -47,6 +47,10 @@ if [ "$mode" = "compose" ]; then
     # run in the backup-runner (restic + mounts); pg runs inside the db container (pgbackrest lives
     # there), then the runner records the pg sentinel into the shared backup dir.
     "${compose[@]}" run --rm backup-runner deploy/backup-files.sh
+    # Bootstrap the stanza if the repo is fresh/was wiped (host mode does the same in backup-pg.sh);
+    # without it pgbackrest backup crashes with a raw 139 instead of a clear error, and WAL
+    # archiving stays broken after a repo wipe.
+    "${compose[@]}" exec -u postgres -T db pgbackrest --stanza=doktok stanza-create 2>/dev/null || true
     # Run pgbackrest as the postgres user (the WAL archive_command runs as that uid), so the repo
     # files - notably archive.info - stay owned by postgres and remain readable by archive-push.
     # `exec` defaults to root, which would write root-owned files and break WAL archiving (#377).

@@ -194,6 +194,12 @@ the offsite sets per leg and flags the DRP offsite leg when below `DOKTOK_OFFSIT
 7 * * * *  cd <repo> && make dev-azure-sync >> backups/cron.log 2>&1
 ```
 
+**Restore from Azure (#359)**: `make dev-azure-fetch` (or `deploy/azure-fetch.sh` on prod) downloads
+the latest (or `TS=<ts>`) tarball pair into `./backups.azure-restore`, unpacks it, and verifies
+both repos are readable. Then restore from staging with the SAME restore script:
+`DOKTOK_BACKUP_DIR=./backups.azure-restore make dev-restore FILES_TARGET=./storage/files`
+(+ optional `PITR=...`). The live local repo is never touched by the fetch.
+
 The **pg leg also flags a stuck WAL archiver**:
 `deploy/pg-wal-freshness.sh` (every minute in prod via `doktok-pg-wal-freshness.timer`) stamps the
 sentinel with the last archived WAL time and marks the leg failed when the most recent archive

@@ -128,6 +128,13 @@ dev-azure-sync: ## Push the local backup repo to Azure Blob (offsite leg; needs 
 		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)"; \
 	./deploy/azure-sync.sh
 
+dev-azure-fetch: ## Fetch an offsite backup set from Azure into ./backups.azure-restore (TS=<timestamp> for a specific set)
+	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
+		DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
+	./deploy/azure-fetch.sh ./backups.azure-restore $(TS)
+
 dev-restore: ## Restore Postgres + files_root from the local repo (DESTRUCTIVE; usage: make dev-restore FILES_TARGET=./storage/files [PITR="YYYY-MM-DD HH:MM:SS+00"])
 	DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env \
 		./deploy/restore.sh $(FILES_TARGET) $(if $(PITR),"$(PITR)",)

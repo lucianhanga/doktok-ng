@@ -216,14 +216,40 @@ function WordCloud2D({
           spiral="archimedean"
           rotate={0}
         >
-          {(cloudWords) =>
-            cloudWords.map((w) => {
+          {(cloudWords) => {
+            // d3-cloud leaves the cloud as big as the spiral needs it - on a wide canvas that is a
+            // compact center blob. Rescale the finished layout to fill the canvas (small margin),
+            // keeping the relative geometry (and center-out order) intact.
+            let minX = Infinity,
+              maxX = -Infinity,
+              minY = Infinity,
+              maxY = -Infinity;
+            for (const w of cloudWords) {
+              const sizePx = w.size ?? 0;
+              const wx = w.x ?? 0;
+              const wy = w.y ?? 0;
+              const hw = (w.text?.length ?? 1) * sizePx * 0.3;
+              const hh = sizePx * 0.6;
+              minX = Math.min(minX, wx - hw);
+              maxX = Math.max(maxX, wx + hw);
+              minY = Math.min(minY, wy - hh);
+              maxY = Math.max(maxY, wy + hh);
+            }
+            const spanX = maxX - minX || 1;
+            const spanY = maxY - minY || 1;
+            const k = Math.min(
+              (size.width - 24) / spanX,
+              (size.height - 24) / spanY,
+            );
+            const midX = (minX + maxX) / 2;
+            const midY = (minY + maxY) / 2;
+            return cloudWords.map((w) => {
               const entity = w.text ? byText.get(w.text) : undefined;
               return (
                 <text
                   key={w.text}
                   textAnchor="middle"
-                  transform={`translate(${w.x}, ${w.y})`}
+                  transform={`translate(${((w.x ?? 0) - midX) * k}, ${((w.y ?? 0) - midY) * k})`}
                   fontSize={w.size}
                   fontFamily={w.font}
                   fill={entity ? colorForType(entity.entity_type) : "var(--text)"}
@@ -233,8 +259,8 @@ function WordCloud2D({
                   {w.text}
                 </text>
               );
-            })
-          }
+            });
+          }}
         </Wordcloud>
       )}
     </div>
@@ -262,13 +288,17 @@ function WordCloud3D({
     [],
   );
 
-  // Unit-sphere directions (even Fibonacci distribution), stable per word list.
+  // Unit-sphere directions (even Fibonacci lattice), but the y positions are re-ordered
+  // equator-first: words arrive occurrence-sorted, so the most frequent land at y≈0 - the canvas
+  // center band - instead of the ellipsoid's top.
   const dirs = useMemo(() => {
     const n = words.length;
     if (n === 0) return [] as { x: number; y: number; z: number }[];
     const golden = Math.PI * (3 - Math.sqrt(5));
+    const latticeY = Array.from({ length: n }, (_, i) => (n === 1 ? 0 : 1 - (i / (n - 1)) * 2));
+    const equatorFirst = [...latticeY].sort((a, b) => Math.abs(a) - Math.abs(b));
     return words.map((_, i) => {
-      const y = n === 1 ? 0 : 1 - (i / (n - 1)) * 2;
+      const y = equatorFirst[i];
       const r = Math.sqrt(Math.max(0, 1 - y * y));
       const theta = golden * i;
       return { x: Math.cos(theta) * r, y, z: Math.sin(theta) * r };

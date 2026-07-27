@@ -32,7 +32,8 @@ function colorForType(entityType: string): string {
   return TYPE_COLORS[entityType.toUpperCase()] ?? "var(--accent, #6ea8fe)";
 }
 
-// sqrt scale so the single most-frequent entity does not dwarf the rest of the cloud.
+// sqrt scale so the single most-frequent entity does not dwarf the rest of the cloud. d3-cloud
+// sorts by size descending and spirals center-out, so the top of this scale lands in the middle.
 function makeFontSizer(words: CloudDatum[]): (d: CloudDatum) => number {
   const values = words.map((w) => w.value);
   const min = Math.min(...values);
@@ -40,7 +41,7 @@ function makeFontSizer(words: CloudDatum[]): (d: CloudDatum) => number {
   const lo = Math.sqrt(min);
   const hi = Math.sqrt(max);
   const MIN_PX = 14;
-  const MAX_PX = 64;
+  const MAX_PX = 88;
   return (d: CloudDatum) => {
     if (hi === lo) return (MIN_PX + MAX_PX) / 2;
     return MIN_PX + ((Math.sqrt(d.value) - lo) / (hi - lo)) * (MAX_PX - MIN_PX);

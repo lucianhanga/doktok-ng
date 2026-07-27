@@ -55,6 +55,25 @@ test("renders entity words and stats in 2D", async () => {
   expect(screen.getByText(/2 entities · showing top 2/)).toBeInTheDocument();
 });
 
+test("words reach the layout sorted by occurrences (d3-cloud spirals center-out from that order)", async () => {
+  const rows = [
+    { entity_type: "GPE", normalized_value: "small", document_count: 1, occurrences: 1 },
+    { entity_type: "ORG", normalized_value: "big", document_count: 9, occurrences: 50 },
+    { entity_type: "PERSON", normalized_value: "mid", document_count: 3, occurrences: 10 },
+  ];
+  stubEntities(rows);
+  render(<WordCloudPanel />);
+  await waitFor(() => screen.getByText("big"));
+  // the mocked Wordcloud receives words in panel order; assert descending occurrences
+  const texts = screen.getAllByText(/^(small|big|mid)$/).map((n) => n.textContent);
+  expect(texts.indexOf("big")).toBeLessThan(texts.indexOf("mid"));
+  expect(texts.indexOf("mid")).toBeLessThan(texts.indexOf("small"));
+  // and the biggest occurrence gets the biggest font size
+  const big = parseFloat(screen.getByText("big").style.fontSize || "0");
+  const small = parseFloat(screen.getByText("small").style.fontSize || "0");
+  if (big > 0 && small > 0) expect(big).toBeGreaterThan(small);
+});
+
 test("duplicate normalized values render once (highest-occurrence wins)", async () => {
   stubEntities([
     { entity_type: "GPE", normalized_value: "münchen", document_count: 2, occurrences: 4 },

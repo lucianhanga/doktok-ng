@@ -55,6 +55,18 @@ test("renders entity words and stats in 2D", async () => {
   expect(screen.getByText(/2 entities · showing top 2/)).toBeInTheDocument();
 });
 
+test("duplicate normalized values render once (highest-occurrence wins)", async () => {
+  stubEntities([
+    { entity_type: "GPE", normalized_value: "münchen", document_count: 2, occurrences: 4 },
+    { entity_type: "ORG", normalized_value: "münchen", document_count: 5, occurrences: 9 },
+    { entity_type: "PERSON", normalized_value: "alice", document_count: 1, occurrences: 2 },
+  ]);
+  render(<WordCloudPanel />);
+  await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
+  expect(screen.getAllByText("münchen")).toHaveLength(1);
+  expect(screen.getByText(/3 entities · showing top 2/)).toBeInTheDocument();
+});
+
 test("clicking a word shows its detail", async () => {
   stubEntities();
   render(<WordCloudPanel />);

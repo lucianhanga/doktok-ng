@@ -79,7 +79,15 @@ export function WordCloudPanel() {
   }, [entities]);
 
   const words: CloudDatum[] = useMemo(() => {
-    return [...entities]
+    // Entities are NOT unique by normalized_value (e.g. "münchen" as GPE and ORG): dedupe by text,
+    // keeping the highest-occurrence entity per text - otherwise the cloud shows the same word
+    // twice and React (correctly) complains about duplicate keys.
+    const byText = new Map<string, EntitySummary>();
+    for (const e of entities) {
+      const prev = byText.get(e.normalized_value);
+      if (!prev || e.occurrences > prev.occurrences) byText.set(e.normalized_value, e);
+    }
+    return [...byText.values()]
       .sort((a, b) => b.occurrences - a.occurrences)
       .slice(0, MAX_WORDS)
       .map((e) => ({ text: e.normalized_value, value: e.occurrences, entity: e }));

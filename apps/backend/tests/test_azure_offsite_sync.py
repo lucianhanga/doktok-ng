@@ -58,3 +58,15 @@ def test_terraform_lifecycle_ladder() -> None:
     assert "delete_after_days_since_modification_greater_than" in TF
     assert "cool_after_days" in TF and "cold_after_days" in TF
     assert "archive_after_days" in TF and "delete_after_days" in TF
+
+
+def test_azure_fetch_downloads_unpacks_and_verifies() -> None:
+    fetch = (REPO_ROOT / "deploy" / "azure-fetch.sh").read_text(encoding="utf-8")
+    assert '--prefix "pg-repo-"' in fetch  # resolves the latest offsite set
+    assert '"${leg}-repo-${want_ts}.tar.gz"' in fetch  # both legs, one tarball each
+    assert "az storage blob download" in fetch
+    assert "tar -xzf" in fetch
+    assert "restic snapshots" in fetch  # verifies the fetched restic repo is readable
+    assert "--stanza=doktok info" in fetch  # verifies the fetched pgBackRest repo is readable
+    # restore-from-staging uses the SAME engine, pointed at the staging dir
+    assert "DOKTOK_BACKUP_DIR=${staging}" in fetch

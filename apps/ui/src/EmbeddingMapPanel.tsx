@@ -20,6 +20,20 @@ function hexToRgb(hex: string): Rgb {
   return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
 }
 
+// WebGL capability probe, injectable for tests (jsdom has no WebGL). When unavailable (or when
+// regl/DeckGL still fails despite it), the panel degrades to a static SVG scatter instead of
+// taking the whole Insights view down.
+export const glSupport = {
+  check(): boolean {
+    try {
+      const c = document.createElement("canvas");
+      return Boolean(c.getContext("webgl2") ?? c.getContext("webgl"));
+    } catch {
+      return false;
+    }
+  },
+};
+
 // Normalize projected coordinates into [-1, 1] so the initial camera/zoom is predictable across
 // datasets (the projector's output range varies run to run).
 function normalize(points: VizPoint[], dim: 2 | 3): { xy: number[][]; span: number } {
@@ -196,6 +210,47 @@ function EmbeddingLegend({ map }: { map: EmbeddingMap | null }) {
   );
 }
 
+function SvgScatter({
+  points,
+  legendColors,
+  onSelect,
+}: {
+  points: VizPoint[];
+  legendColors: Map<string, string>;
+  onSelect: (p: VizPoint | null) => void;
+}) {
+  const { xy } = normalize(points, 2);
+  return (
+    <div className="emap-canvas emap-canvas-fallback">
+      <p className="emap-fallback-note muted" role="note">
+        WebGL unavailable — showing a simplified static map. Enable hardware acceleration for the
+        interactive view.
+      </p>
+      <svg
+        viewBox="-1.05 -1.05 2.1 2.1"
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Embedding map (static fallback)"
+      >
+        {points.map((p, i) => (
+          <circle
+            key={p.chunk_id ?? i}
+            cx={xy[i][0]}
+            cy={-xy[i][1]}
+            r={0.015}
+            fill={legendColors.get(p.category) ?? "#6ea8fe"}
+            opacity={0.8}
+            style={{ cursor: "pointer" }}
+            onClick={() => onSelect(p)}
+          >
+            <title>{p.snippet}</title>
+          </circle>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 function Scatter2D({
   points,
   legendColors,
@@ -206,10 +261,12 @@ function Scatter2D({
   onSelect: (p: VizPoint | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [glOk] = useState(() => glSupport.check());
+  const [glFailed, setGlFailed] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !glOk || glFailed) return;
 
     const categories = Array.from(legendColors.keys());
     const palette = categories.map((c) => legendColors.get(c) ?? "#6ea8fe");
@@ -221,12 +278,18 @@ function Scatter2D({
     // regl-scatterplot points: [x, y, categoryIndex]; colorBy 'valueA' maps the index into `palette`.
     const data = points.map((p, i) => [xy[i][0], xy[i][1], catIndex(p.category)]);
 
-    const scatterplot = createScatterplot({
-      canvas,
-      pointSize: 3,
-      pointSizeSelected: 6,
-      opacity: 0.75,
-    });
+    let scatterplot: ReturnType<typeof createScatterplot>;
+    try {
+      scatterplot = createScatterplot({
+        canvas,
+        pointSize: 3,
+        pointSizeSelected: 6,
+        opacity: 0.75,
+      });
+    } catch {
+      setGlFailed(true); // context creation failed anyway -> static fallback, not a crash
+      return;
+    }
     scatterplot.set({ colorBy: "valueA", pointColor: palette.length ? palette : ["#6ea8fe"] });
     const onPoint = (i: number | undefined) => onSelect(i == null ? null : (points[i] ?? null));
     scatterplot.subscribe("select", ({ points: idxs }) => onPoint(idxs[0]));
@@ -238,8 +301,11 @@ function Scatter2D({
     void scatterplot.draw(data, { zDataType: "categorical" });
 
     return () => scatterplot.destroy();
-  }, [points, legendColors, onSelect]);
+  }, [points, legendColors, onSelect, glOk, glFailed]);
 
+  if (!glOk || glFailed) {
+    return <SvgScatter points={points} legendColors={legendColors} onSelect={onSelect} />;
+  }
   return (
     <div className="emap-canvas">
       <canvas ref={canvasRef} aria-hidden="true" />
@@ -257,6 +323,7 @@ function Scatter3D({
   onSelect: (p: VizPoint | null) => void;
 }) {
   const { xy } = useMemo(() => normalize(points, 3), [points]);
+  const [glOk] = useState(() => glSupport.check());
   const rgbFor = useMemo(() => {
     const cache = new Map<string, Rgb>();
     return (c: string): Rgb => {
@@ -290,6 +357,9 @@ function Scatter3D({
     onClick: (info) => onSelect((info.object as { point: VizPoint } | null)?.point ?? null),
   });
 
+  if (!glOk) {
+    return <SvgScatter points={points} legendColors={legendColors} onSelect={onSelect} />;
+  }
   return (
     <div className="emap-canvas">
       <DeckGL

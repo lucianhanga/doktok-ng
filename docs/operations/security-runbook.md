@@ -161,7 +161,20 @@ timers on the box; launchd/cron on a Mac) and manually by the system administrat
   pgBackRest at all.
 
 DRP freshness is read-only in the UI (Settings → DRP): each leg's last run + age, from the
-sentinels the scripts write into the backup dir. The **pg leg also flags a stuck WAL archiver**:
+sentinels the scripts write into the backup dir.
+
+### Offsite (Azure Blob, #348)
+
+The design is local-first: everything stages encrypted in `./backups` (restic + pgBackRest repos,
+both AES-256), and the Azure hop only ever sees ciphertext. Per-instance naming is derived from
+`DOKTOK_INSTANCE_ID` (12 hex chars, generated once and persisted in `.env`): RG
+`doktok-<id>-rg`, storage account `doktokbkp<id>`, container `doktok-backups` — so independent
+instances never collide (explicit `DOKTOK_AZURE_RG/ACCOUNT/CONTAINER` override). One-time setup
+with `az login`: `deploy/azure-provision.sh` creates the account/container with blob versioning,
+a 30-day immutability policy, and a lifecycle policy (Cool after 30d, delete after 90d — never
+Archive, rehydration would blow RTO).
+
+The **pg leg also flags a stuck WAL archiver**:
 `deploy/pg-wal-freshness.sh` (every minute in prod via `doktok-pg-wal-freshness.timer`) stamps the
 sentinel with the last archived WAL time and marks the leg failed when the most recent archive
 attempt failed. On the Mac dev box run it as `make dev-pg-wal-freshness` — schedule it every

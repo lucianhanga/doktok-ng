@@ -23,12 +23,27 @@ function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  // Upload feedback is a toast, not a permanent label: it clears itself after a few seconds,
+  // otherwise it lingers forever and reads as "the stats never updated".
+  const messageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showMessage(m: { ok: boolean; text: string }) {
+    setMessage(m);
+    if (messageTimer.current) clearTimeout(messageTimer.current);
+    messageTimer.current = setTimeout(() => setMessage(null), 10_000);
+  }
+  useEffect(
+    () => () => {
+      if (messageTimer.current) clearTimeout(messageTimer.current);
+    },
+    [],
+  );
 
   async function send(files: File[]) {
     if (files.length === 0) return;
     // Refuse the whole batch above the count cap (you can't pick which to keep); clear message.
     if (files.length > MAX_UPLOAD_FILES) {
-      setMessage({
+      showMessage({
         ok: false,
         text: `At most ${MAX_UPLOAD_FILES} files per upload — you dropped ${files.length}. Please split into smaller batches.`,
       });
@@ -41,10 +56,10 @@ function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
       const parts: string[] = [];
       if (res.accepted.length) parts.push(`${res.accepted.length} file(s) queued for ingestion`);
       if (res.rejected.length) parts.push(`${res.rejected.length} rejected: ${res.rejected.join("; ")}`);
-      setMessage({ ok: res.rejected.length === 0, text: parts.join(" · ") || "Nothing to upload" });
+      showMessage({ ok: res.rejected.length === 0, text: parts.join(" · ") || "Nothing to upload" });
       onUploaded();
     } catch (e) {
-      setMessage({ ok: false, text: e instanceof Error ? e.message : "upload failed" });
+      showMessage({ ok: false, text: e instanceof Error ? e.message : "upload failed" });
     } finally {
       setBusy(false);
     }

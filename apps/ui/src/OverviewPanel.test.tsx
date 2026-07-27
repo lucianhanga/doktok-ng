@@ -244,3 +244,45 @@ test("files forwarded by the global overlay go through the same upload path", as
   await waitFor(() => expect(screen.getByText(/queued for ingestion/i)).toBeInTheDocument());
   expect(calls.some((u) => u.includes("/api/v1/ingestion/upload"))).toBe(true);
 });
+
+test("the upload message is a toast and clears itself (no stale 'queued' label)", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/v1/ingestion/upload")) {
+          return new Response(JSON.stringify({ accepted: ["c.pdf"], rejected: [] }), {
+            status: 200,
+          });
+        }
+        if (url.includes("/api/v1/stats")) {
+          return new Response(
+            JSON.stringify({
+              documents: 0,
+              jobs: {},
+              entities: 0,
+              pending_ingest: 0,
+              documents_pending_features: 0,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify([]), { status: 200 });
+      }),
+    );
+    render(<OverviewPanel />);
+    const file = new File(["hello"], "c.pdf", { type: "application/pdf" });
+    window.dispatchEvent(new CustomEvent(INGEST_FILES_EVENT, { detail: { files: [file] } }));
+    await vi.waitFor(() =>
+      expect(screen.getByText(/queued for ingestion/i)).toBeInTheDocument(),
+    );
+    vi.advanceTimersByTime(10_500);
+    await vi.waitFor(() =>
+      expect(screen.queryByText(/queued for ingestion/i)).not.toBeInTheDocument(),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});

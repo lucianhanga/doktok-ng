@@ -120,3 +120,16 @@ def test_pg_wal_freshness_honours_compose_overrides() -> None:
     assert "DOKTOK_COMPOSE_ENV_FILE" in text
     # and never the hardcoded prod pair again
     assert "docker-compose.prod.yml --env-file .env.production" not in text
+
+
+def test_pgbackrest_log_and_lock_dirs_are_created() -> None:
+    """stanza-create does NOT create the log/lock dirs; without them every pgbackrest run warns
+    'unable to open log file' and logs nowhere - the scripts must create them."""
+    backup_sh = (REPO_ROOT / "deploy" / "backup.sh").read_text(encoding="utf-8")
+    backup_pg_sh = (REPO_ROOT / "deploy" / "backup-pg.sh").read_text(encoding="utf-8")
+    restore_sh = (REPO_ROOT / "deploy" / "restore.sh").read_text(encoding="utf-8")
+    assert "/var/lib/doktok/pg/log" in backup_sh
+    assert "/var/lib/doktok/pg/lock" in backup_sh
+    assert '"$PG_DIR/log"' in backup_pg_sh
+    assert '"$PG_DIR/lock"' in backup_pg_sh
+    assert "/var/lib/doktok/pg/log" in restore_sh

@@ -20,7 +20,9 @@ require pgbackrest
 trap 'write_status pg false "backup failed"; log_event pg failure false "backup failed"; err "postgres backup FAILED"; exit 1' ERR
 
 pg_t0="$(date +%s%3N 2>/dev/null || echo 0)"
-mkdir -p "$PG_DIR"
+# The log/lock dirs are NOT created by stanza-create; without them every pgbackrest run warns
+# "unable to open log file" and logs nowhere.
+mkdir -p "$PG_DIR" "$PG_DIR/log" "$PG_DIR/lock"
 conf="${BACKUP_DIR}/pgbackrest.conf"
 cat >"$conf" <<CONF
 [global]

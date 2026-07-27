@@ -49,7 +49,9 @@ if [ "$mode" = "compose" ]; then
     "${compose[@]}" run --rm backup-runner deploy/backup-files.sh
     # Bootstrap the stanza if the repo is fresh/was wiped (host mode does the same in backup-pg.sh);
     # without it pgbackrest backup crashes with a raw 139 instead of a clear error, and WAL
-    # archiving stays broken after a repo wipe.
+    # archiving stays broken after a repo wipe. The log/lock dirs are NOT created by stanza-create;
+    # without them every pgbackrest run warns "unable to open log file" and logs nowhere.
+    "${compose[@]}" exec -u postgres -T db mkdir -p /var/lib/doktok/pg/log /var/lib/doktok/pg/lock
     "${compose[@]}" exec -u postgres -T db pgbackrest --stanza=doktok stanza-create 2>/dev/null || true
     # Run pgbackrest as the postgres user (the WAL archive_command runs as that uid), so the repo
     # files - notably archive.info - stay owned by postgres and remain readable by archive-push.

@@ -42,6 +42,8 @@ if [ "$mode" = "compose" ]; then
     esac
     # Stop the db container, then restore the base backup (optional PITR) from a one-off container
     # sharing the data + repo volumes; files_root is restored by the backup-runner (restic there).
+    # The log/lock dirs are NOT created by stanza-create; without them pgbackrest warns + logs nowhere.
+    "${compose[@]}" exec -u postgres -T db mkdir -p /var/lib/doktok/pg/log /var/lib/doktok/pg/lock 2>/dev/null || true
     "${compose[@]}" stop db || true
     pitr_args=()
     if [ -n "$pitr" ]; then

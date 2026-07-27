@@ -21,7 +21,11 @@ vi.mock("@deck.gl/layers", () => ({
   PointCloudLayer: class {},
 }));
 
-import { EmbeddingMapPanel } from "./EmbeddingMapPanel";
+import { EmbeddingMapPanel, glSupport } from "./EmbeddingMapPanel";
+
+// The real renderers need WebGL; jsdom has none, so default the probe to "available" (the mocks
+// above stand in) and flip it per-test for the fallback path.
+glSupport.check = () => true;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -109,4 +113,24 @@ test("toggling to 3D refetches dim=3 and mounts the deck.gl canvas", async () =>
   fireEvent.click(screen.getByRole("button", { name: "3D" }));
   await waitFor(() => expect(screen.getByTestId("deckgl")).toBeInTheDocument());
   expect(fetchMock.mock.calls.some(([u]) => String(u).includes("dim=3"))).toBe(true);
+});
+
+test("without WebGL the panel degrades to a static SVG map instead of crashing", async () => {
+  glSupport.check = () => false;
+  try {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(mapPayload(2, true, [PT])), { status: 200 })),
+    );
+    const { container } = render(<EmbeddingMapPanel />);
+    await waitFor(() =>
+      expect(screen.getByText(/WebGL unavailable/)).toBeInTheDocument(),
+    );
+    // the static fallback still shows the points (clickable) and does not touch regl
+    expect(container.querySelectorAll("svg circle").length).toBe(1);
+    // and the rest of the panel (legend, counts) is alive
+    expect(screen.getByText(/1 points · umap/)).toBeInTheDocument();
+  } finally {
+    glSupport.check = () => true;
+  }
 });

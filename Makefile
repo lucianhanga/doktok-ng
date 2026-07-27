@@ -161,8 +161,13 @@ drp-selftest: ## No-risk DRP self-test: Postgres PITR proof + portable export/re
 verify-recovery: ## No-risk dev recovery check: round-trip the LIVE dev DB + files into a throwaway Postgres and assert documents + enriched/extracted rows survive. Run after ingesting. (needs `make db`)
 	@deploy/verify-recovery-dev.sh
 
-restore-drill-dev: ## DESTRUCTIVE dev disaster drill: back up -> WIPE the dev DB + files -> restore -> verify. Backs up first + asks to confirm (FORCE=1 to skip). Stop run-backend/run-worker first.
-	@deploy/restore-drill-dev.sh
+restore-drill-dev: ## DESTRUCTIVE dev disaster drill on the real engine: baseline -> backup -> WIPE -> restore (PITR) -> verify counts/hashes/API. Asks to confirm (FORCE=1 to skip). Stop run-backend/run-worker first.
+	DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env \
+		deploy/restore-drill-dev.sh
+
+dev-drill: ## NO-RISK dev restore drill (same script as prod's weekly timer): restores the latest files snapshot + pg backup into throwaway targets and verifies counts/hashes vs live; writes the DRP drill sentinel.
+	DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env \
+		./deploy/restore-drill.sh
 
 TYPE ?= full
 backup: ## Run a backup now -> populates the DRP (sentinels + history). Honors DOKTOK_DEPLOY_MODE; TYPE=full|diff|incr (default full). The on-demand, no-systemd path for dev.

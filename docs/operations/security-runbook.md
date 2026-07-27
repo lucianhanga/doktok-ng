@@ -170,6 +170,25 @@ Note: after wiping a bind-mounted backups dir, restart the db container so the m
 (`rm -rf` of a mount point leaves a stale deleted inode inside the container and pgbackrest
 crashes until the restart).
 
+### Restore drills (proving recovery, #755)
+
+An untested backup is not a backup. Both drills verify EVERYTHING came back — restored file count
+== live count, sha256 spot-checks of restored originals against `documents.sha256`, and per-table
+row counts (documents, chunks, entities, tags, notes, users, tenants, features done) compared
+exactly — then write the drill sentinel so Settings → DRP shows the last drill result + measured
+RPO/RTO:
+
+- **No-risk drill (prod + dev)**: `deploy/restore-drill.sh` restores the latest files snapshot
+  and pg backup into throwaway targets and compares against live — it touches NO production data.
+  Prod runs it weekly (`doktok-restore-drill.timer`) and on demand (Settings → DRP → run drill);
+  on the dev box: `make dev-drill`. Run it when ingestion is idle (the restored DB lags live by
+  up to the WAL interval).
+- **Destructive dev drill (real engine, full loop)**: `make restore-drill-dev` (asks for "wipe",
+  `FORCE=1` skips) does baseline → `backup.sh` → DROP SCHEMA + wipe files_root → `restore.sh`
+  with PITR to just before the wipe → verify counts/hashes + API smoke. Stop `run-backend` /
+  `run-worker` first. A cron backup firing mid-drill is blocked by the anomaly guard (#747) —
+  that is the guard doing its job, not a drill failure.
+
 ### Incident freeze (first response to data loss)
 
 Post-disaster backups are poison: they snapshot the wreckage and prune the good history

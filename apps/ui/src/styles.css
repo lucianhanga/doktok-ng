@@ -6278,7 +6278,9 @@ tr.row-selected {
 .emap-canvas,
 .wcloud-canvas {
   position: relative;
-  min-height: 420px;
+  /* A BOUNDED height: the 2D cloud svg is sized from the measured container, so a content-driven
+     height feeds back (svg grows the container -> re-measure -> re-layout -> grow...). */
+  height: clamp(420px, 60vh, 720px);
   border: 1px solid var(--border, #2a3342);
   border-radius: 10px;
   overflow: hidden;

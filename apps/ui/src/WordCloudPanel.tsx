@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Wordcloud } from "@visx/wordcloud";
-import TagCloud from "TagCloud";
 
 import { fetchEntities, type EntitySummary } from "./api";
+import { useMeasure } from "./hooks";
 
 // A word carries its source entity so a click can surface the full detail (type + counts).
 interface CloudDatum {
@@ -151,7 +151,7 @@ export function WordCloudPanel() {
           {mode === "2d" ? (
             <WordCloud2D words={words} fontSize={fontSize} onSelect={setSelected} />
           ) : (
-            <WordCloud3D words={words} onSelect={setSelected} />
+            <WordCloud3D words={words} fontSize={fontSize} onSelect={setSelected} />
           )}
           <aside className="wcloud-detail" aria-live="polite">
             {selected ? (
@@ -191,79 +191,129 @@ function WordCloud2D({
   onSelect: (e: EntitySummary) => void;
 }) {
   const byText = useMemo(() => new Map(words.map((w) => [w.text, w.entity])), [words]);
+  // The layout MUST be computed over the real canvas size: a hardcoded smaller box crowds the
+  // whole cloud into one corner of the (usually much larger) container.
+  const [ref, size] = useMeasure<HTMLDivElement>();
   return (
-    <div className="wcloud-canvas">
-      <Wordcloud<CloudDatum>
-        words={words}
-        width={640}
-        height={420}
-        fontSize={fontSize}
-        font="inherit"
-        padding={2}
-        spiral="archimedean"
-        rotate={0}
-      >
-        {(cloudWords) =>
-          cloudWords.map((w) => {
-            const entity = w.text ? byText.get(w.text) : undefined;
-            return (
-              <text
-                key={w.text}
-                textAnchor="middle"
-                transform={`translate(${w.x}, ${w.y})`}
-                fontSize={w.size}
-                fontFamily={w.font}
-                fill={entity ? colorForType(entity.entity_type) : "var(--text)"}
-                style={{ cursor: "pointer" }}
-                onClick={() => entity && onSelect(entity)}
-              >
-                {w.text}
-              </text>
-            );
-          })
-        }
-      </Wordcloud>
+    <div className="wcloud-canvas" ref={ref}>
+      {size.width > 0 && size.height > 0 && (
+        <Wordcloud<CloudDatum>
+          words={words}
+          width={size.width}
+          height={size.height}
+          fontSize={fontSize}
+          font="inherit"
+          padding={2}
+          spiral="archimedean"
+          rotate={0}
+        >
+          {(cloudWords) =>
+            cloudWords.map((w) => {
+              const entity = w.text ? byText.get(w.text) : undefined;
+              return (
+                <text
+                  key={w.text}
+                  textAnchor="middle"
+                  transform={`translate(${w.x}, ${w.y})`}
+                  fontSize={w.size}
+                  fontFamily={w.font}
+                  fill={entity ? colorForType(entity.entity_type) : "var(--text)"}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => entity && onSelect(entity)}
+                >
+                  {w.text}
+                </text>
+              );
+            })
+          }
+        </Wordcloud>
+      )}
     </div>
   );
 }
 
+// 3D: a slowly rotating ellipsoid (Fibonacci-sphere distribution) that fills the whole canvas
+// (rx/ry from the measured size - no spherical constraint), depth-scaled font size + opacity,
+// occurrence-scaled base size. TagCloud.js only does fixed-radius spheres, hence a renderer here.
 function WordCloud3D({
   words,
+  fontSize,
   onSelect,
 }: {
   words: CloudDatum[];
+  fontSize: (d: CloudDatum) => number;
   onSelect: (e: EntitySummary) => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const [ref, size] = useMeasure<HTMLDivElement>();
+  const [angle, setAngle] = useState(0);
+  const reduceMotion = useMemo(
+    () =>
+      typeof window !== "undefined" &&
+      Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches),
+    [],
+  );
+
+  // Unit-sphere directions (even Fibonacci distribution), stable per word list.
+  const dirs = useMemo(() => {
+    const n = words.length;
+    if (n === 0) return [] as { x: number; y: number; z: number }[];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    return words.map((_, i) => {
+      const y = n === 1 ? 0 : 1 - (i / (n - 1)) * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const theta = golden * i;
+      return { x: Math.cos(theta) * r, y, z: Math.sin(theta) * r };
+    });
+  }, [words]);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const reduce =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const texts = words.map((w) => w.text);
-    const tc = TagCloud(el, texts, {
-      radius: 220,
-      maxSpeed: "normal",
-      initSpeed: reduce ? "slow" : "normal",
-      keep: !reduce,
-    });
-    // Color each generated span by its entity type and wire clicks (spans map to `texts` order).
-    const items = el.querySelectorAll<HTMLElement>(".tagcloud--item");
-    items.forEach((span, i) => {
-      const entity = words[i]?.entity;
-      if (!entity) return;
-      span.style.color = colorForType(entity.entity_type);
-      span.style.cursor = "pointer";
-      span.addEventListener("click", () => onSelect(entity));
-    });
-    return () => {
-      // TagCloud attaches a destroy() to the instance in v2.
-      (tc as { destroy?: () => void }).destroy?.();
-      el.replaceChildren();
+    if (reduceMotion) return;
+    let raf = 0;
+    let last = performance.now();
+    const step = (t: number) => {
+      setAngle((a) => a + (t - last) * 0.00025); // one full turn ~25s
+      last = t;
+      raf = requestAnimationFrame(step);
     };
-  }, [words, onSelect]);
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [reduceMotion]);
 
-  return <div className="wcloud-canvas wcloud-sphere" ref={ref} aria-hidden="true" />;
+  const { width, height } = size;
+  const rx = width * 0.42;
+  const ry = height * 0.4;
+  const cx = width / 2;
+  const cy = height / 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return (
+    <div className="wcloud-canvas wcloud-ellipsoid" ref={ref} aria-hidden="true">
+      {width > 0 &&
+        height > 0 &&
+        dirs.map((d, i) => {
+          const word = words[i];
+          const x = d.x * cos + d.z * sin;
+          const z = -d.x * sin + d.z * cos;
+          const depth = (z + 1) / 2; // 0 = back, 1 = front
+          return (
+            <span
+              key={word.text}
+              className="wcloud-3d-item"
+              style={{
+                left: cx + x * rx,
+                top: cy + d.y * ry,
+                fontSize: fontSize(word) * (0.55 + 0.5 * depth),
+                opacity: 0.35 + 0.65 * depth,
+                zIndex: Math.round(depth * 100),
+                color: colorForType(word.entity.entity_type),
+              }}
+              onClick={() => onSelect(word.entity)}
+            >
+              {word.text}
+            </span>
+          );
+        })}
+    </div>
+  );
 }

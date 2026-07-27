@@ -134,6 +134,25 @@ test("toggling to 3D renders the ellipsoid with occurrence-scaled sizes", async 
   });
 });
 
+test("3D places the most frequent word closest to the vertical center band", async () => {
+  stubEntities([
+    { entity_type: "PERSON", normalized_value: "big", document_count: 9, occurrences: 50 },
+    { entity_type: "ORG", normalized_value: "mid", document_count: 4, occurrences: 10 },
+    { entity_type: "GPE", normalized_value: "small", document_count: 1, occurrences: 1 },
+  ]);
+  render(<WordCloudPanel />);
+  await waitFor(() => screen.getByText("big"));
+  fireEvent.click(screen.getByRole("button", { name: "3D" }));
+  await waitFor(() => {
+    const big = screen.getByText("big");
+    const small = screen.getByText("small");
+    // the canvas is 800x500 (FakeResizeObserver): center y = 250
+    const bigDist = Math.abs(parseFloat(big.style.top) - 250);
+    const smallDist = Math.abs(parseFloat(small.style.top) - 250);
+    expect(bigDist).toBeLessThanOrEqual(smallDist);
+  });
+});
+
 test("shows an error state when the request fails", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
   render(<WordCloudPanel />);

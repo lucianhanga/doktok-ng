@@ -163,16 +163,36 @@ timers on the box; launchd/cron on a Mac) and manually by the system administrat
 DRP freshness is read-only in the UI (Settings → DRP): each leg's last run + age, from the
 sentinels the scripts write into the backup dir.
 
-### Offsite (Azure Blob, #348)
+### Offsite (Azure Blob, #345/#347/#348)
 
-The design is local-first: everything stages encrypted in `./backups` (restic + pgBackRest repos,
-both AES-256), and the Azure hop only ever sees ciphertext. Per-instance naming is derived from
-`DOKTOK_INSTANCE_ID` (12 hex chars, generated once and persisted in `.env`): RG
+The design is local-first: the live engine (restic + pgBackRest, minute-level PITR) works in
+`./backups`, and Azure holds an **archived copy** — one tarball per leg per run
+(`pg-repo-<ts>.tar.gz`, `files-repo-<ts>.tar.gz`), always ciphertext, uploaded by
+`deploy/azure-sync.sh`. Tarballs (not a raw file sync) because the pg repo is ~68k tiny WAL files:
+a run costs 2 PUTs instead of LIST-ing tens of thousands of blobs, and write-once blobs fit the
+immutability policy exactly (no delete/modify conflicts). Offsite pg recovery point = the sync
+cadence (hourly); minute-level PITR stays local.
+
+Per-instance naming is derived from `DOKTOK_INSTANCE_ID` (12 hex chars, persisted in `.env`): RG
 `doktok-<id>-rg`, storage account `doktokbkp<id>`, container `doktok-backups` — so independent
-instances never collide (explicit `DOKTOK_AZURE_RG/ACCOUNT/CONTAINER` override). One-time setup
-with `az login`: `deploy/azure-provision.sh` creates the account/container with blob versioning,
-a 30-day immutability policy, and a lifecycle policy (Cool after 30d, delete after 90d — never
-Archive, rehydration would blow RTO).
+instances never collide (explicit `DOKTOK_AZURE_RG/ACCOUNT/CONTAINER` override).
+
+Infrastructure as code (Terraform, `deploy/terraform/`; `azure-provision.sh` remains the no-TF
+fallback — don't mix both on one account): resource group, storage account (LRS, TLS1.2, no public
+access, versioning, tags), container, 30-day immutability policy, and the lifecycle ladder — Cool
+after 30d, Cold after 90d, Archive after 180d (offline; rehydration takes hours, acceptable only
+that deep), delete after 365d. One-time: `terraform init && terraform apply
+-var="instance_id=<id>"` with `az login`.
+
+Credentials: a write-scoped SAS (`rwcl`, NO delete, HTTPS-only, expiring) as `DOKTOK_AZURE_SAS` in
+`.env` (store a copy OFF the box). Schedule: prod `doktok-azure-sync.timer` (hourly at :12, after
+the backup); dev `make dev-azure-sync` (cron line below). After each upload an **audit** counts
+the offsite sets per leg and flags the DRP offsite leg when below `DOKTOK_OFFSITE_MIN_SETS`
+(default 3) — the "minimum secure number of backups" floor, which a lifecycle rule cannot express.
+
+```cron
+7 * * * *  cd <repo> && make dev-azure-sync >> backups/cron.log 2>&1
+```
 
 The **pg leg also flags a stuck WAL archiver**:
 `deploy/pg-wal-freshness.sh` (every minute in prod via `doktok-pg-wal-freshness.timer`) stamps the

@@ -1,0 +1,10 @@
+[Unit]
+Description=Push the DokTok backup repo to Azure Blob hourly (offsite leg)
+
+[Timer]
+# 12 minutes past the hour: the hourly diff backup (top of the hour) lands first.
+OnCalendar=*-*-* *:12:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

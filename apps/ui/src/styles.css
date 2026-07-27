@@ -6299,6 +6299,14 @@ tr.row-selected {
   justify-content: center;
   font-family: inherit;
 }
+.wcloud-3d-item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.1;
+}
 .emap-side,
 .wcloud-detail {
   display: flex;

@@ -25,9 +25,6 @@ importers:
       '@visx/wordcloud':
         specifier: ^4.0.0
         version: 4.0.0(@types/react@18.3.31)(react@18.3.1)
-      TagCloud:
-        specifier: ^2.5.0
-        version: 2.5.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -907,9 +904,6 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
-
-  TagCloud@2.5.0:
-    resolution: {integrity: sha512-lMr8UCbOLOyP9iKc/lJalpNTm25rjmplbQ20ljw02tyx4ITBxDh4TRBhSpayC6QGjtRtvslUljfr2SGoPOGnXw==}
 
   accessor-fn@1.5.3:
     resolution: {integrity: sha512-rkAofCwe/FvYFUlMB0v0gWmhqtfAtV1IUkdPbfhTUyYniu5LrC0A0UJkTH0Jv3S8SvwkmfuAlY+mQIJATdocMA==}
@@ -3107,8 +3101,6 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
-
-  TagCloud@2.5.0: {}
 
   accessor-fn@1.5.3: {}
 

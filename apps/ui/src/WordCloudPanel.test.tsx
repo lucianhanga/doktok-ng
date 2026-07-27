@@ -12,8 +12,17 @@ vi.mock("@visx/wordcloud", () => ({
     children: (w: { text: string; size: number; x: number; y: number; font: string }[]) => unknown;
   }) => children(words.map((w) => ({ text: w.text, size: 16, x: 0, y: 0, font: "inherit" }))),
 }));
-// TagCloud needs real layout/animation; stub it to a no-op instance.
-vi.mock("TagCloud", () => ({ default: vi.fn(() => ({ destroy: vi.fn() })) }));
+// jsdom has no ResizeObserver; report a fixed canvas so measured renders proceed.
+class FakeResizeObserver {
+  constructor(private cb: (entries: { contentRect: { width: number; height: number } }[]) => void) {}
+  observe(el: Element) {
+    this.cb([{ contentRect: { width: 800, height: 500 } }]);
+    void el;
+  }
+  unobserve() {}
+  disconnect() {}
+}
+vi.stubGlobal("ResizeObserver", FakeResizeObserver);
 
 import { WordCloudPanel } from "./WordCloudPanel";
 
@@ -77,13 +86,21 @@ test("shows the empty state with no entities", async () => {
   await waitFor(() => expect(screen.getByText(/No entities extracted yet/)).toBeInTheDocument());
 });
 
-test("toggling to 3D mounts the TagCloud sphere", async () => {
-  const { default: TagCloud } = await import("TagCloud");
+test("toggling to 3D renders the ellipsoid with occurrence-scaled sizes", async () => {
   stubEntities();
   render(<WordCloudPanel />);
   await waitFor(() => screen.getByText("alice"));
   fireEvent.click(screen.getByRole("button", { name: "3D" }));
-  await waitFor(() => expect(vi.mocked(TagCloud)).toHaveBeenCalled());
+  await waitFor(() => {
+    const alice = screen.getByText("alice");
+    const acme = screen.getByText("acme corp");
+    expect(alice.className).toContain("wcloud-3d-item");
+    expect(acme.className).toContain("wcloud-3d-item");
+    // alice (12 occurrences) must render larger than acme corp (5).
+    const a = parseFloat(alice.style.fontSize);
+    const b = parseFloat(acme.style.fontSize);
+    expect(a).toBeGreaterThan(b);
+  });
 });
 
 test("shows an error state when the request fails", async () => {

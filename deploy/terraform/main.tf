@@ -46,10 +46,16 @@ variable "location" {
   description = "Azure region for the backup resources."
 }
 
-variable "retention_days" {
+variable "short_worm_days" {
+  type        = number
+  default     = 2
+  description = "Container-level WORM (days) for the short-lived GFS sets (hourly/daily). Kept small so the code prune works; the long-term protection lives on the lts container."
+}
+
+variable "lts_worm_days" {
   type        = number
   default     = 30
-  description = "Immutability window (days): blobs cannot be modified/deleted inside it (WORM)."
+  description = "Container-level WORM (days) for the long-lived GFS sets (weekly/monthly/yearly) - the ransomware control."
 }
 
 variable "cool_after_days" {
@@ -72,14 +78,15 @@ variable "archive_after_days" {
 
 variable "delete_after_days" {
   type        = number
-  default     = 365
-  description = "Expire blobs past this age. The minimum-COUNT floor cannot be expressed in a lifecycle rule; deploy/azure-sync.sh enforces it operationally (audit)."
+  default     = 730
+  description = "Safety-net expiry (days). GFS rotation (keep-counts) is code-side; this only catches leftovers. The minimum-COUNT floor is enforced by deploy/azure-sync.sh (audit)."
 }
 
 locals {
-  rg        = "doktok-${var.instance_id}-rg"
-  account   = "doktokbkp${var.instance_id}"
-  container = "doktok-backups"
+  rg           = "doktok-${var.instance_id}-rg"
+  account      = "doktokbkp${var.instance_id}"
+  container    = "doktok-backups"
+  container_lts = "doktok-backups-lts"
   tags = {
     app      = "doktok-ng"
     instance = var.instance_id
@@ -108,18 +115,32 @@ resource "azurerm_storage_account" "backup" {
   }
 }
 
+# Two containers with class-scoped, container-level WORM (#766). Azure enables version-level
+# (per-blob) WORM only at account creation, so WORM is per container instead:
+#   short: hourly+daily GFS sets (2d window - the code prune works freely after it)
+#   lts:   weekly/monthly/yearly sets (30d window - the long-term ransomware control)
 resource "azurerm_storage_container" "backup" {
   name               = local.container
   storage_account_id = azurerm_storage_account.backup.id
 }
 
+resource "azurerm_storage_container" "backup_lts" {
+  name               = local.container_lts
+  storage_account_id = azurerm_storage_account.backup.id
+}
+
 resource "azurerm_storage_container_immutability_policy" "backup" {
   storage_container_resource_manager_id = azurerm_storage_container.backup.id
-  immutability_period_in_days           = var.retention_days
+  immutability_period_in_days           = var.short_worm_days
   protected_append_writes_enabled       = true
-  # Unlocked on purpose: keep it extensible while the setup matures. Lock it (locked = true) only
-  # deliberately - a locked policy can never be shortened/removed.
-  locked = false
+  locked                                = false
+}
+
+resource "azurerm_storage_container_immutability_policy" "backup_lts" {
+  storage_container_resource_manager_id = azurerm_storage_container.backup_lts.id
+  immutability_period_in_days           = var.lts_worm_days
+  protected_append_writes_enabled       = true
+  locked                                = false
 }
 
 resource "azurerm_storage_management_policy" "backup" {
@@ -133,6 +154,8 @@ resource "azurerm_storage_management_policy" "backup" {
     }
     actions {
       base_blob {
+        # Tier ladder for the long-lived sets (monthly+); GFS deletion itself is code-side
+        # (deploy/azure-sync.sh), this rule only transitions tiers and acts as the safety net.
         tier_to_cool_after_days_since_modification_greater_than    = var.cool_after_days
         tier_to_cold_after_days_since_modification_greater_than    = var.cold_after_days
         tier_to_archive_after_days_since_modification_greater_than = var.archive_after_days
@@ -145,6 +168,7 @@ resource "azurerm_storage_management_policy" "backup" {
 output "resource_group" { value = azurerm_resource_group.backup.name }
 output "storage_account" { value = azurerm_storage_account.backup.name }
 output "container" { value = azurerm_storage_container.backup.name }
+output "container_lts" { value = azurerm_storage_container.backup_lts.name }
 output "sync_hint" {
-  value = "set DOKTOK_AZURE_ACCOUNT=${azurerm_storage_account.backup.name} DOKTOK_AZURE_CONTAINER=${azurerm_storage_container.backup.name} (+ a write-scoped SAS) in the instance env"
+  value = "set DOKTOK_AZURE_ACCOUNT=${azurerm_storage_account.backup.name} DOKTOK_AZURE_CONTAINER=${azurerm_storage_container.backup.name} DOKTOK_AZURE_CONTAINER_LTS=${azurerm_storage_container.backup_lts.name} (+ an account-level SAS with delete) in the instance env"
 }

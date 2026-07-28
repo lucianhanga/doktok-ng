@@ -66,9 +66,11 @@ services:
       - -c
       - archive_command=pgbackrest --stanza=doktok archive-push %p
       - -c
-      # Force a WAL segment switch at least every 60s so an idle DB still ships WAL on the ~60s pg
-      # RPO - keeps the DRP pg recovery point fresh instead of flapping "stale" (M12 #377).
-      - archive_timeout=60
+      # Force a WAL segment switch at least every N seconds so an idle DB still ships WAL on the
+      # ~N-second pg RPO - keeps the DRP pg recovery point fresh instead of flapping "stale"
+      # (M12 #377). 60s = ~100MB/day of near-empty WAL idle; raise (e.g. 300) to cut that 5x for
+      # a 5min RPO (#766).
+      - archive_timeout=${DOKTOK_PG_ARCHIVE_TIMEOUT:-60}
       - -c
       - max_wal_size=2GB
     environment:

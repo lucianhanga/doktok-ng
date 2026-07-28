@@ -15,8 +15,8 @@ TF = (REPO_ROOT / "deploy" / "terraform" / "main.tf").read_text(encoding="utf-8"
 
 
 def test_sync_bundles_one_tarball_per_leg() -> None:
-    assert 'tar -czf "$staging/pg-repo-${ts}.tar.gz"' in SYNC
-    assert 'tar -czf "$staging/files-repo-${ts}.tar.gz"' in SYNC
+    # v3 bundles per leg via the leg variable (pg/files loop) - one tarball per leg per run
+    assert 'tar -czf "$staging/${leg}-repo-${ts}.tar.gz"' in SYNC
     # mutable operational dirs never enter the pg bundle
     assert "--exclude='pg/log'" in SYNC and "--exclude='pg/lock'" in SYNC
     # raw blob sync of the repo tree is gone for good
@@ -26,7 +26,7 @@ def test_sync_bundles_one_tarball_per_leg() -> None:
 def test_sync_uploads_without_overwrite_and_audits_the_floor() -> None:
     assert "--overwrite false" in SYNC  # write-once blobs: fits immutability, no modify conflicts
     assert "DOKTOK_OFFSITE_MIN_SETS" in SYNC
-    assert '--prefix "pg-repo-"' in SYNC and '--prefix "files-repo-"' in SYNC
+    assert '"pg-repo-"' in SYNC and '"files-repo-"' in SYNC  # per-leg prefixes for list/audit
     assert "write_status offsite" in SYNC and "log_event offsite" in SYNC
 
 

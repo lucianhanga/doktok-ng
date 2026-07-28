@@ -126,6 +126,7 @@ dev-azure-sync: ## Push the local backup repo to Azure Blob (offsite leg; needs 
 	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
+		DOKTOK_GFS_BASE_CLASS="$$(grep '^DOKTOK_GFS_BASE_CLASS=' .env | cut -d= -f2-)" \
 		DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
 	./deploy/azure-sync.sh
 

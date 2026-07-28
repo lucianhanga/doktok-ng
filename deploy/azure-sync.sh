@@ -16,13 +16,16 @@
 #   lts   (DOKTOK_AZURE_CONTAINER_LTS,  default doktok-backups-lts)  weekly+,       WORM ~30 days
 # Keep counts (GFS): 24 hourly / 7 daily / 4 weekly / 11 monthly / 1 yearly - pruned in code
 # after each run (lifecycle rules cannot count; they only do tier transitions + the 2y safety
-# net). Tier at write avoids early-deletion charges: hourly/daily Hot, weekly/monthly Cool
+# net). The BASE class of each upload follows the sync cadence: hourly runs produce hourly sets
+# (default); a DAILY cadence sets DOKTOK_GFS_BASE_CLASS=daily so uploads land directly in the
+# daily class (no hourly-class duplication). Promotions to higher classes are server-side copies.
+# Tier at write avoids early-deletion charges: hourly/daily Hot, weekly/monthly Cool
 # (ladder to Cold/Archive via lifecycle), yearly Archive direct.
 #
 # Env: DOKTOK_AZURE_ACCOUNT, DOKTOK_AZURE_CONTAINER, DOKTOK_AZURE_CONTAINER_LTS; auth via
 #      DOKTOK_AZURE_SAS (account-level, rwcl + DELETE - the prune needs it) / AZURE_STORAGE_KEY /
-#      `az login`. DOKTOK_GFS_{HOURLY,DAILY,WEEKLY,MONTHLY,YEARLY}, DOKTOK_OFFSITE_MIN_SETS.
-#      Pass --dry-run to plan without uploading.
+#      `az login`. DOKTOK_GFS_{HOURLY,DAILY,WEEKLY,MONTHLY,YEARLY}, DOKTOK_GFS_BASE_CLASS,
+#      DOKTOK_OFFSITE_MIN_SETS. Pass --dry-run to plan without uploading.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/lib.sh
@@ -35,6 +38,9 @@ CONTAINER_SHORT="$DOKTOK_AZURE_CONTAINER"
 CONTAINER_LTS="${DOKTOK_AZURE_CONTAINER_LTS:-doktok-backups-lts}"
 min_sets="${DOKTOK_OFFSITE_MIN_SETS:-3}"
 dry_run="${1:-}"
+# The class each upload gets; follows the sync cadence (hourly by default, daily for a daily
+# schedule). Promotions to this same class are skipped (the upload IS that set).
+BASE_CLASS="${DOKTOK_GFS_BASE_CLASS:-hourly}"
 
 # GFS keep counts + per-class tier (bash 3.2-safe case functions, no assoc arrays).
 keep_for() {
@@ -167,7 +173,7 @@ _put_blob() { # <file> <blobname> <class>
 _promote() { # <src-name> <dst-name> <class>
     local src="$1" dst="$2" cls="$3"
     local src_container dst_container
-    src_container="$(container_for hourly)"
+    src_container="$(container_for "$BASE_CLASS")"
     dst_container="$(container_for "$cls")"
     az storage blob copy start --account-name "$DOKTOK_AZURE_ACCOUNT" \
         --source-container "$src_container" --source-blob "$src" \
@@ -233,23 +239,25 @@ $(list_blobs "$CONTAINER_LTS" "${leg}-repo-")"
         echo "$leg: content unchanged (fp=$fp) - skipping upload"
     else
         [ "$dry_run" = "--dry-run" ] && {
-            warn "$leg: dry-run - WOULD bundle + upload ${leg}-repo-hourly-${ts}-${fp}.tar.gz"
+            warn "$leg: dry-run - WOULD bundle + upload ${leg}-repo-${BASE_CLASS}-${ts}-${fp}.tar.gz"
         } || {
             [ -d "$BACKUP_DIR/$leg" ] || fail_sync "no $leg repo to bundle"
             echo "$leg: bundling + uploading (fp=$fp, was ${off_fp:-none})"
             tar -czf "$staging/${leg}-repo-${ts}.tar.gz" -C "$BACKUP_DIR" \
                 --exclude='pg/log' --exclude='pg/lock' "$leg"
             _put_blob "$staging/${leg}-repo-${ts}.tar.gz" \
-                "${leg}-repo-hourly-${ts}-${fp}.tar.gz" hourly
-            newest="${leg}-repo-hourly-${ts}-${fp}.tar.gz"
+                "${leg}-repo-${BASE_CLASS}-${ts}-${fp}.tar.gz" "$BASE_CLASS"
+            newest="${leg}-repo-${BASE_CLASS}-${ts}-${fp}.tar.gz"
         }
     fi
     if [ "$leg" = "pg" ]; then fp_pg="$fp"; else fp_files="$fp"; fi
 
-    # Promotions across period boundaries (server-side copies of the newest blob).
+    # Promotions across period boundaries (server-side copies of the newest blob; the BASE class
+    # itself is skipped - the upload already IS that set).
     [ "$dry_run" = "--dry-run" ] && continue
     [ -n "$newest" ] || continue
     for cls in daily weekly monthly yearly; do
+        [ "$cls" = "$BASE_CLASS" ] && continue
         cls_container="$(container_for "$cls")"
         newest_in_class="$(list_blobs "$cls_container" "${leg}-repo-${cls}-" | tail -1)"
         have_key="none"

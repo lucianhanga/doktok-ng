@@ -106,6 +106,9 @@ def test_gfs_keep_counts() -> None:
 def test_script_shape() -> None:
     assert "DOKTOK_AZURE_CONTAINER_LTS" in SCRIPT
     assert "copy start" in SCRIPT and "--requires-sync" not in SCRIPT  # >256MB copies are async
+    # uploads land in the cadence-driven BASE class; promotion to that class is skipped
+    assert 'DOKTOK_GFS_BASE_CLASS:-hourly' in SCRIPT
+    assert '[ "$cls" = "$BASE_CLASS" ] && continue' in SCRIPT
     # files fingerprint is host-side path+size (write-once pipeline); the restic tree id embeds
     # directory mtimes (refreshed by staging) and is useless as a content key
     assert "stat -f '%N %z'" in SCRIPT and "stat -c '%n %s'" in SCRIPT

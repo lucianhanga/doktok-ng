@@ -197,12 +197,14 @@ versioning, tags), both containers + immutability policies, lifecycle ladder. On
 
 Credentials: an **account-level SAS with delete** (`rwdlc`, HTTPS-only, expiring) as
 `DOKTOK_AZURE_SAS` in `.env` — delete is required by the code prune; the WORM windows still
-protect against misuse. Store a copy OFF the box. Schedule: prod `doktok-azure-sync.timer`
-(hourly at :12); dev `make dev-azure-sync` (hourly cron at :07). After each run an **audit**
-counts sets per leg and flags the DRP offsite leg below `DOKTOK_OFFSITE_MIN_SETS` (default 3).
+protect against misuse. Store a copy OFF the box. Schedule: **daily at 03:47** (prod
+`doktok-azure-sync.timer`, dev cron below; `DOKTOK_GFS_BASE_CLASS=daily` so uploads land in the
+daily class — offsite RPO ~1 day, local minute-level PITR is unaffected). After each run an
+**audit** counts sets per leg and flags the DRP offsite leg below `DOKTOK_OFFSITE_MIN_SETS`
+(default 3).
 
 ```cron
-7 * * * *  cd <repo> && make dev-azure-sync >> backups/cron.log 2>&1
+47 3 * * *  cd <repo> && make dev-azure-sync >> backups/cron.log 2>&1
 ```
 
 **Restore from Azure (#359)**: `make dev-azure-fetch` (or `deploy/azure-fetch.sh` on prod) downloads

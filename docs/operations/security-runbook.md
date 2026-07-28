@@ -163,32 +163,43 @@ timers on the box; launchd/cron on a Mac) and manually by the system administrat
 DRP freshness is read-only in the UI (Settings → DRP): each leg's last run + age, from the
 sentinels the scripts write into the backup dir.
 
-### Offsite (Azure Blob, #345/#347/#348)
+### Offsite (Azure Blob, #345/#347/#348/#766)
 
 The design is local-first: the live engine (restic + pgBackRest, minute-level PITR) works in
-`./backups`, and Azure holds an **archived copy** — one tarball per leg per run
-(`pg-repo-<ts>.tar.gz`, `files-repo-<ts>.tar.gz`), always ciphertext, uploaded by
-`deploy/azure-sync.sh`. Tarballs (not a raw file sync) because the pg repo is ~68k tiny WAL files:
-a run costs 2 PUTs instead of LIST-ing tens of thousands of blobs, and write-once blobs fit the
-immutability policy exactly (no delete/modify conflicts). Offsite pg recovery point = the sync
-cadence (hourly); minute-level PITR stays local.
+`./backups`, and Azure holds an **archived copy** under a **GFS rotation** (#766). Each set is
+`<leg>-repo-<class>-<ts>-<fp12>.tar.gz` (class + timestamp + content fingerprint), written by
+`deploy/azure-sync.sh`:
+
+- **Rotation (code-managed, lifecycle rules can't count)**: keep 24 hourly / 7 daily / 4 weekly /
+  11 monthly / 1 yearly per leg. Promotions across period boundaries are server-side COPIES of
+  the newest blob (no re-upload); pruning deletes the overflow per class.
+- **Two containers, container-level WORM** (version-level WORM is creation-time-only in Azure):
+  `doktok-backups` holds hourly+daily (2d window), `doktok-backups-lts` holds weekly+ (30d
+  window — the ransomware control).
+- **Tier at write** (avoids early-deletion charges): hourly/daily Hot, weekly/monthly Cool,
+  yearly Archive direct; the lifecycle ladder moves long-lived sets Cool → Cold@90 →
+  Archive@180 and expires anything past 730d as the safety net.
+- **Content dedup**: a leg whose newest offsite fingerprint (restic snapshot id / pgBackRest
+  label+WAL max) matches the local one is skipped — a quiet week uploads nothing, and the DRP
+  offsite leg compares fingerprints so it never reads as falsely stale.
+- **Cost math**: pg repo plateaus at ~4–6GB after 30d retention (archive_timeout=60 forces
+  ~100MB/day of WAL idle; tune via `DOKTOK_PG_ARCHIVE_TIMEOUT`, e.g. 300 for a 5min RPO).
+  GFS caps at 47 sets/leg; Cool/Cold/Archive tiers keep it at single-digit €/month.
 
 Per-instance naming is derived from `DOKTOK_INSTANCE_ID` (12 hex chars, persisted in `.env`): RG
-`doktok-<id>-rg`, storage account `doktokbkp<id>`, container `doktok-backups` — so independent
-instances never collide (explicit `DOKTOK_AZURE_RG/ACCOUNT/CONTAINER` override).
+`doktok-<id>-rg`, storage account `doktokbkp<id>`, containers `doktok-backups[/-lts]` — so
+independent instances never collide (explicit `DOKTOK_AZURE_*` overrides).
 
 Infrastructure as code (Terraform, `deploy/terraform/`; `azure-provision.sh` remains the no-TF
-fallback — don't mix both on one account): resource group, storage account (LRS, TLS1.2, no public
-access, versioning, tags), container, 30-day immutability policy, and the lifecycle ladder — Cool
-after 30d, Cold after 90d, Archive after 180d (offline; rehydration takes hours, acceptable only
-that deep), delete after 365d. One-time: `terraform init && terraform apply
--var="instance_id=<id>"` with `az login`.
+fallback — don't mix both on one account): RG, account (LRS, TLS1.2, no public access,
+versioning, tags), both containers + immutability policies, lifecycle ladder. One-time:
+`terraform init && terraform apply -var="instance_id=<id>"` with `az login`.
 
-Credentials: a write-scoped SAS (`rwcl`, NO delete, HTTPS-only, expiring) as `DOKTOK_AZURE_SAS` in
-`.env` (store a copy OFF the box). Schedule: prod `doktok-azure-sync.timer` (hourly at :12, after
-the backup); dev `make dev-azure-sync` (cron line below). After each upload an **audit** counts
-the offsite sets per leg and flags the DRP offsite leg when below `DOKTOK_OFFSITE_MIN_SETS`
-(default 3) — the "minimum secure number of backups" floor, which a lifecycle rule cannot express.
+Credentials: an **account-level SAS with delete** (`rwdlc`, HTTPS-only, expiring) as
+`DOKTOK_AZURE_SAS` in `.env` — delete is required by the code prune; the WORM windows still
+protect against misuse. Store a copy OFF the box. Schedule: prod `doktok-azure-sync.timer`
+(hourly at :12); dev `make dev-azure-sync` (hourly cron at :07). After each run an **audit**
+counts sets per leg and flags the DRP offsite leg below `DOKTOK_OFFSITE_MIN_SETS` (default 3).
 
 ```cron
 7 * * * *  cd <repo> && make dev-azure-sync >> backups/cron.log 2>&1

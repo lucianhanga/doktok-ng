@@ -125,7 +125,8 @@ dev-pg-wal-freshness: ## Stamp the pg sentinel with the WAL recovery point (prod
 dev-azure-sync: ## Push the local backup repo to Azure Blob (offsite leg; needs DOKTOK_AZURE_* in .env)
 	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
-		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)"; \
+		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
+		DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
 	./deploy/azure-sync.sh
 
 dev-azure-fetch: ## Fetch an offsite backup set from Azure into ./backups.azure-restore (TS=<timestamp> for a specific set)

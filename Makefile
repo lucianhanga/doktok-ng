@@ -146,6 +146,8 @@ js-install: ## Install JS workspace dependencies
 
 js-typecheck: ## Typecheck JS/TS workspaces
 	pnpm -r typecheck
+	@[ -d apps/mobile/node_modules ] && (cd apps/mobile && pnpm typecheck) \
+		|| echo "apps/mobile not installed (make mobile-install) - skipping"
 
 js-lint: ## Lint JS workspaces
 	pnpm -r lint
@@ -154,6 +156,9 @@ js-test: ## Test JS/TS workspaces (Vitest)
 	pnpm -r test
 
 js: js-typecheck js-lint js-test ## Run all JS/TS checks
+
+mobile-install: ## Install apps/mobile deps (standalone - Expo/RN conflicts with the UI's React 18, so it lives OUTSIDE the pnpm workspace)
+	cd apps/mobile && pnpm install --ignore-workspace
 
 secrets: ## Scan tracked files for secrets (detect-secrets)
 	uvx detect-secrets scan --baseline .secrets.baseline

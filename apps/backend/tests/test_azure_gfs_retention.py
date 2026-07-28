@@ -36,7 +36,8 @@ def _defs() -> str:
     import re
 
     parts = []
-    for name in ("_fp12", "name_parts", "_period_key", "keep_for", "tier_for", "container_for"):
+    names = ("_fp12", "name_parts", "_period_key", "keep_for", "tier_for", "container_for")
+    for name in names + ("newest_blob",):
         m = re.search(rf"^{name}\(\) {{(.*?)^}}\n", SCRIPT, re.M | re.S)
         assert m, f"{name} not found"
         parts.append(m.group(0))
@@ -58,6 +59,18 @@ def test_name_parts_parses_the_scheme() -> None:
     proc = _call('name_parts "pg-repo-weekly-20260728-103249-a91f3c02e1ab.tar.gz"')
     assert proc.returncode == 0
     assert proc.stdout.strip() == "weekly 20260728-103249 a91f3c02e1ab"
+
+
+def test_newest_blob_sorts_by_timestamp_not_class_name() -> None:
+    # daily < hourly < monthly < weekly < yearly lexically; the yearly blob here is OLDER than the
+    # hourly one - naive name sort picks the yearly (wrong), newest_blob must pick the hourly.
+    proc = _call(
+        'printf "%s\\n" '
+        '"files-repo-yearly-20260728-010000-aaaaaaaaaaaa.tar.gz" '
+        '"files-repo-hourly-20260728-120000-bbbbbbbbbbbb.tar.gz" '
+        '"files-repo-daily-20260728-030000-cccccccccccc.tar.gz" | newest_blob'
+    )
+    assert proc.stdout.strip() == "files-repo-hourly-20260728-120000-bbbbbbbbbbbb.tar.gz"
 
 
 def test_period_keys() -> None:
@@ -93,9 +106,9 @@ def test_gfs_keep_counts() -> None:
 def test_script_shape() -> None:
     assert "DOKTOK_AZURE_CONTAINER_LTS" in SCRIPT
     assert "copy start" in SCRIPT and "--requires-sync" not in SCRIPT  # >256MB copies are async
-    assert "restic snapshots --latest 1 --json" in SCRIPT  # files fingerprint
-    # tree id, not snapshot id (snapshots are forced on schedule)
-    assert '"tree":"[0-9a-f]+"' in SCRIPT
+    # files fingerprint is host-side path+size (write-once pipeline); the restic tree id embeds
+    # directory mtimes (refreshed by staging) and is useless as a content key
+    assert "stat -f '%N %z'" in SCRIPT and "stat -c '%n %s'" in SCRIPT
     assert "pgbackrest --stanza=doktok info --output=json" in SCRIPT  # pg fingerprint
     # WORM is container-level (Terraform), not per-blob
     assert "immutability-policy set" not in SCRIPT

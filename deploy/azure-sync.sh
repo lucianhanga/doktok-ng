@@ -83,15 +83,26 @@ trap 'fail_sync "unexpected error"' ERR
 
 _fp12() { _sha256 "$1" | cut -c1-12; }
 
+# sha256 hex of stdin (portable; mirrors lib.sh's _sha256 for strings).
+_sha256_pipe() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | cut -d' ' -f1
+    else
+        shasum -a 256 | cut -d' ' -f1
+    fi
+}
+
 # Latest content fingerprint per leg (empty on failure - the leg then uploads to be safe).
 current_fp() {
     case "$1" in
         files)
-            # The snapshot ID changes on every scheduled run (restic snapshots even when 0 files
-            # changed); the root TREE id only changes when content does - the real dedup key.
-            "${compose[@]}" run --rm backup-runner bash -c \
-                'export RESTIC_REPOSITORY=/backups/files RESTIC_PASSWORD="$DOKTOK_RESTIC_PASSWORD"; restic snapshots --latest 1 --json 2>/dev/null' 2>/dev/null \
-                | grep -oE '"tree":"[0-9a-f]+"' | head -1 | grep -oE '[0-9a-f]+' || true
+            # Host-side fingerprint of the files_root: sorted path+size list. The pipeline is
+            # write-once (never edits in place), so this changes exactly when content does. The
+            # restic tree id is useless here - it embeds directory mtimes, which the 15-min
+            # staging copy refreshes even with zero real changes.
+            { find "$FILES_ROOT" -type f ! -name '.DS_Store' -exec stat -f '%N %z' {} + 2>/dev/null \
+                || find "$FILES_ROOT" -type f ! -name '.DS_Store' -exec stat -c '%n %s' {} +; } \
+                | sort | _sha256_pipe
             ;;
         pg)
             "${compose[@]}" exec -u postgres -T db pgbackrest --stanza=doktok info --output=json 2>/dev/null \
@@ -105,6 +116,12 @@ list_blobs() { # <container> <prefix>
     az storage blob list --account-name "$DOKTOK_AZURE_ACCOUNT" \
         --container-name "$1" --prefix "$2" \
         --query "[].name" -o tsv "${auth[@]}" 2>/dev/null | sort || true
+}
+
+# The temporally newest blob from a mixed-class listing: the CLASS prefix scrambles lexical name
+# order (daily < hourly < ... < yearly), so sort by the timestamp embedded in the name instead.
+newest_blob() {
+    sed -E 's/.*-repo-[a-z]+-([0-9]{8}-[0-9]{6})-.*/\1 &/' | sort | tail -1 | cut -d' ' -f2
 }
 
 # name_parts <blobname> -> "<class> <yyyymmdd-hhmmss> <fp12>"
@@ -208,7 +225,7 @@ for leg in pg files; do
 
     all="$(list_blobs "$CONTAINER_SHORT" "${leg}-repo-")
 $(list_blobs "$CONTAINER_LTS" "${leg}-repo-")"
-    newest="$(printf '%s\n' "$all" | tail -1)"
+    newest="$(printf '%s\n' "$all" | newest_blob)"
     off_fp=""
     [ -n "$newest" ] && off_fp="$(name_parts "$newest" | awk '{print $3}')"
 

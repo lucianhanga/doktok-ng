@@ -12,10 +12,30 @@ M12 epic (#366).
 |---|---|---|
 | Postgres | ~1 min | pgBackRest: continuous WAL archiving + base/diff backups (PITR) |
 | files_root | ~15 min | restic dedup snapshots (encrypted) |
-| Offsite (both) | ~1 h | `azure-sync.sh` to Azure Blob (immutability + versioning account-side) |
+| Offsite (both) | ~1 h | `azure-sync.sh` GFS tarball rotation to Azure Blob (two WORM containers, content dedup) |
 
-RTO ~2-4 h to a working stack (restore is bandwidth-bound from Azure; keep recent backups in a
-Hot/Cool tier, not Archive, so rehydration latency doesn't blow RTO).
+RTO ~2-4 h to a working stack (restore is bandwidth-bound from Azure; only the yearly GFS set is
+Archive tier - rehydration takes hours, which is acceptable for the oldest copy, everything newer
+stays online in Hot/Cool/Cold).
+
+## Architecture at a glance
+
+```
+ingest/worker ──> live system (db + files_root)
+        │  every 15 min + weekly full
+        ▼
+local repo (./backups): restic files repo (AES-256) + pgBackRest repo (aes-256-cbc, WAL ~60s)
+        │  anomaly guard refuses to back up a destroyed DB (#747)
+        │  sentinels + append-only history feed the DRP panel; WAL freshness stamped every minute
+        ▼  hourly
+Azure Blob: GFS tarballs <leg>-repo-<class>-<ts>-<fp12>.tar.gz in two containers
+        │   doktok-backups (hourly/daily, WORM 2d) / doktok-backups-lts (weekly+, WORM 30d)
+        │   dedup by content fingerprint; audit enforces a minimum set count
+        ▼
+restore paths: restore.sh (local, PITR) | azure-fetch.sh -> restore.sh (offsite)
+             | rebuild-registry (files ahead of DB) | portable export/import (no containers)
+drills: no-risk verified drill (prod+dev, weekly + on-demand) + destructive dev loop (#755)
+```
 
 ## Layout
 
@@ -163,12 +183,32 @@ on-demand equivalent for dev/macOS.
 
 ## Restore
 
-1. (If offsite) pull the repo from Azure into `$DOKTOK_BACKUP_DIR` (reverse of `azure-sync.sh`).
+1. (If offsite) pull the repo from Azure into a staging dir with `deploy/azure-fetch.sh` (latest or
+   a given timestamp; it verifies both repos are readable), then run the SAME restore against it:
+   `DOKTOK_BACKUP_DIR=./backups.azure-restore ./deploy/restore.sh ./storage/files`
+   (dev: `make dev-azure-fetch`, then `DOKTOK_BACKUP_DIR=./backups.azure-restore make dev-restore
+   FILES_TARGET=./storage/files`). The live local repo is never touched by the fetch.
 2. Stop the stack. Restore Postgres to a point at or before the latest files snapshot:
    `DOKTOK_PGDATA=... DOKTOK_PGBACKREST_CIPHER_PASS=... ./deploy/restore-pg.sh "2026-06-16 20:00:00+00"`
 3. Restore files_root (>= the DB restore point): `./deploy/restore-files.sh /var/lib/doktok/files`
 4. Start the stack, then `doktok-worker repair` to reconcile DB <-> files and re-queue any
    re-derivable gaps (the reconciler backfills derived artifacts).
+
+### If the DB is lost or behind the files tree (files ahead of DB)
+
+When the newest usable pg recovery point is older than the files on disk (or the DB is rebuilt
+from scratch), the documents list is empty even though every byte survives. Rebuild the registry
+from the on-disk manifests instead of re-ingesting:
+
+```bash
+doktok-worker rebuild-registry --tenant <id> [--dry-run]
+```
+
+It re-creates the `documents` rows with their ORIGINAL ids (status ACTIVE, storage path and
+timestamps from `docs.active/<id>/manifest.json`), marks `extract` done (no OCR re-run), and
+re-queues only the DB-resident enrichment stages for the normal reconciler. Idempotent; orphans
+(dirs without a valid manifest) are reported, never deleted. Tenant/users must exist first
+(re-seed or recreate them).
 
 ### Restoring across schema versions (older backup, newer code)
 
@@ -274,8 +314,19 @@ contract and `$DOKTOK_BACKUP_DIR` layout are identical in both modes.
 - **Restore drills:** `deploy/restore-drill.sh` restores the latest files snapshot + runs the
   Postgres PITR proof into throwaway locations, asserts row counts, and records measured RPO/RTO.
   Scheduled weekly and triggerable on demand - see [Recovery drills](#recovery-drills) below.
-- **Azure offsite:** provision once with `deploy/azure-provision.sh` (account + container + versioning
-  + time-based immutability); `azure-sync.sh` pushes the local repo. Keep recent backups Hot/Cool.
+- **Azure offsite (GFS, #766):** `deploy/azure-sync.sh` ships one tarball per leg per run named
+  `<leg>-repo-<class>-<ts>-<fp12>.tar.gz` (class + timestamp + content fingerprint). It keeps 24
+  hourly / 7 daily / 4 weekly / 11 monthly / 1 yearly per leg, pruned **in code** (lifecycle rules
+  can't count; they only run the tier ladder Cool→Cold@90→Archive@180 + a 730d safety-net).
+  Promotions across period boundaries are server-side copies, never re-uploads. Sets land in two
+  containers with container-level WORM (version-level WORM is creation-time-only in Azure):
+  `doktok-backups` for hourly/daily (2d window), `doktok-backups-lts` for weekly+ (30d window).
+  Tiers are assigned at write to avoid early-deletion charges: hourly/daily Hot, weekly/monthly
+  Cool, yearly Archive direct. A leg whose newest offsite fingerprint matches the local one
+  (files: host-side path+size hash of the write-once tree; pg: latest label + WAL max) is
+  **skipped** - quiet periods upload nothing and the DRP offsite leg compares fingerprints, so it
+  never reads falsely stale. Provision with Terraform (`deploy/terraform/`); credentials = an
+  account-level SAS **with delete** (the code prune needs it).
 
 ## Settings -> DRP panel
 
@@ -331,17 +382,28 @@ into **throwaway** containers/dirs only (it touches no production data), and rec
 **both** the `drill` sentinel (latest-state, drives the DRP "Last restore drill" card) and the
 append-only history (`drill_pass` / `drill_fail`).
 
-What a drill now proves:
+What a drill now proves (#755, 4-layer verification):
 
-1. **Files restore is non-empty:** restores the latest restic snapshot into a temp dir and asserts the
-   restored file count is `> 0`.
-2. **Postgres PITR + row count:** runs the self-contained PITR proof (`test-pitr.sh`), which restores
-   a base backup + WAL to a target time in a throwaway container and asserts the restored core table
-   is non-empty (`> 0` rows) - i.e. the recovered database is queryable and carries data.
+1. **Files restore is complete:** restores the latest restic snapshot into a temp dir and asserts the
+   restored file count **equals the live files_root count**, plus sha256 spot-checks of restored
+   originals against `documents.sha256` (the DB is the manifest).
+2. **Postgres restore matches live:** restores the latest pgBackRest backup into a throwaway
+   container (clone of the db image, archive replay to end-of-WAL) and compares per-table row counts
+   (documents, chunks, entities, tags, notes, users, tenants, features done) **exactly** against the
+   live DB.
 3. **Measured RPO/RTO:** records **RPO** (now minus the latest archived WAL recovery point, taken from
    the pg sentinel's `last_run_at`) and **RTO** (wall-clock of the whole drill, a proxy for
-   time-to-recover), plus an `evidence` string (e.g. `files=287 rows(document)=1 rpo=42s rto=118s`)
-   stamped into the sentinel `detail` and the history line.
+   time-to-recover), plus an `evidence` string (e.g.
+   `files=106/106 hashes=ok rows=[12|83|133|0|0|4|1|120] rpo=56s rto=7s`) stamped into the sentinel
+   `detail` and the history line. Run drills when ingestion is idle - the restored DB lags the live
+   one by up to the WAL interval.
+
+There is also a **destructive dev drill** (`make restore-drill-dev`, confirms first): the full loop
+on the real engine - baseline -> `backup.sh` -> DROP SCHEMA + wipe files_root -> `restore.sh` with
+PITR to just before the wipe -> the same 4-layer verify + API smoke. It writes the drill sentinel
+too. Two hard rules it exists to teach: always PITR for logical disasters (restoring "latest"
+replays the destructive statement), and never run a backup between disaster and recovery (the
+anomaly guard enforces the second one).
 
 ### Weekly timer
 
@@ -480,6 +542,26 @@ device](#recover-onto-a-new--different-device).
   `pg-wal-freshness.sh` (last archived WAL), not the base backup. If the leg ages, check that the
   `doktok-pg-wal-freshness.timer` is active (`systemctl list-timers 'doktok-*'`) and that
   `archive_timeout=60` is set on the db, so an idle DB still ships a segment each minute.
+- **Never run a backup between a disaster and the recovery.** Post-disaster backups snapshot the
+  wreckage and prune good history. The anomaly guard (#747) refuses to back up a database whose
+  document count collapsed below half of the previous sentinel's baseline
+  (`DOKTOK_BACKUP_FORCE=1` for intentional clean slates).
+- **"Latest" is not always what you want.** A plain restore replays archived WAL to the end -
+  including the destructive statement itself. For logical disasters (DROP/DELETE) always restore
+  with PITR to just before the incident.
+- **After wiping a bind-mounted backups dir, restart the containers.** `rm -rf` of a mount point
+  leaves a stale deleted inode inside running containers; pgbackrest crashes (exit 139) until the
+  restart. `backup.sh` bootstraps the stanza afterwards, but the mount must be live first.
+- **restic reads on Docker Desktop virtiofs fail with EIO when O_NOATIME is set via fcntl**
+  (docker/for-mac#6812). In dev the backup-runner stages the files tree through a container-local
+  volume (`DOKTOK_FILES_STAGE_SRC`) so restic never reads the bind mount directly; prod (Linux) is
+  unaffected.
+- **Azure version-level (per-blob) WORM can only be enabled at account creation time.** That is
+  why the offsite design uses two containers with container-level policies (2d short / 30d lts)
+  instead of per-blob policies.
+- **Azure tier minimums bill early deletes.** Cool=30d, Cold=90d, Archive=180d minimum retention:
+  a blob deleted or moved earlier is charged the remainder. That is why short-lived GFS sets
+  (hourly/daily) are written to Hot, never Cool.
 
 ## Secrets
 

@@ -1607,7 +1607,7 @@ export function KnowledgeGraphPanel({
                   node.fy = node.y;
                 }}
                 linkColor={linkColor}
-                linkLabel={(link) => (link as unknown as GraphLink).predicate}
+                linkLabel={(link: unknown) => (link as unknown as GraphLink).predicate}
                 linkDirectionalArrowLength={3.5}
                 linkDirectionalArrowRelPos={1}
                 onEngineStop={() => graphRef.current?.zoomToFit(reduced ? 0 : 400, 40)}

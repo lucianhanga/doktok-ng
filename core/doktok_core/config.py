@@ -189,8 +189,15 @@ class Settings(BaseSettings):
 
     # Allowed CORS origins (APP-10). Loopback dev origins by default; set to your UI origin(s) for a
     # deployed UI served from another host. JSON list in env, e.g. '["https://docs.example.com"]'.
+    # The native mobile app needs NO CORS (CORS is browser-enforced); localhost:8081 covers the
+    # Expo web dev preview (#771).
     cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5174", "http://127.0.0.1:5174"]
+        default_factory=lambda: [
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
+        ]
     )
     # Reject request bodies over this many MB with 413 (APP-10). Also the PER-FILE upload cap: a
     # single uploaded file over this is rejected on its own.

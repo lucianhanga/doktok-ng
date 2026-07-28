@@ -23,6 +23,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "extra": {
+      "backendUrl": "http://10.0.2.2:8000"
     }
   }
 }

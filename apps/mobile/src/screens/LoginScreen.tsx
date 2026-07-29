@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -18,18 +18,26 @@ import { colors, spacing, typeScale } from "../theme";
 // Login screen (#771): tenant + email + password against /api/v1/auth/login, spartan like the
 // web login. Shows the backend URL so a wrong target is obvious on a physical device.
 export function LoginScreen() {
-  const { signIn } = useAuth();
+  const { signIn, savedCredentials } = useAuth();
   const [tenantId, setTenantId] = useState("dev");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Prefill from the saved credentials (keystore) - on a dev build only the password needs typing.
+  useEffect(() => {
+    if (savedCredentials) {
+      setTenantId(savedCredentials.tenantId);
+      setEmail(savedCredentials.email);
+    }
+  }, [savedCredentials]);
+
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      await signIn(tenantId, email, password);
+      await signIn({ tenantId, email, password });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "login failed");
     } finally {

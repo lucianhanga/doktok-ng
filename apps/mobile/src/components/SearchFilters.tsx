@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
+import { FlatList, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 
 import { fetchCategories, fetchTags, type DocumentTag } from "../api/documents";
 import { useAuth } from "../auth/AuthContext";
@@ -28,6 +28,54 @@ export const EMPTY_FILTERS: SearchFiltersValue = {
   tags: [],
   tagMatch: "all",
 };
+
+// Compact single-select dropdown for filter fields with many options (#800): a button showing
+// the current value that opens a small capped overlay list - replaces the category chip wall.
+function FilterDropdown({
+  label,
+  value,
+  options,
+  onSelect,
+}: {
+  label: string;
+  value?: string;
+  options: string[];
+  onSelect: (v: string | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={styles.dropdownWrap}>
+      <TouchableOpacity style={styles.dropdownBtn} onPress={() => setOpen(!open)}>
+        <Text style={[styles.dropdownText, value ? styles.dropdownTextActive : undefined]}>
+          {label}: {value ?? "any"} {open ? "▴" : "▾"}
+        </Text>
+      </TouchableOpacity>
+      {open && (
+        <View style={styles.dropdownOverlay}>
+          <FlatList
+            data={[undefined, ...options] as (string | undefined)[]}
+            keyExtractor={(o) => o ?? "__any__"}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.dropdownRow}
+                onPress={() => {
+                  onSelect(item);
+                  setOpen(false);
+                }}
+              >
+                <Text style={[typeScale.body, item === value && styles.dropdownTextActive]} numberOfLines={1}>
+                  {item ?? "any"}
+                </Text>
+                {item === value && <Text style={styles.dropdownCheck}>✓</Text>}
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      )}
+    </View>
+  );
+}
 
 const STATUS_OPTIONS: { value: string | undefined; label: string }[] = [
   { value: undefined, label: "any status" },
@@ -104,23 +152,12 @@ export function SearchFilters({
           </View>
 
           {categories.length > 0 && (
-            <View style={styles.chipsRow}>
-              <TouchableOpacity
-                style={[styles.chip, !value.category && styles.chipActive]}
-                onPress={() => set({ category: undefined })}
-              >
-                <Text style={[styles.chipText, !value.category && styles.chipTextActive]}>any category</Text>
-              </TouchableOpacity>
-              {categories.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[styles.chip, value.category === c && styles.chipActive]}
-                  onPress={() => set({ category: value.category === c ? undefined : c })}
-                >
-                  <Text style={[styles.chipText, value.category === c && styles.chipTextActive]}>{c}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <FilterDropdown
+              label="category"
+              value={value.category}
+              options={categories}
+              onSelect={(c) => set({ category: c })}
+            />
           )}
 
           <View style={styles.chipsRow}>
@@ -192,4 +229,45 @@ const styles = StyleSheet.create({
   chipText: { ...typeScale.small },
   chipTextActive: { color: colors.accent, fontWeight: "700" },
   switchRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  dropdownWrap: { zIndex: 15 },
+  dropdownBtn: {
+    alignSelf: "flex-start",
+    borderColor: colors.borderStrong,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xs + 1,
+  },
+  dropdownText: { ...typeScale.small },
+  dropdownTextActive: { color: colors.accent, fontWeight: "700" },
+  dropdownOverlay: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    minWidth: 220,
+    maxWidth: 320,
+    maxHeight: 8 * 44,
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.borderStrong,
+    borderWidth: 1,
+    borderRadius: 8,
+    marginTop: spacing.xs,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+    zIndex: 25,
+  },
+  dropdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  dropdownCheck: { color: colors.accent, fontWeight: "700" },
 });

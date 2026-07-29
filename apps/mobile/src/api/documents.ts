@@ -51,6 +51,13 @@ export interface DocumentQuery {
   dir?: "asc" | "desc";
   status?: string;
   category?: string;
+  // Complex search (#800): full-text tokens with all/any match, attention flags, tag chips.
+  tokens?: string[];
+  tokenMatch?: "all" | "any";
+  needsAttention?: boolean;
+  unidentifiable?: boolean;
+  tags?: string[];
+  tagMatch?: "all" | "any";
 }
 
 export function fetchDocuments(query: DocumentQuery, token: string): Promise<DocumentPage> {
@@ -62,6 +69,25 @@ export function fetchDocuments(query: DocumentQuery, token: string): Promise<Doc
   if (query.status) params.set("status", query.status);
   if (query.category) params.set("category", query.category);
   if (query.title?.trim()) params.set("title", query.title.trim());
+  (query.tokens ?? []).forEach((t) => t.trim() && params.append("token", t.trim()));
+  if (query.tokenMatch) params.set("token_match", query.tokenMatch);
+  if (query.needsAttention) params.set("needs_attention", "true");
+  if (query.unidentifiable) params.set("unidentifiable", "true");
+  (query.tags ?? []).forEach((t) => t.trim() && params.append("tag", t.trim()));
+  if (query.tagMatch) params.set("tag_match", query.tagMatch);
   const qs = params.toString();
   return apiFetch<DocumentPage>(`/api/v1/documents${qs ? `?${qs}` : ""}`, { token });
+}
+
+export interface CategorySummary {
+  name: string;
+  document_count: number;
+}
+
+export function fetchCategories(token: string): Promise<CategorySummary[]> {
+  return apiFetch<CategorySummary[]>("/api/v1/categories", { token });
+}
+
+export function fetchTags(token: string): Promise<DocumentTag[]> {
+  return apiFetch<DocumentTag[]>("/api/v1/tags", { token });
 }

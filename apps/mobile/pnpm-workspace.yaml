@@ -1,0 +1,5 @@
+# This file makes apps/mobile its OWN pnpm workspace root. Without it, any bare `pnpm install`
+# run inside apps/mobile walks UP to the repo root workspace and dumps the mobile (React 19/RN)
+# packages into the root node_modules - which breaks both the UI typecheck (React 18) and Metro's
+# module resolution. Mobile stays standalone on purpose (see README).
+packages: []

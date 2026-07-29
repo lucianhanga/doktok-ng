@@ -62,23 +62,24 @@ class PyMuPdfRenderer:
 
 
 class PyMuPdfThumbnailer:
-    """``Thumbnailer`` that renders a document's first page to a small WebP preview.
+    """``Thumbnailer`` that renders document pages to small WebP previews.
 
     Renders straight from the canonical (normalized) PDF at roughly the target size - so it is
     uniform for born-digital PDFs and OCR'd scans alike - then does a precise Lanczos downscale and
     WebP encode. fitz/Pillow are imported lazily so importing this class needs no native deps.
     """
 
-    def thumbnail(self, source_path: str, *, max_edge: int = 400) -> bytes:
+    @staticmethod
+    def _render(source_path: str, page_index: int, max_edge: int) -> bytes:
         import io
 
         import fitz
         from PIL import Image
 
         with fitz.open(source_path) as doc:
-            if doc.page_count == 0:
-                raise ValueError("document has no pages to render")
-            page = doc[0]
+            if not 0 <= page_index < doc.page_count:
+                raise ValueError(f"page {page_index} out of range ({doc.page_count} pages)")
+            page = doc[page_index]
             rect = page.rect
             longest = max(rect.width, rect.height) or 1.0
             # Render near the target size (cap upscaling of tiny pages), then exact-fit below.
@@ -90,6 +91,12 @@ class PyMuPdfThumbnailer:
         buffer = io.BytesIO()
         image.save(buffer, format="WEBP", quality=80, method=6)
         return buffer.getvalue()
+
+    def thumbnail(self, source_path: str, *, max_edge: int = 400) -> bytes:
+        return self._render(source_path, 0, max_edge)
+
+    def page_thumbnail(self, source_path: str, page_index: int, *, max_edge: int = 320) -> bytes:
+        return self._render(source_path, page_index, max_edge)
 
 
 class SearchablePdfBuilder:

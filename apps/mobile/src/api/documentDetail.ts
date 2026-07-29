@@ -52,6 +52,11 @@ export function documentPageImageUrl(id: string, page: number, dpi = 150): strin
   return `${BACKEND_URL}/api/v1/documents/${encodeURIComponent(id)}/page/${page}/image?dpi=${dpi}`;
 }
 
+// Small ingest-time page thumbnail (#793): ~30KB WebP vs the ~1-4MB on-demand render above.
+export function documentPageThumbnailUrl(id: string, page: number): string {
+  return `${BACKEND_URL}/api/v1/documents/${encodeURIComponent(id)}/page/${page}/thumbnail`;
+}
+
 export function documentFileUrl(id: string, variant: "original" | "normalized" = "original"): string {
   return `${BACKEND_URL}/api/v1/documents/${encodeURIComponent(id)}/file?variant=${variant}`;
 }

@@ -15,7 +15,7 @@ import { ApiError } from "../api/client";
 import { AuthImage } from "../components/AuthImage";
 import {
   documentFileUrl,
-  documentPageImageUrl,
+  documentPageThumbnailUrl,
   documentThumbnailUrl,
   fetchDocument,
   fetchDocumentActivity,
@@ -121,7 +121,7 @@ export function DocumentDetailScreen({ id }: { id: string }) {
           {Array.from({ length: Math.min(pageCount, 12) }, (_, i) => (
             <AuthImage
               key={i}
-              uri={documentPageImageUrl(doc.id, i + 1, 72)}
+              uri={documentPageThumbnailUrl(doc.id, i + 1)}
               style={styles.thumb}
               resizeMode="cover"
             />

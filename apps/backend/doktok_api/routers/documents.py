@@ -56,7 +56,12 @@ from doktok_contracts.schemas import (
     TokenMatch,
 )
 from doktok_core.audit.logger import actor_identity, record_activity
-from doktok_core.documents.artifacts import NORMALIZED_PDF_REL, THUMBNAIL_REL
+from doktok_core.documents.artifacts import (
+    NORMALIZED_PDF_REL,
+    PAGE_THUMBNAILS_MAX,
+    THUMBNAIL_REL,
+    page_thumbnail_rel,
+)
 from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS_BY_ID
 from doktok_core.features.telemetry import build_processing_summary, build_processing_telemetry
 from doktok_core.security.roles import Role
@@ -1121,6 +1126,38 @@ def get_document_file(
         filename=document.original_filename,
         content_disposition_type=disposition,
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.get("/{document_id}/page/{page_number}/thumbnail")
+def get_page_thumbnail(
+    document_id: str,
+    page_number: int,
+    tenant: Tenant,
+    repo: Repo,
+) -> FileResponse:
+    """Serve the small per-page thumbnail (WebP, ~320px) produced at ingestion (#793).
+
+    Returns 404 until the ``thumbnail`` feature (v2) has produced page thumbnails for this
+    document - the UI falls back to the on-demand full-size page render or a placeholder.
+    """
+    if page_number < 1 or page_number > PAGE_THUMBNAILS_MAX:
+        raise HTTPException(status_code=404, detail="page thumbnail not available")
+    document = repo.get(tenant.tenant_id, document_id)
+    if document is None or not document.storage_path:
+        raise HTTPException(status_code=404, detail="document not found")
+    base = Path(document.storage_path)
+    path = (base / page_thumbnail_rel(page_number)).resolve()
+    if base.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="page thumbnail not available")
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            # Bytes are fixed for a document version; allow a day of private caching.
+            "Cache-Control": "private, max-age=86400",
+        },
     )
 
 

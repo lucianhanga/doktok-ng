@@ -121,7 +121,7 @@ export function DocumentDetailScreen({ id }: { id: string }) {
           {Array.from({ length: Math.min(pageCount, 12) }, (_, i) => (
             <Image
               key={i}
-              source={{ uri: documentPageImageUrl(doc.id, i + 1), headers: authHeaders(token ?? "") }}
+              source={{ uri: documentPageImageUrl(doc.id, i + 1, 72), headers: authHeaders(token ?? "") }}
               style={styles.thumb}
               resizeMode="cover"
             />

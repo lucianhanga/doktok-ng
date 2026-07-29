@@ -48,3 +48,5 @@ dist/
 *.jks
 *.keystore
 !debug.keystore
+
+android/local.properties

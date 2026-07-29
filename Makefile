@@ -160,6 +160,24 @@ js: js-typecheck js-lint js-test ## Run all JS/TS checks
 mobile-install: ## Install apps/mobile deps (standalone - Expo/RN conflicts with the UI's React 18, so it lives OUTSIDE the pnpm workspace)
 	cd apps/mobile && pnpm install --ignore-workspace
 
+ANDROID_HOME ?= $(HOME)/Library/Android/sdk
+EMULATOR ?= doktok
+
+mobile-emulator-start: ## Start the Android emulator detached (EMULATOR=name, default doktok)
+	@$(ANDROID_HOME)/emulator/emulator -avd $(EMULATOR) -gpu auto -no-snapshot-save -no-metrics \
+		>/tmp/doktok-emulator.log 2>&1 & \
+		echo "emulator '$(EMULATOR)' starting in background (log: /tmp/doktok-emulator.log); boot state: make mobile-emulator-status"
+
+mobile-emulator-status: ## Wait for the emulator and print its boot state (1 = booted)
+	@$(ANDROID_HOME)/platform-tools/adb wait-for-device
+	@$(ANDROID_HOME)/platform-tools/adb shell getprop sys.boot_completed
+
+mobile-emulator-stop: ## Stop the Android emulator
+	@$(ANDROID_HOME)/platform-tools/adb emu kill || true
+
+mobile-run: ## Build + install the app on the running emulator (needs JDK 17 + local.properties sdk.dir)
+	cd apps/mobile && pnpm exec expo run:android
+
 secrets: ## Scan tracked files for secrets (detect-secrets)
 	uvx detect-secrets scan --baseline .secrets.baseline
 

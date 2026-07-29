@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,6 +12,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 
 import { ApiError } from "../api/client";
+import { AuthImage } from "../components/AuthImage";
 import {
   documentFileUrl,
   documentPageImageUrl,
@@ -119,9 +119,9 @@ export function DocumentDetailScreen({ id }: { id: string }) {
       {pageCount > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbs}>
           {Array.from({ length: Math.min(pageCount, 12) }, (_, i) => (
-            <Image
+            <AuthImage
               key={i}
-              source={{ uri: documentPageImageUrl(doc.id, i + 1, 72), headers: authHeaders(token ?? "") }}
+              uri={documentPageImageUrl(doc.id, i + 1, 72)}
               style={styles.thumb}
               resizeMode="cover"
             />
@@ -129,11 +129,7 @@ export function DocumentDetailScreen({ id }: { id: string }) {
         </ScrollView>
       )}
       {pageCount === 0 && token && (
-        <Image
-          source={{ uri: documentThumbnailUrl(doc.id), headers: authHeaders(token) }}
-          style={styles.thumbSingle}
-          resizeMode="contain"
-        />
+        <AuthImage uri={documentThumbnailUrl(doc.id)} style={styles.thumbSingle} resizeMode="contain" />
       )}
 
       <View style={styles.actions}>

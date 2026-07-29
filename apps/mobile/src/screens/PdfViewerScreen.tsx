@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Pdf from "react-native-pdf";
 import * as FileSystem from "expo-file-system/legacy";
 
@@ -23,6 +23,10 @@ export function PdfViewerScreen({
   const [source, setSource] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<{ current: number; total: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+
+  const zoomBy = (delta: number) =>
+    setZoom((z) => Math.min(5, Math.max(0.5, Math.round((z + delta) * 100) / 100)));
 
   useEffect(() => {
     let alive = true;
@@ -74,10 +78,22 @@ export function PdfViewerScreen({
         trustAllCerts={false}
         enablePaging
         horizontal={false}
+        scale={zoom}
         onLoadComplete={(numberOfPages) => setPage({ current: 1, total: numberOfPages })}
         onPageChanged={(p) => setPage((prev) => (prev ? { ...prev, current: p } : prev))}
         onError={(e) => setError(e instanceof Error ? e.message : "could not render the PDF")}
       />
+      <View style={styles.zoomBar} pointerEvents="box-none">
+        <TouchableOpacity style={styles.zoomBtn} onPress={() => zoomBy(-0.25)} accessibilityLabel="zoom out">
+          <Text style={styles.zoomText}>−</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.zoomBtn} onPress={() => setZoom(1)} accessibilityLabel="reset zoom">
+          <Text style={styles.zoomLabel}>{Math.round(zoom * 100)}%</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.zoomBtn} onPress={() => zoomBy(0.25)} accessibilityLabel="zoom in">
+          <Text style={styles.zoomText}>+</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -94,4 +110,19 @@ const styles = StyleSheet.create({
   error: { color: colors.danger, textAlign: "center" },
   title: { paddingHorizontal: spacing.md, paddingTop: spacing.sm },
   pdf: { flex: 1, backgroundColor: colors.bg },
+  zoomBar: {
+    position: "absolute",
+    right: spacing.md,
+    bottom: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.borderStrong,
+    borderWidth: 1,
+    borderRadius: 20,
+    overflow: "hidden",
+  },
+  zoomBtn: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  zoomText: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  zoomLabel: { ...typeScale.small, minWidth: 44, textAlign: "center" },
 });

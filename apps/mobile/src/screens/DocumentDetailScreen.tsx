@@ -13,6 +13,22 @@ import * as Sharing from "expo-sharing";
 
 import { ApiError } from "../api/client";
 import { AuthImage } from "../components/AuthImage";
+
+// Make every markdown text node selectable (long-press -> copy) - this is how users copy text out
+// of a document until a proper content-search exists.
+const MD_RULES = {
+  text: (
+    node: { key: string; content: string },
+    _children: unknown,
+    _parent: unknown,
+    styles: Record<string, unknown>,
+    inheritedStyles: Record<string, unknown> = {},
+  ) => (
+    <Text key={node.key} style={[inheritedStyles, styles.text] as never} selectable>
+      {node.content}
+    </Text>
+  ),
+};
 import {
   documentFileUrl,
   documentPageThumbnailUrl,
@@ -174,7 +190,10 @@ export function DocumentDetailScreen({
         ) : content === "" ? (
           <Text style={typeScale.muted}>no extracted content yet</Text>
         ) : (
-          <Markdown style={{ body: styles.md, heading3: styles.mdH, code_inline: styles.mdCode, fence: styles.mdCode }}>
+          <Markdown
+            style={{ body: styles.md, heading3: styles.mdH, code_inline: styles.mdCode, fence: styles.mdCode }}
+            rules={MD_RULES}
+          >
             {content}
           </Markdown>
         ))}

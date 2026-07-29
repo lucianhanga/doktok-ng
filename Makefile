@@ -178,11 +178,11 @@ mobile-emulator-stop: ## Stop the Android emulator
 mobile-run: ## Build + install the app on the running emulator (needs JDK 17 + local.properties sdk.dir)
 	cd apps/mobile && pnpm exec expo run:android
 
-mobile-start: ## Start the Expo/Metro dev server (hot-reload into the installed dev client)
-	cd apps/mobile && pnpm start
+mobile-start: ## Start the Metro dev server in DEV-CLIENT mode (this project has native modules; Expo Go can't run it)
+	cd apps/mobile && pnpm exec expo start --dev-client
 
-mobile-start-clear: ## Start Metro with a cleared cache (after dependency/resolution issues)
-	cd apps/mobile && pnpm start --clear
+mobile-start-clear: ## Start Metro (dev-client) with a cleared cache (after dependency/resolution issues)
+	cd apps/mobile && pnpm exec expo start --dev-client --clear
 
 secrets: ## Scan tracked files for secrets (detect-secrets)
 	uvx detect-secrets scan --baseline .secrets.baseline

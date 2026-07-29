@@ -180,7 +180,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
     <View style={styles.root}>
       <TextInput
         style={styles.search}
-        placeholder="search documents"
+        placeholder="search titles"
         placeholderTextColor={colors.muted}
         autoCapitalize="none"
         value={search}

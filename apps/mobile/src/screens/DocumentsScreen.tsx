@@ -32,6 +32,11 @@ interface RowState {
   tags: Record<string, DocumentTag[]>;
 }
 
+function dedupeById(docs: DokDocument[]): DokDocument[] {
+  const seen = new Set<string>();
+  return docs.filter((d) => (seen.has(d.id) ? false : (seen.add(d.id), true)));
+}
+
 const EMPTY: RowState = { items: [], total: 0, nextCursor: null, processing: {}, tags: {} };
 
 function badgeFor(doc: DokDocument, proc?: ProcessingSummary): { text: string; color: string } | null {
@@ -73,7 +78,12 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           token,
         );
         setState((s) => ({
-          items: mode === "more" ? [...s.items, ...page.items] : page.items,
+          // Dedupe by id: a replace (poll/search) can overlap with an in-flight "more" append, or
+          // the cursor can shift under new ingest - the same doc must never appear twice (#772).
+          items:
+            mode === "more"
+              ? [...s.items, ...page.items.filter((d) => !s.items.some((e) => e.id === d.id))]
+              : dedupeById(page.items),
           total: page.total,
           nextCursor: page.next_cursor,
           processing: { ...(mode === "more" ? s.processing : {}), ...(page.processing ?? {}) },

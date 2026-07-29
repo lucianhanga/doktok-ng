@@ -39,7 +39,13 @@ const TABS: { id: Tab; label: string }[] = [
 
 const authHeaders = (token: string) => ({ Authorization: `Bearer ${token}` });
 
-export function DocumentDetailScreen({ id }: { id: string }) {
+export function DocumentDetailScreen({
+  id,
+  onOpenPdf,
+}: {
+  id: string;
+  onOpenPdf?: (variant: "original" | "normalized") => void;
+}) {
   const { token } = useAuth();
   const [doc, setDoc] = useState<DokDocument | null>(null);
   const [tab, setTab] = useState<Tab>("content");
@@ -65,7 +71,7 @@ export function DocumentDetailScreen({ id }: { id: string }) {
       .catch(() => setActivity([]));
   }, [id, token]);
 
-  async function openPdf(variant: "original" | "normalized") {
+  async function sharePdf(variant: "original" | "normalized") {
     if (!token || !doc) return;
     setSharing(true);
     try {
@@ -133,14 +139,25 @@ export function DocumentDetailScreen({ id }: { id: string }) {
       )}
 
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => void openPdf("original")} disabled={sharing}>
-          <Text style={styles.actionText}>{sharing ? "opening…" : "open PDF"}</Text>
+        <TouchableOpacity
+          style={styles.actionBtn}
+          onPress={() => (onOpenPdf ? onOpenPdf("original") : void sharePdf("original"))}
+          disabled={sharing}
+        >
+          <Text style={styles.actionText}>{sharing ? "opening…" : "view PDF"}</Text>
         </TouchableOpacity>
         {(doc.metadata?.system_document as string | undefined) && (
-          <TouchableOpacity style={styles.actionBtn} onPress={() => void openPdf("normalized")} disabled={sharing}>
-            <Text style={styles.actionText}>open searchable</Text>
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={() => (onOpenPdf ? onOpenPdf("normalized") : void sharePdf("normalized"))}
+            disabled={sharing}
+          >
+            <Text style={styles.actionText}>view searchable</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity style={styles.actionBtn} onPress={() => void sharePdf("original")} disabled={sharing}>
+          <Text style={styles.actionText}>share</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.tabBar}>

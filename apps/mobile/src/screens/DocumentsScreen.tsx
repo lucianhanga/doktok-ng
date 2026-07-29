@@ -17,6 +17,7 @@ import {
   type ProcessingSummary,
   type DocumentTag,
 } from "../api/documents";
+import { EMPTY_FILTERS, SearchFilters, type SearchFiltersValue } from "../components/SearchFilters";
 import { useAuth } from "../auth/AuthContext";
 import { colors, spacing, typeScale } from "../theme";
 
@@ -52,12 +53,15 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
   const { token } = useAuth();
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
+  const [filters, setFilters] = useState<SearchFiltersValue>(EMPTY_FILTERS);
   const [state, setState] = useState<RowState>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
 
   // Debounce the title filter (300ms) so typing doesn't fire a request per keystroke.
   useEffect(() => {
@@ -72,9 +76,24 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
       const cursor = mode === "more" ? prev.nextCursor : null;
       if (mode === "more" && !cursor) return;
       if (mode === "more") setLoadingMore(true);
+      const f = filtersRef.current;
       try {
         const page = await fetchDocuments(
-          { title: debounced, cursor, limit: PAGE_SIZE, sort: "created", dir: "desc" },
+          {
+            title: debounced,
+            cursor,
+            limit: PAGE_SIZE,
+            sort: "created",
+            dir: "desc",
+            tokens: f.tokens,
+            tokenMatch: f.tokenMatch,
+            category: f.category,
+            status: f.status,
+            needsAttention: f.needsAttention,
+            unidentifiable: f.unidentifiable,
+            tags: f.tags,
+            tagMatch: f.tagMatch,
+          },
           token,
         );
         setState((s) => ({
@@ -100,11 +119,11 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
     [token, debounced],
   );
 
-  // Initial load + whenever the debounced search changes.
+  // Initial load + whenever the debounced search or the filters change.
   useEffect(() => {
     setLoading(true);
     void load("replace");
-  }, [load]);
+  }, [load, debounced, filters]);
 
   // Live badges: poll only while any visible document is still mid-pipeline.
   const anyProcessing = useMemo(
@@ -167,6 +186,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
         value={search}
         onChangeText={setSearch}
       />
+      <SearchFilters value={filters} onChange={setFilters} />
       {error && (
         <Text style={styles.error} role="alert">
           {error}

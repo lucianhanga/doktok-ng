@@ -9,7 +9,10 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "ng.doktok.app"
+      "bundleIdentifier": "ng.doktok.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan documents with the camera to ingest them into DokTok NG."
+      }
     },
     "android": {
       "package": "ng.doktok.app",
@@ -26,7 +29,8 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-sharing"
+      "expo-sharing",
+      "react-native-document-scanner-plugin"
     ],
     "extra": {
       "backendUrl": "http://10.0.2.2:8000"

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { JSX, ReactNode } from "react";
 
 /**
  * One-line text that truncates with an ellipsis and exposes the full value in a native tooltip.

@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StyleSheet, Text, View } from "react-native";
 
 import { DocumentsScreen } from "./DocumentsScreen";
+import { DocumentDetailScreen } from "./DocumentDetailScreen";
 import { colors, spacing, typeScale } from "../theme";
 
 export type DocumentsStackParamList = {
@@ -11,22 +12,6 @@ export type DocumentsStackParamList = {
 };
 
 const Stack = createNativeStackNavigator<DocumentsStackParamList>();
-
-// Stub until M1.4 (#773): lets the list navigate without shipping a fake detail.
-function DocumentDetailStub({ route }: { route: { params: { id: string } } }) {
-  return (
-    <View style={styles.root}>
-      <Text style={typeScale.title}>Document</Text>
-      <Text style={[typeScale.muted, styles.note]}>detail lands in M1.4 (#773)</Text>
-      <Text style={[typeScale.small, styles.note]}>id: {route.params.id}</Text>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center", padding: spacing.xl },
-  note: { marginTop: spacing.sm, textAlign: "center" },
-});
 
 export function DocumentsStack() {
   return (
@@ -46,7 +31,7 @@ export function DocumentsStack() {
         )}
       </Stack.Screen>
       <Stack.Screen name="DocumentDetail" options={{ title: "Document" }}>
-        {({ route }) => <DocumentDetailStub route={route} />}
+        {({ route }) => <DocumentDetailScreen id={route.params.id} />}
       </Stack.Screen>
     </Stack.Navigator>
   );

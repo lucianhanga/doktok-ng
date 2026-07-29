@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { JSX } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
 

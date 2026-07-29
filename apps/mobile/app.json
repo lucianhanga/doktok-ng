@@ -25,7 +25,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-sharing"
     ],
     "extra": {
       "backendUrl": "http://10.0.2.2:8000"

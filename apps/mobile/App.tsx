@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from "./src/auth/AuthContext";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { PlaceholderScreen } from "./src/screens/PlaceholderScreen";
 import { DocumentsStack } from "./src/screens/DocumentsStack";
+import { ScanScreen } from "./src/screens/ScanScreen";
 import { colors, spacing, typeScale } from "./src/theme";
 
 const Tab = createBottomTabNavigator();
@@ -71,16 +72,16 @@ function Gate() {
       >
         {(["Documents", "Scan", "Chat", "Insights", "Settings"] as const).map((name) => (
           <Tab.Screen key={name} name={name} options={{ title: name }}>
-            {() =>
-              name === "Documents" ? (
-                <DocumentsStack />
-              ) : (
+            {() => {
+              if (name === "Documents") return <DocumentsStack />;
+              if (name === "Scan") return <ScanScreen />;
+              return (
                 <PlaceholderScreen
                   name={`${name}${user ? ` (${user.display_name || user.email})` : ""}`}
                   note={TAB_NOTES[name]}
                 />
-              )
-            }
+              );
+            }}
           </Tab.Screen>
         ))}
       </Tab.Navigator>

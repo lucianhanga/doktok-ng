@@ -91,3 +91,21 @@ export function fetchCategories(token: string): Promise<CategorySummary[]> {
 export function fetchTags(token: string): Promise<DocumentTag[]> {
   return apiFetch<DocumentTag[]>("/api/v1/tags", { token });
 }
+
+export interface TokenSuggestion {
+  value: string;
+  document_count: number;
+}
+
+/** Token completions for the chip input (#800): prefix match, AND-constrained by the already
+ * selected tokens (same semantics as the web token field). */
+export function suggestTokens(
+  prefix: string,
+  selected: string[],
+  token: string,
+): Promise<TokenSuggestion[]> {
+  const params = new URLSearchParams();
+  params.set("prefix", prefix);
+  selected.forEach((t) => params.append("token", t));
+  return apiFetch<TokenSuggestion[]>(`/api/v1/tokens/suggest?${params.toString()}`, { token });
+}

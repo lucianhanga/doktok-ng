@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 
 import { fetchCategories, fetchTags, type DocumentTag } from "../api/documents";
 import { useAuth } from "../auth/AuthContext";
+import { TokenInput } from "./TokenInput";
 import { colors, spacing, typeScale } from "../theme";
 
 // Complex document search (#800): title (handled by the parent) plus this collapsible panel -
@@ -45,7 +46,6 @@ export function SearchFilters({
 }) {
   const { token } = useAuth();
   const [open, setOpen] = useState(false);
-  const [tokensText, setTokensText] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [tags, setTags] = useState<DocumentTag[]>([]);
 
@@ -71,14 +71,6 @@ export function SearchFilters({
     onChange({ ...value, ...patch });
   }
 
-  function commitTokens(text: string) {
-    setTokensText(text);
-    const tokens = text
-      .split(/[\s,]+/)
-      .map((t) => t.trim())
-      .filter(Boolean);
-    set({ tokens });
-  }
 
   function toggleTag(name: string) {
     const has = value.tags.includes(name);
@@ -96,14 +88,7 @@ export function SearchFilters({
 
       {open && (
         <View style={styles.panel}>
-          <TextInput
-            style={styles.tokensInput}
-            placeholder="tokens (space or comma separated)"
-            placeholderTextColor={colors.muted}
-            autoCapitalize="none"
-            value={tokensText}
-            onChangeText={commitTokens}
-          />
+          <TokenInput tokens={value.tokens} onChange={(tokens) => set({ tokens })} />
           <View style={styles.chipsRow}>
             {(["all", "any"] as const).map((m) => (
               <TouchableOpacity
@@ -195,16 +180,6 @@ const styles = StyleSheet.create({
   root: { paddingHorizontal: spacing.md },
   toggle: { paddingVertical: spacing.xs },
   panel: { paddingTop: spacing.xs, gap: spacing.sm },
-  tokensInput: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 8,
-    color: colors.text,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    fontSize: 14,
-  },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
   chip: {
     borderColor: colors.borderStrong,

@@ -47,7 +47,7 @@ from doktok_contracts.schemas import (
 
 from doktok_core.aggregation import normalize_transaction
 from doktok_core.aggregation.windowing import stitch_windows, window_text
-from doktok_core.documents.artifacts import THUMBNAIL_REL
+from doktok_core.documents.artifacts import PAGE_THUMBNAILS_MAX, THUMBNAIL_REL, page_thumbnail_rel
 from doktok_core.enrichment import (
     MAX_CATEGORIES_PER_DOCUMENT,
     MAX_CATEGORIES_PER_TENANT,
@@ -990,15 +990,17 @@ class StructuredRecordsFeature:
 
 
 class ThumbnailFeature:
-    """Render a small first-page preview (WebP) used by the document card and grid/list views.
+    """Render small WebP previews: the first-page card thumbnail plus one PER PAGE (#793).
 
     Renders from the canonical normalized PDF so it is uniform across born-digital PDFs and OCR'd
-    scans. Idempotent: it overwrites the document's ``thumbnails/thumb.webp`` each run, so the
-    reconciler can backfill existing documents and re-run on a version bump.
+    scans. Idempotent: it overwrites ``thumbnails/thumb.webp`` and ``thumbnails/page-XXXX.webp``
+    each run, so the reconciler can backfill existing documents (v1 -> v2 bump) and re-run on
+    later bumps. Per-page files are the fast thumbnails the UI strips use; the on-demand full-size
+    page render stays for detail zooming.
     """
 
     name = "thumbnail"
-    version = 1
+    version = 2  # v2: per-page thumbnails (v1 wrote only thumbnails/thumb.webp)
     dependencies = ("extract",)  # needs extracted content/artifacts
 
     def __init__(
@@ -1019,8 +1021,30 @@ class ThumbnailFeature:
         # Prefer the normalized system PDF (uniform for PDFs + scans); fall back to the original.
         rel = document.metadata.get("system_document") or document.metadata.get("original")
         source = base / str(rel) if rel else base / document.original_filename
-        data = self._thumbnailer.thumbnail(str(source))
-        self._files.write_bytes(str(base / THUMBNAIL_REL), data)
+        self._files.write_bytes(str(base / THUMBNAIL_REL), self._thumbnailer.thumbnail(str(source)))
+
+        # Per-page thumbnails (#793). The page count comes from extraction metadata; no count, no
+        # per-page work (the card thumbnail above is still produced).
+        page_count = document.metadata.get("page_count")
+        if not isinstance(page_count, int) or page_count <= 0:
+            return
+        written: list[str] = []
+        for page_index in range(min(page_count, PAGE_THUMBNAILS_MAX)):
+            data = self._thumbnailer.page_thumbnail(str(source), page_index)
+            rel_path = page_thumbnail_rel(page_index + 1)
+            self._files.write_bytes(str(base / rel_path), data)
+            written.append(rel_path)
+
+        # Register the artifacts in the manifest when one exists (keeps docs.active
+        # self-describing).
+        manifest_path = base / "manifest.json"
+        try:
+            manifest = json.loads(self._files.read_bytes(str(manifest_path)).decode("utf-8"))
+        except Exception:  # noqa: BLE001 - missing/corrupt manifest: leave artifacts unlisted
+            return
+        artifacts = manifest.setdefault("artifacts", {})
+        artifacts["page_thumbnails"] = written
+        self._files.write_bytes(str(manifest_path), json.dumps(manifest, indent=2).encode("utf-8"))
 
 
 # The enrichment stages every active document runs, in the reconciler's dependency order - single

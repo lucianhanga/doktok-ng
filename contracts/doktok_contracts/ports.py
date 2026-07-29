@@ -449,6 +449,11 @@ class Thumbnailer(Protocol):
         edge scaled to ``max_edge`` pixels and the page aspect ratio preserved."""
         ...
 
+    def page_thumbnail(self, source_path: str, page_index: int, *, max_edge: int = 320) -> bytes:
+        """Render a small preview (WebP bytes) of ONE page (0-based), long edge at ``max_edge`` -
+        the per-page thumbnails generated at ingestion (#793)."""
+        ...
+
 
 @runtime_checkable
 class ImageExtractor(Protocol):

@@ -226,7 +226,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           data={state.items}
           keyExtractor={(d) => d.id}
           numColumns={viewMode === "grid" ? gridCols : 1}
-          columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
+          columnWrapperStyle={viewMode === "grid" && gridCols > 1 ? styles.gridRow : undefined}
           contentContainerStyle={viewMode === "grid" ? styles.gridContent : undefined}
           renderItem={renderItem}
           refreshControl={

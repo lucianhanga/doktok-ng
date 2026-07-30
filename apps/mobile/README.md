@@ -58,7 +58,7 @@ make mobile-install        # = cd apps/mobile && pnpm install --ignore-workspace
 
 ```bash
 make mobile-emulator-start     # boot the AVD (detached; status: make mobile-emulator-status)
-make mobile-run                # build + install the dev client on it (first time / native changes)
+make mobile-run                # build + install the dev client on the EMULATOR (first time / native changes)
 make mobile-start              # Metro in dev-client mode (hot-reload for everything JS)
 ```
 
@@ -69,7 +69,7 @@ The emulator reaches the backend as `http://10.0.2.2:8000` (default in `app.json
 No LAN/firewall needed - everything goes through `adb reverse` tunnels:
 
 ```bash
-make mobile-deploy             # auto-detects the phone, ensures adb reverse tcp:8000+8081, builds+installs
+make mobile-deploy             # build + install on the USB PHONE (auto-detects it, ensures adb reverse tcp:8000+8081)
 make mobile-start              # Metro; the app on the phone loads the bundle over the cable
 ```
 

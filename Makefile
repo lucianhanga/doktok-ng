@@ -19,7 +19,7 @@ export DYLD_FALLBACK_LIBRARY_PATH := $(BREW_PREFIX)/lib:$(DYLD_FALLBACK_LIBRARY_
 endif
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z0-9_.-]+:.*## ' $(MAKEFILE_LIST) | sort | \
+	@grep -hE '^[a-zA-Z0-9_.-]+:.*## ' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 setup: ## Install Python (uv) and JS (pnpm) dependencies

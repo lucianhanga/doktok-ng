@@ -7,6 +7,8 @@ import type {
   DokDocument,
   ProcessingSummary,
 } from "../api/documents";
+import { documentThumbnailUrl } from "../api/documentDetail";
+import { AuthImage } from "./AuthImage";
 import { colors, spacing, typeScale } from "../theme";
 
 // Accordion document tile (#805): collapsed shows title (bold) + the two dates + status badge;
@@ -39,6 +41,12 @@ export function DocumentTile({
       accessibilityState={{ expanded }}
     >
       <View style={styles.headRow}>
+        <View style={styles.thumbWrap}>
+          <Text style={styles.thumbPlaceholder}>{(doc.title || doc.original_filename).charAt(0).toUpperCase()}</Text>
+          <View style={StyleSheet.absoluteFill}>
+            <AuthImage uri={documentThumbnailUrl(doc.id)} style={styles.thumb} resizeMode="cover" />
+          </View>
+        </View>
         <View style={styles.headMain}>
           <Text style={styles.title} numberOfLines={expanded ? undefined : 2}>
             {doc.title || doc.original_filename}
@@ -131,6 +139,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
   },
   headRow: { flexDirection: "row", alignItems: "flex-start" },
+  thumbWrap: {
+    width: 44,
+    height: 58,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+    borderWidth: 1,
+    marginRight: spacing.sm,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  thumbPlaceholder: { ...typeScale.muted, fontSize: 18, fontWeight: "600" },
+  thumb: { width: 44, height: 58 },
   headMain: { flex: 1, marginRight: spacing.sm },
   title: { ...typeScale.body, fontWeight: "700" },
   dates: { ...typeScale.small, marginTop: 2 },

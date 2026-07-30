@@ -18,6 +18,7 @@ import {
   type ProcessingSummary,
   type DocumentTag,
 } from "../api/documents";
+import { DocumentGridCard } from "../components/DocumentGridCard";
 import { DocumentTile } from "../components/DocumentTile";
 import { EMPTY_FILTERS, SearchFilters, type SearchFiltersValue } from "../components/SearchFilters";
 import { useAuth } from "../auth/AuthContext";
@@ -54,6 +55,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"tiles" | "grid">("tiles");
   const stateRef = useRef(state);
   stateRef.current = state;
   const filtersRef = useRef(filters);
@@ -138,6 +140,15 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
   }, [anyProcessing, load]);
 
   function renderItem({ item }: { item: DokDocument }) {
+    if (viewMode === "grid") {
+      return (
+        <DocumentGridCard
+          doc={item}
+          processing={state.processing[item.id]}
+          onOpen={onOpenDocument}
+        />
+      );
+    }
     return (
       <DocumentTile
         doc={item}
@@ -153,14 +164,23 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
 
   return (
     <View style={styles.root}>
-      <TextInput
-        style={styles.search}
-        placeholder="search titles"
-        placeholderTextColor={colors.muted}
-        autoCapitalize="none"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <View style={styles.searchRow}>
+        <TextInput
+          style={[styles.search, styles.searchFlex]}
+          placeholder="search titles"
+          placeholderTextColor={colors.muted}
+          autoCapitalize="none"
+          value={search}
+          onChangeText={setSearch}
+        />
+        <TouchableOpacity
+          style={styles.viewToggle}
+          onPress={() => setViewMode(viewMode === "tiles" ? "grid" : "tiles")}
+          accessibilityLabel="toggle view"
+        >
+          <Text style={styles.viewToggleText}>{viewMode === "tiles" ? "▦" : "☰"}</Text>
+        </TouchableOpacity>
+      </View>
       <SearchFilters value={filters} onChange={setFilters} />
       {error && (
         <Text style={styles.error} role="alert">
@@ -173,8 +193,12 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
         </View>
       ) : (
         <FlatList
+          key={viewMode}
           data={state.items}
           keyExtractor={(d) => d.id}
+          numColumns={viewMode === "grid" ? 2 : 1}
+          columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
+          contentContainerStyle={viewMode === "grid" ? styles.gridContent : undefined}
           renderItem={renderItem}
           refreshControl={
             <RefreshControl
@@ -207,6 +231,19 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginRight: spacing.md },
+  searchFlex: { flex: 1 },
+  viewToggle: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.sm,
+  },
+  viewToggleText: { color: colors.accent, fontSize: 16 },
+  gridRow: { gap: spacing.sm, paddingHorizontal: spacing.md },
+  gridContent: { gap: spacing.md, paddingBottom: spacing.xl },
   search: {
     backgroundColor: colors.surface,
     borderColor: colors.border,

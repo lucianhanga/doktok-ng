@@ -46,11 +46,11 @@ function worstOf(statuses: DocumentFeature["status"][]): GroupStatus {
   return "none";
 }
 
-function Chip({ label, status }: { label: string; status: GroupStatus }) {
+function Chip({ label, status, overlay }: { label: string; status: GroupStatus; overlay: boolean }) {
   return (
-    <View style={styles.chip}>
+    <View style={[styles.chip, overlay && styles.chipOverlay]}>
       <View style={[styles.dot, { backgroundColor: STATUS_COLOR[status] }]} />
-      <Text style={styles.chipText}>{label}</Text>
+      <Text style={[styles.chipText, overlay && styles.chipTextOverlay]}>{label}</Text>
     </View>
   );
 }
@@ -59,10 +59,13 @@ export function FeatureBadges({
   groups,
   rows,
   compact = true,
+  overlay = false,
 }: {
   groups: FeatureGroup[];
   rows: DocumentFeature[];
   compact?: boolean;
+  /** On-image variant: chips get a translucent dark pill + light text so they read over thumbnails. */
+  overlay?: boolean;
 }) {
   const byFeature = useMemo(() => {
     const map = new Map<string, DocumentFeature["status"][]>();
@@ -99,7 +102,7 @@ export function FeatureBadges({
   return (
     <View style={styles.row}>
       {chips.map((c) => (
-        <Chip key={c.key} label={c.label} status={c.status} />
+        <Chip key={c.key} label={c.label} status={c.status} overlay={overlay} />
       ))}
     </View>
   );
@@ -119,4 +122,10 @@ const styles = StyleSheet.create({
   },
   dot: { width: 7, height: 7, borderRadius: 4 },
   chipText: { ...typeScale.small },
+  // Overlaid on a thumbnail: translucent dark pill, light text, hairline light border.
+  chipOverlay: {
+    backgroundColor: "rgba(10, 14, 20, 0.55)",
+    borderColor: "rgba(255, 255, 255, 0.25)",
+  },
+  chipTextOverlay: { color: colors.text },
 });

@@ -47,6 +47,11 @@ export function DocumentGridCard({
             {failed ? "failed" : (processing?.status ?? doc.status)}
           </Text>
         )}
+        {featureGroups && features && (
+          <View style={styles.badgeOverlay} pointerEvents="none">
+            <FeatureBadges groups={featureGroups} rows={features} overlay />
+          </View>
+        )}
       </View>
       <Text style={styles.title} numberOfLines={2}>
         {doc.title || doc.original_filename}
@@ -58,11 +63,6 @@ export function DocumentGridCard({
           year: "numeric",
         })}
       </Text>
-      {featureGroups && features && (
-        <View style={styles.badges}>
-          <FeatureBadges groups={featureGroups} rows={features} />
-        </View>
-      )}
     </TouchableOpacity>
   );
 }
@@ -96,5 +96,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   title: { ...typeScale.body, fontWeight: "600", marginTop: spacing.xs },
-  badges: { marginTop: spacing.xs },
+  // Feature badges sit ON the thumbnail, along its bottom edge (like the web's cards).
+  badgeOverlay: { position: "absolute", left: 0, right: 0, bottom: 0, padding: spacing.xs },
 });

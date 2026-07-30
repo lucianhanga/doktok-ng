@@ -163,10 +163,15 @@ mobile-install: ## Install apps/mobile deps (standalone - Expo/RN conflicts with
 ANDROID_HOME ?= $(HOME)/Library/Android/sdk
 EMULATOR ?= doktok
 
-mobile-emulator-start: ## Start the Android emulator detached (EMULATOR=name, default doktok)
+mobile-emulator-start: ## Start the Android emulator detached (EMULATOR=name, default doktok) + adb reverse tunnels (8000/8081, so 127.0.0.1:8000 works on it too)
 	@$(ANDROID_HOME)/emulator/emulator -avd $(EMULATOR) -gpu auto -no-snapshot-save -no-metrics \
 		>/tmp/doktok-emulator.log 2>&1 & \
 		echo "emulator '$(EMULATOR)' starting in background (log: /tmp/doktok-emulator.log); boot state: make mobile-emulator-status"
+	@sleep 8; serial="$$($(ANDROID_HOME)/platform-tools/adb devices | grep emulator | cut -f1 | head -1)"; \
+	[ -n "$$serial" ] && { \
+		$(ANDROID_HOME)/platform-tools/adb -s "$$serial" reverse tcp:8000 tcp:8000 >/dev/null 2>&1 || true; \
+		$(ANDROID_HOME)/platform-tools/adb -s "$$serial" reverse tcp:8081 tcp:8081 >/dev/null 2>&1 || true; \
+		echo "adb reverse tunnels set on $$serial (8000 backend, 8081 Metro)"; } || true
 
 mobile-emulator-status: ## Wait for the emulator and print its boot state (1 = booted)
 	@$(ANDROID_HOME)/platform-tools/adb wait-for-device
@@ -182,6 +187,8 @@ mobile-run: ## Build + install the app on the EMULATOR (auto-detects it; needs J
 		echo "no emulator running - start it first: make mobile-emulator-start"; exit 1; \
 	fi; \
 	echo "emulator: $$serial"; \
+	$$adb -s "$$serial" reverse tcp:8000 tcp:8000 >/dev/null 2>&1 || true; \
+	$$adb -s "$$serial" reverse tcp:8081 tcp:8081 >/dev/null 2>&1 || true; \
 	cd apps/mobile/android && ANDROID_SERIAL="$$serial" ./gradlew installDebug
 
 mobile-deploy: ## Redeploy on the USB PHONE: auto-detects it, ensures adb reverse tunnels (8000 backend + 8081 Metro), then builds + installs

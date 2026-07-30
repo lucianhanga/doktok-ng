@@ -17,7 +17,6 @@ export function DocumentGridCard({
   compact,
   featureGroups,
   features,
-  badgeCap,
   onOpen,
 }: {
   doc: DokDocument;
@@ -26,8 +25,6 @@ export function DocumentGridCard({
   compact?: boolean;
   featureGroups?: FeatureGroup[];
   features?: DocumentFeature[];
-  /** Max badge chips on the thumbnail before a "+N" overflow chip (web: THUMB_CHIP_CAP). */
-  badgeCap?: number;
   onOpen?: (id: string) => void;
 }) {
   const failed = processing && processing.features_failed > 0;
@@ -52,7 +49,16 @@ export function DocumentGridCard({
         )}
         {featureGroups && features && features.length > 0 && (
           <View style={styles.badgeOverlay} pointerEvents="none">
-            <FeatureBadges groups={featureGroups} rows={features} overlay cap={badgeCap} />
+            {SCRIM_SLICES.map((opacity, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.scrimSlice,
+                  { left: `${(i * 100) / SCRIM_SLICES.length}%`, backgroundColor: `rgba(0,0,0,${opacity})` },
+                ]}
+              />
+            ))}
+            <FeatureBadges groups={featureGroups} rows={features} overlay vertical />
           </View>
         )}
       </View>
@@ -69,6 +75,9 @@ export function DocumentGridCard({
     </TouchableOpacity>
   );
 }
+
+// Left→right opacity ramp for the fake gradient (lightest at the image side, darkest at the edge).
+const SCRIM_SLICES = [0.03, 0.09, 0.16, 0.24, 0.33, 0.45];
 
 const styles = StyleSheet.create({
   card: { flex: 1 },
@@ -99,15 +108,18 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   title: { ...typeScale.body, fontWeight: "600", marginTop: spacing.xs },
-  // Feature badges sit ON the thumbnail along its bottom edge, over a translucent scrim for
-  // contrast (the web uses a black gradient; a solid 45% strip reads the same at this size and
-  // avoids pulling in a native gradient module).
+  // Feature badges: vertical stack hugging the thumbnail's right edge. The "gradient" is faked
+  // with solid slices (RN has no gradients without a native module); chips sit on top.
   badgeOverlay: {
     position: "absolute",
-    left: 0,
+    top: 0,
     right: 0,
     bottom: 0,
-    padding: spacing.xs,
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    width: "56%",
+    paddingRight: spacing.xs,
+    paddingVertical: spacing.xs,
+    justifyContent: "center",
+    alignItems: "flex-end",
   },
+  scrimSlice: { position: "absolute", top: 0, bottom: 0, width: `${100 / SCRIM_SLICES.length}%` },
 });

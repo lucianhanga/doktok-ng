@@ -8,9 +8,10 @@ import { colors, spacing, typeScale } from "../theme";
 // status-tinted "label glyph" chips (✓ done, ✗ failed, … pending/running) built only from the
 // document's actual feature-ledger rows — features with no row are omitted, like the web.
 // Group chips first (entities, knowledge_graph), then individual chips sorted alphabetically by
-// feature name with the web's friendly labels (text, rag, meta, tags, recs, thumb). The overlay
-// variant (grid thumbnails) shrinks the chips and supports a cap with a "+N" overflow chip,
-// exactly like the web's ThumbnailFeatureChips; the parent supplies the translucent scrim.
+// feature name with the web's friendly labels (text, rag, meta, tags, recs, thumb).
+// Variants: inline (default; regular chips in expanded list tiles), overlay (small chips for
+// on-thumbnail use; the parent supplies the scrim), overlay+vertical (grid thumbnails: chips
+// stacked in a column hugging the thumbnail's right edge, all of them shown - no cap needed).
 type GroupStatus = "failed" | "running" | "pending" | "done";
 
 // Individual chip labels, mirroring the web's friendly names (DocumentsPanel.tsx).
@@ -54,7 +55,10 @@ function Chip({ label, status, small }: ChipData & { small: boolean }) {
         { backgroundColor: tint.bg, borderColor: tint.border },
       ]}
     >
-      <Text style={[small ? styles.chipTextSmall : styles.chipText, { color: tint.text }]}>
+      <Text
+        numberOfLines={1}
+        style={[small ? styles.chipTextSmall : styles.chipText, { color: tint.text }]}
+      >
         {label} {glyph(status)}
       </Text>
     </View>
@@ -65,12 +69,15 @@ export function FeatureBadges({
   groups,
   rows,
   overlay = false,
+  vertical = false,
   cap,
 }: {
   groups: FeatureGroup[];
   rows: DocumentFeature[];
-  /** Grid-thumbnail variant: tiny chips over the parent's scrim, "+N" overflow when capped. */
+  /** Grid-thumbnail variant: tiny chips over the parent's scrim. */
   overlay?: boolean;
+  /** Stack the chips in a right-aligned column (all shown; `cap` is ignored). */
+  vertical?: boolean;
   /** Max visible chips; the rest collapse into a "+N" chip (web: THUMB_CHIP_CAP). */
   cap?: number;
 }) {
@@ -102,11 +109,11 @@ export function FeatureBadges({
 
   if (chips.length === 0) return null;
 
-  const visible = cap !== undefined ? chips.slice(0, cap) : chips;
+  const visible = !vertical && cap !== undefined ? chips.slice(0, cap) : chips;
   const hiddenCount = chips.length - visible.length;
 
   return (
-    <View style={styles.row}>
+    <View style={vertical ? styles.column : styles.row}>
       {visible.map((c) => (
         <Chip key={c.key} label={c.label} status={c.status} small={overlay} />
       ))}
@@ -123,6 +130,8 @@ export function FeatureBadges({
 
 const styles = StyleSheet.create({
   row: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  // Vertical overlay on the thumbnail's right edge: chips stack, hugging the right side.
+  column: { flexDirection: "column", alignItems: "flex-end", gap: 3 },
   chip: {
     borderWidth: 1,
     borderRadius: 10,

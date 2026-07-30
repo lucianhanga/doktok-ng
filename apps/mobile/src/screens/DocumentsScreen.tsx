@@ -13,10 +13,12 @@ import {
 import { ApiError } from "../api/client";
 import {
   fetchDocuments,
+  type DocumentListStats,
   type DokDocument,
   type ProcessingSummary,
   type DocumentTag,
 } from "../api/documents";
+import { DocumentTile } from "../components/DocumentTile";
 import { EMPTY_FILTERS, SearchFilters, type SearchFiltersValue } from "../components/SearchFilters";
 import { useAuth } from "../auth/AuthContext";
 import { colors, spacing, typeScale } from "../theme";
@@ -31,6 +33,7 @@ interface RowState {
   nextCursor: string | null;
   processing: Record<string, ProcessingSummary>;
   tags: Record<string, DocumentTag[]>;
+  stats: Record<string, DocumentListStats>;
 }
 
 function dedupeById(docs: DokDocument[]): DokDocument[] {
@@ -38,16 +41,8 @@ function dedupeById(docs: DokDocument[]): DokDocument[] {
   return docs.filter((d) => (seen.has(d.id) ? false : (seen.add(d.id), true)));
 }
 
-const EMPTY: RowState = { items: [], total: 0, nextCursor: null, processing: {}, tags: {} };
+const EMPTY: RowState = { items: [], total: 0, nextCursor: null, processing: {}, tags: {}, stats: {} };
 
-function badgeFor(doc: DokDocument, proc?: ProcessingSummary): { text: string; color: string } | null {
-  if (proc) {
-    if (proc.features_failed > 0) return { text: "failed", color: colors.danger };
-    if (proc.status && proc.status !== "active") return { text: proc.status, color: colors.warning };
-  }
-  if (doc.status !== "active") return { text: doc.status, color: colors.warning };
-  return null;
-}
 
 export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const { token } = useAuth();
@@ -58,6 +53,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const filtersRef = useRef(filters);
@@ -107,6 +103,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           nextCursor: page.next_cursor,
           processing: { ...(mode === "more" ? s.processing : {}), ...(page.processing ?? {}) },
           tags: { ...(mode === "more" ? s.tags : {}), ...(page.tags ?? {}) },
+          stats: { ...(mode === "more" ? s.stats : {}), ...(page.stats ?? {}) },
         }));
         setError(null);
       } catch (e) {
@@ -141,38 +138,16 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
   }, [anyProcessing, load]);
 
   function renderItem({ item }: { item: DokDocument }) {
-    const proc = state.processing[item.id];
-    const badge = badgeFor(item, proc);
-    const docTags = state.tags[item.id] ?? [];
     return (
-      <TouchableOpacity
-        style={styles.row}
-        onPress={() => onOpenDocument?.(item.id)}
-        accessibilityRole="button"
-      >
-        <View style={styles.rowMain}>
-          <Text style={styles.rowTitle} numberOfLines={1}>
-            {item.title || item.original_filename}
-          </Text>
-          <Text style={styles.rowMeta} numberOfLines={1}>
-            {new Date(item.created_at).toLocaleDateString()} · {item.original_filename}
-          </Text>
-          {docTags.length > 0 && (
-            <View style={styles.tagsRow}>
-              {docTags.slice(0, 3).map((t) => (
-                <Text key={t.id} style={[styles.tag, { borderColor: t.color || colors.borderStrong }]}>
-                  {t.name}
-                </Text>
-              ))}
-              {docTags.length > 3 && <Text style={styles.rowMeta}>+{docTags.length - 3}</Text>}
-            </View>
-          )}
-        </View>
-        {badge && <Text style={[styles.badge, { color: badge.color }]}>{badge.text}</Text>}
-        {item.status !== "active" && !badge && (
-          <ActivityIndicator color={colors.warning} size="small" />
-        )}
-      </TouchableOpacity>
+      <DocumentTile
+        doc={item}
+        processing={state.processing[item.id]}
+        stats={state.stats[item.id]}
+        tags={state.tags[item.id]}
+        expanded={expandedId === item.id}
+        onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
+        onOpen={onOpenDocument}
+      />
     );
   }
 

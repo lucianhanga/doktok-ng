@@ -180,6 +180,18 @@ mobile-emulator-status: ## Wait for the emulator and print its boot state (1 = b
 mobile-emulator-stop: ## Stop the Android emulator
 	@$(ANDROID_HOME)/platform-tools/adb emu kill || true
 
+mobile-tunnels: ## (Re)establish adb reverse tunnels (8000 backend + 8081 Metro) on ALL connected devices - run this after "cannot reach backend" errors (adb restarts drop the tunnels)
+	@adb="$(ANDROID_HOME)/platform-tools/adb"; \
+	serials="$$($$adb devices | grep -v 'List of devices' | grep 'device$$' | cut -f1)"; \
+	if [ -z "$$serials" ]; then \
+		echo "no devices connected (start the emulator or plug in the phone)"; exit 1; \
+	fi; \
+	for s in $$serials; do \
+		$$adb -s "$$s" reverse tcp:8000 tcp:8000 >/dev/null && \
+		$$adb -s "$$s" reverse tcp:8081 tcp:8081 >/dev/null && \
+		echo "$$s: tunnels OK (localhost:8000 -> backend, :8081 -> Metro)"; \
+	done
+
 mobile-run: ## Build + install the app on the EMULATOR (auto-detects it; needs JDK 17 + local.properties sdk.dir)
 	@adb="$(ANDROID_HOME)/platform-tools/adb"; \
 	serial="$$($$adb devices | grep -v 'List of devices' | grep emulator | cut -f1 | head -1)"; \

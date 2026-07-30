@@ -46,20 +46,22 @@ function bytesToBase64(bytes: Uint8Array): string {
   return globalThis.btoa ? globalThis.btoa(bin) : bin;
 }
 
-/** Upload the assembled PDF as one document; progress 0..1 via the callback. */
-export async function uploadScanPdf(
-  pdfPath: string,
+/** Upload one file as one document; progress 0..1 via the callback. The server stores it under the
+ * (sanitized) basename of `filePath` — scan PDFs and picked files alike (#775). */
+export async function uploadFile(
+  filePath: string,
+  mimeType: string,
   token: string,
   onProgress?: (fraction: number) => void,
 ): Promise<UploadOutcome> {
   const task = FileSystem.createUploadTask(
     `${BACKEND_URL}/api/v1/ingestion/upload`,
-    pdfPath,
+    filePath,
     {
       httpMethod: "POST",
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: "files",
-      mimeType: "application/pdf",
+      mimeType,
       headers: { Authorization: `Bearer ${token}` },
     },
     (progress) => {
@@ -73,4 +75,17 @@ export async function uploadScanPdf(
     throw new Error(`upload failed (HTTP ${res?.status ?? "?"})`);
   }
   return JSON.parse(res.body) as UploadOutcome;
+}
+
+/** Upload the assembled scan PDF; the server sees the file's basename (scan-<ts>.pdf). */
+export async function uploadScanPdf(
+  pdfPath: string,
+  token: string,
+  onProgress?: (fraction: number) => void,
+): Promise<UploadOutcome> {
+  return uploadFile(pdfPath, "application/pdf", token, onProgress);
+}
+
+export function basename(path: string): string {
+  return path.split("/").pop() ?? path;
 }

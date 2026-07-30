@@ -10,6 +10,7 @@ import { LoginScreen } from "./src/screens/LoginScreen";
 import { PlaceholderScreen } from "./src/screens/PlaceholderScreen";
 import { DocumentsStack } from "./src/screens/DocumentsStack";
 import { ScanScreen } from "./src/screens/ScanScreen";
+import { IngestionTrackerProvider } from "./src/scan/tracker";
 import { colors, spacing, typeScale } from "./src/theme";
 
 const Tab = createBottomTabNavigator();
@@ -93,7 +94,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <Gate />
+        <IngestionTrackerProvider>
+          <Gate />
+        </IngestionTrackerProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

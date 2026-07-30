@@ -8,22 +8,41 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
 import DocumentScanner, { ResponseType, ScanDocumentResponseStatus } from "react-native-document-scanner-plugin";
 
 import { useAuth } from "../auth/AuthContext";
-import { buildScanPdf, uploadScanPdf } from "../scan/upload";
+import { basename, buildScanPdf, uploadFile, uploadScanPdf } from "../scan/upload";
+import { useIngestionTracker, type TrackedUpload } from "../scan/tracker";
 import { colors, spacing, typeScale } from "../theme";
 
-// Camera scanning (#774): ML Kit scanner -> page review (delete/reorder/add) -> one PDF ->
-// upload with progress. Fully on-device until the upload step.
+// Camera scanning (#774) + library/files upload (#775): ML Kit scanner or picked PDFs/images ->
+// upload with progress -> the tracker polls each file to ready/failed (list at the bottom).
 interface Page {
   uri: string;
 }
 
+function guessMime(name: string, mime?: string): string {
+  if (mime) return mime;
+  const ext = name.split(".").pop()?.toLowerCase();
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  return "application/octet-stream";
+}
+
+const STATE_STYLE: Record<TrackedUpload["state"], { color: string; label: string }> = {
+  queued: { color: colors.warning, label: "queued …" },
+  processing: { color: colors.warning, label: "processing …" },
+  ready: { color: colors.success, label: "ready ✓" },
+  failed: { color: colors.danger, label: "failed ✗" },
+};
+
 export function ScanScreen({ onUploaded }: { onUploaded?: () => void }) {
   const { token } = useAuth();
+  const { uploads, track, clearFinished } = useIngestionTracker();
   const [pages, setPages] = useState<Page[]>([]);
-  const [busy, setBusy] = useState<"scan" | "upload" | null>(null);
+  const [busy, setBusy] = useState<"scan" | "upload" | "files" | null>(null);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -66,6 +85,7 @@ export function ScanScreen({ onUploaded }: { onUploaded?: () => void }) {
     try {
       const pdf = await buildScanPdf(pages.map((p) => p.uri));
       const res = await uploadScanPdf(pdf, token, setProgress);
+      track(basename(pdf)); // server stores the file under its basename
       setMessage({
         ok: res.rejected.length === 0,
         text: `${res.accepted.length} document(s) queued for ingestion${
@@ -81,10 +101,53 @@ export function ScanScreen({ onUploaded }: { onUploaded?: () => void }) {
     }
   }
 
+  // Pick existing PDFs/images from the device and upload them one by one (#775).
+  async function pickFiles() {
+    if (!token) return;
+    setMessage(null);
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/*"],
+        multiple: true,
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || res.assets.length === 0) return;
+      setBusy("files");
+      let accepted = 0;
+      let rejected = 0;
+      for (let i = 0; i < res.assets.length; i++) {
+        const asset = res.assets[i];
+        setMessage({ ok: true, text: `uploading ${i + 1}/${res.assets.length}: ${asset.name}` });
+        try {
+          const out = await uploadFile(asset.uri, guessMime(asset.name, asset.mimeType), token, setProgress);
+          accepted += out.accepted.length;
+          rejected += out.rejected.length;
+          // The server stores the file under the multipart filename = cache-copy basename.
+          track(basename(asset.uri));
+        } catch {
+          rejected += 1;
+        }
+      }
+      setMessage({
+        ok: rejected === 0,
+        text: `${accepted} document(s) queued for ingestion${rejected ? ` · ${rejected} rejected` : ""}`,
+      });
+      onUploaded?.();
+    } catch (e) {
+      setMessage({ ok: false, text: e instanceof Error ? e.message : "file pick failed" });
+    } finally {
+      setBusy(null);
+      setProgress(0);
+    }
+  }
+
+  const anyFinished = uploads.some((u) => u.state === "ready" || u.state === "failed");
+
   return (
     <ScrollView style={styles.root} contentContainerStyle={{ padding: spacing.md }}>
       <Text style={typeScale.muted}>
-        scan a paper document page by page, review the order, then upload it as one document
+        scan a paper document page by page, review the order, then upload it as one document — or
+        pick existing PDFs/images from the device
       </Text>
 
       {pages.map((p, i) => (
@@ -128,10 +191,49 @@ export function ScanScreen({ onUploaded }: { onUploaded?: () => void }) {
         </TouchableOpacity>
       )}
 
+      <TouchableOpacity style={styles.secondaryBtn} onPress={pickFiles} disabled={busy !== null}>
+        {busy === "files" ? (
+          <View style={styles.progressWrap}>
+            <ActivityIndicator color={colors.text} />
+            <Text style={styles.secondaryText}>{Math.round(progress * 100)}%</Text>
+          </View>
+        ) : (
+          <Text style={styles.secondaryText}>pick from files (PDF / images)</Text>
+        )}
+      </TouchableOpacity>
+
       {message && (
         <Text style={[styles.message, { color: message.ok ? colors.success : colors.danger }]}>
           {message.text}
         </Text>
+      )}
+
+      {uploads.length > 0 && (
+        <View style={styles.trackerCard}>
+          <View style={styles.trackerHead}>
+            <Text style={typeScale.section}>uploads</Text>
+            {anyFinished && (
+              <TouchableOpacity onPress={clearFinished}>
+                <Text style={[styles.action, { color: colors.accent }]}>clear finished</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {uploads.map((u) => (
+            <View key={u.id} style={styles.trackerRow}>
+              <Text style={styles.trackerName} numberOfLines={1}>
+                {u.filename}
+              </Text>
+              <Text style={[styles.trackerState, { color: STATE_STYLE[u.state].color }]}>
+                {STATE_STYLE[u.state].label}
+              </Text>
+              {u.state === "failed" && u.detail && (
+                <Text style={styles.trackerDetail} numberOfLines={2}>
+                  {u.detail}
+                </Text>
+              )}
+            </View>
+          ))}
+        </View>
       )}
     </ScrollView>
   );
@@ -168,7 +270,39 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     marginTop: spacing.sm,
   },
+  secondaryBtn: {
+    backgroundColor: colors.surface,
+    borderColor: colors.borderStrong,
+    borderWidth: 1,
+    borderRadius: 8,
+    alignItems: "center",
+    paddingVertical: spacing.md,
+    marginTop: spacing.sm,
+  },
   primaryText: { color: colors.bg, fontWeight: "700", fontSize: 15 },
+  secondaryText: { color: colors.text, fontWeight: "600", fontSize: 15 },
   progressWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   message: { textAlign: "center", marginTop: spacing.lg, ...typeScale.body },
+  trackerCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 8,
+    borderColor: colors.border,
+    borderWidth: 1,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+  },
+  trackerHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  trackerRow: {
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    paddingVertical: spacing.sm,
+  },
+  trackerName: { ...typeScale.body, flexShrink: 1 },
+  trackerState: { ...typeScale.small, fontWeight: "600", marginTop: 2 },
+  trackerDetail: { ...typeScale.small, color: colors.danger, marginTop: 2 },
 });

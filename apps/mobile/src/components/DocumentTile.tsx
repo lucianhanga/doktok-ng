@@ -8,6 +8,8 @@ import type {
   ProcessingSummary,
 } from "../api/documents";
 import { documentThumbnailUrl } from "../api/documentDetail";
+import type { DocumentFeature, FeatureGroup } from "../api/features";
+import { FeatureBadges } from "./FeatureBadges";
 import { AuthImage } from "./AuthImage";
 import { colors, spacing, typeScale } from "../theme";
 
@@ -19,6 +21,8 @@ export function DocumentTile({
   processing,
   stats,
   tags,
+  featureGroups,
+  features,
   expanded,
   onToggle,
   onOpen,
@@ -27,6 +31,8 @@ export function DocumentTile({
   processing?: ProcessingSummary;
   stats?: DocumentListStats;
   tags?: DocumentTag[];
+  featureGroups?: FeatureGroup[];
+  features?: DocumentFeature[];
   expanded: boolean;
   onToggle: () => void;
   onOpen?: (id: string) => void;
@@ -77,11 +83,8 @@ export function DocumentTile({
           <Text style={typeScale.muted}>
             {factsLine(processing, stats)}
           </Text>
-          {processing && (processing.features_failed > 0 || processing.features_done > 0) && (
-            <Text style={typeScale.muted}>
-              features: {processing.features_done} done
-              {processing.features_failed > 0 ? ` · ${processing.features_failed} failed` : ""}
-            </Text>
+          {featureGroups && features && (
+            <FeatureBadges groups={featureGroups} rows={features} />
           )}
           <TouchableOpacity style={styles.openBtn} onPress={() => onOpen?.(doc.id)}>
             <Text style={styles.openText}>open ›</Text>

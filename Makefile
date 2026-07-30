@@ -178,6 +178,20 @@ mobile-emulator-stop: ## Stop the Android emulator
 mobile-run: ## Build + install the app on the running emulator (needs JDK 17 + local.properties sdk.dir)
 	cd apps/mobile && pnpm exec expo run:android
 
+mobile-deploy: ## Redeploy on the USB phone: auto-detects it, ensures adb reverse tunnels (8000 backend + 8081 Metro), then builds + installs
+	@adb="$(ANDROID_HOME)/platform-tools/adb"; \
+	serial="$$($$adb devices | grep -v 'List of devices' | grep -v emulator | cut -f1 | head -1)"; \
+	if [ -z "$$serial" ]; then \
+		echo "no USB phone found - connect the cable and enable USB debugging on the phone"; exit 1; \
+	fi; \
+	echo "phone: $$serial"; \
+	$$adb -s "$$serial" reverse --list 2>/dev/null | grep -q "tcp:8000" \
+		|| $$adb -s "$$serial" reverse tcp:8000 tcp:8000; \
+	$$adb -s "$$serial" reverse --list 2>/dev/null | grep -q "tcp:8081" \
+		|| $$adb -s "$$serial" reverse tcp:8081 tcp:8081; \
+	echo "tunnels OK (phone localhost:8000 -> backend, :8081 -> Metro)"; \
+	cd apps/mobile/android && ANDROID_SERIAL="$$serial" ./gradlew installDebug
+
 mobile-start: ## Start the Metro dev server in DEV-CLIENT mode (this project has native modules; Expo Go can't run it)
 	cd apps/mobile && pnpm exec expo start --dev-client
 

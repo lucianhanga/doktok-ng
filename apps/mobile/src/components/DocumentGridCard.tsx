@@ -2,6 +2,8 @@ import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import type { DokDocument, ProcessingSummary } from "../api/documents";
+import type { DocumentFeature, FeatureGroup } from "../api/features";
+import { FeatureBadges } from "./FeatureBadges";
 import { documentThumbnailUrl } from "../api/documentDetail";
 import { AuthImage } from "./AuthImage";
 import { colors, spacing, typeScale } from "../theme";
@@ -13,12 +15,16 @@ export function DocumentGridCard({
   doc,
   processing,
   compact,
+  featureGroups,
+  features,
   onOpen,
 }: {
   doc: DokDocument;
   processing?: ProcessingSummary;
   /** 1-per-row mode: cap the width and center instead of a giant full-width card. */
   compact?: boolean;
+  featureGroups?: FeatureGroup[];
+  features?: DocumentFeature[];
   onOpen?: (id: string) => void;
 }) {
   const failed = processing && processing.features_failed > 0;
@@ -52,6 +58,11 @@ export function DocumentGridCard({
           year: "numeric",
         })}
       </Text>
+      {featureGroups && features && (
+        <View style={styles.badges}>
+          <FeatureBadges groups={featureGroups} rows={features} />
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -85,4 +96,5 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   title: { ...typeScale.body, fontWeight: "600", marginTop: spacing.xs },
+  badges: { marginTop: spacing.xs },
 });

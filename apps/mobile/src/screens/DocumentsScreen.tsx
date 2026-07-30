@@ -18,6 +18,7 @@ import {
   type ProcessingSummary,
   type DocumentTag,
 } from "../api/documents";
+import { fetchDocumentFeatures, fetchFeatureGroups, type DocumentFeature, type FeatureGroup } from "../api/features";
 import { DocumentGridCard } from "../components/DocumentGridCard";
 import { DocumentTile } from "../components/DocumentTile";
 import { EMPTY_FILTERS, SearchFilters, type SearchFiltersValue } from "../components/SearchFilters";
@@ -57,6 +58,16 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [featureGroups, setFeatureGroups] = useState<FeatureGroup[]>([]);
+  const [featuresByDoc, setFeaturesByDoc] = useState<Record<string, DocumentFeature[]>>({});
+
+  // Feature groups for the enrichment badges (#814): fetched once per login.
+  useEffect(() => {
+    if (!token) return;
+    fetchFeatureGroups(token)
+      .then(setFeatureGroups)
+      .catch(() => setFeatureGroups([]));
+  }, [token]);
   const [viewMode, setViewMode] = useState<"tiles" | "grid">("tiles");
   const [gridCols, setGridCols] = useState<1 | 2 | 3>(2);
 
@@ -109,6 +120,28 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           },
           token,
         );
+        void fetchDocumentFeatures(
+          page.items.map((d) => d.id),
+          token,
+        )
+          .then((rows) =>
+            setFeaturesByDoc((prev) => {
+              const next = { ...prev };
+              for (const r of rows) {
+                next[r.document_id] = [...(next[r.document_id] ?? []), r];
+              }
+              // replace per document for freshness on replace mode
+              if (mode === "replace") {
+                const ids = new Set(rows.map((r) => r.document_id));
+                for (const k of Object.keys(next)) if (!ids.has(k)) delete next[k];
+                const byDoc: Record<string, DocumentFeature[]> = {};
+                for (const r of rows) (byDoc[r.document_id] ??= []).push(r);
+                return byDoc;
+              }
+              return next;
+            }),
+          )
+          .catch(() => {});
         setState((s) => ({
           // Dedupe by id: a replace (poll/search) can overlap with an in-flight "more" append, or
           // the cursor can shift under new ingest - the same doc must never appear twice (#772).
@@ -161,6 +194,8 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           doc={item}
           processing={state.processing[item.id]}
           compact={gridCols === 1}
+          featureGroups={featureGroups}
+          features={featuresByDoc[item.id]}
           onOpen={onOpenDocument}
         />
       );
@@ -171,6 +206,8 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
         processing={state.processing[item.id]}
         stats={state.stats[item.id]}
         tags={state.tags[item.id]}
+        featureGroups={featureGroups}
+        features={featuresByDoc[item.id]}
         expanded={expandedId === item.id}
         onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
         onOpen={onOpenDocument}

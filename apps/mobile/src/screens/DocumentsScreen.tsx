@@ -160,6 +160,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
         <DocumentGridCard
           doc={item}
           processing={state.processing[item.id]}
+          compact={gridCols === 1}
           onOpen={onOpenDocument}
         />
       );

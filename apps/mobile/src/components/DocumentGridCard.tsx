@@ -12,16 +12,23 @@ import { colors, spacing, typeScale } from "../theme";
 export function DocumentGridCard({
   doc,
   processing,
+  compact,
   onOpen,
 }: {
   doc: DokDocument;
   processing?: ProcessingSummary;
+  /** 1-per-row mode: cap the width and center instead of a giant full-width card. */
+  compact?: boolean;
   onOpen?: (id: string) => void;
 }) {
   const failed = processing && processing.features_failed > 0;
   const processingNow = doc.status !== "active" || (processing && processing.status !== "active");
   return (
-    <TouchableOpacity style={styles.card} onPress={() => onOpen?.(doc.id)} activeOpacity={0.85}>
+    <TouchableOpacity
+      style={[styles.card, compact && styles.cardCompact]}
+      onPress={() => onOpen?.(doc.id)}
+      activeOpacity={0.85}
+    >
       <View style={styles.thumbWrap}>
         <Text style={styles.thumbPlaceholder}>
           {(doc.title || doc.original_filename).charAt(0).toUpperCase()}
@@ -51,6 +58,8 @@ export function DocumentGridCard({
 
 const styles = StyleSheet.create({
   card: { flex: 1 },
+  // 1-per-row: centered, capped width (a full-width thumbnail looks oversized).
+  cardCompact: { maxWidth: 260, width: "100%", alignSelf: "center" },
   thumbWrap: {
     aspectRatio: 0.72,
     borderRadius: 10,

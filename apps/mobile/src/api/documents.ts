@@ -29,6 +29,13 @@ export interface ProcessingSummary {
   features_failed: number;
 }
 
+// Per-document stats sidecar (list response only): entity/chunk counts + primary category.
+export interface DocumentListStats {
+  entity_count: number;
+  chunk_count: number;
+  category: string | null;
+}
+
 export interface DocumentTag {
   id: string;
   name: string;
@@ -41,6 +48,7 @@ export interface DocumentPage {
   next_cursor: string | null;
   processing?: Record<string, ProcessingSummary>;
   tags?: Record<string, DocumentTag[]>;
+  stats?: Record<string, DocumentListStats>;
 }
 
 export interface DocumentQuery {

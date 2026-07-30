@@ -21,6 +21,8 @@ import {
 import { DocumentGridCard } from "../components/DocumentGridCard";
 import { DocumentTile } from "../components/DocumentTile";
 import { EMPTY_FILTERS, SearchFilters, type SearchFiltersValue } from "../components/SearchFilters";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { useAuth } from "../auth/AuthContext";
 import { colors, spacing, typeScale } from "../theme";
 
@@ -56,6 +58,19 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
   const [loadingMore, setLoadingMore] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"tiles" | "grid">("tiles");
+  const [gridCols, setGridCols] = useState<1 | 2 | 3>(2);
+
+  // Grid column count is a per-user preference (#811): persist it locally so the choice survives
+  // restarts (server-side user_preferences can take over later, like the web).
+  useEffect(() => {
+    AsyncStorage.getItem("doktok.prefs.gridCols").then((v) => {
+      if (v === "1" || v === "2" || v === "3") setGridCols(Number(v) as 1 | 2 | 3);
+    });
+  }, []);
+  const pickCols = (n: 1 | 2 | 3) => {
+    setGridCols(n);
+    void AsyncStorage.setItem("doktok.prefs.gridCols", String(n));
+  };
   const stateRef = useRef(state);
   stateRef.current = state;
   const filtersRef = useRef(filters);
@@ -173,6 +188,20 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           value={search}
           onChangeText={setSearch}
         />
+        {viewMode === "grid" && (
+          <View style={styles.seg}>
+            {([1, 2, 3] as const).map((n) => (
+              <TouchableOpacity
+                key={n}
+                style={[styles.segBtn, gridCols === n && styles.segBtnActive]}
+                onPress={() => pickCols(n)}
+                accessibilityLabel={`${n} per row`}
+              >
+                <Text style={[styles.segText, gridCols === n && styles.segTextActive]}>{n}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
         <TouchableOpacity
           style={styles.viewToggle}
           onPress={() => setViewMode(viewMode === "tiles" ? "grid" : "tiles")}
@@ -193,10 +222,10 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
         </View>
       ) : (
         <FlatList
-          key={viewMode}
+          key={`${viewMode}-${gridCols}`}
           data={state.items}
           keyExtractor={(d) => d.id}
-          numColumns={viewMode === "grid" ? 2 : 1}
+          numColumns={viewMode === "grid" ? gridCols : 1}
           columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
           contentContainerStyle={viewMode === "grid" ? styles.gridContent : undefined}
           renderItem={renderItem}
@@ -242,6 +271,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   viewToggleText: { color: colors.accent, fontSize: 16 },
+  seg: {
+    flexDirection: "row",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  segBtn: { paddingHorizontal: spacing.sm + 2, paddingVertical: spacing.sm },
+  segBtnActive: { backgroundColor: colors.accentSoft },
+  segText: { ...typeScale.small, fontWeight: "700" },
+  segTextActive: { color: colors.accent },
   gridRow: { gap: spacing.sm, paddingHorizontal: spacing.md },
   gridContent: { gap: spacing.md, paddingBottom: spacing.xl },
   search: {

@@ -7,7 +7,8 @@ import { AuthImage } from "./AuthImage";
 import { colors, spacing, typeScale } from "../theme";
 
 // Thumbnail grid card (#805): big first-page preview, title under it, date + status badge. Taps
-// straight into the document detail (no accordion in grid mode).
+// straight into the document detail (no accordion in grid mode). Width comes from the parent's
+// FlatList numColumns; this fills its cell.
 export function DocumentGridCard({
   doc,
   processing,
@@ -49,7 +50,7 @@ export function DocumentGridCard({
 }
 
 const styles = StyleSheet.create({
-  card: { width: "48%" },
+  card: { flex: 1 },
   thumbWrap: {
     aspectRatio: 0.72,
     borderRadius: 10,

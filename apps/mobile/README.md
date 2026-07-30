@@ -54,38 +54,62 @@ types into the UI build. So:
 make mobile-install        # = cd apps/mobile && pnpm install --ignore-workspace
 ```
 
-## Run the emulator
+## Run on the Android emulator
 
 ```bash
-~/Library/Android/sdk/emulator/emulator -avd doktok -gpu auto -no-snapshot-save -no-metrics
+make mobile-emulator-start     # boot the AVD (detached; status: make mobile-emulator-status)
+make mobile-run                # build + install the dev client on it (first time / native changes)
+make mobile-start              # Metro in dev-client mode (hot-reload for everything JS)
 ```
 
-Leave it running in its own terminal. Booted when this prints `1`:
+The emulator reaches the backend as `http://10.0.2.2:8000` (default in `app.json`).
+
+## Run on a physical phone (USB cable)
+
+No LAN/firewall needed - everything goes through `adb reverse` tunnels:
 
 ```bash
-adb devices
-adb shell getprop sys.boot_completed
+make mobile-deploy             # auto-detects the phone, ensures adb reverse tcp:8000+8081, builds+installs
+make mobile-start              # Metro; the app on the phone loads the bundle over the cable
 ```
 
-## Build + install the app on the emulator
+`mobile-deploy` is the one-command phone loop (also after native dependency changes); JS-only
+changes need no redeploy - Metro hot-reloads. The app expects the backend at
+`http://127.0.0.1:8000` over the tunnel (swap `extra.backendUrl` in `app.json` back to
+`http://10.0.2.2:8000` when switching to the emulator).
 
-```bash
-cd apps/mobile
-pnpm exec expo run:android
-```
+Phone prep (once): Settings -> About phone -> tap Build number 7x -> Developer options -> USB
+debugging; accept the RSA prompt on first connect.
 
-First build downloads gradle + Android build deps (~1-2GB once) and takes 5-15 min; later builds
-~1 min. It installs the dev client on the running emulator and starts it. After that, code
-changes hot-reload via `pnpm start` (Metro) - no rebuild needed except for native dependency
-changes (e.g. the camera scanner in M2).
+## What the app does today (M1+)
 
-## Backend URL + login
+- **Login** (tenant + user). Credentials are saved in the OS keystore; on emulators without a
+  lock screen (where the Android keystore silently fails) it falls back to AsyncStorage - either
+  way you log in once.
+- **Documents**: full-width accordion tiles (collapsed: bold title + acquire/doc dates + status
+  badge; tap to expand for category, tags, counts, features, open) OR a 2-column thumbnail grid
+  (toggle next to search). First-page thumbnails everywhere (ingest-generated WebP).
+- **Search**: title box + complex filters - token chips with AND completions (from
+  `/tokens/suggest`, document counts, floating overlay), category dropdown, status, needs
+  attention / unidentifiable switches, tag chips.
+- **Document detail**: Content (rendered markdown, selectable for copy) / Entities / Activity
+  tabs, per-page thumbnails, "view PDF" / "view searchable" inline viewer (native PDFium,
+  zoom buttons +-/%), share.
+- **Scan**: ML Kit camera scanning -> page review (reorder/delete) -> one PDF -> upload with
+  progress. Fully on-device until the upload.
 
-- The emulator reaches the Mac's backend as `http://10.0.2.2:8000` (Android's loopback alias for
-  the host). That is the default in `app.json -> expo.extra.backendUrl`, so nothing to set.
-- A PHYSICAL device instead needs the Mac's LAN IP there (e.g. `http://192.168.1.20:8000`) AND a
-  firewall that allows inbound to 8000 + 8081 - with a locked-down firewall, use the emulator.
-- Login: tenant `dev`, `dev-admin@doktok.local`, password = `DOKTOK_DEV_SEED_PASSWORD` from `.env`.
+## Layout
+
+- `App.tsx` — navigation container + bottom tabs (Documents / Scan / Chat / Insights / Settings),
+  gated by auth
+- `src/theme.ts` — design tokens mirroring `apps/ui/src/styles.css`
+- `src/config.ts` — backend URL resolution (`app.json` `extra.backendUrl`)
+- `src/api/` — typed API client (`client.ts`), auth, documents, document-detail
+- `src/auth/AuthContext.tsx` — token + credentials in SecureStore (AsyncStorage fallback)
+- `src/components/` — DocumentTile, DocumentGridCard, SearchFilters, TokenInput, AuthImage
+- `src/screens/` — DocumentsStack (list -> detail -> PDF viewer), LoginScreen, ScanScreen,
+  PdfViewerScreen, placeholders (Chat/Insights/Settings land per ticket)
+- `metro.config.js` — aliases Node's `punycode` to the userland package (markdown-it on RN)
 
 ## Troubleshooting
 

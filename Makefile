@@ -175,10 +175,16 @@ mobile-emulator-status: ## Wait for the emulator and print its boot state (1 = b
 mobile-emulator-stop: ## Stop the Android emulator
 	@$(ANDROID_HOME)/platform-tools/adb emu kill || true
 
-mobile-run: ## Build + install the app on the running emulator (needs JDK 17 + local.properties sdk.dir)
-	cd apps/mobile && pnpm exec expo run:android
+mobile-run: ## Build + install the app on the EMULATOR (auto-detects it; needs JDK 17 + local.properties sdk.dir)
+	@adb="$(ANDROID_HOME)/platform-tools/adb"; \
+	serial="$$($$adb devices | grep -v 'List of devices' | grep emulator | cut -f1 | head -1)"; \
+	if [ -z "$$serial" ]; then \
+		echo "no emulator running - start it first: make mobile-emulator-start"; exit 1; \
+	fi; \
+	echo "emulator: $$serial"; \
+	cd apps/mobile/android && ANDROID_SERIAL="$$serial" ./gradlew installDebug
 
-mobile-deploy: ## Redeploy on the USB phone: auto-detects it, ensures adb reverse tunnels (8000 backend + 8081 Metro), then builds + installs
+mobile-deploy: ## Redeploy on the USB PHONE: auto-detects it, ensures adb reverse tunnels (8000 backend + 8081 Metro), then builds + installs
 	@adb="$(ANDROID_HOME)/platform-tools/adb"; \
 	serial="$$($$adb devices | grep -v 'List of devices' | grep -v emulator | cut -f1 | head -1)"; \
 	if [ -z "$$serial" ]; then \

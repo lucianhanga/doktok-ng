@@ -17,6 +17,7 @@ export function DocumentGridCard({
   compact,
   featureGroups,
   features,
+  badgeCap,
   onOpen,
 }: {
   doc: DokDocument;
@@ -25,6 +26,8 @@ export function DocumentGridCard({
   compact?: boolean;
   featureGroups?: FeatureGroup[];
   features?: DocumentFeature[];
+  /** Max badge chips on the thumbnail before a "+N" overflow chip (web: THUMB_CHIP_CAP). */
+  badgeCap?: number;
   onOpen?: (id: string) => void;
 }) {
   const failed = processing && processing.features_failed > 0;
@@ -47,9 +50,9 @@ export function DocumentGridCard({
             {failed ? "failed" : (processing?.status ?? doc.status)}
           </Text>
         )}
-        {featureGroups && features && (
+        {featureGroups && features && features.length > 0 && (
           <View style={styles.badgeOverlay} pointerEvents="none">
-            <FeatureBadges groups={featureGroups} rows={features} overlay />
+            <FeatureBadges groups={featureGroups} rows={features} overlay cap={badgeCap} />
           </View>
         )}
       </View>
@@ -96,6 +99,15 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   title: { ...typeScale.body, fontWeight: "600", marginTop: spacing.xs },
-  // Feature badges sit ON the thumbnail, along its bottom edge (like the web's cards).
-  badgeOverlay: { position: "absolute", left: 0, right: 0, bottom: 0, padding: spacing.xs },
+  // Feature badges sit ON the thumbnail along its bottom edge, over a translucent scrim for
+  // contrast (the web uses a black gradient; a solid 45% strip reads the same at this size and
+  // avoids pulling in a native gradient module).
+  badgeOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: spacing.xs,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
 });

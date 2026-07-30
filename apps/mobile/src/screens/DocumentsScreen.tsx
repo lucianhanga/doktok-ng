@@ -196,6 +196,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           compact={gridCols === 1}
           featureGroups={featureGroups}
           features={featuresByDoc[item.id]}
+          badgeCap={gridCols === 3 ? 3 : gridCols === 2 ? 6 : 8}
           onOpen={onOpenDocument}
         />
       );

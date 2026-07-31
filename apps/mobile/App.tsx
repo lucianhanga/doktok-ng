@@ -10,6 +10,7 @@ import { LoginScreen } from "./src/screens/LoginScreen";
 import { PlaceholderScreen } from "./src/screens/PlaceholderScreen";
 import { DocumentsStack } from "./src/screens/DocumentsStack";
 import { ScanScreen } from "./src/screens/ScanScreen";
+import { ChatStack } from "./src/screens/ChatStack";
 import { IngestionTrackerProvider } from "./src/scan/tracker";
 import { colors, spacing, typeScale } from "./src/theme";
 
@@ -31,9 +32,6 @@ const navTheme: Theme = {
 };
 
 const TAB_NOTES: Record<string, string> = {
-  Documents: "the document list lands in M1.3",
-  Scan: "camera scanning lands in M2.1",
-  Chat: "chat lands in M3.1",
   Insights: "phone-adapted insights land in M4.1",
   Settings: "settings land later",
 };
@@ -76,6 +74,7 @@ function Gate() {
             {() => {
               if (name === "Documents") return <DocumentsStack />;
               if (name === "Scan") return <ScanScreen />;
+              if (name === "Chat") return <ChatStack />;
               return (
                 <PlaceholderScreen
                   name={`${name}${user ? ` (${user.display_name || user.email})` : ""}`}

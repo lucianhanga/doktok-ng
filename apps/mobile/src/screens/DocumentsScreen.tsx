@@ -48,7 +48,16 @@ function dedupeById(docs: DokDocument[]): DokDocument[] {
 const EMPTY: RowState = { items: [], total: 0, nextCursor: null, processing: {}, tags: {}, stats: {} };
 
 
-export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
+export function DocumentsScreen({
+  onOpenDocument,
+  presetCategory,
+  onPresetConsumed,
+}: {
+  onOpenDocument?: (id: string) => void;
+  /** Deep-link category filter (Insights > Categories tap, #778); applied once, then cleared. */
+  presetCategory?: string;
+  onPresetConsumed?: () => void;
+}) {
   const { token } = useAuth();
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -171,6 +180,15 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
     setLoading(true);
     void load("replace");
   }, [load, debounced, filters]);
+
+  // Category deep-link from Insights (#778): apply it as the category filter, then clear the
+  // route param so tapping the same category again later re-triggers. Runs once per param change.
+  useEffect(() => {
+    if (!presetCategory) return;
+    setFilters((f) => ({ ...f, category: presetCategory }));
+    onPresetConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetCategory]);
 
   // Live badges: poll only while any visible document is still mid-pipeline.
   const anyProcessing = useMemo(

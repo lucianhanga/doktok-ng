@@ -8,7 +8,7 @@ import { PdfViewerScreen } from "./PdfViewerScreen";
 import { colors } from "../theme";
 
 export type DocumentsStackParamList = {
-  DocumentsList: undefined;
+  DocumentsList: { category?: string } | undefined;
   DocumentDetail: { id: string };
   PdfViewer: { id: string; variant: "original" | "normalized"; title?: string };
 };
@@ -26,8 +26,10 @@ export function DocumentsStack() {
       }}
     >
       <Stack.Screen name="DocumentsList" options={{ title: "Documents", headerShown: false }}>
-        {({ navigation }) => (
+        {({ navigation, route }) => (
           <DocumentsScreen
+            presetCategory={route.params?.category}
+            onPresetConsumed={() => navigation.setParams({ category: undefined })}
             onOpenDocument={(id) => navigation.navigate("DocumentDetail", { id })}
           />
         )}

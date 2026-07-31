@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -37,20 +39,29 @@ import {
   fetchDocumentActivity,
   fetchDocumentContent,
   fetchDocumentEntities,
+  fetchDocumentTags,
   type AuditEvent,
   type DocEntity,
 } from "../api/documentDetail";
-import type { DokDocument } from "../api/documents";
+import {
+  addDocumentNote,
+  deleteDocumentNote,
+  listDocumentNotes,
+  type DocumentNote,
+} from "../api/notes";
+import type { DocumentTag, DokDocument } from "../api/documents";
+import { TagChip } from "../components/TagChip";
 import { useAuth } from "../auth/AuthContext";
 import { colors, spacing, typeScale } from "../theme";
 
-// Document detail (#773): metadata header, Content/Entities/Activity tabs, page thumbnails,
+// Document detail (#773): metadata header, Content/Entities/Activity/Notes tabs, page thumbnails,
 // open-PDF action (download + system share sheet). Spartan like the web card.
-type Tab = "content" | "entities" | "activity";
+type Tab = "content" | "entities" | "activity" | "notes";
 const TABS: { id: Tab; label: string }[] = [
   { id: "content", label: "Content" },
   { id: "entities", label: "Entities" },
   { id: "activity", label: "Activity" },
+  { id: "notes", label: "Notes" },
 ];
 
 const authHeaders = (token: string) => ({ Authorization: `Bearer ${token}` });
@@ -68,6 +79,10 @@ export function DocumentDetailScreen({
   const [content, setContent] = useState<string | null>(null);
   const [entities, setEntities] = useState<DocEntity[] | null>(null);
   const [activity, setActivity] = useState<AuditEvent[] | null>(null);
+  const [docTags, setDocTags] = useState<DocumentTag[]>([]);
+  const [notes, setNotes] = useState<DocumentNote[] | null>(null);
+  const [newNote, setNewNote] = useState("");
+  const [noteBusy, setNoteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
 
@@ -85,7 +100,46 @@ export function DocumentDetailScreen({
     fetchDocumentActivity(id, token)
       .then(setActivity)
       .catch(() => setActivity([]));
+    fetchDocumentTags(id, token)
+      .then(setDocTags)
+      .catch(() => setDocTags([]));
+    listDocumentNotes(id, token)
+      .then(setNotes)
+      .catch(() => setNotes([]));
   }, [id, token]);
+
+  async function addNote() {
+    const body = newNote.trim();
+    if (!body || !token || noteBusy) return;
+    setNoteBusy(true);
+    try {
+      const note = await addDocumentNote(id, body, token);
+      setNotes((prev) => [note, ...(prev ?? [])]);
+      setNewNote("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to add the note");
+    } finally {
+      setNoteBusy(false);
+    }
+  }
+
+  function confirmDeleteNote(note: DocumentNote) {
+    if (!token) return;
+    Alert.alert("Delete note?", "the deletion is recorded in the audit log", [
+      { text: "cancel", style: "cancel" },
+      {
+        text: "delete",
+        style: "destructive",
+        onPress: () => {
+          void deleteDocumentNote(id, note.id, token)
+            .then(() => setNotes((prev) => (prev ?? []).filter((n) => n.id !== note.id)))
+            .catch((e) =>
+              setError(e instanceof Error ? e.message : "failed to delete the note"),
+            );
+        },
+      },
+    ]);
+  }
 
   async function sharePdf(variant: "original" | "normalized") {
     if (!token || !doc) return;
@@ -135,6 +189,13 @@ export function DocumentDetailScreen({
         </Text>
         {doc.status !== "active" && (
           <Text style={[styles.badge, { color: colors.warning }]}>{doc.status}</Text>
+        )}
+        {docTags.length > 0 && (
+          <View style={styles.tagsRow}>
+            {docTags.map((t) => (
+              <TagChip key={t.id} name={t.name} color={t.color} />
+            ))}
+          </View>
         )}
       </View>
 
@@ -229,6 +290,49 @@ export function DocumentDetailScreen({
             </View>
           ))
         ))}
+
+      {tab === "notes" && (
+        <View>
+          <View style={styles.noteAdd}>
+            <TextInput
+              style={styles.noteInput}
+              value={newNote}
+              onChangeText={setNewNote}
+              placeholder="add a note…"
+              placeholderTextColor={colors.muted}
+              multiline
+            />
+            <TouchableOpacity
+              style={[styles.noteBtn, (!newNote.trim() || noteBusy) && styles.noteBtnDisabled]}
+              onPress={addNote}
+              disabled={!newNote.trim() || noteBusy}
+            >
+              <Text style={styles.noteBtnText}>{noteBusy ? "adding…" : "add"}</Text>
+            </TouchableOpacity>
+          </View>
+          {notes === null ? (
+            <ActivityIndicator color={colors.accent} style={styles.sectionSpinner} />
+          ) : notes.length === 0 ? (
+            <Text style={[typeScale.muted, styles.notesEmpty]}>no notes yet</Text>
+          ) : (
+            notes.map((n) => (
+              <TouchableOpacity
+                key={n.id}
+                style={styles.listRow}
+                onLongPress={() => confirmDeleteNote(n)}
+                activeOpacity={0.8}
+              >
+                <Text style={typeScale.body} selectable>
+                  {n.body}
+                </Text>
+                <Text style={typeScale.small}>
+                  {new Date(n.created_at).toLocaleString()} · {n.author_email}
+                </Text>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -239,6 +343,7 @@ const styles = StyleSheet.create({
   error: { color: colors.danger, padding: spacing.xl, textAlign: "center" },
   header: { padding: spacing.md, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
   badge: { ...typeScale.small, fontWeight: "700", textTransform: "uppercase", marginTop: spacing.xs },
+  tagsRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.sm },
   thumbs: { paddingHorizontal: spacing.sm, marginTop: spacing.sm },
   thumb: { width: 120, height: 160, borderRadius: 6, marginHorizontal: spacing.xs, backgroundColor: colors.surfaceAlt },
   thumbSingle: { height: 200, margin: spacing.md, borderRadius: 8, backgroundColor: colors.surfaceAlt },
@@ -273,4 +378,31 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 0,
   },
+  noteAdd: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  noteInput: {
+    flex: 1,
+    color: colors.text,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    maxHeight: 100,
+    fontSize: 14,
+  },
+  noteBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 8,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+  },
+  noteBtnDisabled: { backgroundColor: colors.borderStrong },
+  noteBtnText: { color: colors.bg, fontWeight: "700", fontSize: 14 },
+  notesEmpty: { textAlign: "center", marginTop: spacing.lg },
 });

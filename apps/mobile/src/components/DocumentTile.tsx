@@ -10,12 +10,13 @@ import type {
 import { documentThumbnailUrl } from "../api/documentDetail";
 import type { DocumentFeature, FeatureGroup } from "../api/features";
 import { FeatureBadges } from "./FeatureBadges";
+import { TagChip } from "./TagChip";
 import { AuthImage } from "./AuthImage";
 import { colors, spacing, typeScale } from "../theme";
 
 // Accordion document tile (#805): collapsed shows title (bold) + the two dates + status badge;
-// expanded reveals category, tags, counts and the open action. The parent keeps ONE tile open
-// at a time (opening another collapses the previous).
+// expanded reveals category, tags (tap one to filter the list, #777), counts and the open action.
+// The parent keeps ONE tile open at a time (opening another collapses the previous).
 export function DocumentTile({
   doc,
   processing,
@@ -26,6 +27,7 @@ export function DocumentTile({
   expanded,
   onToggle,
   onOpen,
+  onTagPress,
 }: {
   doc: DokDocument;
   processing?: ProcessingSummary;
@@ -36,6 +38,8 @@ export function DocumentTile({
   expanded: boolean;
   onToggle: () => void;
   onOpen?: (id: string) => void;
+  /** Tap a tag chip -> filter the documents list to that tag (#777). */
+  onTagPress?: (name: string) => void;
 }) {
   const badge = badgeFor(doc, processing);
   return (
@@ -74,9 +78,12 @@ export function DocumentTile({
                 <Text style={[styles.chip, styles.chipCategory]}>{stats.category}</Text>
               )}
               {(tags ?? []).map((t) => (
-                <Text key={t.id} style={[styles.chip, { borderColor: t.color || colors.borderStrong }]}>
-                  {t.name}
-                </Text>
+                <TagChip
+                  key={t.id}
+                  name={t.name}
+                  color={t.color}
+                  onPress={onTagPress ? () => onTagPress(t.name) : undefined}
+                />
               ))}
             </View>
           )}

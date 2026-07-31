@@ -1,9 +1,10 @@
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-import type { DokDocument, ProcessingSummary } from "../api/documents";
+import type { DokDocument, ProcessingSummary, DocumentTag } from "../api/documents";
 import type { DocumentFeature, FeatureGroup } from "../api/features";
 import { FeatureBadges } from "./FeatureBadges";
+import { TagChip } from "./TagChip";
 import { documentThumbnailUrl } from "../api/documentDetail";
 import { AuthImage } from "./AuthImage";
 import { colors, spacing, typeScale } from "../theme";
@@ -17,7 +18,9 @@ export function DocumentGridCard({
   compact,
   featureGroups,
   features,
+  tags,
   onOpen,
+  onTagPress,
 }: {
   doc: DokDocument;
   processing?: ProcessingSummary;
@@ -25,7 +28,10 @@ export function DocumentGridCard({
   compact?: boolean;
   featureGroups?: FeatureGroup[];
   features?: DocumentFeature[];
+  tags?: DocumentTag[];
   onOpen?: (id: string) => void;
+  /** Tap a tag chip -> filter the documents list to that tag (#777). */
+  onTagPress?: (name: string) => void;
 }) {
   const failed = processing && processing.features_failed > 0;
   const processingNow = doc.status !== "active" || (processing && processing.status !== "active");
@@ -72,6 +78,20 @@ export function DocumentGridCard({
           year: "numeric",
         })}
       </Text>
+      {tags && tags.length > 0 && (
+        <View style={styles.tagsRow}>
+          {tags.slice(0, 3).map((t) => (
+            <TagChip
+              key={t.id}
+              name={t.name}
+              color={t.color}
+              small
+              onPress={onTagPress ? () => onTagPress(t.name) : undefined}
+            />
+          ))}
+          {tags.length > 3 && <Text style={typeScale.small}>+{tags.length - 3}</Text>}
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -122,4 +142,5 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   scrimSlice: { position: "absolute", top: 0, bottom: 0, width: `${100 / SCRIM_SLICES.length}%` },
+  tagsRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.xs },
 });

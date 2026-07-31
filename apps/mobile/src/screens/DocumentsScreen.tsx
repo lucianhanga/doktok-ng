@@ -187,6 +187,12 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
     return () => clearInterval(id);
   }, [anyProcessing, load]);
 
+  // Tap a tag chip on any card/tile -> filter the list to that tag (#777). The filters effect
+  // reloads on the state change; the search bar's filter row shows the active chip.
+  function filterByTag(name: string) {
+    setFilters((f) => ({ ...f, tags: f.tags.includes(name) ? f.tags : [...f.tags, name] }));
+  }
+
   function renderItem({ item }: { item: DokDocument }) {
     if (viewMode === "grid") {
       return (
@@ -196,7 +202,9 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
           compact={gridCols === 1}
           featureGroups={featureGroups}
           features={featuresByDoc[item.id]}
+          tags={state.tags[item.id]}
           onOpen={onOpenDocument}
+          onTagPress={filterByTag}
         />
       );
     }
@@ -211,6 +219,7 @@ export function DocumentsScreen({ onOpenDocument }: { onOpenDocument?: (id: stri
         expanded={expandedId === item.id}
         onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
         onOpen={onOpenDocument}
+        onTagPress={filterByTag}
       />
     );
   }

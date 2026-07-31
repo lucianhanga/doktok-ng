@@ -1,6 +1,6 @@
 import { apiFetch } from "./client";
 import { BACKEND_URL } from "../config";
-import type { DokDocument } from "./documents";
+import type { DocumentTag, DokDocument } from "./documents";
 
 // Document-detail API (#773) - same endpoints the web card uses.
 export interface DocEntity {
@@ -41,6 +41,11 @@ export function fetchDocumentEntities(id: string, token: string): Promise<DocEnt
 
 export function fetchDocumentActivity(id: string, token: string): Promise<AuditEvent[]> {
   return apiFetch<AuditEvent[]>(`/api/v1/audit?document_id=${encodeURIComponent(id)}`, { token });
+}
+
+// The document's assigned tags (#777) - Tag is a superset of the list-sidecar DocumentTag.
+export function fetchDocumentTags(id: string, token: string): Promise<DocumentTag[]> {
+  return apiFetch<DocumentTag[]>(`/api/v1/documents/${encodeURIComponent(id)}/tags`, { token });
 }
 
 // Image/file URLs - the token goes in headers for <Image source> and the download call.

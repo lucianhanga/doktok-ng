@@ -7,11 +7,11 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "rea
 
 import { AuthProvider, useAuth } from "./src/auth/AuthContext";
 import { LoginScreen } from "./src/screens/LoginScreen";
-import { PlaceholderScreen } from "./src/screens/PlaceholderScreen";
 import { DocumentsStack } from "./src/screens/DocumentsStack";
 import { ScanScreen } from "./src/screens/ScanScreen";
 import { ChatStack } from "./src/screens/ChatStack";
 import { InsightsScreen } from "./src/screens/InsightsScreen";
+import { ActivityScreen } from "./src/screens/ActivityScreen";
 import { IngestionTrackerProvider } from "./src/scan/tracker";
 import { colors, spacing, typeScale } from "./src/theme";
 
@@ -32,12 +32,8 @@ const navTheme: Theme = {
   },
 };
 
-const TAB_NOTES: Record<string, string> = {
-  Settings: "settings land later",
-};
-
 function Gate() {
-  const { status, user, signOut } = useAuth();
+  const { status, signOut } = useAuth();
 
   if (status === "loading") {
     return (
@@ -69,19 +65,14 @@ function Gate() {
           tabBarInactiveTintColor: colors.muted,
         }}
       >
-        {(["Documents", "Scan", "Chat", "Insights", "Settings"] as const).map((name) => (
+        {(["Documents", "Scan", "Chat", "Insights", "Activity"] as const).map((name) => (
           <Tab.Screen key={name} name={name} options={{ title: name }}>
             {() => {
               if (name === "Documents") return <DocumentsStack />;
               if (name === "Scan") return <ScanScreen />;
               if (name === "Chat") return <ChatStack />;
               if (name === "Insights") return <InsightsScreen />;
-              return (
-                <PlaceholderScreen
-                  name={`${name}${user ? ` (${user.display_name || user.email})` : ""}`}
-                  note={TAB_NOTES[name]}
-                />
-              );
+              return <ActivityScreen />;
             }}
           </Tab.Screen>
         ))}

@@ -58,6 +58,7 @@ export function LoginScreen() {
         placeholder="tenant id"
         placeholderTextColor={colors.muted}
         autoCapitalize="none"
+        autoCorrect={false}
         value={tenantId}
         onChangeText={setTenantId}
       />
@@ -66,6 +67,7 @@ export function LoginScreen() {
         placeholder="email"
         placeholderTextColor={colors.muted}
         autoCapitalize="none"
+        autoCorrect={false}
         autoComplete="email"
         keyboardType="email-address"
         value={email}
@@ -76,6 +78,8 @@ export function LoginScreen() {
         placeholder="password"
         placeholderTextColor={colors.muted}
         secureTextEntry
+        autoCapitalize="none"
+        autoCorrect={false}
         value={password}
         onChangeText={setPassword}
         onSubmitEditing={submit}

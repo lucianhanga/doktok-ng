@@ -11,6 +11,7 @@ import { PlaceholderScreen } from "./src/screens/PlaceholderScreen";
 import { DocumentsStack } from "./src/screens/DocumentsStack";
 import { ScanScreen } from "./src/screens/ScanScreen";
 import { ChatStack } from "./src/screens/ChatStack";
+import { InsightsScreen } from "./src/screens/InsightsScreen";
 import { IngestionTrackerProvider } from "./src/scan/tracker";
 import { colors, spacing, typeScale } from "./src/theme";
 
@@ -32,7 +33,6 @@ const navTheme: Theme = {
 };
 
 const TAB_NOTES: Record<string, string> = {
-  Insights: "phone-adapted insights land in M4.1",
   Settings: "settings land later",
 };
 
@@ -75,6 +75,7 @@ function Gate() {
               if (name === "Documents") return <DocumentsStack />;
               if (name === "Scan") return <ScanScreen />;
               if (name === "Chat") return <ChatStack />;
+              if (name === "Insights") return <InsightsScreen />;
               return (
                 <PlaceholderScreen
                   name={`${name}${user ? ` (${user.display_name || user.email})` : ""}`}

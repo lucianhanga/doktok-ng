@@ -6,11 +6,15 @@ from pathlib import Path
 import pytest
 from doktok_api.main import create_app
 from doktok_contracts.ports import (
+    AuditLogRepository,
     CategoryRepository,
     ChunkRepository,
     DocumentRepository,
     EntityRepository,
+    FeatureRepository,
     KnowledgeGraphRepository,
+    RecordRepository,
+    TagRepository,
 )
 from doktok_contracts.schemas import (
     Document,
@@ -24,13 +28,17 @@ from doktok_contracts.schemas import (
     KgEntity,
     KgEntityMention,
 )
+from doktok_core.aggregation.inmemory import InMemoryRecordRepository
+from doktok_core.audit.inmemory import InMemoryAuditLogRepository
 from doktok_core.categories import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.entities.inmemory import InMemoryEntityRepository
+from doktok_core.features.inmemory import InMemoryFeatureRepository
 from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.knowledge_graph.inmemory import InMemoryKnowledgeGraphRepository
 from doktok_core.registry import build_registry
+from doktok_core.tags.inmemory import InMemoryTagRepository
 from fastapi.testclient import TestClient
 
 TOKENS = {"tok-a": "tenant-a"}
@@ -84,10 +92,12 @@ def _client(
     registry = build_registry()
     registry.register(DocumentRepository, doc_repo)  # type: ignore[type-abstract]
     registry.register(EntityRepository, entity_repo)  # type: ignore[type-abstract]
-    if cats is not None:
-        registry.register(CategoryRepository, cats)  # type: ignore[type-abstract]
-    if chunks is not None:
-        registry.register(ChunkRepository, chunks)  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, cats or InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
+    registry.register(RecordRepository, InMemoryRecordRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, chunks or InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     if kg is not None:
         registry.register(KnowledgeGraphRepository, kg)  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
@@ -165,6 +175,8 @@ def _detail_client(tmp_path: Path) -> TestClient:
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     registry.register(RecordRepository, InMemoryRecordRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -250,6 +262,8 @@ def test_detail_includes_processing_telemetry(tmp_path: Path) -> None:
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     registry.register(RecordRepository, InMemoryRecordRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 
@@ -305,6 +319,8 @@ def _records_client(tmp_path: Path, records: list[ExtractedRecord] | None = None
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     registry.register(RecordRepository, rec_repo)  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 

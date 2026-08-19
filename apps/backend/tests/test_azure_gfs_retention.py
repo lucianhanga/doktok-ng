@@ -74,40 +74,40 @@ def test_newest_blob_sorts_by_timestamp_not_class_name() -> None:
 
 
 def test_period_keys() -> None:
-    assert _call('_period_key daily 20260728').stdout.strip() == "20260728"
-    assert _call('_period_key monthly 20260728').stdout.strip() == "202607"
-    assert _call('_period_key yearly 20260728').stdout.strip() == "2026"
+    assert _call("_period_key daily 20260728").stdout.strip() == "20260728"
+    assert _call("_period_key monthly 20260728").stdout.strip() == "202607"
+    assert _call("_period_key yearly 20260728").stdout.strip() == "2026"
     # same ISO week for Monday and Sunday (weeks-since-epoch bucket)
-    mon = _call('_period_key weekly 20260727').stdout.strip()
-    sun = _call('_period_key weekly 20260802').stdout.strip()
+    mon = _call("_period_key weekly 20260727").stdout.strip()
+    sun = _call("_period_key weekly 20260802").stdout.strip()
     assert mon == sun
-    nxt = _call('_period_key weekly 20260803').stdout.strip()
+    nxt = _call("_period_key weekly 20260803").stdout.strip()
     assert int(nxt) == int(mon) + 1
 
 
 def test_class_to_tier_and_container_mapping() -> None:
-    assert _call('tier_for hourly').stdout.strip() == "Hot"
-    assert _call('tier_for weekly').stdout.strip() == "Cool"
-    assert _call('tier_for yearly').stdout.strip() == "Archive"
-    assert _call('container_for hourly').stdout.strip() == "short"
-    assert _call('container_for daily').stdout.strip() == "short"
-    assert _call('container_for weekly').stdout.strip() == "lts"
-    assert _call('container_for yearly').stdout.strip() == "lts"
+    assert _call("tier_for hourly").stdout.strip() == "Hot"
+    assert _call("tier_for weekly").stdout.strip() == "Cool"
+    assert _call("tier_for yearly").stdout.strip() == "Archive"
+    assert _call("container_for hourly").stdout.strip() == "short"
+    assert _call("container_for daily").stdout.strip() == "short"
+    assert _call("container_for weekly").stdout.strip() == "lts"
+    assert _call("container_for yearly").stdout.strip() == "lts"
 
 
 def test_gfs_keep_counts() -> None:
-    assert _call('keep_for hourly').stdout.strip() == "24"
-    assert _call('keep_for daily').stdout.strip() == "7"
-    assert _call('keep_for weekly').stdout.strip() == "4"
-    assert _call('keep_for monthly').stdout.strip() == "11"
-    assert _call('keep_for yearly').stdout.strip() == "1"
+    assert _call("keep_for hourly").stdout.strip() == "24"
+    assert _call("keep_for daily").stdout.strip() == "7"
+    assert _call("keep_for weekly").stdout.strip() == "4"
+    assert _call("keep_for monthly").stdout.strip() == "11"
+    assert _call("keep_for yearly").stdout.strip() == "1"
 
 
 def test_script_shape() -> None:
     assert "DOKTOK_AZURE_CONTAINER_LTS" in SCRIPT
     assert "copy start" in SCRIPT and "--requires-sync" not in SCRIPT  # >256MB copies are async
     # uploads land in the cadence-driven BASE class; promotion to that class is skipped
-    assert 'DOKTOK_GFS_BASE_CLASS:-hourly' in SCRIPT
+    assert "DOKTOK_GFS_BASE_CLASS:-hourly" in SCRIPT
     assert '[ "$cls" = "$BASE_CLASS" ] && continue' in SCRIPT
     # files fingerprint is host-side path+size (write-once pipeline); the restic tree id embeds
     # directory mtimes (refreshed by staging) and is useless as a content key

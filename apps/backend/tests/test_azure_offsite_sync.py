@@ -44,8 +44,8 @@ def test_terraform_owns_the_full_stack() -> None:
 
 
 def test_terraform_instance_naming_and_tags() -> None:
-    assert 'doktok-${var.instance_id}-rg' in TF
-    assert 'doktokbkp${var.instance_id}' in TF
+    assert "doktok-${var.instance_id}-rg" in TF
+    assert "doktokbkp${var.instance_id}" in TF
     assert '"doktok-backups"' in TF
     assert 'app      = "doktok-ng"' in TF
     assert "purpose  = " in TF and '"backup"' in TF

@@ -15,8 +15,8 @@ SCRIPT = (REPO_ROOT / "deploy" / "azure-provision.sh").read_text(encoding="utf-8
 
 def test_instance_id_derived_names() -> None:
     assert "DOKTOK_INSTANCE_ID" in SCRIPT
-    assert 'doktok-${instance}-rg' in SCRIPT
-    assert 'doktokbkp${instance}' in SCRIPT
+    assert "doktok-${instance}-rg" in SCRIPT
+    assert "doktokbkp${instance}" in SCRIPT
     # explicit names still win
     assert "DOKTOK_AZURE_RG:-" in SCRIPT
     assert "DOKTOK_AZURE_ACCOUNT:-" in SCRIPT

@@ -11,14 +11,24 @@ from doktok_api.main import create_app
 from doktok_contracts.ports import (
     AppSettingsRepository,
     AuditLogRepository,
+    CategoryRepository,
+    ChunkRepository,
     DocumentRepository,
+    EntityRepository,
+    FeatureRepository,
+    RecordRepository,
     TagRepository,
     TenantRegistry,
 )
 from doktok_contracts.schemas import AuditEventType, Document, DocumentStatus, Tag, Tenant, User
+from doktok_core.aggregation.inmemory import InMemoryRecordRepository
 from doktok_core.audit.inmemory import InMemoryAuditLogRepository
+from doktok_core.categories.inmemory import InMemoryCategoryRepository
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
+from doktok_core.entities.inmemory import InMemoryEntityRepository
+from doktok_core.features.inmemory import InMemoryFeatureRepository
+from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.registry import build_registry
 from doktok_core.security.inmemory import InMemoryTenantRegistry
 from doktok_core.security.sessions import issue_access_token
@@ -83,6 +93,11 @@ def _client(
     registry.register(TagRepository, tags)  # type: ignore[type-abstract]
     registry.register(AppSettingsRepository, InMemoryAppSettingsRepository())  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, audit)  # type: ignore[type-abstract]
+    registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(RecordRepository, InMemoryRecordRepository())  # type: ignore[type-abstract]
     settings = Settings(  # type: ignore[call-arg]
         env="test",
         auth_jwt_secret=JWT_SECRET,

@@ -62,9 +62,11 @@ def decrypt_secret(stored: str, secrets_key: str) -> str:
     except InvalidToken:
         pass  # fall through to the legacy read path
     try:
-        return _legacy_fernet(secrets_key).decrypt(
-            stored[len(_MARKER) :].encode("ascii")
-        ).decode("utf-8")
+        return (
+            _legacy_fernet(secrets_key)
+            .decrypt(stored[len(_MARKER) :].encode("ascii"))
+            .decode("utf-8")
+        )
     except InvalidToken as exc:
         raise SecretDecryptionError(
             "could not decrypt stored secret; DOKTOK_SECRETS_KEY may have changed"

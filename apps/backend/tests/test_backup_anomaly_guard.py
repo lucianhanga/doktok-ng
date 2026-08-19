@@ -26,10 +26,7 @@ def _run_guard(backup_dir: Path, cur: int, **extra_env: str) -> subprocess.Compl
         "PATH": "/usr/bin:/bin:/usr/local/bin",
         **extra_env,
     }
-    body = (
-        f"source '{LIB_SH}'\n"
-        f'backup_anomaly_guard "{cur}"\n'
-    )
+    body = f"source '{LIB_SH}'\nbackup_anomaly_guard \"{cur}\"\n"
     return subprocess.run(["bash", "-c", body], capture_output=True, text=True, env=env)
 
 

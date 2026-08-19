@@ -15,6 +15,7 @@ from doktok_contracts.ports import (
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
+    TagRepository,
 )
 from doktok_contracts.schemas import Document, DocumentChunk, DocumentStatus
 from doktok_core.categories import InMemoryCategoryRepository
@@ -24,6 +25,7 @@ from doktok_core.entities.inmemory import InMemoryEntityRepository
 from doktok_core.features.inmemory import InMemoryFeatureRepository
 from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.registry import build_registry
+from doktok_core.tags.inmemory import InMemoryTagRepository
 from fastapi.testclient import TestClient
 
 TOKENS = {"tok-a": "tenant-a"}
@@ -76,6 +78,7 @@ def _client(
     )
     registry.register(EntityRepository, entities or InMemoryEntityRepository())  # type: ignore[type-abstract]
     registry.register(ChunkRepository, chunks or InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 

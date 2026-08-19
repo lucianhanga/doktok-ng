@@ -9,6 +9,7 @@ from doktok_contracts.ports import (
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
+    TagRepository,
 )
 from doktok_contracts.schemas import Document, DocumentStatus
 from doktok_core.categories import InMemoryCategoryRepository
@@ -18,6 +19,7 @@ from doktok_core.entities.inmemory import InMemoryEntityRepository
 from doktok_core.features.inmemory import InMemoryFeatureRepository
 from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.registry import build_registry
+from doktok_core.tags.inmemory import InMemoryTagRepository
 from fastapi.testclient import TestClient
 
 TOKENS = {"tok-a": "tenant-a", "tok-b": "tenant-b"}
@@ -55,6 +57,7 @@ def _client(*docs: Document) -> TestClient:
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
     registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 
@@ -126,6 +129,7 @@ def test_needs_attention_filter() -> None:
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
     registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 
@@ -183,6 +187,7 @@ def test_stats_sidecar_entity_count() -> None:
     entity_repo = InMemoryEntityRepository()
     registry.register(EntityRepository, entity_repo)  # type: ignore[type-abstract]
     registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
     body = client.get("/api/v1/documents", headers=_auth("tok-a")).json()
@@ -204,6 +209,7 @@ def test_stats_sidecar_category() -> None:
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
     registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
     body = client.get("/api/v1/documents", headers=_auth("tok-a")).json()
@@ -238,6 +244,7 @@ def test_sort_by_entities_and_cursor_round_trip() -> None:
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
     registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 
@@ -271,6 +278,7 @@ def test_sort_by_chunks_and_cursor_round_trip() -> None:
     registry.register(FeatureRepository, InMemoryFeatureRepository())  # type: ignore[type-abstract]
     registry.register(EntityRepository, InMemoryEntityRepository())  # type: ignore[type-abstract]
     registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     client = TestClient(create_app(settings=settings, registry=registry))
 

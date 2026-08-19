@@ -10,10 +10,12 @@ from doktok_api.main import create_app
 from doktok_contracts.ports import (
     AuditLogRepository,
     CategoryRepository,
+    ChunkRepository,
     DocumentRepository,
     EntityRepository,
     FeatureRepository,
     RecordRepository,
+    TagRepository,
     TenantRegistry,
 )
 from doktok_contracts.schemas import Document, DocumentStatus, Tenant, User
@@ -24,9 +26,11 @@ from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.entities.inmemory import InMemoryEntityRepository
 from doktok_core.features.inmemory import InMemoryFeatureRepository
+from doktok_core.indexing.inmemory import InMemoryChunkRepository
 from doktok_core.registry import build_registry
 from doktok_core.security.inmemory import InMemoryTenantRegistry
 from doktok_core.security.sessions import issue_access_token
+from doktok_core.tags.inmemory import InMemoryTagRepository
 from fastapi.testclient import TestClient
 
 JWT_SECRET = "audit-actor-secret"  # pragma: allowlist secret
@@ -67,6 +71,8 @@ def _client(tmp_path: Path) -> TestClient:
     registry.register(CategoryRepository, InMemoryCategoryRepository())  # type: ignore[type-abstract]
     registry.register(AuditLogRepository, InMemoryAuditLogRepository())  # type: ignore[type-abstract]
     registry.register(RecordRepository, InMemoryRecordRepository())  # type: ignore[type-abstract]
+    registry.register(ChunkRepository, InMemoryChunkRepository())  # type: ignore[type-abstract]
+    registry.register(TagRepository, InMemoryTagRepository())  # type: ignore[type-abstract]
     settings = Settings(
         env="test",
         auth_jwt_secret=JWT_SECRET,

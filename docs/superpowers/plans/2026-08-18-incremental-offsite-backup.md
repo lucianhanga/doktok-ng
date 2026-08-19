@@ -44,7 +44,7 @@ SAS_FULL="$(az storage container generate-sas --name restic-spike --account-name
 
 ```bash
 export AZURE_ACCOUNT_NAME="$DOKTOK_AZURE_ACCOUNT" AZURE_ACCOUNT_SAS="$SAS_NODEL"
-export RESTIC_REPOSITORY="azure:restic-spike:/files" RESTIC_PASSWORD="spike-test-pw"
+export RESTIC_REPOSITORY="azure:restic-spike:/files" RESTIC_PASSWORD="spike-test-pw"  # pragma: allowlist secret
 restic init --no-lock            # expected: created repo
 mkdir -p /tmp/spike-data && echo hello > /tmp/spike-data/a.txt
 restic backup /tmp/spike-data --no-lock   # expected: snapshot created, no delete-permission error

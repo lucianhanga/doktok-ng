@@ -98,15 +98,17 @@ projection-engine: ## Install the embedding-projection runtime (PCA/UMAP/HDBSCAN
 address-libpostal: ## Install the libpostal address-parsing runtime (needs the C lib: `brew install libpostal`; not in lockfile - re-run after any `uv sync`)
 	uv pip install postal
 
-db: ## Start local Postgres + pgvector and Gotenberg (docker compose)
-	docker compose up -d
-
-db-down: ## Stop local Postgres (keep volume)
-	docker compose down
-
 # Backup/restore on the dev box, the SAME scripts as prod (#745): the db container gets the prod
 # pgbackrest wiring via docker-compose.dev.yml, the files leg runs in the backup-runner service.
+# db/db-down always include the dev override: a plain `docker compose up -d` would recreate
+# doktok-db from the stock pgvector image (no pgbackrest) and silently break the pg backup leg.
 DEV_COMPOSE_FILES=docker-compose.yml,docker-compose.dev.yml
+
+db: ## Start local Postgres + pgvector + Gotenberg (dev compose incl. the pgBackRest backup wiring)
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+db-down: ## Stop local Postgres (keep volume)
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 
 db-dev-backup-image: ## Build the dev db image (pg17 + pgvector + pgBackRest) for backups
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build db
@@ -126,15 +128,17 @@ dev-azure-sync: ## Push the local backup repo to Azure Blob (offsite leg; needs 
 	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
-		DOKTOK_GFS_BASE_CLASS="$$(grep '^DOKTOK_GFS_BASE_CLASS=' .env | cut -d= -f2-)" \
-		DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
+		DOKTOK_AZURE_SAS_PRUNE="$$(grep '^DOKTOK_AZURE_SAS_PRUNE=' .env | cut -d= -f2-)" \
+		DOKTOK_RESTIC_PASSWORD="$$(grep '^DOKTOK_RESTIC_PASSWORD=' .env | cut -d= -f2-)" \
+		DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
 	./deploy/azure-sync.sh
 
 dev-azure-fetch: ## Fetch an offsite backup set from Azure into ./backups.azure-restore (TS=<timestamp> for a specific set)
 	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
-		DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
+		DOKTOK_RESTIC_PASSWORD="$$(grep '^DOKTOK_RESTIC_PASSWORD=' .env | cut -d= -f2-)" \
+		DOKTOK_DEPLOY_MODE=compose DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
 	./deploy/azure-fetch.sh ./backups.azure-restore $(TS)
 
 dev-restore: ## Restore Postgres + files_root from the local repo (DESTRUCTIVE; usage: make dev-restore FILES_TARGET=./storage/files [PITR="YYYY-MM-DD HH:MM:SS+00"])
@@ -239,7 +243,12 @@ deploy-box: ## Deploy the working tree to the compose box: rsync + rebuild (live
 	@deploy/deploy-to-box.sh
 
 drp-selftest: ## No-risk DRP self-test: Postgres PITR proof + portable export/restore round-trip (throwaway containers; needs Docker)
-	@deploy/drp-selftest.sh
+	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_SAS_PRUNE="$$(grep '^DOKTOK_AZURE_SAS_PRUNE=' .env | cut -d= -f2-)" \
+		DOKTOK_RESTIC_PASSWORD="$$(grep '^DOKTOK_RESTIC_PASSWORD=' .env | cut -d= -f2-)"; \
+		deploy/drp-selftest.sh
 
 verify-recovery: ## No-risk dev recovery check: round-trip the LIVE dev DB + files into a throwaway Postgres and assert documents + enriched/extracted rows survive. Run after ingesting. (needs `make db`)
 	@deploy/verify-recovery-dev.sh

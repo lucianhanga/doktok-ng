@@ -35,8 +35,10 @@ Run these in order. Steps 4-6 each stay in the foreground in their **own termina
 # 1. Start Docker Desktop (the app). The containers do NOT auto-start with it.
 
 # 2. Start the Docker services (PostgreSQL 17 + pgvector, and Gotenberg for office conversion).
-#    `make db` runs `docker compose up -d`, which brings up both the doktok-db and
-#    doktok-gotenberg containers.
+#    `make db` runs `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`,
+#    which brings up doktok-db (with the prod pgBackRest backup wiring, #745) and
+#    doktok-gotenberg. Never start the db with a plain `docker compose up -d`: that recreates
+#    doktok-db from the stock pgvector image (no pgbackrest) and silently breaks pg backups.
 make db
 
 # 3. Make sure Ollama is running (the Ollama menu-bar app, or `ollama serve`).
@@ -81,7 +83,7 @@ a production deployment.
 
 | Command | Process | Notes |
 |---|---|---|
-| `make db` | `docker compose up -d` (containers `doktok-db`, `doktok-gotenberg`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5433`, so another local Postgres keeps `5432`); Gotenberg (office -> PDF) on `DOKTOK_GOTENBERG_PORT` (default `3000`). |
+| `make db` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` (containers `doktok-db`, `doktok-gotenberg`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5433`, so another local Postgres keeps `5432`); the dev override gives the db the prod pgBackRest wiring (#745); Gotenberg (office -> PDF) on `DOKTOK_GOTENBERG_PORT` (default `3000`). |
 | `make run-backend` | `uvicorn doktok_api.main:app --reload --port 8000 --host ${DOKTOK_BIND_HOST:-127.0.0.1}` | Foreground. Runs the backend model-stack preflight first (see below), then serves `/api/v1` (token-protected) and public `/health`. Binds loopback unless `DOKTOK_BIND_HOST` says otherwise (see the LAN note above). |
 | `make run-worker` | `uv run doktok-worker` | Foreground. Runs the worker model-stack preflight first (see below), then watches each tenant's `ingest/` folder and runs the pipeline. |
 | `make run-ui` | `pnpm --filter @doktok/ui dev` | Foreground. Vite dev server; the dev proxy injects the bearer token. |
@@ -145,6 +147,26 @@ backend, worker, UI), but you do not lose data.
   `make db` starts it the first time. If it is unreachable, office ingestion fails with `needs_ocr`.
 - **Ollama** - unless the menu-bar app is a login item.
 - **The backend, worker, and UI** - always started by hand with the Make targets above.
+
+## Scheduled backups in dev (cron)
+
+Dev has no systemd, so the backup schedule lives in the user crontab (`crontab -e`). The dev
+crontab should hold four lines (all append to `backups/cron.log`):
+
+```cron
+* * * * *    cd <repo> && make dev-pg-wal-freshness >> backups/cron.log 2>&1
+*/15 * * * * cd <repo> && make dev-backup TYPE=incr >> backups/cron.log 2>&1
+17 3 * * 0   cd <repo> && make dev-backup TYPE=full >> backups/cron.log 2>&1
+7 * * * *    cd <repo> && make dev-azure-sync >> backups/cron.log 2>&1
+```
+
+- The `*/15` line runs an **incremental** backup (`TYPE=incr`; fulls are weekly, Sun 03:17). It
+  ran `TYPE=full` before 2026-08-18 - that misconfiguration is what bloated the local pgBackRest
+  repo in the incident behind #827.
+- Switch the `dev-azure-sync` line from the old daily 03:47 run (`47 3 * * *`) to **hourly** when
+  adopting the incremental restic transport (#827, [ADR-0026](../adr/ADR-0026-incremental-offsite-restic-transport.md)):
+  hourly uploads carry only the churn, so the 1 h offsite RPO is cheap. On prod the equivalent is
+  `doktok-azure-sync.timer` (`OnCalendar=hourly`).
 
 ## The worker auto-resumes where it left off
 

@@ -12,6 +12,7 @@ DOKTOK_FILES_ROOT=/var/lib/doktok/files
 DOKTOK_RESTIC_PASSWORD=...
 DOKTOK_PGBACKREST_CIPHER_PASS=...
 DOKTOK_AZURE_ACCOUNT=...   DOKTOK_AZURE_CONTAINER=...   DOKTOK_AZURE_SAS=...
+DOKTOK_AZURE_SAS_PRUNE=...   # host-only, delete-capable: the forget/prune step only (#827)
 ```
 (The restic/pgBackRest passphrases must ALSO be stored off the box - a repo is useless without them.)
 
@@ -26,7 +27,8 @@ systemctl list-timers 'doktok-*'
 ```
 
 It installs `doktok-backup-diff.timer` (hourly), `doktok-backup-full.timer` (weekly),
-`doktok-pg-wal-freshness.timer` (every minute), `doktok-restore-drill.timer` (weekly Sun 03:00), and
+`doktok-pg-wal-freshness.timer` (every minute), `doktok-azure-sync.timer` (hourly - the
+incremental offsite restic sync, #827), `doktok-restore-drill.timer` (weekly Sun 03:00), and
 the `doktok-restore-drill-ondemand.path` (on-demand drill trigger). All run from
 `WorkingDirectory=/opt/doktok` and read
 `/etc/doktok/backup.env`, so they honour `DOKTOK_DEPLOY_MODE`: in **compose** mode the backup units
@@ -35,8 +37,8 @@ call the mode-aware `deploy/backup.sh` (files via the `backup-runner` container 
 They run as **root** because compose mode needs Docker access and the status sentinels are
 root-owned. `doktok-restore-drill.timer` (weekly) and the on-demand `doktok-restore-drill-ondemand.path`
 are shipped units installed the same way (the path-unit is enabled `--now`; the drill `.service` units
-are triggered by the timer/path, so they are installed but not enabled directly). The azure-sync /
-check-backup / ollama-autostop units are documented below and installed the same way (copy the example
+are triggered by the timer/path, so they are installed but not enabled directly). The check-backup /
+ollama-autostop units are documented below and installed the same way (copy the example
 unit blocks into `/etc/systemd/system/`).
 
 ### pg WAL-freshness (DRP)
@@ -104,7 +106,9 @@ WantedBy=timers.target
 
 Other services swap `Description`/`ExecStart`:
 - `doktok-backup-pg.service` -> `ExecStart=/opt/doktok/deploy/backup-pg.sh diff` (+ a `-full` variant `OnCalendar=Sun 03:00`)
-- `doktok-azure-sync.service` -> `ExecStart=/opt/doktok/deploy/azure-sync.sh` (timer `OnCalendar=hourly`)
+- `doktok-azure-sync.service` -> `ExecStart=/opt/doktok/deploy/azure-sync.sh` (shipped unit,
+  installed by `install-systemd.sh`; timer `OnCalendar=hourly` - the incremental restic
+  transport uploads only churn, so the 1h offsite RPO is cheap, #827)
 - `doktok-check-backup.service` -> `ExecStart=/opt/doktok/deploy/check-backup-freshness.sh` (timer `OnCalendar=*:0/30`)
 - `doktok-restore-drill.service` -> `ExecStart=/opt/doktok/deploy/restore-drill.sh` (shipped; timer `OnCalendar=Sun 03:00`)
 - `doktok-ollama-autostop.service` -> `ExecStart=/opt/doktok/deploy/ollama-autostop.sh` (timer
@@ -114,8 +118,9 @@ Other services swap `Description`/`ExecStart`:
 `doktok-backup-alert@.service` is a oneshot that sends a notification (email/webhook) for any failed
 backup unit, e.g. `ExecStart=/opt/doktok/deploy/notify.sh "%i failed"`.
 
-Prune/expire runs inside the backup scripts (restic forget --prune; pgBackRest retention) - keep that
-on the scheduled path, not on the offsite immutable copy.
+Prune/expire runs inside the backup scripts (restic forget --prune; pgBackRest retention), and the
+offsite sync prunes its Azure restic repos in the same scheduled run (forget --prune under the
+host-only prune SAS, #827) - there is no immutable offsite copy to keep prune away from.
 
 ## Restore drill (scheduled + on-demand)
 

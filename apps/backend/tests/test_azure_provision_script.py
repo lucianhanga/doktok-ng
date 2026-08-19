@@ -1,8 +1,9 @@
-"""Host-script tests for the Azure offsite provisioning script (#348).
+"""Host-script tests for the Azure offsite provisioning script (#348, restic transport #827).
 
-Text assertions on deploy/azure-provision.sh: multi-instance naming derivation, the lifecycle
-policy (Cool/expire, never Archive), and the safety controls. The live provisioning itself ran
-against the real subscription during development of the ticket.
+Text assertions on deploy/azure-provision.sh: multi-instance naming derivation, the safety
+controls (soft-delete instead of container WORM), the lifecycle policy scoped to the legacy
+tarball prefixes only (never the restic repos), and the restic repo init + two-SAS guidance.
+The live provisioning itself runs against the real subscription from the operator's host.
 """
 
 from __future__ import annotations
@@ -34,17 +35,25 @@ def test_instance_resources_are_tagged() -> None:
     assert "purpose=backup" in SCRIPT
 
 
-def test_lifecycle_tiers_to_cool_and_expires_never_archive() -> None:
+def test_soft_delete_replaces_worm() -> None:
+    # #827: time-based WORM conflicts with restic prune (blocked deletes, 2026-08-18 incident).
+    # Ransomware resistance = 30d soft-delete + no-delete sync SAS + host-only prune SAS.
+    assert "--enable-delete-retention true" in SCRIPT
+    assert "--delete-retention-days" in SCRIPT
+    assert "immutability-policy create" not in SCRIPT
+    # existing deployments get the old policies removed idempotently
+    assert "immutability-policy delete" in SCRIPT
+
+
+def test_lifecycle_never_touches_the_restic_repos() -> None:
     assert "management-policy create" in SCRIPT
-    assert '"tierToCool"' in SCRIPT
-    assert '"delete"' in SCRIPT
+    # expiry applies ONLY to the legacy tarball prefixes; a delete inside files//pg/ prefixes
+    # would corrupt the restic repos
+    assert '"prefixMatch": ["pg-repo-", "files-repo-"]' in SCRIPT
     assert "tierToArchive" not in SCRIPT  # Archive rehydration takes hours - would blow RTO
-    assert "DOKTOK_AZURE_COOL_AFTER_DAYS" in SCRIPT
-    assert "DOKTOK_AZURE_DELETE_AFTER_DAYS" in SCRIPT
 
 
-def test_immutability_and_versioning_controls() -> None:
-    assert "immutability-policy create" in SCRIPT
-    assert "--enable-versioning true" in SCRIPT
-    assert "--allow-blob-public-access false" in SCRIPT
-    assert "DOKTOK_AZURE_RETENTION_DAYS" in SCRIPT
+def test_restic_repos_are_initialized_and_two_sas_guidance_printed() -> None:
+    assert "restic init" in SCRIPT and ":/files" in SCRIPT and ":/pg" in SCRIPT
+    assert "DOKTOK_AZURE_SAS" in SCRIPT and "DOKTOK_AZURE_SAS_PRUNE" in SCRIPT
+    assert "--permissions rwcl" in SCRIPT  # sync SAS: read/write/create/list, NO delete

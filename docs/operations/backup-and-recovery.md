@@ -12,11 +12,11 @@ M12 epic (#366).
 |---|---|---|
 | Postgres | ~1 min | pgBackRest: continuous WAL archiving + base/diff backups (PITR) |
 | files_root | ~15 min | restic dedup snapshots (encrypted) |
-| Offsite (both) | ~1 h | `azure-sync.sh` GFS tarball rotation to Azure Blob (two WORM containers, content dedup) |
+| Offsite (both) | ~1 h | `azure-sync.sh` incremental restic sync to Azure Blob (two repos, chunk dedup; ADR-0026) |
 
-RTO ~2-4 h to a working stack (restore is bandwidth-bound from Azure; only the yearly GFS set is
-Archive tier - rehydration takes hours, which is acceptable for the oldest copy, everything newer
-stays online in Hot/Cool/Cold).
+RTO ~2-4 h to a working stack (restore is bandwidth-bound from Azure; the offsite restic repos
+stay online in Hot - only the legacy pre-#827 tarballs ride a tiering lifecycle, and nothing a
+restore needs is in Archive).
 
 ## Architecture at a glance
 
@@ -28,9 +28,10 @@ local repo (./backups): restic files repo (AES-256) + pgBackRest repo (aes-256-c
         │  anomaly guard refuses to back up a destroyed DB (#747)
         │  sentinels + append-only history feed the DRP panel; WAL freshness stamped every minute
         ▼  hourly
-Azure Blob: GFS tarballs <leg>-repo-<class>-<ts>-<fp12>.tar.gz in two containers
-        │   doktok-backups (hourly/daily, WORM 2d) / doktok-backups-lts (weekly+, WORM 30d)
-        │   dedup by content fingerprint; audit enforces a minimum set count
+Azure Blob: two restic repos, azure:<container>:/files + :/pg (chunk-deduped; ADR-0026)
+        │   retention = restic forget/prune (7d/4w/12m/1y) over shared chunks
+        │   30d blob soft-delete + two-SAS split (sync SAS rwcl no-delete; prune SAS host-only);
+        │   audit enforces a minimum offsite snapshot count
         ▼
 restore paths: restore.sh (local, PITR) | azure-fetch.sh -> restore.sh (offsite)
              | rebuild-registry (files ahead of DB) | portable export/import (no containers)
@@ -133,7 +134,7 @@ The sentinels and the history are complementary: **sentinels = "is the latest ba
 | `restore-files.sh <target> [snap]` | restore files_root from the local repo |
 | `backup-pg.sh [full\|diff\|incr]` | pgBackRest backup -> local repo |
 | `restore-pg.sh ["<time>"]` | pgBackRest restore / PITR into `$DOKTOK_PGDATA` |
-| `azure-sync.sh [--dry-run]` | push the local repo to Azure Blob (offsite leg) |
+| `azure-sync.sh [--dry-run]` | incremental restic sync of both legs to Azure (offsite leg); `DOKTOK_OFFSITE_TRANSPORT=tarball` selects the legacy one-release fallback (`azure-sync-tarball.sh`) |
 | `test-pitr.sh` | self-contained proof that folder-based WAL+base+PITR works (throwaway containers) |
 | `restore-drill.sh` | live restore drill into throwaway dirs/containers; asserts row counts + records RPO/RTO (drill sentinel + history) |
 | `log-event.sh` | compose-mode wrapper to append one history event (`log_event`) from inside `backup-runner` |
@@ -149,8 +150,8 @@ scripts above are the scheduled **low-RPO running backups**.
   contains only pre-target data). The `repair`/`verify-restore` reconciler runs against the live DB.
 - **Box-side (needs the host / Azure account):** wiring Postgres `archive_command=pgbackrest
   --stanza=doktok archive-push %p` into the db container (DB-A1); systemd timers + resource caps;
-  Azure account, container immutability/versioning/lifecycle; the firewall. These are M12 infra
-  tickets to apply on the N95.
+  Azure account, blob soft-delete/versioning/lifecycle (no container WORM since #827 - it blocks
+  restic prune); the firewall. These are M12 infra tickets to apply on the N95.
 
 ## Back up (scheduled on the box)
 
@@ -158,7 +159,7 @@ scripts above are the scheduled **low-RPO running backups**.
 # files (every ~15 min) and Postgres (base/diff per schedule); then offsite
 DOKTOK_RESTIC_PASSWORD=... ./deploy/backup-files.sh
 DOKTOK_PGDATA=/var/lib/postgresql/data DOKTOK_PGBACKREST_CIPHER_PASS=... ./deploy/backup-pg.sh diff
-DOKTOK_AZURE_ACCOUNT=... DOKTOK_AZURE_CONTAINER=... DOKTOK_AZURE_SAS=... ./deploy/azure-sync.sh
+DOKTOK_AZURE_ACCOUNT=... DOKTOK_AZURE_CONTAINER=... DOKTOK_AZURE_SAS=... DOKTOK_AZURE_SAS_PRUNE=... DOKTOK_RESTIC_PASSWORD=... ./deploy/azure-sync.sh
 ```
 
 Wrap with the quiesce hook for a still snapshot: `doktok-worker quiesce` -> back up -> `quiesce --off`.
@@ -183,8 +184,9 @@ on-demand equivalent for dev/macOS.
 
 ## Restore
 
-1. (If offsite) pull the repo from Azure into a staging dir with `deploy/azure-fetch.sh` (latest or
-   a given timestamp; it verifies both repos are readable), then run the SAME restore against it:
+1. (If offsite) pull the offsite state from Azure into a staging dir with `deploy/azure-fetch.sh`
+   (latest or a `yyyymmdd[-hhmmss]` timestamp; it restic-restores both Azure repos into the
+   staging layout and verifies they are readable), then run the SAME restore against it:
    `DOKTOK_BACKUP_DIR=./backups.azure-restore ./deploy/restore.sh ./storage/files`
    (dev: `make dev-azure-fetch`, then `DOKTOK_BACKUP_DIR=./backups.azure-restore make dev-restore
    FILES_TARGET=./storage/files`). The live local repo is never touched by the fetch.
@@ -238,10 +240,10 @@ The backup repos are **portable** - a backup taken on one device restores on ano
 real test of a backup). restic (files) is content-addressed + encrypted; pgBackRest (Postgres)
 restores its repo into a fresh data dir. Three things must travel with the repos:
 
-1. **The repos** - the whole `$DOKTOK_BACKUP_DIR` (its `files/`, `pg/`, and `status/` dirs). With
-   offsite (Azure) deferred, backups currently live only on the source device's local disk, so
-   moving A -> B today means **copying `$DOKTOK_BACKUP_DIR` by hand** (USB / `scp` / rsync). (Once
-   offsite ships, B pulls the repo instead - step 1 of [Restore](#restore).)
+1. **The repos** - the whole `$DOKTOK_BACKUP_DIR` (its `files/`, `pg/`, and `status/` dirs). When
+   the source has the Azure offsite configured, B pulls the offsite copy instead - step 1 of
+   [Restore](#restore). Without it, moving A -> B means **copying `$DOKTOK_BACKUP_DIR` by hand**
+   (USB / `scp` / rsync).
 2. **The passphrases** - `DOKTOK_RESTIC_PASSWORD` and `DOKTOK_PGBACKREST_CIPHER_PASS`. They are NOT
    in the backup (off-box by design); the repos are unrecoverable without them. Carry
    `DOKTOK_SECRETS_KEY` too - `app_settings` (incl. the OpenAI key) is in the DB backup and B needs
@@ -299,8 +301,9 @@ contract and `$DOKTOK_BACKUP_DIR` layout are identical in both modes.
   `doktok-backup-full` (weekly Sun 03:00 -> `backup.sh full`), and `doktok-pg-wal-freshness` (every
   minute -> `pg-wal-freshness.sh`). The units are **mode-aware** via `DOKTOK_DEPLOY_MODE` in
   `backup.env`: in `compose` mode they drive the containerized tools; in `host` mode they run the host
-  tools. The azure-sync / check-backup / restore-drill / ollama-autostop timers are documented as
-  example units in `deploy/systemd/README.md`.
+  tools. `doktok-azure-sync` (hourly -> `azure-sync.sh`) and the restore-drill units ship and
+  install the same way; the check-backup / ollama-autostop timers are documented as example units
+  in `deploy/systemd/README.md`.
 - **pg WAL-freshness:** `deploy/pg-wal-freshness.sh` (every minute) stamps the pg sentinel's
   `last_run_at` to the last archived WAL time (the real recovery point) and records `wal_lag_s`,
   **preserving** the base backup's `size`/`backup_id`. Without it the pg leg would flap "stale"
@@ -314,19 +317,28 @@ contract and `$DOKTOK_BACKUP_DIR` layout are identical in both modes.
 - **Restore drills:** `deploy/restore-drill.sh` restores the latest files snapshot + runs the
   Postgres PITR proof into throwaway locations, asserts row counts, and records measured RPO/RTO.
   Scheduled weekly and triggerable on demand - see [Recovery drills](#recovery-drills) below.
-- **Azure offsite (GFS, #766):** `deploy/azure-sync.sh` ships one tarball per leg per run named
-  `<leg>-repo-<class>-<ts>-<fp12>.tar.gz` (class + timestamp + content fingerprint). It keeps 24
-  hourly / 7 daily / 4 weekly / 11 monthly / 1 yearly per leg, pruned **in code** (lifecycle rules
-  can't count; they only run the tier ladder Cool→Cold@90→Archive@180 + a 730d safety-net).
-  Promotions across period boundaries are server-side copies, never re-uploads. Sets land in two
-  containers with container-level WORM (version-level WORM is creation-time-only in Azure):
-  `doktok-backups` for hourly/daily (2d window), `doktok-backups-lts` for weekly+ (30d window).
-  Tiers are assigned at write to avoid early-deletion charges: hourly/daily Hot, weekly/monthly
-  Cool, yearly Archive direct. A leg whose newest offsite fingerprint matches the local one
-  (files: host-side path+size hash of the write-once tree; pg: latest label + WAL max) is
-  **skipped** - quiet periods upload nothing and the DRP offsite leg compares fingerprints, so it
-  never reads falsely stale. Provision with Terraform (`deploy/terraform/`); credentials = an
-  account-level SAS **with delete** (the code prune needs it).
+- **Azure offsite (incremental restic, #827 / ADR-0026):** `deploy/azure-sync.sh` keeps two
+  restic repos on Azure Blob (created once by `azure-provision.sh`): `azure:<container>:/files`
+  (an hourly `restic backup` of the files tree - same source as the local repo, so chunk dedup
+  means only churn crosses the wire) and `azure:<container>:/pg` (an hourly backup of the local
+  pgBackRest repo dir, whose write-once files dedup exactly; the WAL stream rides inside, so the
+  offsite pg recovery point tracks the local one within the sync cadence). GFS retention is
+  `restic forget --prune --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --keep-yearly 1` on
+  both repos - snapshot metadata over shared chunks, no duplicate bytes. The protection model is
+  **30-day blob soft-delete** (account level, plus versioning) and a **two-SAS split** instead of
+  the old container WORM (dropped in #827: it blocks the deletes restic prune needs): the hourly
+  sync SAS `DOKTOK_AZURE_SAS` is `rwcl` WITHOUT delete (its compromise cannot destroy history),
+  and the delete-capable `DOKTOK_AZURE_SAS_PRUNE` is host-only and exported only around the
+  forget/prune step. After each run an audit counts the offsite snapshots per repo and flags the
+  DRP offsite leg below `DOKTOK_OFFSITE_MIN_SETS` (default 3). Provision with Terraform
+  (`deploy/terraform/`) or `azure-provision.sh`. The pre-#827 tarball transport survives one
+  release behind `DOKTOK_OFFSITE_TRANSPORT=tarball` (`deploy/azure-sync-tarball.sh`).
+- **Legacy tarball expiry (migration note):** the pre-#827 tarball sets are NOT migrated. The
+  account-level lifecycle rule - rescoped in #827 to the legacy `pg-repo-`/`files-repo-` prefixes
+  only, so it can never touch the restic repos (`files/`, `pg/`), where a lifecycle delete would
+  corrupt the repo - expires them automatically (Cool after 30d, delete after 90d as provisioned
+  by `azure-provision.sh`). The 2026-07-28 LTS sets sit in their 30-day WORM window until
+  ~2026-08-27 and can be deleted (or age out) from then on; that is the last WORM holdover.
 
 ## Settings -> DRP panel
 
@@ -556,15 +568,21 @@ device](#recover-onto-a-new--different-device).
   (docker/for-mac#6812). In dev the backup-runner stages the files tree through a container-local
   volume (`DOKTOK_FILES_STAGE_SRC`) so restic never reads the bind mount directly; prod (Linux) is
   unaffected.
-- **Azure version-level (per-blob) WORM can only be enabled at account creation time.** That is
-  why the offsite design uses two containers with container-level policies (2d short / 30d lts)
-  instead of per-blob policies.
+- **Time-based container WORM conflicts with restic prune.** Prune deletes pack/index/lock files,
+  which an immutability policy forbids for its whole window (the 2026-08-18 incident left 4.65 GB
+  undeletable for 30 days). #827 therefore dropped container WORM: ransomware resistance is 30-day
+  blob soft-delete + the two-SAS split (the hourly sync SAS has no delete permission; the
+  delete-capable prune SAS stays host-only). Soft-delete is not WORM - a prune-credential
+  compromise can destroy history within the soft-delete window.
 - **Azure tier minimums bill early deletes.** Cool=30d, Cold=90d, Archive=180d minimum retention:
-  a blob deleted or moved earlier is charged the remainder. That is why short-lived GFS sets
-  (hourly/daily) are written to Hot, never Cool.
+  a blob deleted or moved earlier is charged the remainder. The offsite restic repos therefore
+  stay in Hot (prune deletes/rewrites packs every run), and only the legacy pre-#827 tarballs
+  ride the Cool/Cold/Archive lifecycle ladder on their way out.
 
 ## Secrets
 
 `DOKTOK_RESTIC_PASSWORD` and `DOKTOK_PGBACKREST_CIPHER_PASS` encrypt the repos - **store them off the
 box** (a repo is useless without its key, and an SSD failure would take both). Azure credentials
-(`DOKTOK_AZURE_SAS` / key) are write secrets. Names only in env examples; see the security runbook.
+(`DOKTOK_AZURE_SAS` sync, `DOKTOK_AZURE_SAS_PRUNE` prune) are write secrets; the prune SAS is
+delete-capable and stays host-only (never read by the app). Names only in env examples; see the
+security runbook.

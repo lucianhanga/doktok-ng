@@ -109,6 +109,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (no local model loaded), a local Ollama pipeline reuses the already-resident pipeline model. Removed
   the now-unused `DOKTOK_JUDGE_MODEL` / `judge_num_ctx` config. `DOKTOK_ENRICH_MODEL` remains only as
   the local fallback used when the pipeline is OpenAI but egress is disabled.
+- **Offsite backup transport replaced with incremental restic repos on Azure Blob** (#827,
+  [ADR-0026](docs/adr/ADR-0026-incremental-offsite-restic-transport.md)). `deploy/azure-sync.sh`
+  no longer tars the whole local repo into GFS-rotated tarballs kept per class (storage grew with
+  corpus × retention classes); it now runs an hourly `restic backup` of the files tree and of the
+  pgBackRest repo dir into two Azure restic repos (`azure:<container>:/files` + `:/pg`), so only
+  churn crosses the wire, Azure holds ~1× the compressed corpus, and GFS retention (7d/4w/12m/1y)
+  is `restic forget --prune` snapshot metadata over shared chunks. The sync cadence moved from
+  daily 03:47 to **hourly** (dev crontab `7 * * * *`, prod `doktok-azure-sync.timer`
+  `OnCalendar=hourly`) — the offsite RPO is now 1 h for both legs. The time-based container WORM
+  policies are gone (they block the deletes restic prune needs — the 2026-08-18 incident left
+  4.65 GB undeletable for 30 days); ransomware resistance is now 30-day blob soft-delete plus a
+  **two-SAS split** (hourly sync SAS `DOKTOK_AZURE_SAS` without delete; delete-capable
+  `DOKTOK_AZURE_SAS_PRUNE` host-only, used only by forget/prune). The pre-#827 tarball transport
+  survives one release behind `DOKTOK_OFFSITE_TRANSPORT=tarball`
+  (`deploy/azure-sync-tarball.sh`). `deploy/azure-fetch.sh` restores via restic instead of
+  tarball download (`TS=` now selects a snapshot timestamp) and rebuilds the staging repos the
+  unchanged `restore.sh` path consumes; `deploy/restore-files.sh` now reads the snapshot's own
+  recorded path, so restores are path-agnostic (a repo rebuilt by azure-fetch, or a `FILES_ROOT`
+  that moved since the snapshot, restores correctly). `make drp-selftest` gained a live offsite
+  round-trip leg (seed → backup to a throwaway Azure prefix → restore → compare, pruned on
+  teardown), skipped when the Azure env is absent.
 - **Document enrichment now also follows the Data Pipeline AI setting; no hardcoded enrichment
   model.** The metadata/category/record/NER extractors no longer fall back to a separate
   `DOKTOK_ENRICH_MODEL` (which defaulted to `qwen3:14b`); when the Data Pipeline is set to OpenAI but

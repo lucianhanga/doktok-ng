@@ -53,6 +53,9 @@ def test_transport_is_restic_end_to_end() -> None:
     # the compose files leg stages only when the virtiofs workaround is configured (#745) and
     # fails fast on a partial stage - never find -delete on an unguarded tree
     assert 'set -e' in SYNC and '[ -n "${DOKTOK_FILES_STAGE_SRC:-}" ]' in SYNC
+    # compose mode stages the pg repo off the virtiofs bind mount before restic reads it (#745
+    # O_NOATIME/EIO workaround, same class as the files leg's staging)
+    assert "/tmp/pg-repo" in SYNC
 
 
 def test_gfs_is_restic_forget_metadata_not_duplicate_bytes() -> None:
@@ -95,3 +98,6 @@ def test_drp_selftest_has_an_offsite_roundtrip_leg() -> None:
     mk = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     m = re.search(r"drp-selftest:.*?deploy/drp-selftest\.sh", mk, re.S)
     assert m and "DOKTOK_AZURE_SAS_PRUNE" in m.group(0)
+    # compose mode stages the payload container-locally before restic reads it (virtiofs
+    # O_NOATIME/EIO workaround, #745 - same class as the sync/fetch staging)
+    assert "/tmp/st" in st

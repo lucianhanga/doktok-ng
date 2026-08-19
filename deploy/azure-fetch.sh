@@ -35,6 +35,9 @@ offsite_azure_env sync
 export RESTIC_PASSWORD="$DOKTOK_RESTIC_PASSWORD"
 mkdir -p "$staging/files" "$staging/pg"
 staging_abs="$(cd "$staging" && pwd)"
+# Idempotent re-runs: drop leftover scratch trees from previous (possibly failed) fetches -
+# restic restore refuses to recreate existing entries (e.g. the pg repo's `latest` symlink).
+rm -rf "$staging_abs/.filestree" "$staging_abs/.pgtree"
 require python3  # the snapshot picker runs host-side in both modes (lib.sh relies on host python3 too)
 if [ "$mode" != "compose" ]; then require restic; fi
 
@@ -52,16 +55,22 @@ staging_restic() {
     fi
 }
 
-# Mode-specific path spaces: restic --target must be runner-visible in compose mode.
+# Mode-specific path spaces: the pg restore target must be runner-visible in compose mode (the
+# files leg handles its own container-local paths inline, see below). Host-only rebuild paths are
+# plain host paths.
 if [ "$mode" = "compose" ]; then
-    tree_target="/backups/.filestree"; pgtree_target="/backups/.pgtree"; st_repo="/backups/files"
+    pgtree_target="/backups/.pgtree"
 else
-    tree_target="$staging_abs/.filestree"; pgtree_target="$staging_abs/.pgtree"; st_repo="$staging_abs/files"
+    pgtree_target="$staging_abs/.pgtree"
+    tree_target="$staging_abs/.filestree"; st_repo="$staging_abs/files"
 fi
 
-# Pick the /pg snapshot: newest at/before the requested ts (default: latest). IDs listed newest-last.
-snap_json="$(RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/pg" offsite_restic snapshots --no-lock --json)"
-snap_id="$(printf '%s' "$snap_json" | python3 -c '
+# pick_pg_snapshot - prints the newest /pg snapshot id at/before $want_ts (empty if none).
+# Called as LATE as possible (right before the pg leg): the files leg takes minutes, and the
+# hourly sync's prune collapses same-day snapshots (keep-daily), so an early pick can be deleted
+# underfoot. The pg restore retries once with a fresh pick on failure.
+pick_pg_snapshot() {
+    RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/pg" offsite_restic snapshots --no-lock --json | python3 -c '
 import sys, json
 want = sys.argv[1].replace("-", "")
 if len(want) == 8:  # date-only means "up to end of that day"
@@ -73,38 +82,62 @@ for s in snaps:
     if not want or stamp <= want:
         pick = s["id"]
 print(pick)
-' "$want_ts")"
-[ -n "$snap_id" ] || { err "no /pg offsite snapshot at/before '${want_ts:-latest}'"; exit 1; }
-echo "fetching offsite state (pg snapshot ${snap_id}) -> ${staging}"
+' "$want_ts"
+}
 
 # files leg: restore the latest tree from Azure, then rebuild a local restic repo from it (the
 # restore engine consumes staging/files as a repo; single-repo auth only - restic copy's
-# --from-repo auth proved unreliable on restic 0.14, spike 2026-08-18). The tree lands under
-# <target><snapshot's recorded path>; read that path from the snapshot metadata instead of
-# guessing depths.
-files_path="$(RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/files" offsite_restic snapshots latest --no-lock --json \
-    | sed -n 's/.*"paths":\["\([^"]*\)"\].*/\1/p')"
-[ -n "$files_path" ] || { err "no /files offsite snapshot"; exit 1; }
-RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/files" \
-    staging_restic restore latest --no-lock --target "$tree_target"
-tree_root="$staging_abs/.filestree$files_path"
-[ -d "$tree_root" ] || { err "restored files tree missing at $tree_root"; exit 1; }
+# --from-repo auth proved unreliable on restic 0.14, spike 2026-08-18). In compose mode the
+# restore+rebuild run ENTIRELY inside the runner on container-local storage: restic reads sources
+# with O_NOATIME, which virtiofs bind mounts fail with EIO (#745, same class as the sync staging).
+# The container name goes in as $1 (no quote splicing); the rebuilt snapshot's recorded path is
+# /tmp/filestree<orig> - restore-files.sh resolves paths from snapshot metadata, so that is fine.
 if [ "$mode" = "compose" ]; then
-    st_tree="/backups/.filestree$files_path"
+    "${compose[@]}" run --rm -v "$staging_abs:/backups" \
+        -e AZURE_ACCOUNT_NAME -e AZURE_ACCOUNT_SAS -e RESTIC_PASSWORD \
+        backup-runner bash -c '
+            set -e
+            rm -rf /tmp/filestree
+            RESTIC_REPOSITORY="azure:$1:/files" restic restore latest --no-lock --target /tmp/filestree
+            src="$(RESTIC_REPOSITORY="azure:$1:/files" restic snapshots latest --no-lock --json \
+                | sed -n "s/.*\"paths\":\[\"\([^\"]*\)\"\].*/\1/p")"
+            [ -n "$src" ] && [ -d "/tmp/filestree$src" ] || { echo "restored files tree missing" >&2; exit 1; }
+            restic -r /backups/files init 2>/dev/null || true
+            restic -r /backups/files backup "/tmp/filestree$src" --tag files_root --host doktok >/dev/null
+            rm -rf /tmp/filestree
+        ' _ "$DOKTOK_AZURE_CONTAINER"
 else
-    st_tree="$tree_root"
+    files_path="$(RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/files" offsite_restic snapshots latest --no-lock --json \
+        | sed -n 's/.*"paths":\["\([^"]*\)"\].*/\1/p')"
+    [ -n "$files_path" ] || { err "no /files offsite snapshot"; exit 1; }
+    RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/files" \
+        staging_restic restore latest --no-lock --target "$tree_target"
+    tree_root="$staging_abs/.filestree$files_path"
+    [ -d "$tree_root" ] || { err "restored files tree missing at $tree_root"; exit 1; }
+    RESTIC_REPOSITORY="$st_repo" staging_restic init 2>/dev/null || true
+    RESTIC_REPOSITORY="$st_repo" staging_restic backup "$tree_root" --tag files_root --host doktok >/dev/null
+    rm -rf "$staging_abs/.filestree"
 fi
-RESTIC_REPOSITORY="$st_repo" staging_restic init 2>/dev/null || true
-RESTIC_REPOSITORY="$st_repo" staging_restic backup "$st_tree" --tag files_root --host doktok >/dev/null
-rm -rf "$staging_abs/.filestree"
-# pg leg: restore the snapshot; restic recreates the original absolute paths under the target, so
-# locate the pg repo root (the dir holding backup/ + archive/) wherever it landed. -print -quit:
-# first match, no SIGPIPE under pipefail.
-RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/pg" \
-    staging_restic restore "$snap_id" --no-lock --target "$pgtree_target"
-pg_tree="$(find "$staging_abs/.pgtree" -type d -name archive -path '*/pg/*' -print -quit)"
-[ -n "$pg_tree" ] || { err "restored pg snapshot has no pg archive dir"; exit 1; }
-cp -a "$(dirname "$pg_tree")/" "$staging_abs/pg/"
+# pg leg: pick the snapshot NOW (late - see pick_pg_snapshot) and restore it; restic recreates
+# the original absolute paths under the target. The repo root can land at any depth/name (the
+# sync stages it at /tmp/pg-repo in compose mode), so locate it structurally: the dir that
+# CONTAINS the pgBackRest `archive` dir IS the repo root. -print -quit: first match, no SIGPIPE.
+snap_id="$(pick_pg_snapshot)"
+[ -n "$snap_id" ] || { err "no /pg offsite snapshot at/before '${want_ts:-latest}'"; exit 1; }
+echo "pg: restore snapshot ${snap_id} -> ${staging}/pg"
+if ! RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/pg" \
+        staging_restic restore "$snap_id" --no-lock --target "$pgtree_target"; then
+    # The hourly sync's prune may have deleted the pick underfoot (same-day collapse); retry once
+    # with a fresh pick.
+    warn "pg restore failed - re-picking the latest snapshot and retrying once"
+    snap_id="$(pick_pg_snapshot)"
+    [ -n "$snap_id" ] || { err "no /pg offsite snapshot at/before '${want_ts:-latest}'"; exit 1; }
+    RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/pg" \
+        staging_restic restore "$snap_id" --no-lock --target "$pgtree_target"
+fi
+archive_dir="$(find "$staging_abs/.pgtree" -type d -name archive -print -quit)"
+[ -n "$archive_dir" ] || { err "restored pg snapshot has no pg archive dir"; exit 1; }
+cp -a "$(dirname "$archive_dir")/" "$staging_abs/pg/"
 rm -rf "$staging_abs/.pgtree"
 
 # Verify both repos are readable (same best-effort checks as the tarball design; the compose

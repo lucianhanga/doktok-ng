@@ -54,3 +54,10 @@ def test_azure_fetch_restores_from_the_restic_repos() -> None:
     assert "DOKTOK_BACKUP_DIR=${staging}" in fetch
     # no tarball machinery left
     assert "az storage blob download" not in fetch
+    # compose mode restores+rebuilds the files repo entirely inside the runner on
+    # container-local storage (virtiofs O_NOATIME/EIO workaround, same class as the sync legs)
+    assert "/tmp/filestree" in fetch
+    # the pg repo root is located structurally (the dir holding `archive`), never by a
+    # name/depth assumption - the sync stages it at /tmp/pg-repo, which has no `/pg/` segment
+    assert "'*/pg/*'" not in fetch
+    assert "-name archive -print -quit" in fetch

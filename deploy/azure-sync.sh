@@ -95,9 +95,24 @@ fi
 
 export RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/pg"
 echo "pg: backup $pg_src -> $RESTIC_REPOSITORY"
-[ "$dry_run" = "--dry-run" ] || \
-    offsite_restic backup "$pg_src" --no-lock --exclude log --exclude lock \
-        || fail_sync "pg repo backup to Azure failed"
+if [ "$dry_run" != "--dry-run" ]; then
+    if [ "$mode" = "compose" ]; then
+        # Stage the pg repo off the virtiofs bind mount first (same O_NOATIME/EIO workaround as
+        # the files leg, #745): restic sets O_NOATIME on source files and every read through the
+        # /backups bind mount fails with EIO on Docker Desktop for Mac.
+        "${compose[@]}" run --rm -e AZURE_ACCOUNT_NAME -e AZURE_ACCOUNT_SAS \
+            -e RESTIC_REPOSITORY -e RESTIC_PASSWORD backup-runner bash -c '
+                set -e
+                rm -rf /tmp/pg-repo
+                cp -a /backups/pg /tmp/pg-repo
+                restic backup /tmp/pg-repo --tag pg_repo --host doktok --no-lock \
+                    --exclude log --exclude lock
+            ' || fail_sync "pg repo backup to Azure failed"
+    else
+        offsite_restic backup "$pg_src" --tag pg_repo --host doktok --no-lock \
+            --exclude log --exclude lock || fail_sync "pg repo backup to Azure failed"
+    fi
+fi
 
 # --- GFS retention: snapshot metadata, not duplicate bytes (the only delete-capable step) -------
 if [ "$dry_run" != "--dry-run" ]; then

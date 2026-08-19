@@ -33,31 +33,39 @@ if [ -n "${DOKTOK_AZURE_ACCOUNT:-}" ] && [ -n "${DOKTOK_AZURE_SAS:-}" ]; then
     for f in ${COMPOSE_FILES//,/ }; do compose+=(-f "$f"); done
     compose+=(--env-file "$COMPOSE_ENV_FILE")
     st_id="selftest-$(date -u +%Y%m%d%H%M%S)"
-    # The payload lives under BACKUP_DIR so the backup-runner sees it too (compose mode mounts
-    # $BACKUP_DIR at /backups); restic restores recreate the snapshot's absolute path under the
-    # target, so the compare appends the runner-visible payload path.
+    # The payload lives under BACKUP_DIR so the runner sees it (compose mounts $BACKUP_DIR at
+    # /backups) - but restic must not READ it there (O_NOATIME/virtiofs EIO, #745), so the runner
+    # stages it container-locally first. Restore lands back on /backups for the host-side diff.
     st_payload="$BACKUP_DIR/.$st_id"
     st_out="$BACKUP_DIR/.$st_id-out"
     mkdir -p "$st_payload" "$st_out"
     echo "drp selftest payload $(date -u)" >"$st_payload/payload.txt"
-    if [ "$mode" = "compose" ]; then
-        st_payload_rt="/backups/.$st_id"; st_out_rt="/backups/.$st_id-out"
-    else
-        st_payload_rt="$st_payload"; st_out_rt="$st_out"
-    fi
     offsite_azure_env sync
     export RESTIC_PASSWORD="$DOKTOK_RESTIC_PASSWORD"
-    RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/$st_id" offsite_restic init
-    RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/$st_id" \
-        offsite_restic backup "$st_payload_rt" --no-lock >/dev/null
-    RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/$st_id" \
-        offsite_restic restore latest --no-lock --target "$st_out_rt" >/dev/null
-    diff -r "$st_payload" "$st_out$st_payload_rt" >/dev/null && ok "offsite round-trip: content identical" \
-        || { err "offsite round-trip MISMATCH"; exit 1; }
-    # teardown needs delete rights: prune SAS when present; without it the throwaway prefix's
-    # repo skeleton (config/keys, a few KBs) stays behind - the lifecycle rule is scoped to the
-    # legacy pg-repo-/files-repo- prefixes and will NOT clean it - until someone prunes it with
-    # delete rights.
+    if [ "$mode" = "compose" ]; then
+        "${compose[@]}" run --rm -e AZURE_ACCOUNT_NAME -e AZURE_ACCOUNT_SAS -e RESTIC_PASSWORD \
+            backup-runner bash -c '
+                set -e
+                rm -rf /tmp/st && mkdir -p /tmp/st
+                cp -a "/backups/.$2/." /tmp/st/
+                RESTIC_REPOSITORY="azure:$1:/$2" restic init >/dev/null
+                RESTIC_REPOSITORY="azure:$1:/$2" restic backup /tmp/st --no-lock >/dev/null
+                rm -rf "/backups/.$2-out"
+                RESTIC_REPOSITORY="azure:$1:/$2" restic restore latest --no-lock --target "/backups/.$2-out" >/dev/null
+            ' _ "$DOKTOK_AZURE_CONTAINER" "$st_id"
+        diff -r "$st_payload" "$st_out/tmp/st" >/dev/null && ok "offsite round-trip: content identical" \
+            || { err "offsite round-trip MISMATCH"; exit 1; }
+    else
+        RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/$st_id" offsite_restic init
+        RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/$st_id" \
+            offsite_restic backup "$st_payload" --no-lock >/dev/null
+        RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/$st_id" \
+            offsite_restic restore latest --no-lock --target "$st_out" >/dev/null
+        diff -r "$st_payload" "$st_out$st_payload" >/dev/null && ok "offsite round-trip: content identical" \
+            || { err "offsite round-trip MISMATCH"; exit 1; }
+    fi
+    # teardown needs delete rights: prune SAS when present, else the throwaway prefix's repo
+    # skeleton (config/keys, KBs) stays until someone prunes it with delete rights.
     if [ -n "${DOKTOK_AZURE_SAS_PRUNE:-}" ]; then
         offsite_azure_env prune
         RESTIC_REPOSITORY="azure:${DOKTOK_AZURE_CONTAINER}:/$st_id" \

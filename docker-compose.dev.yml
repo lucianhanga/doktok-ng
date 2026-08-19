@@ -33,6 +33,10 @@ services:
       POSTGRES_DB: doktok
       # Repo encryption pass (never committed); set it in .env, store it off the box.
       PGBACKREST_REPO1_CIPHER_PASS: ${DOKTOK_PGBACKREST_CIPHER_PASS:?set DOKTOK_PGBACKREST_CIPHER_PASS in .env}
+      # Dev retention: 7 days of fulls + WAL suffice on a dev box (the shared pgbackrest.conf keeps
+      # 30 for prod). Env beats the mounted conf file, so this stays dev-scoped. The 1-min RPO is
+      # held by WAL archiving; frequent 15-min backups run as incr (see the dev crontab), not full.
+      PGBACKREST_REPO1_RETENTION_FULL: "7"
     volumes:
       - doktok-pgdata:/var/lib/postgresql/data
       - ./storage/postgres/initdb:/docker-entrypoint-initdb.d:ro

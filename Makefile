@@ -98,15 +98,17 @@ projection-engine: ## Install the embedding-projection runtime (PCA/UMAP/HDBSCAN
 address-libpostal: ## Install the libpostal address-parsing runtime (needs the C lib: `brew install libpostal`; not in lockfile - re-run after any `uv sync`)
 	uv pip install postal
 
-db: ## Start local Postgres + pgvector and Gotenberg (docker compose)
-	docker compose up -d
-
-db-down: ## Stop local Postgres (keep volume)
-	docker compose down
-
 # Backup/restore on the dev box, the SAME scripts as prod (#745): the db container gets the prod
 # pgbackrest wiring via docker-compose.dev.yml, the files leg runs in the backup-runner service.
+# db/db-down always include the dev override: a plain `docker compose up -d` would recreate
+# doktok-db from the stock pgvector image (no pgbackrest) and silently break the pg backup leg.
 DEV_COMPOSE_FILES=docker-compose.yml,docker-compose.dev.yml
+
+db: ## Start local Postgres + pgvector + Gotenberg (dev compose incl. the pgBackRest backup wiring)
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+db-down: ## Stop local Postgres (keep volume)
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 
 db-dev-backup-image: ## Build the dev db image (pg17 + pgvector + pgBackRest) for backups
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build db

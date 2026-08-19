@@ -35,8 +35,10 @@ Run these in order. Steps 4-6 each stay in the foreground in their **own termina
 # 1. Start Docker Desktop (the app). The containers do NOT auto-start with it.
 
 # 2. Start the Docker services (PostgreSQL 17 + pgvector, and Gotenberg for office conversion).
-#    `make db` runs `docker compose up -d`, which brings up both the doktok-db and
-#    doktok-gotenberg containers.
+#    `make db` runs `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`,
+#    which brings up doktok-db (with the prod pgBackRest backup wiring, #745) and
+#    doktok-gotenberg. Never start the db with a plain `docker compose up -d`: that recreates
+#    doktok-db from the stock pgvector image (no pgbackrest) and silently breaks pg backups.
 make db
 
 # 3. Make sure Ollama is running (the Ollama menu-bar app, or `ollama serve`).
@@ -81,7 +83,7 @@ a production deployment.
 
 | Command | Process | Notes |
 |---|---|---|
-| `make db` | `docker compose up -d` (containers `doktok-db`, `doktok-gotenberg`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5433`, so another local Postgres keeps `5432`); Gotenberg (office -> PDF) on `DOKTOK_GOTENBERG_PORT` (default `3000`). |
+| `make db` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` (containers `doktok-db`, `doktok-gotenberg`) | Detached. Postgres 17 + pgvector on `DOKTOK_DB_PORT` (default `5433`, so another local Postgres keeps `5432`); the dev override gives the db the prod pgBackRest wiring (#745); Gotenberg (office -> PDF) on `DOKTOK_GOTENBERG_PORT` (default `3000`). |
 | `make run-backend` | `uvicorn doktok_api.main:app --reload --port 8000 --host ${DOKTOK_BIND_HOST:-127.0.0.1}` | Foreground. Runs the backend model-stack preflight first (see below), then serves `/api/v1` (token-protected) and public `/health`. Binds loopback unless `DOKTOK_BIND_HOST` says otherwise (see the LAN note above). |
 | `make run-worker` | `uv run doktok-worker` | Foreground. Runs the worker model-stack preflight first (see below), then watches each tenant's `ingest/` folder and runs the pipeline. |
 | `make run-ui` | `pnpm --filter @doktok/ui dev` | Foreground. Vite dev server; the dev proxy injects the bearer token. |

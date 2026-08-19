@@ -1,4 +1,4 @@
-# DokTok NG offsite backup infrastructure (Azure Blob) as code (#348/#345/#347).
+# DokTok NG offsite backup infrastructure (Azure Blob) as code (#348/#345/#347, restic #827).
 #
 # One deployment per doktok-ng instance. All names derive from var.instance_id (12 hex chars,
 # persisted in the instance's .env as DOKTOK_INSTANCE_ID) so independent instances never collide:
@@ -6,9 +6,12 @@
 #   storage account  doktokbkp<id>     (Azure: lowercase+digits, 3-24 chars, globally unique)
 #   container        doktok-backups
 #
-# Controls: blob versioning + a 30-day immutability policy (ransomware/WORM) + a lifecycle ladder
-# that tiers old blobs to cheaper storage and expires them (cost control). Blobs are write-once
-# tarballs produced by deploy/azure-sync.sh, which fits immutability exactly.
+# Controls: blob versioning + 30-day soft-delete (the ransomware safety net) + a lifecycle rule
+# scoped to the legacy tarball prefixes (pg-repo-/files-repo-) ONLY - it must never match the
+# restic repos at files//pg/ (a lifecycle delete there corrupts the repos; restic retention is
+# forget/prune). Time-based container WORM was dropped in #827: it blocks the lock/index deletes
+# restic prune needs (2026-08-18 incident). Ransomware delete-resistance comes from the two-SAS
+# split: the hourly sync SAS is rwcl (NO delete), the delete-capable prune SAS stays host-only.
 #
 # Usage (auth via `az login`; the azurerm provider picks up the CLI session):
 #   terraform init
@@ -46,18 +49,6 @@ variable "location" {
   description = "Azure region for the backup resources."
 }
 
-variable "short_worm_days" {
-  type        = number
-  default     = 2
-  description = "Container-level WORM (days) for the short-lived GFS sets (hourly/daily). Kept small so the code prune works; the long-term protection lives on the lts container."
-}
-
-variable "lts_worm_days" {
-  type        = number
-  default     = 30
-  description = "Container-level WORM (days) for the long-lived GFS sets (weekly/monthly/yearly) - the ransomware control."
-}
-
 variable "cool_after_days" {
   type        = number
   default     = 30
@@ -79,13 +70,13 @@ variable "archive_after_days" {
 variable "delete_after_days" {
   type        = number
   default     = 730
-  description = "Safety-net expiry (days). GFS rotation (keep-counts) is code-side; this only catches leftovers. The minimum-COUNT floor is enforced by deploy/azure-sync.sh (audit)."
+  description = "Safety-net expiry (days) for the legacy tarball prefixes. GFS retention for the restic repos is forget/prune inside deploy/azure-sync.sh (#827); the minimum offsite snapshot count is audited there too (DOKTOK_OFFSITE_MIN_SETS)."
 }
 
 locals {
-  rg           = "doktok-${var.instance_id}-rg"
-  account      = "doktokbkp${var.instance_id}"
-  container    = "doktok-backups"
+  rg            = "doktok-${var.instance_id}-rg"
+  account       = "doktokbkp${var.instance_id}"
+  container     = "doktok-backups"
   container_lts = "doktok-backups-lts"
   tags = {
     app      = "doktok-ng"
@@ -112,13 +103,19 @@ resource "azurerm_storage_account" "backup" {
 
   blob_properties {
     versioning_enabled = true
+
+    # #827: soft-delete (30d) is the ransomware safety net now that container WORM is gone
+    # (WORM blocked the lock/index deletes restic prune needs - 2026-08-18 incident).
+    delete_retention_policy {
+      days = 30
+    }
   }
 }
 
-# Two containers with class-scoped, container-level WORM (#766). Azure enables version-level
-# (per-blob) WORM only at account creation, so WORM is per container instead:
-#   short: hourly+daily GFS sets (2d window - the code prune works freely after it)
-#   lts:   weekly/monthly/yearly sets (30d window - the long-term ransomware control)
+# Two containers (the short/lts split is a legacy of the tarball GFS design, #766) WITHOUT
+# time-based immutability (#827): WORM conflicts with restic prune, so soft-delete + the
+# two-SAS split carry the ransomware protection. The restic repos live at the files//pg/
+# prefixes of the short container.
 resource "azurerm_storage_container" "backup" {
   name               = local.container
   storage_account_id = azurerm_storage_account.backup.id
@@ -129,33 +126,22 @@ resource "azurerm_storage_container" "backup_lts" {
   storage_account_id = azurerm_storage_account.backup.id
 }
 
-resource "azurerm_storage_container_immutability_policy" "backup" {
-  storage_container_resource_manager_id = azurerm_storage_container.backup.id
-  immutability_period_in_days           = var.short_worm_days
-  protected_append_writes_enabled       = true
-  locked                                = false
-}
-
-resource "azurerm_storage_container_immutability_policy" "backup_lts" {
-  storage_container_resource_manager_id = azurerm_storage_container.backup_lts.id
-  immutability_period_in_days           = var.lts_worm_days
-  protected_append_writes_enabled       = true
-  locked                                = false
-}
-
 resource "azurerm_storage_management_policy" "backup" {
   storage_account_id = azurerm_storage_account.backup.id
 
   rule {
     name    = "tier-and-expire"
     enabled = true
+    # #827: legacy tarball prefixes ONLY. This rule must NEVER match the restic repo prefixes
+    # (files/, pg/) - a lifecycle delete inside a restic repo corrupts it; the repos manage
+    # their own retention via forget/prune.
     filters {
-      blob_types = ["blockBlob"]
+      blob_types   = ["blockBlob"]
+      prefix_match = ["pg-repo-", "files-repo-"]
     }
     actions {
       base_blob {
-        # Tier ladder for the long-lived sets (monthly+); GFS deletion itself is code-side
-        # (deploy/azure-sync.sh), this rule only transitions tiers and acts as the safety net.
+        # Tier ladder + expiry for the aging legacy tarballs (restic prefixes never match).
         tier_to_cool_after_days_since_modification_greater_than    = var.cool_after_days
         tier_to_cold_after_days_since_modification_greater_than    = var.cold_after_days
         tier_to_archive_after_days_since_modification_greater_than = var.archive_after_days
@@ -170,5 +156,5 @@ output "storage_account" { value = azurerm_storage_account.backup.name }
 output "container" { value = azurerm_storage_container.backup.name }
 output "container_lts" { value = azurerm_storage_container.backup_lts.name }
 output "sync_hint" {
-  value = "set DOKTOK_AZURE_ACCOUNT=${azurerm_storage_account.backup.name} DOKTOK_AZURE_CONTAINER=${azurerm_storage_container.backup.name} DOKTOK_AZURE_CONTAINER_LTS=${azurerm_storage_container.backup_lts.name} (+ an account-level SAS with delete) in the instance env"
+  value = "set DOKTOK_AZURE_ACCOUNT=${azurerm_storage_account.backup.name} DOKTOK_AZURE_CONTAINER=${azurerm_storage_container.backup.name} (+ sync SAS rwcl-no-delete as DOKTOK_AZURE_SAS, prune SAS rwcld as DOKTOK_AZURE_SAS_PRUNE host-only)"
 }

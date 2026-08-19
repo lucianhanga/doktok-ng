@@ -128,7 +128,8 @@ dev-azure-sync: ## Push the local backup repo to Azure Blob (offsite leg; needs 
 	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
-		DOKTOK_GFS_BASE_CLASS="$$(grep '^DOKTOK_GFS_BASE_CLASS=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_SAS_PRUNE="$$(grep '^DOKTOK_AZURE_SAS_PRUNE=' .env | cut -d= -f2-)" \
+		DOKTOK_RESTIC_PASSWORD="$$(grep '^DOKTOK_RESTIC_PASSWORD=' .env | cut -d= -f2-)" \
 		DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
 	./deploy/azure-sync.sh
 
@@ -136,6 +137,7 @@ dev-azure-fetch: ## Fetch an offsite backup set from Azure into ./backups.azure-
 	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
 		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
+		DOKTOK_RESTIC_PASSWORD="$$(grep '^DOKTOK_RESTIC_PASSWORD=' .env | cut -d= -f2-)" \
 		DOKTOK_COMPOSE_FILES=$(DEV_COMPOSE_FILES) DOKTOK_COMPOSE_ENV_FILE=.env; \
 	./deploy/azure-fetch.sh ./backups.azure-restore $(TS)
 
@@ -241,7 +243,12 @@ deploy-box: ## Deploy the working tree to the compose box: rsync + rebuild (live
 	@deploy/deploy-to-box.sh
 
 drp-selftest: ## No-risk DRP self-test: Postgres PITR proof + portable export/restore round-trip (throwaway containers; needs Docker)
-	@deploy/drp-selftest.sh
+	@export DOKTOK_AZURE_ACCOUNT="$$(grep '^DOKTOK_AZURE_ACCOUNT=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_CONTAINER="$$(grep '^DOKTOK_AZURE_CONTAINER=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_SAS="$$(grep '^DOKTOK_AZURE_SAS=' .env | cut -d= -f2-)" \
+		DOKTOK_AZURE_SAS_PRUNE="$$(grep '^DOKTOK_AZURE_SAS_PRUNE=' .env | cut -d= -f2-)" \
+		DOKTOK_RESTIC_PASSWORD="$$(grep '^DOKTOK_RESTIC_PASSWORD=' .env | cut -d= -f2-)"; \
+		deploy/drp-selftest.sh
 
 verify-recovery: ## No-risk dev recovery check: round-trip the LIVE dev DB + files into a throwaway Postgres and assert documents + enriched/extracted rows survive. Run after ingesting. (needs `make db`)
 	@deploy/verify-recovery-dev.sh

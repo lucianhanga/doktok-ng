@@ -25,7 +25,7 @@ def test_tarball_fallback_is_preserved_for_one_release() -> None:
 def test_offsite_restic_helper_is_mode_aware() -> None:
     assert "offsite_restic()" in LIB
     # compose mode delegates to the backup-runner image (which bakes restic)
-    assert 'run --rm' in LIB and 'backup-runner restic' in LIB
+    assert "run --rm" in LIB and "backup-runner restic" in LIB
     # restic's Azure backend env is mapped from the DOKTOK_* settings
     assert 'AZURE_ACCOUNT_NAME="${DOKTOK_AZURE_ACCOUNT' in LIB
     # sync and prune use different SAS tokens; the no-delete one is the default
@@ -49,10 +49,10 @@ def test_transport_is_restic_end_to_end() -> None:
     assert 'backup "$pg_src"' in SYNC
     # no runtime az/tarball machinery left in the restic path
     assert "az storage blob upload" not in SYNC
-    assert 'tar -czf' not in SYNC
+    assert "tar -czf" not in SYNC
     # the compose files leg stages only when the virtiofs workaround is configured (#745) and
     # fails fast on a partial stage - never find -delete on an unguarded tree
-    assert 'set -e' in SYNC and '[ -n "${DOKTOK_FILES_STAGE_SRC:-}" ]' in SYNC
+    assert "set -e" in SYNC and '[ -n "${DOKTOK_FILES_STAGE_SRC:-}" ]' in SYNC
     # compose mode stages the pg repo off the virtiofs bind mount before restic reads it (#745
     # O_NOATIME/EIO workaround, same class as the files leg's staging)
     assert "/tmp/pg-repo" in SYNC
@@ -91,9 +91,9 @@ def test_hourly_cadence_and_env_wiring() -> None:
 
 def test_drp_selftest_has_an_offsite_roundtrip_leg() -> None:
     st = (REPO_ROOT / "deploy" / "drp-selftest.sh").read_text(encoding="utf-8")
-    assert "selftest-" in st            # throwaway Azure prefix
-    assert "offsite_restic" in st       # uses the same transport helpers as the real sync
-    assert "restore latest" in st       # restores the seed tree back
+    assert "selftest-" in st  # throwaway Azure prefix
+    assert "offsite_restic" in st  # uses the same transport helpers as the real sync
+    assert "restore latest" in st  # restores the seed tree back
     # the make target passes the Azure env through, else the leg silently skips
     mk = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     m = re.search(r"drp-selftest:.*?deploy/drp-selftest\.sh", mk, re.S)

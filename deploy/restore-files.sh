@@ -21,11 +21,16 @@ mkdir -p "$target"
 # restic recreates the snapshot's absolute path under --target (a snapshot of /x/y restores into
 # <target>/x/y), so restore into a scratch dir first and then move the tree into place.
 scratch="$(mktemp -d "${target}.scratch.XXXXXX")"
-abs_root="$(cd "$FILES_ROOT" && pwd -P)"
-echo "restoring snapshot $snapshot -> $target"
+# The tree's location comes from the snapshot's own recorded path (#827): a repo rebuilt by
+# azure-fetch, or a FILES_ROOT that moved since the snapshot, still restores. restic always
+# records paths; single-root snapshots are the repo's invariant (backup-files.sh).
+snap_root="$(restic snapshots "$snapshot" --json | sed -n 's/.*"paths":\["\([^"]*\)"\].*/\1/p')"
+[ -n "$snap_root" ] || { err "cannot read the recorded path of snapshot $snapshot"; exit 1; }
+echo "restoring snapshot $snapshot (path $snap_root) -> $target"
 restic restore "$snapshot" --target "$scratch"
+[ -d "$scratch$snap_root" ] || { err "restored tree missing at $scratch$snap_root"; exit 1; }
 find "$target" -mindepth 1 -delete
-cp -a "$scratch$abs_root/." "$target/"
+cp -a "$scratch$snap_root/." "$target/"
 rm -rf "$scratch"
 
 # Staging copy-back (dev-on-macOS workaround, #745; see backup-files.sh): when the files_root was

@@ -202,3 +202,40 @@ log_event() {
         _emit
     fi
 }
+
+# --- Offsite (Azure) restic transport (#827) -----------------------------------------------
+
+# offsite_restic <restic-args...> - run restic for the OFFSITE copy, mode-aware like backup.sh:
+# host mode runs the local restic; compose mode runs restic in the backup-runner image (it bakes
+# restic + sees $BACKUP_DIR at /backups). The caller exports RESTIC_REPOSITORY / RESTIC_PASSWORD /
+# AZURE_ACCOUNT_NAME / AZURE_ACCOUNT_SAS first; compose mode passes them through by name.
+# Secrets travel via env only - never on the command line (ps-visible) or in logs.
+offsite_restic() {
+    if [ "${mode:-host}" = "compose" ]; then
+        "${compose[@]}" run --rm \
+            -e RESTIC_REPOSITORY -e RESTIC_PASSWORD \
+            -e AZURE_ACCOUNT_NAME -e AZURE_ACCOUNT_SAS \
+            backup-runner restic "$@"
+    else
+        restic "$@"
+    fi
+}
+
+# offsite_azure_env <sync|prune> - map the DOKTOK_AZURE_* settings onto restic's Azure backend env.
+# `sync` uses the NO-delete SAS (ransomware layer: the hourly writer cannot destroy history);
+# `prune` alone uses the delete-capable, host-only SAS (forget/prune deletes packs + lock files).
+offsite_azure_env() {
+    export AZURE_ACCOUNT_NAME="${DOKTOK_AZURE_ACCOUNT:?set DOKTOK_AZURE_ACCOUNT}"
+    if [ "$1" = "prune" ]; then
+        export AZURE_ACCOUNT_SAS="${DOKTOK_AZURE_SAS_PRUNE:?set DOKTOK_AZURE_SAS_PRUNE (host-only, delete-capable)}"
+    else
+        export AZURE_ACCOUNT_SAS="${DOKTOK_AZURE_SAS:?set DOKTOK_AZURE_SAS}"
+    fi
+}
+
+# offsite_snapshot_count - snapshot count of $RESTIC_REPOSITORY (host-side python3 parse; the
+# backup-runner image has no python). Prints 0 on any failure (audit only, never blocks a sync).
+offsite_snapshot_count() {
+    offsite_restic snapshots --no-lock --json 2>/dev/null \
+        | python3 -c 'import sys, json; print(len(json.load(sys.stdin)))' 2>/dev/null || printf '0'
+}

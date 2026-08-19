@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = (REPO_ROOT / "deploy" / "azure-sync.sh").read_text(encoding="utf-8")
+SCRIPT = (REPO_ROOT / "deploy" / "azure-sync-tarball.sh").read_text(encoding="utf-8")
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 

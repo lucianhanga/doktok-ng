@@ -1,8 +1,10 @@
-"""Host-script tests for the Azure offsite sync (tarball design, #345/#347) + Terraform module.
+"""Host-script tests for the Azure offsite fetch (restic transport, #827) + Terraform module.
 
-Text assertions on deploy/azure-sync.sh and deploy/terraform/main.tf: the offsite hop ships ONE
-tarball per leg (never a raw 68k-file sync), the audit enforces the minimum-set floor, and the
-Terraform module owns the infra incl. the full lifecycle ladder.
+Text assertions on deploy/azure-fetch.sh and deploy/terraform/main.tf: fetch rebuilds both repos
+from the Azure restic repos into the staging layout the restore engine consumes, and the
+Terraform module owns the infra with soft-delete instead of container WORM and the lifecycle
+rule scoped to the legacy tarball prefixes only (#827). The legacy tarball-sync assertions are
+superseded by test_azure_restic_transport.py (#827).
 """
 
 from __future__ import annotations
@@ -10,24 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SYNC = (REPO_ROOT / "deploy" / "azure-sync.sh").read_text(encoding="utf-8")
 TF = (REPO_ROOT / "deploy" / "terraform" / "main.tf").read_text(encoding="utf-8")
-
-
-def test_sync_bundles_one_tarball_per_leg() -> None:
-    # v3 bundles per leg via the leg variable (pg/files loop) - one tarball per leg per run
-    assert 'tar -czf "$staging/${leg}-repo-${ts}.tar.gz"' in SYNC
-    # mutable operational dirs never enter the pg bundle
-    assert "--exclude='pg/log'" in SYNC and "--exclude='pg/lock'" in SYNC
-    # raw blob sync of the repo tree is gone for good
-    assert "az storage blob sync" not in SYNC
-
-
-def test_sync_uploads_without_overwrite_and_audits_the_floor() -> None:
-    assert "--overwrite false" in SYNC  # write-once blobs: fits immutability, no modify conflicts
-    assert "DOKTOK_OFFSITE_MIN_SETS" in SYNC
-    assert '"pg-repo-"' in SYNC and '"files-repo-"' in SYNC  # per-leg prefixes for list/audit
-    assert "write_status offsite" in SYNC and "log_event offsite" in SYNC
 
 
 def test_terraform_owns_the_full_stack() -> None:
@@ -35,12 +20,14 @@ def test_terraform_owns_the_full_stack() -> None:
         "azurerm_resource_group",
         "azurerm_storage_account",
         "azurerm_storage_container",
-        "azurerm_storage_container_immutability_policy",
         "azurerm_storage_management_policy",
     ):
         assert f'resource "{res}"' in TF
     assert "versioning_enabled = true" in TF
     assert "allow_nested_items_to_be_public = false" in TF
+    # #827: soft-delete replaces container WORM (conflicts with restic prune)
+    assert "delete_retention_policy" in TF
+    assert "azurerm_storage_container_immutability_policy" not in TF
 
 
 def test_terraform_instance_naming_and_tags() -> None:
@@ -51,22 +38,19 @@ def test_terraform_instance_naming_and_tags() -> None:
     assert "purpose  = " in TF and '"backup"' in TF
 
 
-def test_terraform_lifecycle_ladder() -> None:
-    assert "tier_to_cool_after_days_since_modification_greater_than" in TF
-    assert "tier_to_cold_after_days_since_modification_greater_than" in TF
-    assert "tier_to_archive_after_days_since_modification_greater_than" in TF
+def test_terraform_lifecycle_scoped_to_legacy_tarballs() -> None:
+    assert 'prefix_match = ["pg-repo-", "files-repo-"]' in TF
     assert "delete_after_days_since_modification_greater_than" in TF
-    assert "cool_after_days" in TF and "cold_after_days" in TF
-    assert "archive_after_days" in TF and "delete_after_days" in TF
 
 
-def test_azure_fetch_downloads_unpacks_and_verifies() -> None:
+def test_azure_fetch_restores_from_the_restic_repos() -> None:
     fetch = (REPO_ROOT / "deploy" / "azure-fetch.sh").read_text(encoding="utf-8")
-    assert '--prefix "pg-repo-"' in fetch  # resolves the latest offsite set
-    assert '"${leg}-repo-${want_ts}.tar.gz"' in fetch  # both legs, one tarball each
-    assert "az storage blob download" in fetch
-    assert "tar -xzf" in fetch
-    assert "restic snapshots" in fetch  # verifies the fetched restic repo is readable
-    assert "--stanza=doktok info" in fetch  # verifies the fetched pgBackRest repo is readable
-    # restore-from-staging uses the SAME engine, pointed at the staging dir
+    # files leg: restore the tree from Azure, then rebuild a local restic repo from it (the
+    # restore engine consumes staging/files as a repo; single-repo auth only - no restic copy)
+    assert "restore latest" in fetch and "restic init" in fetch
+    # pg leg: restic restore of the pg-repo snapshot, then pgBackRest runs against the result
+    assert "--stanza=doktok info" in fetch  # fetched pgBackRest repo verified readable
+    # the staging contract the restore engine consumes is unchanged
     assert "DOKTOK_BACKUP_DIR=${staging}" in fetch
+    # no tarball machinery left
+    assert "az storage blob download" not in fetch

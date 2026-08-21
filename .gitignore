@@ -55,3 +55,7 @@ deploy/terraform/*.tfstate*
 deploy/terraform/.terraform.lock.hcl
 deploy/terraform/terraform.tfvars
 backups.azure-restore/
+
+# Agent working notes (kimi CLI sessions, superpowers progress) - never tracked
+.kimi/
+.superpowers/

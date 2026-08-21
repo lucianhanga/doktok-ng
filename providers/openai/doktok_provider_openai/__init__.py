@@ -14,7 +14,7 @@ from doktok_provider_openai.ner import OpenAiEntityNerExtractor
 from doktok_provider_openai.records import OpenAiRecordExtractor
 from doktok_provider_openai.relations import OpenAiRelationExtractor
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "OpenAiAuthError",

@@ -1,14 +1,14 @@
 # DokTok NG — Architecture
 
-Status: Proposed
-Date: 2026-06-10
+Status: Current (0.3.0)
+Date: 2026-08-20
 
 ## 1. Purpose
 
 DokTok NG is a slim, local-first, AI-enabled **document-intelligence** system. It ingests documents
 from local folders, extracts text and structure, indexes them for hybrid search, supports RAG chat
-with citations, and later exposes document knowledge through a read-only MCP server for clients such
-as Claude Code, GitHub Copilot, and PersonalAI.
+with citations, and exposes document knowledge through a read-only MCP server for clients such as
+Claude Code, GitHub Copilot, and PersonalAI.
 
 DokTok NG is **not** a generic AI assistant. The first product goal is reliable document ingestion and
 indexing. Chat and MCP become primary only after that foundation is solid.
@@ -36,7 +36,7 @@ schemas.
 - Infrastructure details live in **adapters**.
 - `import-linter` enforces the dependency direction (core must not import adapters).
 - The **worker** runs as a separate process from the backend but shares the same core packages.
-- The **MCP server** is introduced later and is read-only first.
+- The **MCP server** (`apps/mcp/`) ships as a separate read-only stdio server.
 
 ## 4. Runtime architecture
 
@@ -60,7 +60,7 @@ FastAPI Backend  ----------------------------+
    |
    +--> Ollama (chat + embeddings)
    |
-   +--> MCP server (later, read-only first)
+   +--> MCP server (read-only stdio)
 ```
 
 ## 5. Module map (ports and adapters)
@@ -86,7 +86,9 @@ Security: `SecurityPolicy`, `QuarantineService`.
 - `storage/filesystem` — `LocalFileStorage`.
 - `modalities/files` — `LibmagicMimeDetector`, `GotenbergNormalizer` (office -> PDF), and file-type handling.
 - `providers/ollama` — `OllamaEmbeddingProvider`, `OllamaChatModelProvider`.
-- extraction adapters — `PyMuPdfTextExtractor`, `DoclingExtractor`, `OcrMyPdfExtractor`, `SpacyEntityExtractor`.
+- extraction adapters — `DirectTextExtractor` and `PyMuPdfTextExtractor` (`modalities/files`), OCR via
+  the pluggable engines (`PaddleOcr`, `RapidOcr`, `OllamaVisionOcr`; §10), entity extraction in
+  `core/doktok_core/entities/` (§11).
 - `retrieval/hybrid` — `HybridPostgresRetriever`.
 - `tools/builtin`, `tools/mcp` — tool surfaces.
 
@@ -176,7 +178,9 @@ indexes, entities, and the audit event are all complete.
 ## 9. Search and retrieval
 
 **Hybrid retrieval from the first search milestone** (ADR-0005), never vector-only. Signals:
-pgvector semantic search, PostgreSQL full-text search, and entity/token search; reranking later.
+pgvector semantic search, PostgreSQL full-text search, and entity/token search; reranking ships as a
+local Qwen3-Reranker cross-encoder (default 0.6B, `providers/reranker/`, #466) with the listwise LLM
+reranker (`LlmReranker`, M6.1) as the fallback.
 Search results carry document id, title/filename, chunk id, page number, snippet, score components,
 extraction method, and citation metadata.
 
@@ -206,14 +210,17 @@ use a heavier PP-OCRv6 medium profile with a 4-way orientation vote. CPU acceler
 (`DOKTOK_OCR_ENABLE_MKLDNN`, default on) **must be disabled on Intel N95 / Alder Lake-N**, where
 PaddlePaddle's oneDNN kernels crash (ADR-0010).
 
-OCR is moving toward a **pluggable, device-aware** model (ADR-0021): a host probe drives
-`GET /api/v1/settings/ocr/recommendation` (`{engine, concurrency, reason}`, shown as a Settings hint —
-shipped, M17), and a RapidOCR (ONNX/OpenVINO) adapter plus live in-UI engine selection are planned.
-PaddleOCR remains the default until RapidOCR is benchmarked on the N95.
+OCR runs behind a **pluggable, device-aware** model (ADR-0021): a host probe drives
+`GET /api/v1/settings/ocr/recommendation` (`{engine, concurrency, reason}`, shown as a Settings hint),
+and the RapidOCR (ONNX/OpenVINO) adapter ships alongside PaddleOCR (`providers/rapidocr/`, installed
+via `make ocr-rapid` / `make ocr-rapid-openvino`, M17). PaddleOCR remains the default engine; the
+engine is env-selected (`DOKTOK_OCR_ENGINE`) and shown read-only in Settings — live in-UI engine
+selection is the one piece still planned.
 
 ## 11. Entity extraction
 
-Entities come from three independent extractors composed behind their ports:
+Entities come from five extractors — the deterministic three (regex, validated, address) ship inside
+the single `RegexEntityExtractor` adapter; NER and lexical run behind their own ports:
 
 - **Rule-based regex** (`RegexEntityExtractor`) — emits **EMAIL** and **URL** only. The low-value
   types (MONEY, DATE, INVOICE_ID, CONTRACT_ID, DOCUMENT_ID) were dropped (M8.x, #312): their regex
@@ -221,7 +228,11 @@ Entities come from three independent extractors composed behind their ports:
   in document metadata. Those enum values remain in the `EntityType` vocabulary for back-compat so
   historical rows still resolve, but nothing emits them; migration `0030` deletes existing rows of the
   five dropped types.
-- **NER** (`EntityNerExtractor`, M7.4) — **PERSON / ORG / GPE**.
+- **Validated identifiers** (`extract_validated_entities`, #518) — **PHONE / IBAN / VAT_ID /
+  TAX_NUMBER / REGISTRATION_NUMBER**, each gated by a real validator (checksum, libphonenumber, or a
+  required context cue), never a bare pattern hit.
+- **Addresses** (`extract_addresses`, libpostal-backed) — **ADDRESS / POSTAL_CODE**.
+- **NER** (`EntityNerExtractor`, M7.4) — **PERSON / ORG / GPE / JOB_TITLE** (#518 Phase 2).
 - **Lexical** (`LexicalTermExtractor`, M5.7) — **CUSTOM_TOKEN** keyword terms in the document's
   detected language.
 
@@ -245,7 +256,8 @@ suggestions-never-auto-merge, postal-code/city split, the shared-surname *possib
 documented in [knowledge-graph-entities.md](knowledge-graph-entities.md). Read it before changing
 entity identity, merges, or relation edges.
 
-Later: domain dictionaries, richer normalization, a Settings-UI backend selector.
+Later: domain dictionaries, richer normalization. (The Settings-UI backend selector shipped — NER/KEG
+backends are selectable per purpose in Settings → AI, ADR-0023.)
 
 ## 12. Security model
 
@@ -256,18 +268,18 @@ providers.
 
 ## 13. MCP strategy
 
-Introduced after ingestion, search, and RAG work (M8). Read-only first. Initial tools:
-`doktok.search_documents`, `doktok.get_document`, `doktok.get_chunk`, `doktok.ask_documents`,
-`doktok.list_entities`, `doktok.find_related_documents`, `doktok.get_ingestion_status`. No arbitrary
-SQL, no arbitrary filesystem access; all MCP access audited.
+Shipped (M8) as a read-only stdio server (`apps/mcp/`). Tools: `search_documents`, `list_documents`,
+`aggregate_records`. No arbitrary SQL, no arbitrary filesystem access; all MCP access audited.
 
 ## 14. Technology stack
 
 - Backend: Python 3.12, FastAPI, Pydantic, `uv` workspace, pytest, ruff, mypy.
 - Frontend: TypeScript, React, Vite, `pnpm`, Vitest.
-- Database: PostgreSQL 17, pgvector, migrations (Alembic or equivalent).
-- AI runtime: Ollama by default (default chat `qwen3.6:35b-a3b`, default embedding
-  `qwen3-embedding:0.6b`); OpenAI is an opt-in remote provider selectable per purpose (see §17).
+- Database: PostgreSQL 17, pgvector, migrations via a custom ordered `.sql` runner
+  (`storage/postgres` `db.py`).
+- AI runtime: Ollama by default (code default chat `qwen3.6:27b` — `.env.example` pins
+  `qwen3.6:35b-a3b` (#462); default embedding `qwen3-embedding:0.6b`); OpenAI is an opt-in remote
+  provider selectable per purpose (see §17).
 - File processing: content-based MIME detection (libmagic/python-magic), PyMuPDF, PaddleOCR; office
   (OOXML) -> PDF conversion via a local Gotenberg container (§20).
 - Deployment: Docker Compose for local dev (Postgres + Gotenberg); no Kubernetes in the first phase.
@@ -287,8 +299,10 @@ DokTok NG is multi-tenant from the foundation (ADR-0007, ADR-0008).
 - **Authentication:** clients send `Authorization: Bearer <token>`; the backend resolves the token to
   a tenant (constant-time compare) and scopes the request. `/health` is public; `/api/*` requires a
   token. The server binds loopback by default and fails closed when no tokens are configured.
-- **Token store:** a static `DOKTOK_TENANT_TOKENS` JSON map (`{"<token>": "<tenant_id>"}`) now;
-  DB-backed `tenants` + `api_tokens` (hashed, revocable) later behind the same interface.
+- **Token store:** a DB-backed `tenants` + `api_tokens` registry (hashed, revocable) ships behind the
+  same interface (ADR-0024); the static `DOKTOK_TENANT_TOKENS` JSON map (`{"<token>": "<tenant_id>"}`)
+  still works as the env/bootstrap path. Opt-in password login issues short-lived session JWTs with
+  viewer/editor/admin RBAC per route (ADR-0024), plus a platform-owner host console (ADR-0025).
 
 Tenant identity always comes from the authenticated token, never from request input. Every future
 milestone (extraction, search, RAG, MCP) inherits this scoping.
@@ -298,9 +312,12 @@ milestone (extraction, search, RAG, MCP) inherits this scoping.
 Beyond the blocking extraction stage, additive capabilities run as **reconciled features** (ADR-0009):
 each is a versioned, idempotent `FeatureProcessor` listed in the feature catalog
 (`core/.../features/catalog.py`), driven to `done` per `(tenant, document, feature)` by the worker
-reconciler. The current catalog: `chunk_embed` (RAG index), `entities` (entities + keyword tokens),
-`doc_metadata` (title / date / location / summary), `doc_classify` (categories), `structured_records`
-(typed line items), and `thumbnail`.
+reconciler. The current catalog (nine features): `chunk_embed` (RAG index), `entities` (validated
+structured entities + keyword tokens), `ner` (model-based people / orgs / places / job titles),
+`entity_graph` (cross-document knowledge-graph nodes), `relation_extract` (knowledge-graph relation
+triples), `doc_metadata` (title / date / location / summary), `doc_classify` (categories),
+`structured_records` (typed line items), and `thumbnail`. The inline `extract` step is deliberately
+not a feature: it runs once at ingestion, and re-running it means a full re-ingest.
 
 **First-pages enrichment (M8.x, #311).** The two cheap LLM features read only the **opening pages** of
 a document, not its full text, because title/summary/date/location and the document category are
@@ -390,10 +407,11 @@ jointly (UMAP preferred, PCA fallback; 2D and 3D are independent fits), so it ca
   flight; `POST .../recompute` enqueues one. Color uses each document's primary category (the linked
   category with the highest tenant-wide document count; documents are multi-label, ADR-0016 §3), so
   the server owns the palette and the 2D view, 3D view, and legend always agree.
-- **UI**: the SVG scatter (2D direct, 3D rotatable) with legend show/hide, hover tooltip, click-to-
+- **UI**: the WebGL scatter (2D direct, 3D rotatable) with legend show/hide, hover tooltip, click-to-
   open-document, and all API-driven states (loading/empty/not-computed/stale/truncated/error). The
-  renderer is dependency-free SVG at current scale; the API contract is stable so a WebGL renderer
-  (deck.gl) can replace it for very large tenants without backend changes.
+  renderer is regl-scatterplot for 2D and @deck.gl (`PointCloudLayer` + `OrbitView`) for 3D in
+  `apps/ui/src/EmbeddingMapPanel.tsx`, degrading to a static SVG scatter when WebGL is unavailable;
+  the API contract is stable, so the renderer can evolve without backend changes.
 
 The reducer adapter (`providers/projection`, `SklearnUmapReducer`) keeps `umap-learn`/`scikit-learn`/
 `numpy` as an optional, lazily-imported `engine` extra (like PaddleOCR), installed with
@@ -432,6 +450,9 @@ overlay all derive from the system document, so they behave uniformly for office
 
 See [../milestones/M0-M10.md](../milestones/M0-M10.md). Every milestone ships a runnable system; one
 milestone per pass. The blocking ingestion foundation (M0–M3), search (M4), entities (M5), RAG chat
-(M6), enrichment/aggregation (M6.1–M6.3), the Insights embedding map (M7.1), and the M8.x pipeline
-cost/format work (first-pages enrichment, entity cleanup, office-document support) are implemented;
-remaining work is M8 (read-only MCP), M9 (advanced document tools), and M10 (external integrations).
+(M6), enrichment/aggregation (M6.1–M6.3), the Insights embedding map (M7.1), the M8.x pipeline
+cost/format work (first-pages enrichment, entity cleanup, office-document support), the read-only
+MCP server (M8, §13), and the M11 deployment packaging (ADR-0020) are implemented — as are the later
+tracks: M12 backup/DRP, M14 upload, M17 RapidOCR, the mobile app, and the ADR-0026 incremental
+offsite transport. Remaining work is M9 (advanced document tools) and the M10-era external
+integrations beyond the MCP server.

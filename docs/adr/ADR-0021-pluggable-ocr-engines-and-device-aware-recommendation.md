@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (recommendation shipped; RapidOCR adapter and Settings-UI engine selection planned, M17 #375)
+Accepted (recommendation and RapidOCR adapter shipped, M17 #375; Settings-UI engine selection planned)
 
 ## Context
 

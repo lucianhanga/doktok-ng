@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-20
+
+First public release. Everything since the 0.2.0 marker (2026-06-26), including the mobile app,
+tenant/user management with RBAC, the knowledge-graph family hints, the no-egress controls, DRP
+hardening, and the incremental offsite backup transport (ADR-0026).
+
 ### Added
+- **Mobile app (Android, Expo dev-client).** A first-class phone client for the library: a compact
+  grid with thumbnails and enrichment feature badges (#812-#817), upload with live ingestion-status
+  tracking (#775), chat with threads, streamed answers, and citations into documents (#776),
+  document notes + tag badges with tap-to-filter (#777), phone-adapted insights (word cloud,
+  categories, cluster list) (#778), and an activity feed plus a read-only DRP view for admins
+  (#779). See `apps/mobile/README.md`; `make mobile-install` / `make mobile-run` (emulator) or
+  `make mobile-deploy` (USB phone).
 - **Knowledge-graph "possible family (shared surname)" hint** (#532) with a converging review
   queue. Two PERSON nodes sharing a parsed surname are surfaced as a *weak hint* (never a fact,
   never a MERGE input): a distinct dashed panel in the graph view with per-pair **Confirm family**

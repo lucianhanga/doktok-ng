@@ -10,8 +10,8 @@ DokTok NG is **not** a generic AI assistant. Think:
 Paperless-ngx + local RAG + MCP + entity search
 ```
 
-The first product goal is **reliable document ingestion and indexing** — not "chat with files".
-Chat and MCP come later, once the ingestion foundation is solid.
+The first product goal was **reliable document ingestion and indexing** — not "chat with files".
+That foundation is shipped; chat and MCP now stand on it.
 
 Architecturally inspired by [personal-ai](https://github.com/lucianhanga/personal-ai): local-first
 runtime, modular monolith, ports and adapters, contracts-first schemas, FastAPI backend, TypeScript
@@ -20,52 +20,47 @@ the *style*, narrowed to documents.
 
 ## Status
 
-**M6 (RAG chat with citations).** Ask questions about your documents at `POST /api/v1/chat` and a
-**Chat** tab: the M4 hybrid retriever finds relevant chunks, the default chat model
-(`DOKTOK_DEFAULT_MODEL`) answers **only from those excerpts** with `[n]` citations, and **refuses**
-when the evidence is insufficient. Tenant-scoped and token-protected.
+**0.3.0 — first public release.** The full loop is shipped and self-hosted in daily use: ingest →
+extract/OCR → enrich (embeddings, entities, categories, records, thumbnails) → hybrid search →
+grounded RAG chat, with a knowledge graph, an insights surface, multi-tenant RBAC, disaster-recovery
+tooling, a mobile app, and a read-only MCP server on top. Concretely:
 
-**M5 (Entity indexing).** On top of M4, ingested documents have their **entities extracted** into a
-tenant-scoped `document_entities` table, browsable and filterable via `GET /api/v1/entities`
-(+ `/documents`) and an **Entities** tab. The rule-based regex extractor emits **emails and URLs**
-only — the low-value types (money, dates, invoice/contract/document IDs) were dropped (#312) because
-their matches were ~90% noise; monetary data lives in extracted records and dates in metadata.
-**PERSON/ORG/GPE** come from NER and significant keyword terms are stored as `CUSTOM_TOKEN`.
+- **Ingestion & extraction.** Files dropped into a tenant's ingest folder are detected, validated,
+  hashed, and extracted: `.txt`/`.md`/born-digital PDF directly; scanned PDFs and images via the
+  pluggable OCR engine (`DOKTOK_OCR_ENGINE`, default `paddleocr`; `rapidocr` for weak CPUs;
+  `glm-ocr` via Ollama vision remains selectable); Office documents are converted to PDF locally by
+  a Gotenberg container (ADR-0019). Each document yields `manifest.json`, `content.md`,
+  `content.json`, `pages/`, a derived searchable PDF, and thumbnails — with the original file
+  always kept.
+- **Enrichment.** A versioned feature ledger (ADR-0009) derives per-document features: chunks +
+  embeddings (Ollama `qwen3-embedding:0.6b` → pgvector), entities (validated regex/validator
+  extractors — emails, URLs, phones, IBAN, VAT/tax/registration numbers, addresses; NER
+  PERSON/ORG/GPE/JOB_TITLE; and lexical keyword terms via language-aware Postgres FTS), document
+  metadata, categories, structured records (invoices etc.), thumbnails, the entity graph, and
+  relations (GLiNER-Relex or the chat model, ADR-0023) — every feature versioned, idempotent, and
+  re-derivable from the stored artifacts.
+- **Search.** Hybrid retrieval — pgvector cosine + Postgres FTS fused with Reciprocal Rank Fusion,
+  optional local reranker — at `GET /api/v1/search` and the Insights surface.
+- **Chat.** `POST /api/v1/chat` (and streamed) answers **only from retrieved excerpts** with `[n]`
+  citations and refuses when evidence is insufficient; an agent mode adds a read-only tool loop
+  (ADR-0022). Threads have memory and per-message reasoning overrides.
+- **Knowledge graph.** Canonical entity identities with LLM-adjudicated merge suggestions, shared-
+  surname family hints, curation actions (merge/split/rename/decompose), and an interactive graph
+  view (ADR-0016 area, `docs/architecture/knowledge-graph-entities.md`).
+- **Interfaces.** The web UI (Overview, Documents, Insights, Chat, Activity, Settings, Admin), an
+  Android **mobile app** (library grid with badges, upload + ingestion tracking, chat, notes/tags,
+  insights, admin activity/DRP views — `apps/mobile/`), and a read-only **MCP server**
+  (`search_documents`, `list_documents`, `aggregate_records`).
+- **Multi-tenancy & auth.** Everything is tenant-scoped and token-protected, with optional password
+  login + session JWTs, viewer/editor/admin roles, invitations, per-user preferences, and a
+  host-console tier for platform actions (ADR-0024/0025).
+- **Backup & DR.** Local restic (files) + pgBackRest (PITR, ~1-min RPO via WAL archiving);
+  incremental restic repos on Azure Blob offsite, synced hourly; tamper-evident history, freshness
+  sentinels, weekly restore drills, portable export/restore, and a DRP board in Settings
+  (ADR-0026).
 
-On top of the structured entities, each document's **significant terms** are extracted with
-PostgreSQL `to_tsvector` in the document's **detected language** (stopwords removed, stemmed) and
-stored as `CUSTOM_TOKEN` keyword entities — a multilingual lexical/keyword layer browsable and
-filterable in the Entities tab (`DOKTOK_LEXICAL_TERMS_LIMIT`).
-
-The **UI** has an Overview dashboard that separates the document **library** (Documents / Entities /
-Categories counts) from an **Ingestion** pipeline section showing only actionable states (Waiting /
-Processing / Failed / Pending features, or "Pipeline idle"); a **Documents** tab with **List** and
-**Thumbnails** views (a shared toolbar for sort / token-filter / status / category, multi-select with
-shift-range and select-all-matching, and bulk reingest/delete); a document detail card with a
-two-column thumbnail + summary layout (extracted text + entities + categories + per-feature
-processing + activity); a **Settings** tab to pick the AI model per purpose (see below); live
-auto-refresh; and cross-linking (search hit / entity / job → open the document).
-
-**M4 (Vector + full-text search).** On top of M3, every activated document is **chunked, embedded
-(Ollama `qwen3-embedding:0.6b` → pgvector) and full-text indexed** before it goes active. **Hybrid search**
-(semantic vector + Postgres FTS, fused with Reciprocal Rank Fusion) is exposed at `GET /api/v1/search`
-and a **Search** tab in the UI — tenant-scoped and token-protected. Earlier milestones below.
-
-**M3 (OCR extraction).** Files dropped into a tenant's ingest folder are detected, validated, and
-**extracted into active documents**. Born-digital `.txt`/`.md`/PDF use direct/PyMuPDF extraction;
-**scanned PDFs and images are OCR'd** by the configurable OCR engine (`DOKTOK_OCR_ENGINE`, default
-`paddleocr` — PP-OCRv5, deterministic and CPU-only; the legacy Ollama vision model `glm-ocr` remains
-selectable) and a derived `normalized/searchable.pdf` (images + invisible OCR text layer) becomes
-the canonical "system document" — with the original always kept (`original.<ext>`). Mixed PDFs keep
-embedded text and only OCR blank pages. **Office documents** (`.docx`/`.xlsx`/`.pptx`) are converted
-to PDF on ingest by a local Gotenberg container and then follow the same path (see below). Each
-document yields `manifest.json`, `content.md` (plain text for embeddings), `content.json`, and
-`pages/`, surfaced via the tenant-scoped `/api/v1/documents` API and the Documents tab. Every document activity is recorded to an immutable, tenant-scoped
-**activity/audit log** (`GET /api/v1/audit` and the **Activity** tab). Everything is multi-tenant and
-token-protected. See the [milestone roadmap](docs/milestones/M0-M10.md).
-
-See [`docs/architecture/doktok-ng-architecture.md`](docs/architecture/doktok-ng-architecture.md),
-the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
+Earlier milestone notes (M0-M10) live in [docs/milestones/M0-M10.md](docs/milestones/M0-M10.md) —
+kept as history; the section above is the current truth.
 
 ## Core principles
 
@@ -80,11 +75,11 @@ the [ADRs](docs/adr/), and the [milestone roadmap](docs/milestones/M0-M10.md).
 ## Default models (Ollama, configurable)
 
 ```env
-DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b          # RAG chat / reranker (23 GB MoE)
+DOKTOK_DEFAULT_MODEL=qwen3.6:35b-a3b          # RAG chat / reranker (23 GB MoE; without any env the code default is the dense qwen3.6:27b, #462)
 DOKTOK_EMBEDDING_MODEL=qwen3-embedding:0.6b    # 1024-dim, no 512-token truncation
 DOKTOK_EMBEDDING_NUM_CTX=1024                  # cap embedding context (chunks ~300 tok) to free KV-cache
 # Enrichment + OCR-quality judge follow the Data Pipeline model selected in the UI (no hardcoded model)
-DOKTOK_OCR_ENGINE=paddleocr                    # PP-OCRv5 (default); or "glm-ocr" (Ollama vision)
+DOKTOK_OCR_ENGINE=paddleocr                    # PP-OCRv5 (default); "rapidocr" for weak CPUs; or "glm-ocr" (Ollama vision)
 DOKTOK_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
@@ -175,6 +170,7 @@ make setup
 #    Postgres binds host port 5433 by default (another local Postgres keeps 5432);
 #    override with DOKTOK_DB_PORT if you need something else.
 #    Gotenberg listens on host port 3000; override with DOKTOK_GOTENBERG_PORT if it clashes.
+#    (dev compose includes the pgBackRest backup wiring via docker-compose.dev.yml, #745)
 make db
 
 # 3. Run the backend (http://localhost:8000)
@@ -199,7 +195,7 @@ no aggregate start command. After a machine reboot (or a fresh shell), start thi
 ```bash
 # 1. Start Docker Desktop (the containers do NOT auto-start with it).
 # 2. Start the Docker services: PostgreSQL 17 + pgvector and Gotenberg (office -> PDF).
-make db   # = docker compose up -d (starts both the db and gotenberg services)
+make db   # = docker compose with the dev override (db gets the pgBackRest backup wiring)
 # 3. Make sure Ollama is running (menu-bar app or `ollama serve`).
 
 # 4. Terminal A - FastAPI backend (http://localhost:8000)
@@ -310,28 +306,31 @@ Unsupported types are rejected to `.../docs.failed/`; dangerous types are isolat
 `.../quarantine/`; duplicate content (same SHA-256, per tenant) is flagged; scanned PDFs and images are
 marked `needs_ocr` (handled in M3).
 
-## Repository shape (target)
+## Repository shape
 
 ```
 doktok-ng/
   contracts/                 ports, schemas, API contracts
   core/doktok_core/          domain logic: ingestion, documents, extraction,
-                             indexing, retrieval, entities, security, audit
+                             indexing, retrieval, entities, knowledge graph,
+                             rag/agent, security, settings, backup, audit
   apps/
-    backend/                 FastAPI backend
+    backend/                 FastAPI backend (the only HTTP surface)
     ui/                      React + Vite frontend
-    worker/                  ingestion pipeline worker
-    mcp/                     read-only MCP server (later)
-  providers/ollama/          Ollama chat + embedding adapters
-  providers/openai/          OpenAI adapters (opt-in remote provider; off by default)
+    worker/                  ingestion/enrichment worker
+    mcp/                     read-only MCP server (stdio)
+    mobile/                  Android app (Expo dev-client)
+  providers/                 ollama, openai, paddleocr, rapidocr, gliner,
+                             reranker, projection (heavy runtimes as extras)
   storage/postgres/          PostgreSQL adapters + migrations
   storage/filesystem/        local filesystem storage adapter
-  modalities/files/          file modality handling
-  retrieval/hybrid/          hybrid retrieval
-  tools/builtin/             built-in tools
-  tools/mcp/                 MCP tool surface
-  docs/{architecture,adr,milestones,prompts}
-  docker-compose.yml
+  modalities/files/          file modality handling (MIME, PyMuPDF, Gotenberg)
+  retrieval/hybrid/          hybrid retrieval (vector + FTS, RRF)
+  tools/builtin/             built-in tools (placeholder; real tools in core)
+  tools/mcp/                 MCP tool surface (placeholder; real server in apps/mcp)
+  deploy/                    backup/restore engine, systemd units, Terraform, CI helpers
+  docs/{architecture,adr,milestones,operations,prompts}
+  docker-compose.yml         (+ docker-compose.dev.yml / docker-compose.prod.yml)
   pyproject.toml
   package.json
   pnpm-workspace.yaml

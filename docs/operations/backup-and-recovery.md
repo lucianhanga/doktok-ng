@@ -22,7 +22,7 @@ restore needs is in Archive).
 
 ```
 ingest/worker ──> live system (db + files_root)
-        │  every 15 min + weekly full
+        │  every 15 min (*/15 dev cron / host-mode files timer); hourly compose diff timer + weekly full
         ▼
 local repo (./backups): restic files repo (AES-256) + pgBackRest repo (aes-256-cbc, WAL ~60s)
         │  anomaly guard refuses to back up a destroyed DB (#747)
@@ -156,7 +156,7 @@ scripts above are the scheduled **low-RPO running backups**.
 ## Back up (scheduled on the box)
 
 ```bash
-# files (every ~15 min) and Postgres (base/diff per schedule); then offsite
+# files + Postgres (*/15 cron in dev; hourly diff + weekly full systemd timers on the box); then offsite
 DOKTOK_RESTIC_PASSWORD=... ./deploy/backup-files.sh
 DOKTOK_PGDATA=/var/lib/postgresql/data DOKTOK_PGBACKREST_CIPHER_PASS=... ./deploy/backup-pg.sh diff
 DOKTOK_AZURE_ACCOUNT=... DOKTOK_AZURE_CONTAINER=... DOKTOK_AZURE_SAS=... DOKTOK_AZURE_SAS_PRUNE=... DOKTOK_RESTIC_PASSWORD=... ./deploy/azure-sync.sh
@@ -284,9 +284,11 @@ on a fresh/empty target (or stage + swap), never against a live `files_root`/`PG
 mode, run the equivalent inside the db container / backup-runner as the existing scripts do; the
 contract and `$DOKTOK_BACKUP_DIR` layout are identical in both modes.
 
-> Simpler one-file path coming: a single downloadable `.tgz` (DB + files) with UI download/restore is
-> in design - it will become the easiest A -> B path for non-PITR full recovery. This section covers
-> the current restic/pgBackRest mechanism.
+> Simpler one-file path: the **portable backup** ships a single encrypted `.tgz.enc` (DB + files)
+> via the host-console endpoints (`POST /api/v1/settings/backup/export`, then download) - the
+> easiest A -> B path for non-PITR full recovery (see [Testing the DRP](#testing-the-drp)). The SPA
+> deliberately has no export/restore UI (#700); these are host-credential operations. This section
+> covers the restic/pgBackRest mechanism.
 
 ## Box-side: scheduling, monitoring, offsite
 
@@ -342,7 +344,7 @@ contract and `$DOKTOK_BACKUP_DIR` layout are identical in both modes.
 
 ## Settings -> DRP panel
 
-The backend reads the sentinels and exposes them at `GET /drp` (`apps/backend/doktok_api/routers/settings.py`,
+The backend reads the sentinels and exposes them at `GET /api/v1/settings/drp` (`apps/backend/doktok_api/routers/settings.py`,
 `DrpStatus`/`BackupLegStatus` in `contracts/doktok_contracts/schemas.py`). For each leg the backend
 **derives a state** from the sentinel: `ok` is `false` -> **failed**; else age `> 3 x` the leg's
 target RPO -> **stale**; else **ok**; a missing or never-run sentinel -> **unknown**.
@@ -467,12 +469,15 @@ full destructive path needs a Linux host; everything else is testable anywhere w
 - **Tier 1 - one command, no risk (dev or any box):** `make drp-selftest` runs, in throwaway
   containers that touch no real data, the PITR proof **and** a portable export -> encrypt -> decrypt
   -> restore round-trip (`deploy/restore-roundtrip.sh`) asserting rows + a pgvector value + a file
-  come across A -> B. Also: create + download a backup in Settings -> DRP, then **Check backup** on
-  the downloaded `.tgz.enc` (a non-destructive preview validates the real archive end-to-end).
+  come across A -> B. Also: create a portable export from the host console
+  (`POST /api/v1/settings/backup/export`, host token), download the `.tgz.enc`, and validate it
+  non-destructively with `POST /api/v1/settings/backup/restore/preview` (the preview parses the real
+  archive end-to-end without touching anything).
 - **Tier 2 - cross-device (the real DR test, no risk to prod):** stand up a throwaway second stack,
   export from A, restore into B, and confirm documents/search/chat came across. `restore-roundtrip.sh`
   proves the data/format leg of this self-contained; the full app-level B is a manual stand-up.
-- **Tier 3 - in place on the box:** real backups, "Run drill now", and a real restore. The restore
+- **Tier 3 - in place on the box:** real backups, an on-demand drill (`POST /api/v1/settings/drp/drill`
+  with the host credential - a systemd path unit picks it up), and a real restore. The restore
   takes a **mandatory pre-restore safety snapshot and rolls back on failure**, so it is recoverable
   even in place - but Tier 2 (a separate B) is the safer first proof.
 

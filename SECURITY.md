@@ -19,7 +19,10 @@ DokTok NG processes private documents and is designed to be **safe by default**.
   are configured and binds to loopback by default (refuses a non-loopback bind without tokens).
 - Data is isolated per tenant via a `tenant_id` on every tenant-owned table and per-tenant filesystem
   folders (ADR-0007). Repositories never expose an unscoped read.
-- Static `.env` tokens now; DB-backed hashed/revocable tokens later.
+- API tokens are DB-backed, hashed, and revocable (ADR-0024); static `.env` tokens
+  (`DOKTOK_TENANT_TOKENS`) remain as the env/bootstrap path.
+- Opt-in password login issues short-lived session JWTs; routes are role-gated
+  (viewer/editor/admin, ADR-0024).
 
 ## Untrusted inputs
 

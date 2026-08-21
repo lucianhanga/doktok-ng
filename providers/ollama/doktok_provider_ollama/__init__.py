@@ -9,7 +9,7 @@ from doktok_provider_ollama.ocr import OllamaVisionOcr
 from doktok_provider_ollama.records import OllamaRecordExtractor
 from doktok_provider_ollama.relations import OllamaRelationExtractor
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "OllamaCategoryClassifier",

@@ -96,19 +96,25 @@ debugging; accept the RSA prompt on first connect.
   tabs, per-page thumbnails, "view PDF" / "view searchable" inline viewer (native PDFium,
   zoom buttons +-/%), share.
 - **Scan**: ML Kit camera scanning -> page review (reorder/delete) -> one PDF -> upload with
-  progress. Fully on-device until the upload.
+  progress and live ingestion-status tracking (#775). Fully on-device until the upload.
+- **Chat**: threads with streamed answers and citations that open the source document (#776).
+- **Insights**: phone-adapted word cloud, categories, and cluster list (#778).
+- **Activity**: the activity feed, plus a read-only DRP view for admins (#779).
+- **Notes & tags**: document notes and tag badges with tap-to-filter (#777).
 
 ## Layout
 
-- `App.tsx` — navigation container + bottom tabs (Documents / Scan / Chat / Insights / Settings),
+- `App.tsx` — navigation container + bottom tabs (Documents / Scan / Chat / Insights / Activity),
   gated by auth
 - `src/theme.ts` — design tokens mirroring `apps/ui/src/styles.css`
 - `src/config.ts` — backend URL resolution (`app.json` `extra.backendUrl`)
-- `src/api/` — typed API client (`client.ts`), auth, documents, document-detail
+- `src/api/` — typed API client (`client.ts`) plus per-surface modules (auth, documents,
+  document-detail, chat, insights, activity, notes, drp, features)
 - `src/auth/AuthContext.tsx` — token + credentials in SecureStore (AsyncStorage fallback)
-- `src/components/` — DocumentTile, DocumentGridCard, SearchFilters, TokenInput, AuthImage
+- `src/components/` — DocumentTile, DocumentGridCard, SearchFilters, TokenInput, AuthImage,
+  FeatureBadges, TagChip, MarkdownText
 - `src/screens/` — DocumentsStack (list -> detail -> PDF viewer), LoginScreen, ScanScreen,
-  PdfViewerScreen, placeholders (Chat/Insights/Settings land per ticket)
+  PdfViewerScreen, ChatStack (threads + streaming), InsightsScreen, ActivityScreen
 - `metro.config.js` — aliases Node's `punycode` to the userland package (markdown-it on RN)
 
 ## Troubleshooting
@@ -128,13 +134,3 @@ debugging; accept the RSA prompt on first connect.
 - **App can't reach the backend on a physical device**: host firewall blocks inbound - use the
   emulator instead (everything stays on the Mac).
 - **Reset the emulator**: `adb emu kill`, then start it again (or `emulator -avd doktok -wipe-data`).
-
-## Layout
-
-- `App.tsx` — navigation container + bottom tabs (Documents / Scan / Chat / Insights / Settings),
-  gated by auth
-- `src/theme.ts` — design tokens mirroring `apps/ui/src/styles.css`
-- `src/config.ts` — backend URL resolution (`app.json` `extra.backendUrl`)
-- `src/api/` — typed API client (`client.ts`), auth API (`auth.ts`)
-- `src/auth/AuthContext.tsx` — token in expo-secure-store, restored + validated on start
-- `src/screens/` — LoginScreen + placeholders (real screens land per ticket, M1.3+)

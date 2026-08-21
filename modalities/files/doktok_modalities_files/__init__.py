@@ -14,7 +14,7 @@ from doktok_modalities_files.render import (
     rotate_source,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "DirectTextExtractor",

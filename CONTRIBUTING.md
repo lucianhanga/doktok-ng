@@ -5,7 +5,10 @@ simple and disciplined.
 
 ## Workflow (milestone-driven, ticket-driven)
 
-1. Work is organized into milestones **M0-M10** (see [docs/milestones/M0-M10.md](docs/milestones/M0-M10.md)).
+1. Work was organized into milestones **M0-M11** (see
+   [docs/milestones/M0-M10.md](docs/milestones/M0-M10.md)) — now a historical record; shipped work
+   goes well past it. For the current state see the README's Status section and the
+   [ADRs](docs/adr/).
 2. Each milestone is tracked by a GitHub milestone and the **DokTok NG Roadmap** project board.
 3. Each unit of work is a GitHub issue (a `task`), labeled with its area and `milestone-mX`.
 4. One **branch per ticket**, one **PR per ticket**, merged into `main`.
@@ -39,7 +42,7 @@ Before opening a PR, the relevant checks must pass:
 
 - Python: `ruff` lint, `ruff format`, `mypy` typecheck, `pytest`, `import-linter` (hexagonal arch).
 - Frontend: typecheck, lint, Vitest.
-- A single `make check` runs the full suite once it exists.
+- A single `make check` runs the full suite (Python + JS).
 
 ## Architecture rules
 

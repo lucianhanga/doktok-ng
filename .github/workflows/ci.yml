@@ -122,7 +122,8 @@ jobs:
           DETECT_SECRETS: uvx --from detect-secrets detect-secrets  # pragma: allowlist secret
         run: python3 scripts/detect_secrets_check.py
       - name: Dependency audit (pip-audit)
-        continue-on-error: true # informational for now; tighten to a gate once advisories are triaged
         run: |
-          uv export --format requirements-txt --all-packages --no-emit-project -o /tmp/req.txt
+          # --no-emit-workspace/--no-hashes: pip-audit dry-run-installs the export and
+          # cannot hash-install editable workspace members; audit third-party deps only.
+          uv export --format requirements-txt --all-packages --no-emit-workspace --no-hashes -o /tmp/req.txt
           uvx pip-audit -r /tmp/req.txt

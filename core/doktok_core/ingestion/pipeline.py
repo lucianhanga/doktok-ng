@@ -80,6 +80,10 @@ logger = logging.getLogger("doktok.ingestion")
 
 DETECTOR_NAME = "libmagic"
 
+# A file whose job keeps dying mid-pipeline is presumed to crash the worker (e.g. OOM during
+# rasterization, audit v2 D-01). Re-queue at most this many times, then quarantine instead.
+MAX_STALE_RECOVERIES = 2
+
 _ACTIVATION_SUMMARY = {
     "text": "Parsed plain text",
     "markdown": "Parsed Markdown",
@@ -293,8 +297,9 @@ def recover_stale_jobs(services: IngestionServices, *, older_than: datetime) -> 
 
     Such a job sits forever in a non-terminal state with its source file stranded in the in.process
     workdir, and it never becomes a document - so it is invisible and unrecoverable from the UI. For
-    each one, move the stranded file back to the ingest folder and drop the stale job, so the normal
-    scan reprocesses it cleanly. Returns the jobs that were recovered.
+    each one, move the stranded file back to the ingest folder and keep the stale job row as a
+    FAILED tombstone, so the normal scan reprocesses it cleanly. A file whose tombstones pile up
+    past MAX_STALE_RECOVERIES is quarantined instead (crash tripwire). Returns the recovered jobs.
     """
     recovered: list[IngestionJob] = []
     for job in services.job_repo.list_in_flight(services.tenant_id, before=older_than):
@@ -304,10 +309,18 @@ def recover_stale_jobs(services: IngestionServices, *, older_than: datetime) -> 
 
 
 def _requeue_stale_job(services: IngestionServices, job: IngestionJob) -> bool:
-    """Move a stale job's stranded source file back to ingest and delete the job. Best-effort."""
+    """Move a stale job's stranded source file back to ingest and tombstone the job. Best-effort.
+
+    The stale job row is kept as a FAILED tombstone (``worker_crash_recovered``) keyed by content
+    hash, so a file that keeps killing the worker accumulates strikes; past MAX_STALE_RECOVERIES
+    it is quarantined instead of re-queued (audit v2 D-01 crash tripwire).
+    """
     original_name = Path(job.metadata.get("original_ingest_path", job.source_path)).name
     src = Path(job.source_path)
     try:
+        strikes = _crash_strikes(services, job, src)
+        if strikes >= MAX_STALE_RECOVERIES:
+            return _quarantine_crash_loop(services, job, src, original_name, strikes)
         if src.is_file():
             ingest = services.layout.ingest
             ingest.mkdir(parents=True, exist_ok=True)
@@ -315,21 +328,76 @@ def _requeue_stale_job(services: IngestionServices, job: IngestionJob) -> bool:
             if dest.exists():  # avoid clobbering an unrelated file already queued under that name
                 dest = ingest / f"{job.id[:8]}_{original_name}"
             services.file_storage.move(str(src), str(dest))
-        services.job_repo.delete(services.tenant_id, job.id)
+        job.status = JobStatus.FAILED
+        job.error_code = "worker_crash_recovered"
+        job.error_message = "abandoned mid-pipeline (worker died); file re-queued for a fresh job"
+        job.finished_at = datetime.now(UTC)
+        services.job_repo.update(job)
         workdir = services.layout.job_workdir(job.id)
         if workdir.exists():
             shutil.rmtree(workdir, ignore_errors=True)
         logger.warning(
-            "recovered stale job %s (was %s, tenant=%s) -> re-queued %s",
+            "recovered stale job %s (was %s, tenant=%s) -> re-queued %s (strike %d/%d)",
             job.id,
             job.status.value,
             services.tenant_id,
             original_name,
+            strikes + 1,
+            MAX_STALE_RECOVERIES,
         )
         return True
     except Exception:  # noqa: BLE001 - one bad job must not block recovering the rest
         logger.exception("could not recover stale job %s", job.id)
         return False
+
+
+def _crash_strikes(services: IngestionServices, job: IngestionJob, src: Path) -> int:
+    """How many recovery tombstones this content already has (0 when no hash is available)."""
+    sha256 = job.sha256
+    if not sha256 and src.is_file() and services.hash_service is not None:
+        try:
+            sha256 = services.hash_service.sha256(str(src))
+        except Exception:  # noqa: BLE001 - unreadable file: no strike history available
+            return 0
+    if not sha256:
+        return 0
+    prior = services.job_repo.find_by_sha256(services.tenant_id, sha256)
+    return sum(1 for j in prior if j.id != job.id and j.error_code == "worker_crash_recovered")
+
+
+def _quarantine_crash_loop(
+    services: IngestionServices, job: IngestionJob, src: Path, original_name: str, strikes: int
+) -> bool:
+    """Terminal quarantine for a file that has crashed the worker once too often."""
+    job.status = JobStatus.QUARANTINED
+    job.error_code = "crash_loop"
+    job.error_message = (
+        f"abandoned mid-pipeline {strikes + 1} times (worker crash suspected); quarantined"
+    )
+    job.finished_at = datetime.now(UTC)
+    if src.is_file():
+        dest_dir = services.layout.quarantine_dir(job.id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        services.file_storage.move(str(src), str(dest_dir / original_name))
+    services.job_repo.update(job)
+    workdir = services.layout.job_workdir(job.id)
+    if workdir.exists():
+        shutil.rmtree(workdir, ignore_errors=True)
+    _audit(
+        services,
+        AuditEventType.DOCUMENT_QUARANTINED,
+        job,
+        filename=original_name,
+        reason=job.error_message,
+    )
+    logger.error(
+        "quarantined crash-loop file %s (job %s, tenant=%s) after %d recoveries",
+        original_name,
+        job.id,
+        services.tenant_id,
+        strikes + 1,
+    )
+    return True
 
 
 def process_file(services: IngestionServices, source_path: str) -> IngestionJob:

@@ -101,3 +101,34 @@ def test_classifier_flags_full_page_image_and_ignores_plain_text(tmp_path: Path)
 
     text_only = PyMuPdfClassifier().page_image_coverage(_make_pdf(tmp_path, "just text"))
     assert text_only[0] < 0.5
+
+
+def _make_sized_pdf(tmp_path: Path, width: float, height: float) -> str:
+    import fitz
+
+    path = tmp_path / "sized.pdf"
+    doc = fitz.open()
+    doc.new_page(width=width, height=height)
+    doc.save(str(path))
+    doc.close()
+    return str(path)
+
+
+def test_absurd_mediabox_page_raises_render_limit(tmp_path: Path) -> None:
+    # A crafted 100k x 100k pt MediaBox cannot be rasterized even at the minimum useful DPI.
+    from doktok_contracts.errors import RenderLimitExceededError
+
+    path = _make_sized_pdf(tmp_path, 100_000, 100_000)
+    with pytest.raises(RenderLimitExceededError):
+        PyMuPdfRenderer().render_pages(path, dpi=200)
+
+
+def test_oversized_page_is_downscaled_within_pixel_cap(tmp_path: Path) -> None:
+    # 20k x 20k pt at 200 DPI would be ~3.1 Gpx; the renderer must clamp under the cap instead.
+    from doktok_modalities_files.render import MAX_PAGE_PIXELS
+    from PIL import Image
+
+    path = _make_sized_pdf(tmp_path, 20_000, 20_000)
+    (png,) = PyMuPdfRenderer().render_pages(path, dpi=200)
+    image = Image.open(io.BytesIO(png))
+    assert image.width * image.height <= MAX_PAGE_PIXELS

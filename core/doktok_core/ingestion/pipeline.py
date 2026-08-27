@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from doktok_contracts.errors import DuplicateActiveDocumentError
+from doktok_contracts.errors import DuplicateActiveDocumentError, RenderLimitExceededError
 from doktok_contracts.ports import (
     AuditLogRepository,
     ChatModelProvider,
@@ -453,6 +453,8 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
         return _fail(services, job, code="needs_ocr", message=str(exc))
     except TooManyPagesError as exc:
         return _fail(services, job, code="too_many_pages", message=str(exc))
+    except RenderLimitExceededError as exc:
+        return _fail(services, job, code="render_limit_exceeded", message=str(exc))
 
     document_id = _new_id()
     original_filename = Path(job.metadata.get("original_ingest_path", job.source_path)).name

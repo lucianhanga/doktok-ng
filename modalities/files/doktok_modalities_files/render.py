@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from doktok_contracts.errors import RenderLimitExceededError
 from doktok_contracts.media import RenderedPage
 
 
@@ -45,19 +46,51 @@ def rotate_source(data: bytes, mime: str | None, degrees: int) -> bytes:
     raise ValueError(f"cannot rotate {mime}")
 
 
+# Rasterization safety bounds (audit v2 D-01): a hostile PDF can declare a huge MediaBox, and even
+# a legit long scan can exhaust the worker's memory cgroup when every page PNG is held in memory.
+MAX_PAGE_PIXELS = 50_000_000  # ~150 MB RGB per page; larger pages are downscaled to fit
+MAX_TOTAL_PNG_BYTES = 1_000_000_000  # cumulative PNG bytes held for one document
+MIN_EFFECTIVE_DPI = 25  # below this OCR is useless; fail the document instead
+
+
+def _bounded_zoom(rect, dpi: int) -> float:
+    """Zoom for ``dpi``, clamped so the rasterized page stays within ``MAX_PAGE_PIXELS``."""
+    zoom = dpi / 72.0
+    if rect.width * rect.height * zoom * zoom <= MAX_PAGE_PIXELS:
+        return zoom
+    clamped = (MAX_PAGE_PIXELS / (rect.width * rect.height)) ** 0.5
+    # fitz rounds the raster dimensions up to whole pixels, which can overshoot the cap slightly;
+    # shrink the zoom until the rounded pixel count fits.
+    while (int(rect.width * clamped) + 1) * (int(rect.height * clamped) + 1) > MAX_PAGE_PIXELS:
+        clamped -= 1.0 / max(rect.width, rect.height)
+    if clamped * 72.0 < MIN_EFFECTIVE_DPI:
+        raise RenderLimitExceededError(
+            f"page is {rect.width:.0f}x{rect.height:.0f} pt; even {MIN_EFFECTIVE_DPI} DPI "
+            f"exceeds {MAX_PAGE_PIXELS} pixels"
+        )
+    return clamped
+
+
 class PyMuPdfRenderer:
     """``PdfRenderer`` that rasterizes PDF pages to PNG bytes."""
 
     def render_pages(self, path: str, dpi: int = 200) -> list[bytes]:
         import fitz
 
-        zoom = dpi / 72.0
-        matrix = fitz.Matrix(zoom, zoom)
         images: list[bytes] = []
+        total_bytes = 0
         with fitz.open(path) as doc:
             for page in doc:
-                pix = page.get_pixmap(matrix=matrix)
-                images.append(pix.tobytes("png"))
+                zoom = _bounded_zoom(page.rect, dpi)
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+                data = pix.tobytes("png")
+                total_bytes += len(data)
+                if total_bytes > MAX_TOTAL_PNG_BYTES:
+                    raise RenderLimitExceededError(
+                        f"rendered pages exceed {MAX_TOTAL_PNG_BYTES} PNG bytes; "
+                        "refusing to rasterize further"
+                    )
+                images.append(data)
         return images
 
 

@@ -26,9 +26,18 @@ def test_token_injection_is_conditional_on_missing_client_authorization() -> Non
     )
     # ...and the static token is injected only under that matcher.
     inject = next(
-        line.strip() for line in lines if "Bearer {$DOKTOK_API_TOKEN}" in line and "@" in line
+        line.strip()
+        for line in lines
+        if "Bearer {env.DOKTOK_API_TOKEN}" in line and "@" in line
     )
     assert inject.startswith("header @"), f"injection is not matcher-scoped: {inject}"
+
+
+def test_token_injection_is_gated_on_a_configured_token() -> None:
+    # E-01 (audit v2): with DOKTOK_API_TOKEN empty the edge injects NO Authorization header, so
+    # anonymous requests reach the API unauthenticated instead of running as the platform owner.
+    text = CADDYFILE.read_text(encoding="utf-8")
+    assert "expression `{env.DOKTOK_API_TOKEN} != ''`" in text
 
 
 def test_no_unconditional_authorization_overwrite_remains() -> None:

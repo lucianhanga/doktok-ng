@@ -13,8 +13,9 @@
 #   docker compose -f docker-compose.prod.yml exec ollama ollama pull qwen3-embedding:0.6b
 #
 # Required env (e.g. an untracked .env.production; see #340 DEVOPS-11):
-#   DOKTOK_DB_PASSWORD, DOKTOK_TENANT_TOKENS (JSON), DOKTOK_API_TOKEN (one of the tenant tokens),
-#   and optionally DOKTOK_OPENAI_API_KEY, DOKTOK_PIPELINE_PROVIDER, DOKTOK_RAG_PROVIDER,
+#   DOKTOK_DB_PASSWORD, DOKTOK_TENANT_TOKENS (JSON), and optionally DOKTOK_API_TOKEN (one of the
+#   tenant tokens; leave empty to disable the edge injection - recommended with password login),
+#   DOKTOK_OPENAI_API_KEY, DOKTOK_PIPELINE_PROVIDER, DOKTOK_RAG_PROVIDER,
 #   DOKTOK_SITE_ADDRESS (a domain enables automatic HTTPS).
 
 name: doktok-prod
@@ -239,7 +240,9 @@ services:
         condition: service_started
     environment:
       DOKTOK_BACKEND_URL: backend:8000
-      DOKTOK_API_TOKEN: ${DOKTOK_API_TOKEN:?set DOKTOK_API_TOKEN (must be one of DOKTOK_TENANT_TOKENS)}
+      # Edge-injected platform credential (one of DOKTOK_TENANT_TOKENS). Empty disables the
+      # injection - recommended when password login is enabled (E-01, audit v2).
+      DOKTOK_API_TOKEN: ${DOKTOK_API_TOKEN:-}
       # Site address (#321): ":80" = plain HTTP (default); a domain (e.g. "docs.example.com") turns
       # on automatic HTTPS via Let's Encrypt. For a LAN host with no public domain, set an https://
       # address and uncomment `tls internal` in apps/ui/Caddyfile (see the deployment guide).

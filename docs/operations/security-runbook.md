@@ -35,11 +35,12 @@ once on the box per the [fresh-box runbook section 3](deploy-fresh-box-runbook.m
       `tls internal`; nothing is served on plain HTTP to untrusted networks.
 - [ ] Tenant tokens rotated off the `dev-token-*` defaults; long and random. `DOKTOK_API_TOKEN`
       (the Caddy edge token) is one of `DOKTOK_TENANT_TOKENS`.
-- [ ] Edge trust boundary understood (#616): the Caddy edge injects `DOKTOK_API_TOKEN` only when a
-      request has no `Authorization` of its own (logged-in JWTs pass through), but that token is a
-      **platform credential** (ADR-0025) - anonymous callers to the port act as the platform owner.
-      Either restrict the port to a trusted network, or enable password login so real users present
-      their own credentials.
+- [ ] Edge trust boundary understood (#616, E-01): whenever `DOKTOK_API_TOKEN` is set, the Caddy
+      edge injects it into any request without an `Authorization` of its own (logged-in JWTs pass
+      through), and that token is a **platform credential** (ADR-0025) - anonymous callers to the
+      port act as the platform owner. Restrict the port to a trusted network. Enabling password
+      login does NOT disable the injection; leave `DOKTOK_API_TOKEN` empty to disable it
+      (recommended with login).
 - [ ] `DOKTOK_SECRETS_KEY` set so the OpenAI key is encrypted at rest (APP-8).
 - [ ] If password login is enabled: a dedicated `DOKTOK_AUTH_JWT_SECRET` set, at least 32 bytes
       (the backend warns at startup otherwise - do not lean on the `DOKTOK_SECRETS_KEY` fallback in
@@ -82,7 +83,10 @@ levers:
   secret, and with neither, login is disabled with a 503). The backend logs a loud startup warning
   for a short or fallback secret. Session JWTs live `DOKTOK_AUTH_ACCESS_TTL_SECONDS` (default
   3600) - keep the TTL modest, since a session cannot be individually revoked before expiry. The
-  SPA holds the JWT in memory + sessionStorage only (per-tab, gone on close).
+  SPA holds the JWT in memory + sessionStorage only (per-tab, gone on close). Login and the edge
+  injection are independent - enabling login does NOT turn the injection off; leave
+  `DOKTOK_API_TOKEN` empty (see the exposure checklist) so anonymous requests reach the API
+  unauthenticated.
 - **Brute-force posture.** Login attempts are throttled before any credential work:
   `DOKTOK_LOGIN_RATE_PER_MINUTE` per (tenant, email) (default 5) and
   `DOKTOK_LOGIN_IP_RATE_PER_MINUTE` per source IP (default 20), answered with 429 + `Retry-After`.

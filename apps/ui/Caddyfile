@@ -4,9 +4,10 @@
 #
 # TRUST BOUNDARY (#616, F-04): the injected DOKTOK_API_TOKEN is a PLATFORM credential (ADR-0025) -
 # every request without its own Authorization runs as the platform owner. Restrict who can reach
-# this port (trusted LAN, firewall, tailnet, or an authenticated external proxy), or enable login
-# (DOKTOK_AUTH_JWT_SECRET) so each user presents their own JWT - which is now passed THROUGH
-# untouched (the injection fires only when the client sent no Authorization header).
+# this port (trusted LAN, firewall, tailnet, or an authenticated external proxy). Enabling login
+# (DOKTOK_AUTH_JWT_SECRET) does NOT disable this injection - a logged-in user's JWT is passed
+# through untouched, but anonymous callers still receive the platform credential. To turn the
+# injection off (recommended when login is enabled), leave DOKTOK_API_TOKEN empty.
 #
 # TLS (#321): the site address comes from DOKTOK_SITE_ADDRESS.
 #   - ":80"               -> plain HTTP (default; put behind a trusted LAN or an external TLS proxy)
@@ -21,13 +22,17 @@
 	encode zstd gzip
 	# tls internal   # uncomment for a self-signed cert on a LAN host without a public domain
 
-	# API + health endpoints -> backend. Inject the tenant bearer token ONLY when the client sent
-	# no Authorization of its own (#616): a logged-in user's JWT flows through unchanged, so
-	# per-user RBAC and platform flags work end-to-end; the token-free bundle still works.
+	# API + health endpoints -> backend. Inject the platform bearer token ONLY when the client sent
+	# no Authorization of its own (#616) AND a token is configured (E-01, audit v2): with login
+	# enabled, leave DOKTOK_API_TOKEN empty so anonymous requests reach the API unauthenticated
+	# instead of silently running as the platform owner.
 	@api path /api/* /health /ready
 	handle @api {
-		@no_client_token not header Authorization *
-		header @no_client_token >Authorization "Bearer {$DOKTOK_API_TOKEN}"
+		@inject {
+			not header Authorization *
+			expression `{env.DOKTOK_API_TOKEN} != ''`
+		}
+		header @inject >Authorization "Bearer {env.DOKTOK_API_TOKEN}"
 		reverse_proxy {$DOKTOK_BACKEND_URL:backend:8000}
 	}
 

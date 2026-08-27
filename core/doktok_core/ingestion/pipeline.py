@@ -317,6 +317,7 @@ def _requeue_stale_job(services: IngestionServices, job: IngestionJob) -> bool:
     """
     original_name = Path(job.metadata.get("original_ingest_path", job.source_path)).name
     src = Path(job.source_path)
+    prior_status = job.status.value  # captured before the tombstone overwrite below
     try:
         strikes = _crash_strikes(services, job, src)
         if strikes >= MAX_STALE_RECOVERIES:
@@ -339,7 +340,7 @@ def _requeue_stale_job(services: IngestionServices, job: IngestionJob) -> bool:
         logger.warning(
             "recovered stale job %s (was %s, tenant=%s) -> re-queued %s (strike %d/%d)",
             job.id,
-            job.status.value,
+            prior_status,
             services.tenant_id,
             original_name,
             strikes + 1,

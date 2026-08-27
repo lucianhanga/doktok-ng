@@ -325,8 +325,9 @@ host** alternative in ADR-0020 instead of OpenAI.
 
 ## Secrets, TLS, and the outbound firewall
 
-- **Secrets.** Tenant tokens (`DOKTOK_TENANT_TOKENS`), the Caddy edge token (`DOKTOK_API_TOKEN`, which
-  must be one of the tenant tokens), the DB password, and `DOKTOK_SECRETS_KEY` come from an untracked
+- **Secrets.** Tenant tokens (`DOKTOK_TENANT_TOKENS`), the Caddy edge token (`DOKTOK_API_TOKEN`,
+  which, when set, must be one of the tenant tokens), the DB password, and `DOKTOK_SECRETS_KEY`
+  come from an untracked
   `.env.production` (gitignored, a one-time manual bootstrap copied from
   [`.env.production.example`](../../.env.production.example); never rsynced by `make deploy-box`) —
   never the `dev-token-*` defaults. The OpenAI key is entered via the

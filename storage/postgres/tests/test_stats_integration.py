@@ -39,6 +39,15 @@ def test_summary_counts(db: Database) -> None:
     jobs = PostgresIngestionJobRepository(db)
     jobs.add(IngestionJob(id="j1", tenant_id=TENANT, source_path="/x", status=JobStatus.ACTIVE))
     jobs.add(IngestionJob(id="j2", tenant_id=TENANT, source_path="/y", status=JobStatus.FAILED))
+    jobs.add(
+        IngestionJob(
+            id="j3",
+            tenant_id=TENANT,
+            source_path="/z",
+            status=JobStatus.FAILED,
+            error_code="worker_crash_recovered",  # tripwire tombstone: not an actionable failure
+        )
+    )
     PostgresEntityRepository(db).add_entities(
         [
             DocumentEntity(
@@ -59,6 +68,7 @@ def test_summary_counts(db: Database) -> None:
 
     summary = PostgresStatsRepository(db).summary(TENANT)
     assert summary.documents == 1
+    # The worker_crash_recovered tombstone (j3) is excluded from the job-status counts.
     assert summary.jobs == {"active": 1, "failed": 1}
     assert summary.entities == 1
     # The pending feature is counted as in-progress, not as "needs attention" (failed).

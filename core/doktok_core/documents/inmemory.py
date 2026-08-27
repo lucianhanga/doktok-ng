@@ -136,6 +136,21 @@ class InMemoryDocumentRepository:
         doc.ingested_at = now
         return True
 
+    def fail(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        error_code: str,
+        error_message: str,
+    ) -> bool:
+        doc = self._docs.get(document_id)
+        if doc is None or doc.tenant_id != tenant_id or doc.status is not DocumentStatus.PROCESSING:
+            return False
+        doc.status = DocumentStatus.FAILED
+        doc.metadata = {**doc.metadata, "error_code": error_code, "error_message": error_message}
+        return True
+
     def _sort_value(self, d: Document, sort: DocumentSort) -> _SortVal:
         if sort is DocumentSort.ACQUIRED:
             return d.created_at

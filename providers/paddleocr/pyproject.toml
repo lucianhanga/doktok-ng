@@ -12,7 +12,7 @@ dependencies = ["doktok-contracts"]
 # Heavy runtime deps kept optional so CI / default installs stay light; imported lazily.
 # Enable on the worker host with: uv pip install paddleocr paddlepaddle pillow numpy
 [project.optional-dependencies]
-engine = ["paddleocr>=3.0", "paddlepaddle>=3.3", "pillow>=10", "numpy>=1.26"]
+engine = ["paddleocr>=3.0", "paddlepaddle>=3.3", "pillow>=12.3", "numpy>=1.26"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["doktok_provider_paddleocr"]

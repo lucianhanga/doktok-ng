@@ -4,7 +4,9 @@ Driven by the reconciler like any other stage: for a ``processing`` document it 
 (born-digital text or OCR), writes the canonical artifacts, and flips the document to ``active`` via
 ``DocumentRepository.activate``. It does NOT index inline - ``chunk_embed``/``entities``/... run as
 their own stages gated on ``extract`` being done. Failure is the reconciler's concern (retry/
-backoff); a content duplicate discovered at activation is dropped (the winner already exists).
+backoff) - EXCEPT ``RenderLimitExceededError``, which is deterministic, so the stage fails the
+document terminally itself; a content duplicate discovered at activation is dropped (the winner
+already exists).
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable
 
-from doktok_contracts.errors import DuplicateActiveDocumentError
+from doktok_contracts.errors import DuplicateActiveDocumentError, RenderLimitExceededError
 from doktok_contracts.ports import DocumentRepository, FileStorage
 from doktok_contracts.schemas import DocumentStatus
 
@@ -55,7 +57,21 @@ class ExtractStage:
             raise ValueError(f"processing document {document_id} has no staged source path")
 
         layout = FilesystemLayout(self._files_root, tenant_id)
-        result, normalized_pdf = self._extract(tenant_id, document.detected_mime or "", str(source))
+        try:
+            result, normalized_pdf = self._extract(
+                tenant_id, document.detected_mime or "", str(source)
+            )
+        except RenderLimitExceededError as exc:
+            # The renderer's memory bounds are deterministic - retrying can never succeed, so fail
+            # the document terminally instead of letting the reconciler burn max_attempts on it
+            # (audit v2 D-01). Other extraction errors still propagate for retry/backoff.
+            self._documents.fail(
+                tenant_id,
+                document_id,
+                error_code="render_limit_exceeded",
+                error_message=str(exc),
+            )
+            return
         language = detect_language(result.content_md)
         artifacts = write_document_artifacts(
             self._files,

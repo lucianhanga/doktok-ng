@@ -89,3 +89,28 @@ def test_drops_a_document_whose_content_is_already_active(tmp_path: Path) -> Non
     _stage(tmp_path, repo).process("t1", "d2")
     assert repo.get("t1", "d2") is None  # the duplicate was dropped, winner kept
     assert repo.get("t1", "d1") is not None
+
+
+def test_render_limit_fails_the_document_terminally(tmp_path: Path) -> None:
+    # A render bound violation is deterministic: the document must end FAILED with the error
+    # recorded, not propagate for the reconciler to retry until max_attempts.
+    from doktok_contracts.errors import RenderLimitExceededError
+
+    src = tmp_path / "in.pdf"
+    src.write_bytes(b"%PDF-1.4 fake")
+    repo = InMemoryDocumentRepository()
+    repo.add(_processing("d1", src))
+
+    files_root = str(tmp_path / "files")
+    FilesystemLayout(files_root, "t1").ensure()
+
+    def extractor(tenant_id: str, mime: str, path: str) -> tuple[ExtractionResult, bytes | None]:
+        raise RenderLimitExceededError("page exceeds pixel cap")
+
+    ExtractStage(repo, LocalFileStorage(), files_root, extractor).process("t1", "d1")
+
+    doc = repo.get("t1", "d1")
+    assert doc is not None
+    assert doc.status is DocumentStatus.FAILED
+    assert doc.metadata["error_code"] == "render_limit_exceeded"
+    assert "pixel cap" in doc.metadata["error_message"]

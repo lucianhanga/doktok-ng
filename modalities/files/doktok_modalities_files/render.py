@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from doktok_contracts.errors import RenderLimitExceededError
 from doktok_contracts.media import RenderedPage
 
@@ -53,19 +55,28 @@ MAX_TOTAL_PNG_BYTES = 1_000_000_000  # cumulative PNG bytes held for one documen
 MIN_EFFECTIVE_DPI = 25  # below this OCR is useless; fail the document instead
 
 
-def _bounded_zoom(rect, dpi: int) -> float:
+class _RectLike(Protocol):
+    """Structural type for a page rect (keeps ``fitz`` a lazy import)."""
+
+    width: float
+    height: float
+
+
+def _bounded_zoom(rect: _RectLike, dpi: int) -> float:
     """Zoom for ``dpi``, clamped so the rasterized page stays within ``MAX_PAGE_PIXELS``."""
+    width = float(rect.width)
+    height = float(rect.height)
     zoom = dpi / 72.0
-    if rect.width * rect.height * zoom * zoom <= MAX_PAGE_PIXELS:
+    if width * height * zoom * zoom <= MAX_PAGE_PIXELS:
         return zoom
-    clamped = (MAX_PAGE_PIXELS / (rect.width * rect.height)) ** 0.5
+    clamped: float = (MAX_PAGE_PIXELS / (width * height)) ** 0.5
     # fitz rounds the raster dimensions up to whole pixels, which can overshoot the cap slightly;
     # shrink the zoom until the rounded pixel count fits.
-    while (int(rect.width * clamped) + 1) * (int(rect.height * clamped) + 1) > MAX_PAGE_PIXELS:
-        clamped -= 1.0 / max(rect.width, rect.height)
+    while (int(width * clamped) + 1) * (int(height * clamped) + 1) > MAX_PAGE_PIXELS:
+        clamped -= 1.0 / max(width, height)
     if clamped * 72.0 < MIN_EFFECTIVE_DPI:
         raise RenderLimitExceededError(
-            f"page is {rect.width:.0f}x{rect.height:.0f} pt; even {MIN_EFFECTIVE_DPI} DPI "
+            f"page is {width:.0f}x{height:.0f} pt; even {MIN_EFFECTIVE_DPI} DPI "
             f"exceeds {MAX_PAGE_PIXELS} pixels"
         )
     return clamped

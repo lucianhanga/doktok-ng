@@ -26,9 +26,7 @@ def test_token_injection_is_conditional_on_missing_client_authorization() -> Non
     )
     # ...and the static token is injected only under that matcher.
     inject = next(
-        line.strip()
-        for line in lines
-        if "Bearer {env.DOKTOK_API_TOKEN}" in line and "@" in line
+        line.strip() for line in lines if "Bearer {env.DOKTOK_API_TOKEN}" in line and "@" in line
     )
     assert inject.startswith("header @"), f"injection is not matcher-scoped: {inject}"
 

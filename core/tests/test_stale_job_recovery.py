@@ -61,8 +61,11 @@ def test_stale_job_is_requeued_to_ingest(tmp_path: Path) -> None:
     assert len(recovered) == 1
     # File is back in the ingest folder under its original name, ready to be picked up again.
     assert (services.layout.ingest / "0000046.pdf").is_file()
-    # The stale job row and its working dir are gone.
-    assert services.job_repo.list_jobs(TENANT) == []
+    # The stale job row stays as a FAILED tombstone (crash-strike bookkeeping); the working dir
+    # is gone and the file is ready to be picked up again by the normal scan.
+    (tombstone,) = services.job_repo.list_jobs(TENANT)
+    assert tombstone.status is JobStatus.FAILED
+    assert tombstone.error_code == "worker_crash_recovered"
     assert not services.layout.job_workdir(recovered[0].id).exists()
 
 
@@ -76,3 +79,55 @@ def test_recent_in_flight_job_is_left_alone(tmp_path: Path) -> None:
     assert recovered == []
     assert len(services.job_repo.list_jobs(TENANT)) == 1
     assert not (services.layout.ingest / "0000051.pdf").exists()
+
+
+def _tombstone(services: IngestionServices, sha256: str, suffix: str) -> None:
+    """A prior recovery tombstone for the same content (job failed as worker_crash_recovered)."""
+    services.job_repo.add(
+        IngestionJob(
+            id=f"tomb{suffix}00000000000000000000000000cd",
+            tenant_id=TENANT,
+            source_path=f"/gone/{suffix}.pdf",
+            status=JobStatus.FAILED,
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            sha256=sha256,
+            error_code="worker_crash_recovered",
+            error_message="abandoned mid-pipeline (worker died); file re-queued",
+            finished_at=datetime.now(UTC) - timedelta(minutes=50),
+            metadata={},
+        )
+    )
+
+
+def test_repeat_crash_file_is_quarantined_not_requeued(tmp_path: Path) -> None:
+    services = _services(tmp_path)
+    sha = "deadbeef" * 8
+    _tombstone(services, sha, "a")
+    _tombstone(services, sha, "b")
+    job = _stranded_job(services, age_minutes=30, name="poison.pdf")
+    job.sha256 = sha
+    services.job_repo.update(job)
+
+    recovered = recover_stale_jobs(services, older_than=datetime.now(UTC) - timedelta(minutes=10))
+
+    assert len(recovered) == 1
+    final = services.job_repo.get(TENANT, job.id)
+    assert final is not None
+    assert final.status is JobStatus.QUARANTINED
+    assert final.error_code == "crash_loop"
+    # The poison file lands in quarantine, NOT back in ingest (no 4th crash).
+    assert not (services.layout.ingest / "poison.pdf").exists()
+    assert (services.layout.quarantine_dir(job.id) / "poison.pdf").is_file()
+
+
+def test_first_strike_still_requeues(tmp_path: Path) -> None:
+    services = _services(tmp_path)
+    sha = "cafef00d" * 8
+    _tombstone(services, sha, "a")
+    job = _stranded_job(services, age_minutes=30, name="flaky.pdf")
+    job.sha256 = sha
+    services.job_repo.update(job)
+
+    recover_stale_jobs(services, older_than=datetime.now(UTC) - timedelta(minutes=10))
+
+    assert (services.layout.ingest / "flaky.pdf").is_file()

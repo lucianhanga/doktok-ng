@@ -216,6 +216,19 @@ class DocumentRepository(Protocol):
         content-dedup race, ``uq_documents_active_sha``)."""
         ...
 
+    def fail(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        error_code: str,
+        error_message: str,
+    ) -> bool:
+        """Flip a ``processing`` document to ``failed`` (ADR-0015 §5): the terminal outcome for an
+        extraction error that retrying can never fix. Records the error in metadata. Returns False
+        if the document is not ``processing`` (already activated/failed or gone)."""
+        ...
+
 
 @runtime_checkable
 class DocumentVersionRepository(Protocol):

@@ -108,8 +108,10 @@ openssl rand -hex 32
 - `DOKTOK_DB_PASSWORD` — Postgres password for the bundled db container.
 - `DOKTOK_TENANT_TOKENS` — JSON bearer-token -> tenant map, e.g. `{"<long-random-token>":"default"}`.
   One long random token per tenant. Never the `dev-token-*` defaults.
-- `DOKTOK_API_TOKEN` — the token Caddy injects for same-origin browser calls. It **must be one of the
-  keys** in `DOKTOK_TENANT_TOKENS`.
+- `DOKTOK_API_TOKEN` — the token Caddy injects for same-origin browser calls that carry no
+  `Authorization` of their own. When set, it **must be one of the keys** in `DOKTOK_TENANT_TOKENS`.
+  Leave it empty to disable the injection (recommended with password login enabled): anonymous
+  requests then reach the API unauthenticated instead of running as the platform owner (E-01).
 - `DOKTOK_SECRETS_KEY` — encrypts the stored OpenAI key at rest (APP-8).
 
 To **run backups** (M12), also fill and store **off the box**:

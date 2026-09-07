@@ -109,3 +109,10 @@ def test_aggregate_intent_used_is_typed() -> None:
     # Sanity: the tool builds a typed AggregationIntent (no text-to-SQL).
     intent = AggregationIntent(merchant="block house")
     assert intent.operation == "sum"
+
+
+def test_fastmcp_importable() -> None:
+    # Regression: build_server() imports FastMCP lazily, so a breaking mcp upgrade (2.x removed
+    # mcp.server.fastmcp) only fails at runtime. Fail loudly here instead. The dependency is
+    # pinned `mcp>=1.2,<2` in apps/mcp/pyproject.toml.
+    from mcp.server.fastmcp import FastMCP  # noqa: F401

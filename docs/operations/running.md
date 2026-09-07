@@ -176,8 +176,10 @@ manual intervention. Two recovery mechanisms run before it processes the live qu
 1. **Stale-job recovery.** A job that a previous worker was killed in the middle of (for example,
    during OCR) is left in a non-terminal state with its source file stranded under `in.process/`,
    where it would otherwise be invisible and never become a document. On startup (and periodically),
-   the worker moves each such stranded file back into that tenant's `ingest/` folder and drops the
-   stale job, so the normal scan reprocesses it cleanly. See
+   the worker moves each such stranded file back into that tenant's `ingest/` folder and keeps the
+   stale job row as a `failed` tombstone (`worker_crash_recovered`), so the normal scan reprocesses
+   it cleanly. If the same content has already crashed the worker twice, the file is quarantined
+   instead of re-queued (crash tripwire, error code `crash_loop`). See
    `recover_stale_jobs` in `core/doktok_core/ingestion/pipeline.py`
    (driven by `IngestionWorker.recover_stale` in `apps/worker/doktok_worker/worker.py`).
 2. **Ingest-folder rescan.** Any file still sitting in a tenant's `ingest/` folder (anything that had

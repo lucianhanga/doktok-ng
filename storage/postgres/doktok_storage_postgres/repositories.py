@@ -512,6 +512,24 @@ class PostgresDocumentRepository:
         except pg_errors.UniqueViolation as exc:
             raise DuplicateActiveDocumentError(str(exc)) from exc
 
+    def fail(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        error_code: str,
+        error_message: str,
+    ) -> bool:
+        metadata = {"error_code": error_code, "error_message": error_message}
+        with self._db.connection() as conn:
+            cur = conn.execute(
+                "UPDATE documents SET status='failed', "
+                "metadata = metadata || %s "
+                "WHERE id=%s AND tenant_id=%s AND status='processing'",
+                (Json(metadata), document_id, tenant_id),
+            )
+            return cur.rowcount > 0
+
     def get(self, tenant_id: str, document_id: str) -> Document | None:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
@@ -2229,7 +2247,11 @@ class PostgresStatsRepository:
                 cur, "SELECT COUNT(*) AS n FROM documents WHERE tenant_id=%s", tenant_id
             )
             job_rows = cur.execute(
+                # Crash-recovery tombstones (FAILED rows with the worker_crash_recovered error
+                # code) are bookkeeping, not actionable failures - keep them out of the Overview
+                # "Failed" stat. They still appear in the /jobs list.
                 "SELECT status, COUNT(*) AS n FROM ingestion_jobs WHERE tenant_id=%s "
+                "AND (error_code IS NULL OR error_code != 'worker_crash_recovered') "
                 "GROUP BY status",
                 (tenant_id,),
             ).fetchall()

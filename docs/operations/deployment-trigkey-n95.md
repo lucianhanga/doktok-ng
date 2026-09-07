@@ -109,8 +109,10 @@ Key points:
   which injects the dev token; see `make run-ui`.) Treat the injected
   `DOKTOK_API_TOKEN` as the **console credential** (ADR-0025, epic #700): anyone who can reach the
   published port without logging in can drive the deployment-spanning API (backup export/restore,
-  model stack, tenant provisioning). Restrict the port to a trusted network, or enable password
-  login for multi-user use - with login on, the edge token only ever covers anonymous requests.
+  model stack, tenant provisioning). Restrict the port to a trusted network. Password login (for
+  multi-user use) and the edge injection are independent features: login does not disable the
+  injection - with login enabled, leave `DOKTOK_API_TOKEN` empty so anonymous requests reach the
+  API unauthenticated instead of running as the platform owner (E-01, audit v2).
 - The **backend binds loopback / internal only** and fails closed without tokens
   (`DOKTOK_TENANT_TOKENS`); it must never be exposed directly (ADR-0008). If you bind it to a
   non-loopback host, it refuses to start unless tokens are configured.
@@ -323,8 +325,9 @@ host** alternative in ADR-0020 instead of OpenAI.
 
 ## Secrets, TLS, and the outbound firewall
 
-- **Secrets.** Tenant tokens (`DOKTOK_TENANT_TOKENS`), the Caddy edge token (`DOKTOK_API_TOKEN`, which
-  must be one of the tenant tokens), the DB password, and `DOKTOK_SECRETS_KEY` come from an untracked
+- **Secrets.** Tenant tokens (`DOKTOK_TENANT_TOKENS`), the Caddy edge token (`DOKTOK_API_TOKEN`,
+  which, when set, must be one of the tenant tokens), the DB password, and `DOKTOK_SECRETS_KEY`
+  come from an untracked
   `.env.production` (gitignored, a one-time manual bootstrap copied from
   [`.env.production.example`](../../.env.production.example); never rsynced by `make deploy-box`) —
   never the `dev-token-*` defaults. The OpenAI key is entered via the

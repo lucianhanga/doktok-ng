@@ -9,6 +9,8 @@ Exposes a small, allowlisted set of read-only tools over the local document stor
   tenant's data.
 - **No migrations**: the MCP process never migrates the schema (it may run as a read-only role); the
   backend/worker own migrations.
+- **Fenced responses (audit v2 E-02)**: document-controlled text is returned under a ``notice``
+  field framing it as untrusted data, not instructions for the consuming LLM.
 """
 
 from __future__ import annotations
@@ -69,12 +71,12 @@ def build_server(settings: Settings) -> FastMCP:
     mcp = FastMCP("doktok-ng")
 
     @mcp.tool()
-    def search_documents(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    def search_documents(query: str, limit: int = 10) -> dict[str, Any]:
         """Hybrid semantic + full-text search over the documents."""
         return tools.search_documents(retriever, tenant, query, limit)
 
     @mcp.tool()
-    def list_documents(limit: int = 50) -> list[dict[str, Any]]:
+    def list_documents(limit: int = 50) -> dict[str, Any]:
         """List active documents with title/date/summary."""
         return tools.list_documents(documents, tenant, limit)
 

@@ -564,10 +564,12 @@ dependencies = [
     { name = "doktok-core" },
     { name = "doktok-modalities-files" },
     { name = "doktok-provider-ollama" },
+    { name = "doktok-provider-openai" },
     { name = "doktok-retrieval-hybrid" },
     { name = "doktok-storage-postgres" },
     { name = "fastapi" },
     { name = "langgraph" },
+    { name = "python-multipart" },
     { name = "uvicorn" },
 ]
 
@@ -577,10 +579,12 @@ requires-dist = [
     { name = "doktok-core", editable = "core" },
     { name = "doktok-modalities-files", editable = "modalities/files" },
     { name = "doktok-provider-ollama", editable = "providers/ollama" },
+    { name = "doktok-provider-openai", editable = "providers/openai" },
     { name = "doktok-retrieval-hybrid", editable = "retrieval/hybrid" },
     { name = "doktok-storage-postgres", editable = "storage/postgres" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "langgraph", specifier = ">=1.2,<2" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
@@ -600,6 +604,7 @@ dependencies = [
     { name = "phonenumbers" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyjwt" },
 ]
 
 [package.metadata]
@@ -610,6 +615,7 @@ requires-dist = [
     { name = "phonenumbers", specifier = ">=8.13" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
+    { name = "pyjwt", specifier = ">=2.8" },
 ]
 
 [[package]]
@@ -960,6 +966,7 @@ dependencies = [
     { name = "doktok-modalities-files" },
     { name = "doktok-provider-gliner", extra = ["engine"] },
     { name = "doktok-provider-ollama" },
+    { name = "doktok-provider-openai" },
     { name = "doktok-provider-paddleocr" },
     { name = "doktok-provider-projection" },
     { name = "doktok-provider-rapidocr" },
@@ -974,6 +981,7 @@ requires-dist = [
     { name = "doktok-modalities-files", editable = "modalities/files" },
     { name = "doktok-provider-gliner", extras = ["engine"], editable = "providers/gliner" },
     { name = "doktok-provider-ollama", editable = "providers/ollama" },
+    { name = "doktok-provider-openai", editable = "providers/openai" },
     { name = "doktok-provider-paddleocr", editable = "providers/paddleocr" },
     { name = "doktok-provider-projection", editable = "providers/projection" },
     { name = "doktok-provider-rapidocr", editable = "providers/rapidocr" },

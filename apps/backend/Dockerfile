@@ -8,8 +8,12 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 COPY . .
-# Install the whole workspace into /app/.venv (the packages are interdependent).
-RUN uv sync --frozen --no-dev
+# Install only the backend's dependency closure (--package doktok-api), NOT the whole workspace
+# root: the API never runs torch/GLiNER/OCR, so those stay out of the image. The cache mount keeps
+# package downloads across builds, so a code-only change rebuilds in seconds instead of
+# re-downloading the world.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package doktok-api
 
 FROM python:3.12-slim-bookworm AS runtime
 # libmagic1: content-based MIME detection (python-magic), used by the upload path.

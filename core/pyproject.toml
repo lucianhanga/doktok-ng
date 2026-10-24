@@ -11,6 +11,7 @@ dependencies = [
     "doktok-contracts",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "pyjwt>=2.8",
     "langdetect>=1.0.9",
     # Pure-Python libphonenumber port for PHONE validation (#518). Lightweight -> normal lockfile
     # dep (unlike libpostal, which is a heavy engine extra; see `make address-libpostal`).

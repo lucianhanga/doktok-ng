@@ -6,8 +6,15 @@
 FROM node:22-bookworm-slim AS build
 RUN corepack enable
 WORKDIR /app
+# Manifests before source: the dependency install layer is cached as long as the lockfile/manifests
+# don't change, and the pnpm store mount keeps downloads across builds. A UI code change then only
+# re-runs the build itself.
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY apps/ui/package.json apps/ui/package.json
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --filter @doktok/ui
 COPY . .
-RUN pnpm install --frozen-lockfile && pnpm --filter @doktok/ui build
+RUN pnpm --filter @doktok/ui build
 
 FROM caddy:2-alpine AS runtime
 COPY --from=build /app/apps/ui/dist /srv

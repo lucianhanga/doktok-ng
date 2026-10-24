@@ -8,15 +8,20 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 COPY . .
-RUN uv sync --frozen --no-dev
+# Install only the worker's dependency closure (--package doktok-worker). The cache mount keeps the
+# wheel downloads across builds: a code-only change no longer re-downloads the OCR runtimes.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package doktok-worker
 # Bake the PaddleOCR runtime into the image so it can never be pruned by a later `uv sync` (the
 # extra is intentionally not in the lockfile; this mirrors `make ocr-paddle`). (#317)
-RUN uv pip install --python /app/.venv/bin/python paddleocr paddlepaddle pillow numpy
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python paddleocr paddlepaddle pillow numpy
 # Also bake the RapidOCR engine options (M17 #375): same PP-OCR models, much faster on weak CPUs.
 # ONNX (any CPU) + OpenVINO (Intel; ~20x vs Paddle on the N95). rapidocr-openvino uses the old
 # `openvino.runtime` API removed in openvino 2025+, so pin openvino<2025. The OpenCV runtime libs
 # (libgl1/libglib2.0-0) are already installed below for PaddleOCR.
-RUN uv pip install --python /app/.venv/bin/python rapidocr-onnxruntime rapidocr-openvino "openvino<2025"
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python rapidocr-onnxruntime rapidocr-openvino "openvino<2025"
 
 FROM python:3.12-slim-bookworm AS runtime
 # libmagic1: MIME detection. libgl1/libglib2.0-0/libgomp1: PaddleOCR (OpenCV) runtime libraries.

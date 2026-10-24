@@ -6,7 +6,17 @@ import type { DokDocument } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+/** Media loads go through the (authenticated) fetch and come back as blob URLs. */
+function stubMediaFetch() {
+  const fetchMock = vi.fn(
+    async () => new Response(new Blob(["x"], { type: "application/octet-stream" })),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 function doc(overrides: Partial<DokDocument> = {}): DokDocument {
   return {
@@ -21,11 +31,14 @@ function doc(overrides: Partial<DokDocument> = {}): DokDocument {
   };
 }
 
-test("renders an image preview with new-tab + download and a safe rel", () => {
+test("renders an image preview with new-tab + download and a safe rel", async () => {
+  const fetchMock = stubMediaFetch();
   render(<DocumentPreviewModal doc={doc()} onClose={() => {}} />);
 
-  const img = screen.getByAltText("Preview of scan.png") as HTMLImageElement;
-  expect(img.getAttribute("src")).toBe("/api/v1/documents/d1/file");
+  // The image bytes load through the authenticated fetch and render as a blob object URL.
+  const img = (await screen.findByAltText("Preview of scan.png")) as HTMLImageElement;
+  expect(img.getAttribute("src")).toBe("blob:mock");
+  expect(fetchMock).toHaveBeenCalledWith("/api/v1/documents/d1/file");
 
   const newTab = screen.getByRole("link", { name: /Open in new tab/ });
   expect(newTab).toHaveAttribute("target", "_blank");
@@ -38,7 +51,8 @@ test("renders an image preview with new-tab + download and a safe rel", () => {
   expect(screen.getByLabelText("Close preview")).toBeInTheDocument();
 });
 
-test("previews an office document via its normalized PDF; download keeps the original", () => {
+test("previews an office document via its normalized PDF; download keeps the original", async () => {
+  const fetchMock = stubMediaFetch();
   render(
     <DocumentPreviewModal
       doc={doc({
@@ -51,8 +65,9 @@ test("previews an office document via its normalized PDF; download keeps the ori
     />,
   );
 
-  const frame = screen.getByTitle("Preview of report.docx");
-  expect(frame.getAttribute("src")).toBe("/api/v1/documents/d1/file?variant=normalized");
+  const frame = await screen.findByTitle("Preview of report.docx");
+  expect(frame.getAttribute("src")).toBe("blob:mock");
+  expect(fetchMock).toHaveBeenCalledWith("/api/v1/documents/d1/file?variant=normalized");
 
   // Download still hands back the original .docx, not the converted PDF.
   expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(

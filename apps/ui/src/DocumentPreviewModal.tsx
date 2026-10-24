@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { documentFileUrl, fetchDocumentLayout, type DokDocument, type LayoutPage } from "./api";
+import { AuthImg } from "./AuthImg";
+import { downloadFile, openInNewTab, useAuthBlobUrl } from "./authMedia";
 import { OcrBoxOverlay } from "./OcrBoxOverlay";
 
 type Kind = "pdf" | "image" | "text" | "unsupported";
@@ -36,6 +38,9 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: DokDocument; onClo
     : documentFileUrl(doc.id);
   const newTabUrl = fileUrl;
   const downloadUrl = documentFileUrl(doc.id, { disposition: "attachment" });
+  // PDFs (incl. normalized office docs) preview in an <iframe>, which cannot carry the session
+  // token - load the bytes through the authenticated fetch and show the blob URL (login mode).
+  const { blobUrl: pdfBlobUrl, error: pdfError } = useAuthBlobUrl(kind === "pdf" ? fileUrl : null);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -70,6 +75,10 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: DokDocument; onClo
     }
     if (kind === "unsupported") setStatus("ready");
   }, [fileUrl, kind]);
+
+  useEffect(() => {
+    if (pdfError) setStatus("error");
+  }, [pdfError]);
 
   // OCR text-region overlay: fetch the per-page boxes; if any exist, default to the regions view
   // ("boxes shown when you open the document"). Only OCR'd documents have them.
@@ -114,11 +123,25 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: DokDocument; onClo
               {mode === "regions" ? "Document" : "Text regions"}
             </button>
           )}
-          <a href={newTabUrl} target="_blank" rel="noopener noreferrer">
+          <a
+            href={newTabUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.preventDefault();
+              openInNewTab(newTabUrl);
+            }}
+          >
             Open in new tab ↗
           </a>
-          <a href={downloadUrl} download={doc.original_filename}>
-            Download
+          <a
+            href={downloadUrl}
+            download={doc.original_filename}
+            onClick={(e) => {
+              e.preventDefault();
+              downloadFile(downloadUrl, doc.original_filename);
+            }}
+          >            Download
           </a>
           <button type="button" aria-label="Close preview" onClick={onClose}>
             ✕
@@ -140,15 +163,15 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: DokDocument; onClo
           </p>
         )}
 
-        {mode === "document" && kind === "pdf" && (
+        {mode === "document" && kind === "pdf" && pdfBlobUrl && (
           <iframe
             title={`Preview of ${doc.original_filename}`}
-            src={fileUrl}
+            src={pdfBlobUrl}
             onLoad={() => setStatus("ready")}
           />
         )}
         {mode === "document" && kind === "image" && (
-          <img
+          <AuthImg
             alt={`Preview of ${doc.original_filename}`}
             src={fileUrl}
             onLoad={() => setStatus("ready")}

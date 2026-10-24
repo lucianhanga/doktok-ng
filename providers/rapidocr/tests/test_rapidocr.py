@@ -42,3 +42,47 @@ def test_empty_result_is_handled() -> None:
 
     page = RapidOcr(engine=_Empty()).ocr_image(_png())
     assert page.text == "" and page.lines == [] and page.confidence is None
+
+
+def test_broken_pool_is_rebuilt_and_page_retried(monkeypatch: Any) -> None:
+    # Same failure mode as the PaddleOCR adapter: a dead pool child (OOM kill) breaks the whole
+    # ProcessPoolExecutor; ocr_image must rebuild it and retry the page once.
+    from concurrent.futures.process import BrokenProcessPool
+
+    import doktok_provider_rapidocr.ocr as ocr_mod
+
+    class _Future:
+        def __init__(self, value: Any) -> None:
+            self._value = value
+
+        def result(self) -> Any:
+            return self._value
+
+    class _BrokenPool:
+        def submit(self, fn: Any, *args: Any) -> _Future:
+            raise BrokenProcessPool("A child process terminated abruptly")
+
+        def shutdown(self, wait: bool = True) -> None: ...
+
+    class _WorkingPool:
+        def submit(self, fn: Any, *args: Any) -> _Future:
+            return _Future(fn(*args))
+
+        def shutdown(self, wait: bool = True) -> None: ...
+
+    pool_kinds = iter([_BrokenPool, _WorkingPool])
+    builds: list[Any] = []
+
+    def _factory(**kwargs: Any) -> Any:
+        pool = next(pool_kinds)()
+        builds.append(pool)
+        return pool
+
+    monkeypatch.setattr(ocr_mod, "_WORKER_ENGINE", _FakeEngine())
+    monkeypatch.setattr(ocr_mod, "ProcessPoolExecutor", _factory)
+
+    ocr = RapidOcr(pool_size=2)
+    assert ocr.ocr_image(_png()).text == "Hello\nWorld"
+    assert len(builds) == 2  # the broken pool was replaced, not reused
+    assert ocr.ocr_image(_png()).text == "Hello\nWorld"
+    assert len(builds) == 2

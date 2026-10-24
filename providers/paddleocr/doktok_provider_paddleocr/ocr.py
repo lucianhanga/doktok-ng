@@ -16,10 +16,12 @@ runs in child interpreters (own GIL), so up to ``pool_size`` pages OCR truly in 
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import threading
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Any
 
 from doktok_contracts.media import OcrPageResult, OcrTextLine
@@ -279,7 +281,28 @@ class PaddleOcr:
         # cross-page parallelism across ``pool_size`` cores. The 4-way vote (Enhanced) OCRs each
         # page at all four orientations, so it is ~4x slower - opt-in only.
         worker = _worker_ocr_vote if self._orient_vote else _worker_ocr
-        return self._executor().submit(worker, image_png).result()
+        try:
+            return self._executor().submit(worker, image_png).result()
+        except BrokenProcessPool:
+            # A pool child died (e.g. OOM-killed): the executor is permanently broken, and without
+            # a rebuild EVERY later document fails until the worker restarts. Drop it and retry the
+            # page once on a fresh pool. A repeat BrokenProcessPool (persistent memory pressure)
+            # propagates - the next call rebuilds again, so the pool self-heals per document.
+            self._discard_pool()
+            return self._executor().submit(worker, image_png).result()
+
+    def _discard_pool(self) -> None:
+        """Drop the current executor so the next ``_executor()`` builds a fresh pool. No-op when
+        shut down (a page in flight at Ctrl-C must not resurrect the pool) or when a concurrent
+        caller already replaced it."""
+        with self._lock:
+            if self._closed:
+                return
+            broken, self._pool = self._pool, None
+        if broken is not None:
+            # A broken pool may raise on teardown; there is nothing to join, so don't block.
+            with contextlib.suppress(Exception):
+                broken.shutdown(wait=False)
 
 
 def _as_list(value: Any) -> list[Any]:

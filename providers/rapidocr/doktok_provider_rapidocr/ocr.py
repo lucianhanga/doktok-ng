@@ -13,11 +13,13 @@ pool live and tear it down cleanly. The ``rapidocr`` runtime is imported lazily,
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import os
 import threading
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Any
 
 from doktok_contracts.media import OcrPageResult, OcrTextLine
@@ -171,4 +173,23 @@ class RapidOcr:
     def ocr_image(self, image_png: bytes) -> OcrPageResult:
         if self._engine is not None:  # in-process (tests)
             return _run_ocr(self._engine, image_png)
-        return self._executor().submit(_worker_ocr, image_png).result()
+        try:
+            return self._executor().submit(_worker_ocr, image_png).result()
+        except BrokenProcessPool:
+            # A pool child died (e.g. OOM-killed): the executor is permanently broken, and without
+            # a rebuild EVERY later document fails until the worker restarts. Drop it and retry the
+            # page once on a fresh pool; a repeat failure propagates (the next call rebuilds again).
+            self._discard_pool()
+            return self._executor().submit(_worker_ocr, image_png).result()
+
+    def _discard_pool(self) -> None:
+        """Drop the current executor so the next ``_executor()`` builds a fresh pool. No-op when
+        shut down or when a concurrent caller already replaced it."""
+        with self._lock:
+            if self._closed:
+                return
+            broken, self._pool = self._pool, None
+        if broken is not None:
+            # A broken pool may raise on teardown; there is nothing to join, so don't block.
+            with contextlib.suppress(Exception):
+                broken.shutdown(wait=False)

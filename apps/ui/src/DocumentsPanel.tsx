@@ -30,6 +30,7 @@ import {
   type TagOut,
   type TokenMatch,
 } from "./api";
+import { AuthImg } from "./AuthImg";
 import { DataTable } from "./DataTable";
 import { useInterval } from "./hooks";
 import { loadJSON, saveJSON } from "./persist";
@@ -629,7 +630,7 @@ function DocumentCard({
             {mimeGlyph(doc.detected_mime)}
           </div>
         ) : (
-          <img
+          <AuthImg
             className="doc-card-thumb"
             src={documentThumbnailUrl(doc.id)}
             alt={`Preview of ${doc.title ?? doc.original_filename}`}

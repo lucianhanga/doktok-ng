@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { AuthImg } from "./AuthImg";
 import { documentThumbnailUrl, type Citation, type TraceStep } from "./api";
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
@@ -132,7 +133,7 @@ function DocumentRankChip({
           DOC
         </span>
       ) : (
-        <img
+        <AuthImg
           className="doc-rank-thumb"
           src={documentThumbnailUrl(row.document_id)}
           alt=""

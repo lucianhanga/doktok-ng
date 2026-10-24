@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { OcrBoxOverlay } from "./OcrBoxOverlay";
 
@@ -15,9 +15,14 @@ const pages = [
 ];
 
 test("draws OCR boxes over the page image and toggles them", async () => {
+  // The page image loads via AuthImg (authenticated fetch -> blob URL).
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(new Blob(["png"], { type: "image/png" }), { status: 200 })),
+  );
   render(<OcrBoxOverlay docId="d1" pages={pages} />);
 
-  expect(screen.getByAltText("Page 1")).toBeInTheDocument();
+  expect(await screen.findByAltText("Page 1")).toBeInTheDocument();
   // Each line becomes a box positioned by proportion, with its text as the tooltip.
   const box = screen.getByTitle("Hello world");
   expect(box).toBeInTheDocument();

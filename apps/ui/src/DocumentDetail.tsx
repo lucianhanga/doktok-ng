@@ -38,6 +38,7 @@ import {
   type SimilarDocument,
   type TagOut,
 } from "./api";
+import { AuthImg } from "./AuthImg";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 import { entityTypeMeta } from "./entityTypes";
 import { currentUser } from "./session";
@@ -361,7 +362,7 @@ function DocumentThumbnail({ id, title }: { id: string; title: string }) {
     );
   }
   return (
-    <img
+    <AuthImg
       className="doc-thumb"
       src={documentThumbnailUrl(id)}
       alt={`First-page preview of ${title}`}

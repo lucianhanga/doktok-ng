@@ -292,7 +292,7 @@ test("Load more pages through the keyset cursor", async () => {
 });
 
 test("Thumbnails subtab shows a thumbnail grid for the same documents", async () => {
-  mockDocs([doc({ id: "a", original_filename: "report.pdf", title: "Report" })]);
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf", title: "Report" })]);
   render(<DocumentsPanel />);
   // With an explicit title, the Name column shows "Report" (not the raw filename)
   await waitFor(() => expect(screen.getByText("Report")).toBeInTheDocument()); // list default
@@ -300,8 +300,14 @@ test("Thumbnails subtab shows a thumbnail grid for the same documents", async ()
   fireEvent.click(screen.getByText("Thumbnails"));
   // No refetch needed: the card renders from the same data with a first-page preview image.
   expect(screen.getByLabelText("Select all loaded documents")).toBeInTheDocument();
-  const img = screen.getByAltText("Preview of Report") as HTMLImageElement;
-  expect(img.getAttribute("src")).toContain("/api/v1/documents/a/thumbnail");
+  // AuthImg loads the bytes through the (authenticated) fetch and renders a blob object URL.
+  const img = (await screen.findByAltText("Preview of Report")) as HTMLImageElement;
+  expect(img.getAttribute("src")).toMatch(/^blob:/);
+  expect(
+    fetchMock.mock.calls.some(([input]) =>
+      String(input).includes("/api/v1/documents/a/thumbnail"),
+    ),
+  ).toBe(true);
 });
 
 test("sort control changes the documents query", async () => {

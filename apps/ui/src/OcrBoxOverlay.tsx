@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { AuthImg } from "./AuthImg";
 import { documentPageImageUrl, type LayoutPage } from "./api";
 
 /**
@@ -43,7 +44,7 @@ export function OcrBoxOverlay({ docId, pages }: { docId: string; pages: LayoutPa
         )}
       </div>
       <div className="ocr-overlay-canvas">
-        <img src={documentPageImageUrl(docId, page.page_number)} alt={`Page ${page.page_number}`} />
+        <AuthImg src={documentPageImageUrl(docId, page.page_number)} alt={`Page ${page.page_number}`} />
         {showBoxes && sized && (
           <div className="ocr-overlay-boxes" aria-hidden="true">
             {page.lines.map((ln, i) => (

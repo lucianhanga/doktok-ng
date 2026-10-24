@@ -30,6 +30,13 @@ if (typeof globalThis.matchMedia === "undefined") {
   })) as unknown as typeof globalThis.matchMedia;
 }
 
+// jsdom does not implement URL.createObjectURL/revokeObjectURL; AuthImg (authenticated media
+// loading via fetch -> blob) needs them whenever a test renders an image.
+if (typeof URL.createObjectURL === "undefined") {
+  URL.createObjectURL = () => "blob:mock";
+  URL.revokeObjectURL = () => {};
+}
+
 // jsdom in this setup does not expose a working localStorage; provide a minimal in-memory one so
 // UI code that persists settings (and tests that assert it) works under test.
 if (typeof globalThis.localStorage === "undefined") {

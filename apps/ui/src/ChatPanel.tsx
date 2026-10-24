@@ -20,6 +20,7 @@ import {
   type TraceStep,
   type TurnMetrics,
 } from "./api";
+import { AuthImg } from "./AuthImg";
 import { ChatActivityTimeline } from "./ChatActivityTimeline";
 import { InfoHint } from "./InfoHint";
 import { DocumentDetail } from "./DocumentDetail";
@@ -201,7 +202,7 @@ function SourceCard({
           {imgFailed ? (
             <span className="chat-source-thumb chat-source-thumb-fallback">DOC</span>
           ) : (
-            <img
+            <AuthImg
               className="chat-source-thumb"
               src={documentThumbnailUrl(citation.document_id)}
               alt=""

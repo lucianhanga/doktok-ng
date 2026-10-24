@@ -213,7 +213,11 @@ worker runs in a memory-capped container, the **worker container's `memory:` cap
 what bounds safe concurrency: exceeding it OOM-kills a child, which surfaces as `BrokenProcessPool` /
 "a child process terminated abruptly". Fix by lowering `DOKTOK_OCR_CONCURRENCY` or raising the worker
 `memory:` cap. On this box the validated combination is `DOKTOK_OCR_CONCURRENCY=2` with the worker
-capped at ~2.5 GB. (At 8 GB total, also leave room for Postgres, the embedder, and the OS.)
+capped at ~4 GB - the parent process alone holds ~2 GB once the `gliner-relex-large` relations model
+is loaded, and each OCR pool child needs ~0.5-1 GB on top; a ~2.5 GB cap OOM-killed pool children
+mid-page (2026-10-24 incident). (At 8 GB total, also leave room for Postgres, the embedder, and the
+OS.) If relations extraction is switched to a lighter model/provider in Settings, the cap can go back
+down.
 
 **Device-aware sizing hint.** `GET /api/v1/settings/ocr/recommendation` probes this host (CPU vendor,
 cores, RAM, GPU) and returns a suggested engine + concurrency; the Settings UI shows it as a one-click

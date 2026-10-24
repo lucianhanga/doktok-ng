@@ -52,7 +52,8 @@ budget above. It has its own knobs:
 container's memory cap** (not host RAM) bounds safe concurrency — exceeding it OOM-kills a child,
 surfacing as `BrokenProcessPool` / "a child process terminated abruptly". Fix by lowering
 `DOKTOK_OCR_CONCURRENCY` or raising the worker `memory:` cap. (On the N95: `OCR_CONCURRENCY=2`, worker
-capped ~2.5 GB.) See [ADR-0010](../adr/ADR-0010-paddleocr-default-ocr-engine.md) and
+capped ~4 GB — the parent holds ~2 GB for the `gliner-relex-large` relations model, so a ~2.5 GB cap
+OOM-killed OCR children mid-page; see the 2026-10-24 incident.) See [ADR-0010](../adr/ADR-0010-paddleocr-default-ocr-engine.md) and
 [deployment-trigkey-n95.md](deployment-trigkey-n95.md).
 
 A **device-aware recommendation** (`GET /api/v1/settings/ocr/recommendation`, shown in the Settings UI)

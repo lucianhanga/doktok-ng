@@ -245,7 +245,7 @@ def test_test_openai_probe_uses_the_tenant_key(
     app_settings.set_tenant_openai_api_key("tenant-a", "sk-tenant-a")
     seen: list[str] = []
 
-    def _fake_probe(key: str) -> tuple[bool, str]:
+    def _fake_probe(key: str, base_url: str = "https://api.openai.com/v1") -> tuple[bool, str]:
         seen.append(key)
         return (True, "valid")
 

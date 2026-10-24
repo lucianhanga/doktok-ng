@@ -614,14 +614,15 @@ def warmup_ollama(
     return OllamaWarmupResult(ok=ok, detail=detail, url=url, model=model)
 
 
-def _probe_openai(key: str) -> tuple[bool, str]:
+def _probe_openai(key: str, base_url: str = "https://api.openai.com/v1") -> tuple[bool, str]:
     """Validate an OpenAI key by listing models (M13). Returns (ok, short detail); never raises and
-    never includes the key in the message."""
+    never includes the key in the message. Targets the configured base URL, so the probe also works
+    against OpenAI-compatible servers (e.g. a local vLLM /v1 endpoint)."""
     import httpx
 
     try:
         resp = httpx.get(
-            "https://api.openai.com/v1/models",
+            f"{base_url.rstrip('/')}/models",
             headers={"Authorization": f"Bearer {key}"},
             timeout=10.0,
         )
@@ -648,7 +649,7 @@ def test_openai_key(
     if not key:
         return OpenAiTestResult(ok=False, detail="no API key provided or stored")
     _refuse_egress_probe(repo, settings, tenant.tenant_id, remote=True)
-    ok, detail = _probe_openai(key)
+    ok, detail = _probe_openai(key, base_url=settings.openai_base_url)
     return OpenAiTestResult(ok=ok, detail=detail)
 
 

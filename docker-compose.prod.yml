@@ -36,6 +36,8 @@ x-app-env: &app-env
   DOKTOK_SECRETS_KEY: ${DOKTOK_SECRETS_KEY:-}
   DOKTOK_LOG_FORMAT: ${DOKTOK_LOG_FORMAT:-json}
   DOKTOK_LOG_LEVEL: ${DOKTOK_LOG_LEVEL:-INFO}
+  # Production semantics (e.g. stricter JWT-secret checks); overridable for staging.
+  DOKTOK_ENV: ${DOKTOK_ENV:-production}
   # Headless AI provider split (APP-2); seeded only on a fresh DB, never overwrites UI edits.
   DOKTOK_PIPELINE_PROVIDER: ${DOKTOK_PIPELINE_PROVIDER:-}
   DOKTOK_PIPELINE_MODEL: ${DOKTOK_PIPELINE_MODEL:-}

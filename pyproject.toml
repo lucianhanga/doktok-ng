@@ -26,6 +26,12 @@ dependencies = [
     "doktok-tools-mcp",
 ]
 
+[[tool.uv.index]]
+# CPU-only PyTorch wheels for Linux (see [tool.uv.sources] torch pin above).
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.workspace]
 members = [
     "contracts",
@@ -49,6 +55,13 @@ members = [
 ]
 
 [tool.uv.sources]
+torch = [
+    # CPU-only PyTorch wheels on Linux: the GLiNER engine extra pulls torch, and PyPI's default
+    # linux wheel bundles the multi-GB CUDA runtime - dead weight on the CPU-only targets this
+    # project deploys to (N95-class boxes). Other platforms keep the PyPI build; a future CUDA
+    # box can drop this pin.
+    { index = "pytorch-cpu", marker = "platform_system == 'Linux'" },
+]
 doktok-contracts = { workspace = true }
 doktok-core = { workspace = true }
 doktok-api = { workspace = true }

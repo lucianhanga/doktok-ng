@@ -36,3 +36,20 @@ def test_openai_reasoning_effort_only_for_reasoning_models() -> None:
     assert openai_reasoning_effort("medium", "gpt-4o-mini") is None  # not a reasoning model
     assert openai_reasoning_effort("off", "gpt-5-mini") == "minimal"
     assert openai_reasoning_effort("high", "gpt-5-nano") == "high"
+
+
+def test_luna_offered_as_cheap_remote_options() -> None:
+    # gpt-6-luna (OpenAI's cheapest latest-tier model) is selectable for the enrichment pipeline
+    # and RAG/interrogation; like every OpenAI option it is marked as egressing, and as a gpt-6
+    # model it supports the reasoning-density knob.
+    for options in (MODEL_CATALOG.pipeline, MODEL_CATALOG.rag):
+        luna = [o for o in options if o.model == "gpt-6-luna"]
+        assert luna, "gpt-6-luna should be offered for pipeline and rag"
+        assert luna[0].provider == "openai"
+        assert luna[0].requires_egress is True
+        assert luna[0].supports_reasoning is True
+
+
+def test_openai_reasoning_effort_covers_gpt6_models() -> None:
+    assert openai_reasoning_effort("low", "gpt-6-luna") == "low"
+    assert openai_reasoning_effort("off", "gpt-6-luna") == "minimal"

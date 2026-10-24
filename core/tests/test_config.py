@@ -98,3 +98,11 @@ def test_loopback_url_detection() -> None:
     assert is_loopback_url("http://[::1]:11434")
     assert not is_loopback_url("http://10.0.0.5:11434")
     assert not is_loopback_url("https://api.example.com")
+
+
+def test_openai_base_url_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default is the real OpenAI API; overridable for OpenAI-compatible servers (e.g. a local
+    # vLLM deployment exposing /v1) - the providers take this as their base_url.
+    assert _settings_without_env_file().openai_base_url == "https://api.openai.com/v1"
+    monkeypatch.setenv("DOKTOK_OPENAI_BASE_URL", "http://vllm.lan:8000/v1")
+    assert _settings_without_env_file().openai_base_url == "http://vllm.lan:8000/v1"

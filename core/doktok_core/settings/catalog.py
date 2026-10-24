@@ -22,6 +22,13 @@ MODEL_CATALOG = ModelCatalog(
         ),
         ModelOption(
             provider="openai",
+            model="gpt-6-luna",
+            label="OpenAI gpt-6-luna - cheapest latest-tier remote",
+            contexts=[128000],
+            supports_reasoning=True,
+        ),
+        ModelOption(
+            provider="openai",
             model="gpt-4o-mini",
             label="OpenAI gpt-4o-mini - cheap remote (easy job)",
             contexts=[128000],
@@ -41,6 +48,13 @@ MODEL_CATALOG = ModelCatalog(
             model="qwen3.6:27b",
             label="Qwen3.6 27B - dense, local (recommended)",
             contexts=[8192, 16384, 32768],
+            supports_reasoning=True,
+        ),
+        ModelOption(
+            provider="openai",
+            model="gpt-6-luna",
+            label="OpenAI gpt-6-luna - cheapest latest-tier remote",
+            contexts=[128000],
             supports_reasoning=True,
         ),
         ModelOption(
@@ -128,7 +142,7 @@ for _option in _ALL_OPTIONS:
     _option.requires_egress = _option.provider == "openai"
 
 # OpenAI models whose name starts with one of these reason; they take reasoning_effort, not temp.
-_OPENAI_REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_OPENAI_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
 
 
 def ollama_think_for(reasoning: str, model: str, *, structured: bool) -> bool:

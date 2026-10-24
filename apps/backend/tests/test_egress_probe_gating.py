@@ -41,7 +41,11 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
         settings_mod, "_probe_ollama", lambda url: (True, "reachable - 1 model(s) installed", ["m"])
     )
     monkeypatch.setattr(settings_mod, "_warmup_ollama", lambda url, model: (True, "loaded"))
-    monkeypatch.setattr(settings_mod, "_probe_openai", lambda key: (True, "valid"))
+    monkeypatch.setattr(
+        settings_mod,
+        "_probe_openai",
+        lambda key, base_url="https://api.openai.com/v1": (True, "valid"),
+    )
 
 
 def _make_client(tmp_path: Path, *, no_egress: bool, locked: bool = False) -> TestClient:

@@ -135,6 +135,7 @@ def _resolve_ner_backend(
     key: str,
     no_egress: bool,
     default_url: str,
+    openai_base_url: str,
     timeout: float,
     keep_alive: str,
 ) -> tuple[EntityNerExtractor, str]:
@@ -175,7 +176,7 @@ def _resolve_ner_backend(
             return EgressBlocked("NER"), "openai:blocked"
         effort = openai_reasoning_effort(cfg.reasoning, model)
         return OpenAiEntityNerExtractor(
-            model, key, timeout=timeout, reasoning_effort=effort
+            model, key, base_url=openai_base_url, timeout=timeout, reasoning_effort=effort
         ), f"openai:{model}"
     # ollama (not offered in the catalog, but honored if hand-configured)
     if no_egress and url_requires_egress(cfg.ollama_base_url, default_url=default_url):
@@ -199,6 +200,7 @@ def _resolve_relation_backend(
     key: str,
     no_egress: bool,
     default_url: str,
+    openai_base_url: str,
     timeout: float,
     keep_alive: str,
 ) -> tuple[RelationExtractor, str]:
@@ -233,7 +235,7 @@ def _resolve_relation_backend(
             return EgressBlocked("Relations"), "openai:blocked"
         effort = openai_reasoning_effort(cfg.reasoning, model)
         return OpenAiRelationExtractor(
-            model, key, timeout=timeout, reasoning_effort=effort
+            model, key, base_url=openai_base_url, timeout=timeout, reasoning_effort=effort
         ), f"openai:{model}"
     if no_egress and url_requires_egress(cfg.ollama_base_url, default_url=default_url):
         return EgressBlocked("Relations"), "ollama:blocked"
@@ -556,21 +558,47 @@ def build_services(
         elif use_openai:
             description = f"OpenAI {pl.model} (egress per AI settings)"
             effort = openai_reasoning_effort(pl.reasoning, pl.model)
-            judge = OpenAiChatModelProvider(pl.model, key, timeout=timeout, reasoning_effort=effort)
+            judge = OpenAiChatModelProvider(
+                pl.model,
+                key,
+                base_url=settings.openai_base_url,
+                timeout=timeout,
+                reasoning_effort=effort,
+            )
             metadata_extractor = OpenAiMetadataExtractor(
-                pl.model, key, timeout=timeout, reasoning_effort=effort
+                pl.model,
+                key,
+                base_url=settings.openai_base_url,
+                timeout=timeout,
+                reasoning_effort=effort,
             )
             category_classifier = OpenAiCategoryClassifier(
-                pl.model, key, timeout=timeout, reasoning_effort=effort
+                pl.model,
+                key,
+                base_url=settings.openai_base_url,
+                timeout=timeout,
+                reasoning_effort=effort,
             )
             record_extractor = OpenAiRecordExtractor(
-                pl.model, key, timeout=timeout, reasoning_effort=effort
+                pl.model,
+                key,
+                base_url=settings.openai_base_url,
+                timeout=timeout,
+                reasoning_effort=effort,
             )
             ner_extractor = OpenAiEntityNerExtractor(
-                pl.model, key, timeout=timeout, reasoning_effort=effort
+                pl.model,
+                key,
+                base_url=settings.openai_base_url,
+                timeout=timeout,
+                reasoning_effort=effort,
             )
             relation_extractor = OpenAiRelationExtractor(
-                pl.model, key, timeout=timeout, reasoning_effort=effort
+                pl.model,
+                key,
+                base_url=settings.openai_base_url,
+                timeout=timeout,
+                reasoning_effort=effort,
             )
         else:
             # The Data Pipeline UI model when local; the canonical local default_model only as the
@@ -642,6 +670,7 @@ def build_services(
             key=key,
             no_egress=no_egress,
             default_url=default_url,
+            openai_base_url=settings.openai_base_url,
             timeout=timeout,
             keep_alive=settings.enrich_keep_alive,
         )
@@ -651,6 +680,7 @@ def build_services(
             key=key,
             no_egress=no_egress,
             default_url=default_url,
+            openai_base_url=settings.openai_base_url,
             timeout=timeout,
             keep_alive=settings.enrich_keep_alive,
         )

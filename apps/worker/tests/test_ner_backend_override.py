@@ -43,6 +43,7 @@ def _ner(
         key=key,
         no_egress=no_egress,
         default_url="http://localhost:11434",
+        openai_base_url="https://api.openai.com/v1",
         timeout=120.0,
         keep_alive="30m",
     )
@@ -61,6 +62,7 @@ def _keg(
         key=key,
         no_egress=no_egress,
         default_url="http://localhost:11434",
+        openai_base_url="https://api.openai.com/v1",
         timeout=120.0,
         keep_alive="30m",
     )

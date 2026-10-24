@@ -170,6 +170,13 @@ class Settings(BaseSettings):
     # empty. Lets a fresh deployment provision the hybrid (remote pipeline/RAG) split headlessly.
     openai_api_key: str = ""
 
+    # Base URL for the OpenAI provider (all purposes). Override to point the "openai" provider at
+    # any OpenAI-compatible server exposing /v1 - e.g. a local vLLM deployment
+    # (DOKTOK_OPENAI_BASE_URL=http://vllm.lan:8000/v1). Note the provider still counts as egress
+    # under the no-egress posture, so a local vLLM needs DOKTOK_NO_EGRESS=false (same rule as a
+    # remote Ollama URL).
+    openai_base_url: str = "https://api.openai.com/v1"
+
     # Headless bootstrap of the AI provider split (APP-2). When a provider is set here and NO AI
     # settings have been saved yet (fresh DB), these seed app_settings on startup so a deployment
     # gets the hybrid split without the Settings UI. Empty = leave the stored/default selection. The

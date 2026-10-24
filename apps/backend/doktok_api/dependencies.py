@@ -391,7 +391,11 @@ def _build_rag_chat_model(request: Request) -> ChatModelProvider:
 
         effort = openai_reasoning_effort(rag.reasoning, rag.model)
         model_provider = OpenAiChatModelProvider(
-            rag.model, openai_key, timeout=settings.rag_timeout_seconds, reasoning_effort=effort
+            rag.model,
+            openai_key,
+            base_url=settings.openai_base_url,
+            timeout=settings.rag_timeout_seconds,
+            reasoning_effort=effort,
         )
     else:
         from doktok_provider_ollama import OllamaChatModelProvider
@@ -753,6 +757,7 @@ def _build_entity_merge_adjudicator(request: Request) -> EntityMergeAdjudicator 
         openai_adj: EntityMergeAdjudicator = OpenAiEntityMergeAdjudicator(
             pl.model,
             openai_key,
+            base_url=settings.openai_base_url,
             timeout=timeout,
             reasoning_effort=openai_reasoning_effort("off", pl.model),
         )

@@ -256,3 +256,61 @@ def test_pick_orientation_biases_to_upright_on_near_tie() -> None:
     assert _pick_orientation({0: 0.3, 90: 0.99, 180: 0.3, 270: 0.2}) == 90
     # A genuine upside-down page (clearly better at 180) still flips.
     assert _pick_orientation({0: 0.5, 90: 0.2, 180: 0.9, 270: 0.2}) == 180
+
+
+def test_broken_pool_is_rebuilt_and_page_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An OOM-killed pool child breaks the whole ProcessPoolExecutor (BrokenProcessPool). ocr_image
+    # must rebuild the pool and retry the page instead of failing every later document until the
+    # worker restarts (the production outage from 2026-10-24).
+    from concurrent.futures.process import BrokenProcessPool
+
+    import doktok_provider_paddleocr.ocr as ocr_mod
+
+    class _Future:
+        def __init__(self, value: object) -> None:
+            self._value = value
+
+        def result(self) -> object:
+            return self._value
+
+    class _BrokenPool:
+        def submit(self, fn: object, *args: object) -> _Future:
+            raise BrokenProcessPool("A child process terminated abruptly")
+
+        def shutdown(self, wait: bool = True) -> None: ...
+
+    class _WorkingPool:
+        def submit(self, fn: object, *args: object) -> _Future:
+            return _Future(fn(*args))  # type: ignore[operator]
+
+        def shutdown(self, wait: bool = True) -> None: ...
+
+    pool_kinds = iter([_BrokenPool, _WorkingPool])
+    builds: list[object] = []
+
+    def _factory(**kwargs: object) -> object:
+        pool = next(pool_kinds)()
+        builds.append(pool)
+        return pool
+
+    class FakeEngine:
+        def predict(self, image: object) -> list[dict[str, object]]:
+            return [{"rec_texts": ["X"], "rec_scores": [0.9], "rec_boxes": [[0, 0, 5, 5]]}]
+
+    pytest.importorskip("PIL.Image")
+    pytest.importorskip("numpy")
+    monkeypatch.setattr(ocr_mod, "_WORKER_ENGINE", FakeEngine())
+    monkeypatch.setattr(ocr_mod, "ProcessPoolExecutor", _factory)
+
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), "white").save(buffer, format="PNG")
+    ocr = PaddleOcr(pool_size=2)
+    assert ocr.ocr_image(buffer.getvalue()).text == "X"
+    assert len(builds) == 2  # the broken pool was replaced, not reused
+    # Later pages keep using the rebuilt pool - no further rebuilds.
+    assert ocr.ocr_image(buffer.getvalue()).text == "X"
+    assert len(builds) == 2

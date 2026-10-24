@@ -14,6 +14,9 @@ dist
 build
 # Local data + secrets must never enter an image.
 storage/files
+# Local backup repos (restic/pgBackRest, written by root via the systemd timers) - huge and
+# unreadable to the build client; excluding them keeps `docker compose build` working (#fix).
+backups
 .env
 .env.*
 *.log

@@ -17,6 +17,10 @@
 #   tenant tokens; leave empty to disable the edge injection - recommended with password login),
 #   DOKTOK_OPENAI_API_KEY, DOKTOK_PIPELINE_PROVIDER, DOKTOK_RAG_PROVIDER,
 #   DOKTOK_SITE_ADDRESS (a domain enables automatic HTTPS).
+#
+# Image naming: local source builds get plain `doktok-ng-*` tags. To deploy the GHCR-published
+# images instead of building, set DOKTOK_IMAGE_REGISTRY=ghcr.io/lucianhanga/ plus
+# DOKTOK_IMAGE_TAG=<tag> and use `compose pull && compose up -d` (what deploy.yml does).
 
 name: doktok-prod
 
@@ -57,7 +61,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/db.Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-db:${DOKTOK_IMAGE_TAG:-latest}
+    image: ${DOKTOK_IMAGE_REGISTRY:-}doktok-ng-db:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-db
     # Continuous WAL archiving: archive_command runs pgBackRest archive-push inside this container.
     command:
@@ -140,7 +144,7 @@ services:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-backend:${DOKTOK_IMAGE_TAG:-latest}
+    image: ${DOKTOK_IMAGE_REGISTRY:-}doktok-ng-backend:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-backend
     depends_on:
       db:
@@ -200,7 +204,7 @@ services:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-worker:${DOKTOK_IMAGE_TAG:-latest}
+    image: ${DOKTOK_IMAGE_REGISTRY:-}doktok-ng-worker:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-worker
     depends_on:
       db:
@@ -235,7 +239,7 @@ services:
     build:
       context: .
       dockerfile: apps/ui/Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-ui:${DOKTOK_IMAGE_TAG:-latest}
+    image: ${DOKTOK_IMAGE_REGISTRY:-}doktok-ng-ui:${DOKTOK_IMAGE_TAG:-latest}
     container_name: doktok-prod-caddy
     depends_on:
       backend:
@@ -271,7 +275,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/backup-runner.Dockerfile
-    image: ghcr.io/lucianhanga/doktok-ng-backup-runner:${DOKTOK_IMAGE_TAG:-latest}
+    image: ${DOKTOK_IMAGE_REGISTRY:-}doktok-ng-backup-runner:${DOKTOK_IMAGE_TAG:-latest}
     profiles: ["tools"]
     environment:
       DOKTOK_BACKUP_DIR: /backups

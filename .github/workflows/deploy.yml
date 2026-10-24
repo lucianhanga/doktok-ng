@@ -49,6 +49,9 @@ jobs:
             # Record the currently-running digests so we can roll back.
             docker compose -f docker-compose.prod.yml images --format json > /opt/doktok/.last-deploy.json || true
             export DOKTOK_IMAGE_TAG="${IMAGE_TAG}"
+            # The pull path deploys the GHCR-published images (release.yml); local source builds
+            # leave DOKTOK_IMAGE_REGISTRY unset and use the plain doktok-ng-* names.
+            export DOKTOK_IMAGE_REGISTRY="ghcr.io/lucianhanga/"
             # Back up the DB before changing anything (DEVOPS-6).
             ./deploy/backup.sh || { echo "backup failed; aborting deploy"; exit 1; }
             docker compose -f docker-compose.prod.yml --env-file ".env.${ENVIRONMENT}" pull

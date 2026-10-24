@@ -52,4 +52,5 @@ def test_luna_offered_as_cheap_remote_options() -> None:
 
 def test_openai_reasoning_effort_covers_gpt6_models() -> None:
     assert openai_reasoning_effort("low", "gpt-6-luna") == "low"
-    assert openai_reasoning_effort("off", "gpt-6-luna") == "minimal"
+    # gpt-6 renamed the off level: "none" (gpt-5/o*-series use "minimal").
+    assert openai_reasoning_effort("off", "gpt-6-luna") == "none"

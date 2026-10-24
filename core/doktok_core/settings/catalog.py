@@ -160,4 +160,8 @@ def openai_reasoning_effort(reasoning: str, model: str) -> str | None:
     """Map a density level to OpenAI ``reasoning_effort`` (None for non-reasoning models)."""
     if not model.startswith(_OPENAI_REASONING_PREFIXES):
         return None
-    return "minimal" if reasoning == "off" else reasoning
+    if reasoning == "off":
+        # The off level is named "minimal" on gpt-5/o*-series; gpt-6 models renamed it to "none"
+        # (gpt-6 rejects "minimal" with a 400).
+        return "none" if model.startswith("gpt-6") else "minimal"
+    return reasoning

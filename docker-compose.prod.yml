@@ -98,8 +98,10 @@ services:
       retries: 10
     logging: *logging
     # Resource caps for the 8 GB box (#323). Limits ~ db .75g + gotenberg .5g + ollama 1.75g +
-    # backend .75g + worker 2.5g + caddy .25g = ~6.5g, leaving ~1g for the OS. The worker cap holds
-    # two PaddleOCR processes (~1g each) so OCR_CONCURRENCY=2 is viable on this box.
+    # backend .75g + worker 4g + caddy .25g = ~8g on paper, but caps are limits, not reservations -
+    # real usage sits far below them. The worker cap holds the parent (~2g with gliner-relex-large
+    # loaded) plus OCR_CONCURRENCY=2 pool children (~1g each); a 2.5g cap OOM-killed children
+    # mid-page (2026-10-24).
     deploy:
       resources:
         limits:
@@ -219,6 +221,10 @@ services:
       # reconciler can fan out, but each reconcile also hits the local embedder - keep it moderate.
       DOKTOK_OCR_CONCURRENCY: ${DOKTOK_OCR_CONCURRENCY:-2}
       DOKTOK_OCR_CPU_THREADS: ${DOKTOK_OCR_CPU_THREADS:-1}
+      # Forward the engine choice from .env - without these passthroughs the worker silently ran
+      # the paddleocr default even when .env asked for rapidocr (2026-10-24 OOM incident).
+      DOKTOK_OCR_ENGINE: ${DOKTOK_OCR_ENGINE:-paddleocr}
+      DOKTOK_OCR_RAPID_BACKEND: ${DOKTOK_OCR_RAPID_BACKEND:-onnxruntime}
       # Disable on N95/Alder Lake-N (oneDNN PIR crash); harmless to leave true on capable CPUs.
       DOKTOK_OCR_ENABLE_MKLDNN: ${DOKTOK_OCR_ENABLE_MKLDNN:-true}
       DOKTOK_INGEST_CONCURRENCY: ${DOKTOK_INGEST_CONCURRENCY:-2}
@@ -229,7 +235,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2560m
+          # The parent process alone holds ~2 GB when the gliner-relex-large relations model is
+          # loaded, and each OCR pool child needs ~0.5-1 GB on top; 2560m OOM-killed pool children
+          # mid-page (BrokenProcessPool on every document). Caps are limits, not reservations -
+          # the other services' real usage stays far below their caps.
+          memory: 4096m
           cpus: "2.0"
     # Long enough for the SIGTERM -> PaddleOCR pool teardown to finish.
     stop_grace_period: 60s

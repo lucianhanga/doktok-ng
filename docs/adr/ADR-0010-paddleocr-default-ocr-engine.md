@@ -50,7 +50,8 @@ GIL-serialized, so real parallelism comes from processes, not threads). Each Pad
 bounds safe concurrency: exceeding it OOM-kills a child, surfacing as `BrokenProcessPool` /
 "a child process terminated abruptly". Fix by lowering `DOKTOK_OCR_CONCURRENCY` or raising the worker
 `memory:` cap. On the N95 the validated config is `DOKTOK_OCR_CONCURRENCY=2` with the worker capped at
-~2.5 GB. See [deployment-trigkey-n95.md](../operations/deployment-trigkey-n95.md) and
+~4 GB — the ~2.5 GB cap predates the `gliner-relex-large` relations model, which alone holds ~2 GB in
+the worker parent (raised after the 2026-10-24 OOM incident). See [deployment-trigkey-n95.md](../operations/deployment-trigkey-n95.md) and
 [performance-and-ollama.md](../operations/performance-and-ollama.md).
 
 ## Consequences

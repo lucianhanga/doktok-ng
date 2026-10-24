@@ -45,9 +45,13 @@ class QwenReranker:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        # local_files_only: load strictly from the on-disk HF cache. Construction happens inside
+        # the chat request path, so a missing model must raise immediately (the backend then falls
+        # back to the LLM listwise reranker) instead of downloading gigabytes mid-request. Models
+        # get onto the box via `make reranker-models` / the preflight, never lazily.
         self._torch = torch
-        self._tok = AutoTokenizer.from_pretrained(model, padding_side="left")
-        self._model = AutoModelForCausalLM.from_pretrained(model).eval()  # type: ignore[no-untyped-call]
+        self._tok = AutoTokenizer.from_pretrained(model, padding_side="left", local_files_only=True)
+        self._model = AutoModelForCausalLM.from_pretrained(model, local_files_only=True).eval()  # type: ignore[no-untyped-call]
         self._device = _pick_device(device, torch)
         self._model.to(self._device)
         self._max_length = max_length

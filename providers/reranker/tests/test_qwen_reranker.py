@@ -67,3 +67,59 @@ def test_rerank_score_none_for_single_hit_short_circuit() -> None:
     out = QwenReranker.rerank(object(), "q", _hits(1), top_k=5)  # type: ignore[arg-type]
     assert len(out) == 1
     assert out[0].rerank_score is None
+
+
+def test_init_loads_only_from_local_cache_never_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chat request must never trigger a multi-GB model download: __init__ loads with
+    local_files_only=True so a model that is not on disk raises immediately and the backend
+    falls back to the LLM listwise reranker."""
+    import sys
+    import types
+
+    calls: dict[str, dict[str, object]] = {}
+
+    class _FakeTokenizer:
+        def convert_tokens_to_ids(self, token: str) -> int:
+            return 1
+
+        def __call__(self, text: str, add_special_tokens: bool = False) -> dict[str, list[int]]:
+            return {"input_ids": [0]}
+
+    class _FakeModel:
+        def eval(self) -> _FakeModel:
+            return self
+
+        def to(self, device: str) -> None:
+            return None
+
+    def _tokenizer_from_pretrained(model: str, **kwargs: object) -> _FakeTokenizer:
+        calls["tokenizer"] = kwargs
+        return _FakeTokenizer()
+
+    def _model_from_pretrained(model: str, **kwargs: object) -> _FakeModel:
+        calls["model"] = kwargs
+        return _FakeModel()
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoTokenizer = types.SimpleNamespace(  # type: ignore[attr-defined]
+        from_pretrained=_tokenizer_from_pretrained
+    )
+    fake_transformers.AutoModelForCausalLM = types.SimpleNamespace(  # type: ignore[attr-defined]
+        from_pretrained=_model_from_pretrained
+    )
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)  # type: ignore[attr-defined]
+    fake_torch.backends = types.SimpleNamespace(  # type: ignore[attr-defined]
+        mps=types.SimpleNamespace(is_available=lambda: False)
+    )
+
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    QwenReranker("Qwen/Qwen3-Reranker-0.6B")
+
+    assert calls["tokenizer"]["local_files_only"] is True
+    assert calls["model"]["local_files_only"] is True

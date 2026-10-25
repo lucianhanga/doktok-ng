@@ -131,3 +131,126 @@ def test_first_strike_still_requeues(tmp_path: Path) -> None:
     recover_stale_jobs(services, older_than=datetime.now(UTC) - timedelta(minutes=10))
 
     assert (services.layout.ingest / "flaky.pdf").is_file()
+
+
+def test_crash_loop_quarantine_creates_a_terminal_document(tmp_path: Path) -> None:
+    # A file that has already exhausted its recovery strikes is quarantined (not re-queued) AND,
+    # per the processing invariant, leaves a terminal quarantined DOCUMENT row so it is visible
+    # in Documents - not just a job tombstone.
+    from doktok_contracts.schemas import DocumentStatus
+
+    services = _services(tmp_path)
+    job = _stranded_job(services, age_minutes=30, name="killer.pdf")
+    import hashlib
+
+    job.sha256 = hashlib.sha256(Path(job.source_path).read_bytes()).hexdigest()
+    services.job_repo.update(job)
+    # Two prior crash tombstones for the same content -> this recovery is the third strike.
+    for i in (1, 2):
+        services.job_repo.add(
+            IngestionJob(
+                id=f"tomb{i:032d}",
+                tenant_id=TENANT,
+                source_path=f"/gone/{i}.pdf",
+                status=JobStatus.FAILED,
+                error_code="worker_crash_recovered",
+                sha256=job.sha256,
+                started_at=datetime.now(UTC) - timedelta(minutes=60),
+            )
+        )
+
+    recovered = recover_stale_jobs(services, older_than=datetime.now(UTC) - timedelta(minutes=10))
+    assert recovered
+    updated = services.job_repo.get(TENANT, job.id)
+    assert updated is not None and updated.status is JobStatus.QUARANTINED
+    docs, _, _ = services.document_repo.list_documents(TENANT)
+    quarantined = [d for d in docs if d.status is DocumentStatus.QUARANTINED]
+    assert len(quarantined) == 1
+    assert quarantined[0].original_filename == "killer.pdf"
+    assert quarantined[0].metadata["error_code"] == "crash_loop"
+
+
+def _processing_document(
+    services: IngestionServices, doc_id: str, *, age_minutes: int
+) -> None:
+    from doktok_contracts.schemas import Document, DocumentStatus  # noqa: F401
+
+    doc = Document(
+        id=doc_id,
+        tenant_id=TENANT,
+        sha256="z" * 64,
+        original_filename=f"{doc_id}.pdf",
+        title=doc_id,
+        status=DocumentStatus.PROCESSING,
+        created_at=datetime.now(UTC) - timedelta(minutes=age_minutes),
+        metadata={"staged_source": f"/data/in.process/{doc_id}/source.pdf"},
+    )
+    services.document_repo.add(doc)
+
+
+def test_zombie_processing_document_with_failed_extract_is_failed(tmp_path: Path) -> None:
+    # Worker SIGKILLed mid-extract: the job went terminal at the staged handoff, so only the
+    # document + ledger remain. Once the extract feature is terminally failed (attempts
+    # exhausted), the document must become failed - not sit 'processing' forever.
+    from doktok_contracts.schemas import DocumentStatus, FeatureStatus  # noqa: F401
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+    from doktok_core.ingestion.pipeline import fail_interrupted_processing
+
+    services = _services(tmp_path)
+    services.feature_repo = InMemoryFeatureRepository()
+    _processing_document(services, "doc-zombie", age_minutes=120)
+    services.feature_repo.seed_for_document(TENANT, "doc-zombie", [("extract", 1)])
+    row = services.feature_repo.list_for_document(TENANT, "doc-zombie")[0]
+    row.status = FeatureStatus.FAILED
+    row.attempts = row.max_attempts
+    row.last_error = "attempts exhausted: never ran to completion (likely crashed/OOM)"
+    services.feature_repo.rows = [row]
+
+    failed = fail_interrupted_processing(
+        services, older_than=datetime.now(UTC) - timedelta(minutes=30)
+    )
+    assert failed == 1
+    zombie = services.document_repo.get(TENANT, "doc-zombie")
+    assert zombie is not None and zombie.status is DocumentStatus.FAILED
+
+
+def test_processing_document_with_in_flight_extract_is_left_alone(tmp_path: Path) -> None:
+    # A pending/running extract row means the work is legitimately in flight - never reap it,
+    # no matter how old the document is.
+    from doktok_contracts.schemas import DocumentStatus
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+    from doktok_core.ingestion.pipeline import fail_interrupted_processing
+
+    services = _services(tmp_path)
+    services.feature_repo = InMemoryFeatureRepository()
+    _processing_document(services, "doc-live", age_minutes=120)
+    services.feature_repo.seed_for_document(TENANT, "doc-live", [("extract", 1)])
+
+    failed = fail_interrupted_processing(
+        services, older_than=datetime.now(UTC) - timedelta(minutes=30)
+    )
+    assert failed == 0
+    live = services.document_repo.get(TENANT, "doc-live")
+    assert live is not None and live.status is DocumentStatus.PROCESSING
+
+
+def test_old_processing_document_without_any_ledger_is_failed(tmp_path: Path) -> None:
+    # Intake crashed mid-handoff (document inserted, stage ledger never seeded): no extract row
+    # exists and none ever will - the document must not sit 'processing' forever.
+    from doktok_contracts.schemas import DocumentStatus
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+    from doktok_core.ingestion.pipeline import fail_interrupted_processing
+
+    services = _services(tmp_path)
+    services.feature_repo = InMemoryFeatureRepository()
+    _processing_document(services, "doc-orphan", age_minutes=120)
+    _processing_document(services, "doc-fresh", age_minutes=5)  # fresh: give intake time
+
+    failed = fail_interrupted_processing(
+        services, older_than=datetime.now(UTC) - timedelta(minutes=30)
+    )
+    assert failed == 1
+    orphan = services.document_repo.get(TENANT, "doc-orphan")
+    assert orphan is not None and orphan.status is DocumentStatus.FAILED
+    fresh = services.document_repo.get(TENANT, "doc-fresh")
+    assert fresh is not None and fresh.status is DocumentStatus.PROCESSING

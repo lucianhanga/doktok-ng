@@ -10,6 +10,14 @@ const ITEMS = [
   { cls: "seg-done", label: "Done", hint: "fully processed" },
 ] as const;
 
+// Pipeline stage color groups (the segmented in-flight bar).
+const STAGES = [
+  { cls: "seg-intake", label: "Intake", hint: "reading, hashing, converting" },
+  { cls: "seg-processing", label: "Extracting text", hint: "text extraction / OCR" },
+  { cls: "seg-index", label: "Indexing", hint: "chunking + embeddings" },
+  { cls: "seg-done", label: "Finishing", hint: "activation" },
+] as const;
+
 /** Small (?) button that explains the status color codes on demand. */
 export function StatusLegend() {
   const [open, setOpen] = useState(false);
@@ -28,7 +36,15 @@ export function StatusLegend() {
       {open && (
         <span className="status-legend" role="note">
           {ITEMS.map((item) => (
-            <span key={item.cls} className="status-legend-row">
+            <span key={item.cls + item.label} className="status-legend-row">
+              <i className={`status-swatch ${item.cls}`} aria-hidden="true" />
+              <strong>{item.label}</strong>
+              <span className="muted">{item.hint}</span>
+            </span>
+          ))}
+          <span className="status-legend-row status-legend-subhead muted">Pipeline stages</span>
+          {STAGES.map((item) => (
+            <span key={item.cls + item.label} className="status-legend-row">
               <i className={`status-swatch ${item.cls}`} aria-hidden="true" />
               <strong>{item.label}</strong>
               <span className="muted">{item.hint}</span>

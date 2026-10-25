@@ -530,6 +530,17 @@ class PostgresDocumentRepository:
             )
             return cur.rowcount > 0
 
+    def list_processing(self, tenant_id: str, *, older_than: datetime) -> list[Document]:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            rows = cur.execute(
+                f"SELECT {_DOC_COLUMNS} FROM documents "
+                "WHERE tenant_id=%s AND status='processing' AND created_at < %s "
+                "ORDER BY created_at",
+                (tenant_id, older_than),
+            ).fetchall()
+        return [_row_to_document(r) for r in rows]
+
     def get(self, tenant_id: str, document_id: str) -> Document | None:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)

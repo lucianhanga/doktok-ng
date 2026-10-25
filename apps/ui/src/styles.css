@@ -7520,3 +7520,43 @@ tr.row-selected {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Segmented stage bar (#848): one segment per intake stage; filled segments take their stage
+ * group color, the track is empty surface. */
+.stage-bar {
+  background: transparent;
+  gap: 2px;
+}
+.stage-seg {
+  flex: 1;
+  height: 100%;
+  background: var(--surface-3);
+  border-radius: 2px;
+}
+.stage-seg.filled.seg-intake {
+  background: var(--source);
+}
+.stage-seg.filled.seg-index {
+  background: var(--accent-strong);
+}
+.stage-seg.filled.seg-processing {
+  background: var(--accent);
+}
+.stage-seg.filled.seg-waiting {
+  background: var(--muted);
+}
+.stage-seg.filled.seg-done {
+  background: var(--success);
+}
+.seg-intake {
+  background: var(--source);
+}
+.seg-index {
+  background: var(--accent-strong);
+}
+.status-legend-subhead {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  margin-top: 4px;
+}

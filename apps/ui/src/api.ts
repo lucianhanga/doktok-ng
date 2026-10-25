@@ -1679,6 +1679,8 @@ export interface IngestionJob {
   error_message: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Carries original_ingest_path - the file's real name before the workdir rename. */
+  metadata?: Record<string, unknown>;
 }
 
 export function fetchIngestionJobs(signal?: AbortSignal): Promise<IngestionJob[]> {

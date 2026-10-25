@@ -10,19 +10,11 @@ const ITEMS = [
   { cls: "seg-done", label: "Done", hint: "fully processed" },
 ] as const;
 
-// The granular pipeline stages, each with its own color (#848) - the same seg-f-* classes color
-// the per-document bar segments and the stage-queue bars.
+// The per-document stage bar: one segment per pipeline stage, shading blue -> green as stages
+// complete; a red segment marks the failed stage.
 const STAGES = [
-  { cls: "seg-f-extract", label: "Extract / OCR", hint: "text + OCR from the original" },
-  { cls: "seg-f-thumbnail", label: "Thumbnails", hint: "page previews" },
-  { cls: "seg-f-chunk_embed", label: "Chunk & embed", hint: "search vectors" },
-  { cls: "seg-f-entities", label: "Entities (patterns)", hint: "emails, dates, amounts, ..." },
-  { cls: "seg-f-ner", label: "NER", hint: "people, organizations, places" },
-  { cls: "seg-f-entity_graph", label: "Entity graph", hint: "links entities across documents" },
-  { cls: "seg-f-relations", label: "Relations", hint: "who did what, where, when" },
-  { cls: "seg-f-doc_metadata", label: "Metadata", hint: "title, date, summary" },
-  { cls: "seg-f-doc_classify", label: "Classification", hint: "document category" },
-  { cls: "seg-f-structured_records", label: "Records", hint: "tables, line items" },
+  { cls: "stage-grad-demo", label: "Stage progress", hint: "blue → green as stages complete" },
+  { cls: "seg-failed", label: "Failed stage", hint: "the stage that stopped the document" },
 ] as const;
 
 /** Small (?) button that explains the status color codes on demand. */

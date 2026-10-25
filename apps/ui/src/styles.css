@@ -7616,3 +7616,8 @@ tr.row-selected {
 .seg-f-doc_metadata { background: #a8c256; }
 .seg-f-doc_classify { background: #4bb3d4; }
 .seg-f-structured_records { background: #4cc266; }
+
+/* Legend swatch demonstrating the blue->green stage gradient. */
+.status-swatch.stage-grad-demo {
+  background: linear-gradient(to right, var(--accent), var(--success));
+}

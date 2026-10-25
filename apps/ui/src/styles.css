@@ -7484,3 +7484,21 @@ tr.row-selected {
   font-size: 12px;
   white-space: nowrap;
 }
+.inflight-retry {
+  background: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  flex: none;
+}
+.inflight-retry:hover {
+  background: var(--danger);
+  color: var(--accent-contrast);
+}
+.inflight-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -268,3 +268,63 @@ test("the upload message is a toast and clears itself (no stale 'queued' label)"
     vi.useRealTimers();
   }
 });
+
+test("a failed pre-intake row offers Retry, which requeues the job and reloads", async () => {
+  const calls = stubApi({
+    jobs: [
+      {
+        id: "j4",
+        source_path: "/data/processed/abc/source.pdf",
+        status: "failed",
+        document_id: null,
+        error_code: "worker_crash_recovered",
+        error_message: "worker crashed",
+        started_at: null,
+      },
+    ],
+  });
+  render(<OverviewPanel />);
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  fireEvent.click(retry);
+  await waitFor(() =>
+    expect(calls.some((u) => u.includes("/api/v1/ingestion/jobs/j4/retry"))).toBe(true),
+  );
+});
+
+test("a retry failure is surfaced instead of silently swallowed", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/retry")) {
+        return new Response(JSON.stringify({ detail: "the source file no longer exists" }), {
+          status: 409,
+        });
+      }
+      if (url.includes("/api/v1/ingestion/jobs")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "j9",
+              source_path: "/i/gone.pdf",
+              status: "failed",
+              document_id: null,
+              error_code: "worker_crash_recovered",
+              error_message: "worker crashed",
+              started_at: null,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify(url.includes("/stats") ? EMPTY_STATS : []), {
+        status: 200,
+      });
+    }),
+  );
+  render(<OverviewPanel />);
+  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  await waitFor(() =>
+    expect(screen.getByText(/source file no longer exists/)).toBeInTheDocument(),
+  );
+});

@@ -127,6 +127,22 @@ class InMemoryFeatureRepository:
         prereqs: dict[str, set[str]] = {}
         for feature, prereq in dependencies:
             prereqs.setdefault(feature, set()).add(prereq)
+        # Features that ARE prerequisites of others (e.g. extract) unblock the most downstream work.
+        prereq_features = {prereq for _, prereq in dependencies}
+
+        # Parity with the Postgres adapter: crash-bound the reclaim loop - a stale running row that
+        # exhausted its attempts is failed, never reclaimed (#850).
+        for row in self.rows:
+            if (
+                row.tenant_id == tenant_id
+                and row.status is FeatureStatus.RUNNING
+                and row.attempts >= row.max_attempts
+                and row.last_attempt_at is not None
+                and row.last_attempt_at < reclaim_before
+            ):
+                row.status = FeatureStatus.FAILED
+                row.last_error = "attempts exhausted: never ran to completion (likely crashed/OOM)"
+                row.next_attempt_at = None
 
         def ready(row: DocumentFeature) -> bool:
             # Every prerequisite of this feature must have a 'done' row on the same document.
@@ -141,9 +157,12 @@ class InMemoryFeatureRepository:
                     return False
             return True
 
-        for row in self.rows:
-            if row.tenant_id != tenant_id:
-                continue
+        # Prerequisite stages first (they unblock downstream rows), then FIFO by creation.
+        ordered = sorted(
+            (r for r in self.rows if r.tenant_id == tenant_id),
+            key=lambda r: (r.feature not in prereq_features, r.created_at),
+        )
+        for row in ordered:
             due = (
                 row.status is FeatureStatus.PENDING
                 or (
@@ -153,6 +172,7 @@ class InMemoryFeatureRepository:
                 )
                 or (
                     row.status is FeatureStatus.RUNNING
+                    and row.attempts < row.max_attempts
                     and row.last_attempt_at is not None
                     and row.last_attempt_at < reclaim_before
                 )

@@ -40,6 +40,7 @@ are visible and reprocessable from Documents.
 | F5 | low | The bounded sweep (#850) fails an exhausted feature row but nothing marks the parent document failed when the exhausted feature is `extract` (same root as F3). |
 | F6 | low | Documents UI: the status filter lacks `quarantined`; failed documents have no direct Reprocess affordance in the list (reingest exists in DocumentDetail + bulk action, endpoint has no status guard). |
 | F7 | info | Overview in-flight pinned terminal rows (pre-intake failures) — a workaround for F1/F2; becomes obsolete once terminal documents exist for every outcome. Legacy tombstones remain dismissible (DELETE /jobs, #853). |
+| F8 | **high** | Scheduler starvation: `claim_next` was strict FIFO by `created_at`, so a fresh document's `extract` row (the newest row) parked behind the whole older enrichment backlog of already-extracted documents — OCR sat idle while later stages ran (user report 2026-10-25). Fixed: prerequisite stages claim first (a row whose feature others depend on unblocks the most downstream work), then FIFO. The in-memory repository also gained parity for the #850 crash bound. |
 
 ## Verified consistent (no action)
 

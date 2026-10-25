@@ -181,3 +181,33 @@ def test_crashed_running_feature_is_failed_after_max_attempts(db: Database) -> N
     row = next(r for r in repo.list_for_document(TENANT, "d1") if r.feature == "relations")
     assert row.status is FeatureStatus.FAILED
     assert row.last_error  # explains the crash loop instead of sitting silent
+
+
+def test_prerequisite_stage_is_claimed_before_the_older_backlog(db: Database) -> None:
+    # A fresh document's `extract` row is the NEWEST ledger row; strict FIFO (created_at) parked
+    # it behind every older pending feature of already-extracted documents, so OCR sat idle while
+    # the reconciler churned the enrichment backlog (user report 2026-10-25). Rows whose feature
+    # is a prerequisite of other rows must claim first - they unblock everything downstream.
+    docs = PostgresDocumentRepository(db)
+    _active_doc(docs, "d1")
+    _active_doc(docs, "d2")
+    repo = PostgresFeatureRepository(db)
+
+    # d1 seeded EARLIER: its extract is done, its entities row (old) is due and unblocked.
+    repo.seed_for_document(TENANT, "d1", [("extract", 1), ("entities", 1)])
+    now = datetime.now(UTC)
+    first = repo.claim_next(TENANT, now=now, reclaim_before=now - timedelta(seconds=900))
+    assert first is not None and first.feature == "extract" and first.document_id == "d1"
+    repo.mark_done(first.id, feature_version=1)
+
+    # d2 seeded LATER: extract pending, entities gated behind it.
+    repo.seed_for_document(TENANT, "d2", [("extract", 1), ("entities", 1)])
+
+    nxt = repo.claim_next(
+        TENANT,
+        now=now,
+        reclaim_before=now - timedelta(seconds=900),
+        dependencies=[("entities", "extract")],
+    )
+    # Without priority this returns d1's (older) entities row and OCR waits.
+    assert nxt is not None and nxt.feature == "extract" and nxt.document_id == "d2"

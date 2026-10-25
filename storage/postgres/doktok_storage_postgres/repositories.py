@@ -2501,7 +2501,11 @@ class PostgresFeatureRepository:
                 "      SELECT 1 FROM document_features p WHERE p.tenant_id = f.tenant_id"
                 "        AND p.document_id = f.document_id AND p.feature = d.prereq"
                 "        AND p.status = 'done'))"
-                "  ORDER BY f.created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
+                # Prerequisite stages first: a row whose feature other rows depend on (extract for
+                # every enrichment stage) unblocks the most downstream work. Strict FIFO parked a
+                # fresh document's extract behind the whole older backlog, idling OCR (2026-10-25).
+                "  ORDER BY (EXISTS (SELECT 1 FROM deps dp WHERE dp.prereq = f.feature)) DESC, "
+                "  f.created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
                 "UPDATE document_features f SET status='running', attempts=f.attempts+1, "
                 "last_attempt_at=%(now)s, updated_at=now() FROM due WHERE f.id=due.id "
                 f"RETURNING {_FEATURE_COLUMNS_F}",

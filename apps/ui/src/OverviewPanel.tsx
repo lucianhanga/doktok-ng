@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  dismissIngestionJob,
   fetchActivity,
   fetchCategories,
   fetchIngestionJobs,
@@ -161,21 +162,21 @@ function jobStage(job: IngestionJob): { label: string; pct: number; cls: string 
  * lands in Documents - whatever its status - the row leaves this list. Broken rows (failed before
  * intake) carry a Retry action: the file is still on the server, so one click requeues it. */
 function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: () => void }) {
-  const [retrying, setRetrying] = useState<string | null>(null);
-  const [retryError, setRetryError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const moving = jobs.filter((j) => !BROKEN_JOB.has(j.status));
   const broken = jobs.filter((j) => BROKEN_JOB.has(j.status));
 
-  async function retry(job: IngestionJob) {
-    setRetrying(job.id);
-    setRetryError(null);
+  async function act(job: IngestionJob, action: (id: string) => Promise<void>, what: string) {
+    setBusyId(job.id);
+    setActionError(null);
     try {
-      await retryIngestionJob(job.id);
+      await action(job.id);
       onChanged();
     } catch (e) {
-      setRetryError(e instanceof Error ? e.message : "retry failed");
+      setActionError(`${what} failed: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
-      setRetrying(null);
+      setBusyId(null);
     }
   }
 
@@ -198,14 +199,25 @@ function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: ()
                   {isBroken ? "" : elapsed(job.started_at)}
                 </span>
                 {isBroken && (
-                  <button
-                    type="button"
-                    className="inflight-retry"
-                    disabled={retrying === job.id}
-                    onClick={() => void retry(job)}
-                  >
-                    {retrying === job.id ? "Retrying…" : "Retry"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="inflight-retry"
+                      disabled={busyId === job.id}
+                      onClick={() => void act(job, retryIngestionJob, "Retry")}
+                    >
+                      {busyId === job.id ? "…" : "Retry"}
+                    </button>
+                    <button
+                      type="button"
+                      className="inflight-dismiss"
+                      disabled={busyId === job.id}
+                      title="Remove this entry (the file is gone or no longer wanted)"
+                      onClick={() => void act(job, dismissIngestionJob, "Dismiss")}
+                    >
+                      Dismiss
+                    </button>
+                  </>
                 )}
               </div>
               <div className="flow-bar">
@@ -215,9 +227,9 @@ function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: ()
           );
         })}
       </ul>
-      {retryError && (
+      {actionError && (
         <p role="alert" className="status-error">
-          Retry failed: {retryError}
+          {actionError}
         </p>
       )}
       <p className="muted inflight-summary">

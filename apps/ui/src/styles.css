@@ -7502,3 +7502,21 @@ tr.row-selected {
   opacity: 0.5;
   cursor: default;
 }
+.inflight-dismiss {
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  flex: none;
+}
+.inflight-dismiss:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+.inflight-dismiss:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

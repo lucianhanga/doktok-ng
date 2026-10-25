@@ -273,7 +273,8 @@ class Settings(BaseSettings):
     ocr_concurrency: int = 4
     # Staged ingestion (ADR-0015): when on, intake creates a `processing` document + seeds the
     # stage ledger and the `extract` stage does OCR/extraction + activation, instead of the inline
-    # pipeline. Default off while the staged path is built and proven; flip once it ships.
+    # pipeline. The default stays off for tests/dev; prod compose enables it explicitly (the staged
+    # path survived the 2026-10 processing audit - F3/F4/F5 zombie handling included).
     staged_ingestion: bool = False
     # How many feature-reconciler runs proceed in parallel (backfills drain faster). The reconciler
     # claims distinct rows with SKIP LOCKED, so this is safe; bound it by Ollama/DB capacity.

@@ -3,9 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Overview modes — prototype</title>
+<title>Overview — current implementation preview</title>
 <style>
-  /* Theme tokens copied from apps/ui/src/styles.css (dark = default). */
   :root {
     --bg: #14171c; --surface: #1a1e25; --surface-2: #212630; --surface-3: #2a303b;
     --border: #2e3540; --border-strong: #3c4552;
@@ -15,335 +14,303 @@
     --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  }
-  /* Prototype chrome (not part of the proposal). */
-  .proto-bar {
-    position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center;
-    padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border-strong);
-  }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+
+  .proto-bar { position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border-strong); }
   .proto-bar .note { color: var(--muted); font-size: 12px; margin-right: auto; }
-  .proto-bar button {
-    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
-  }
+  .proto-bar button { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
   .proto-bar button.active { border-color: var(--accent); color: var(--accent); }
-  .concept { color: var(--muted); font-size: 13px; margin: 4px 0 20px; max-width: 70ch; }
-  .concept strong { color: var(--text); }
 
   main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 64px; }
-  h2 { font-size: 17px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 0 0 16px; }
   h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
   .muted { color: var(--muted); }
-  .num { font-variant-numeric: tabular-nums; }
+  .num, strong { font-variant-numeric: tabular-nums; }
 
-  /* Tiles — flat, 1px border, the number is the hero. */
-  .tiles { display: grid; gap: 10px; }
-  .tiles.t3 { grid-template-columns: repeat(3, 1fr); }
-  .tiles.t6 { grid-template-columns: repeat(6, 1fr); }
-  .tile {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: 14px 16px;
-  }
-  .tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .tile .l { color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .tile .sub { font-size: 12px; margin-top: 4px; }
-  .tile.alert { border-color: var(--danger); }
-  .tile.alert .v { color: var(--danger); }
-  .tile.warn .v { color: var(--warning); }
+  /* --- shipped classes (mirror of styles.css) --- */
+  .stat-tiles { display: grid; gap: 10px; }
+  .stat-tiles.t3 { grid-template-columns: repeat(3, 1fr); }
+  .stat-tiles.t5 { grid-template-columns: repeat(5, 1fr); }
+  .stat-tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .stat-tile .stat-value { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat-tile .stat-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .stat-tile.alert { border-color: var(--danger); }
+  .stat-tile.alert .stat-value { color: var(--danger); }
+  .stat-tile.warn .stat-value { color: var(--warning); }
 
-  /* Dropzone. */
-  .dropzone {
-    border: 1.5px dashed var(--border-strong); border-radius: 8px; background: var(--surface);
-    padding: 18px; text-align: center; cursor: pointer;
-  }
-  .dropzone small { display: block; color: var(--muted); margin-top: 4px; }
-  .dropzone.hero { padding: 56px 18px; font-size: 17px; }
+  .upload-dropzone { border: 1.5px dashed var(--border-strong); border-radius: 8px; background: var(--surface); padding: 18px; text-align: center; cursor: pointer; }
+  .upload-dropzone.hero { padding: 56px 18px; font-size: 17px; }
+  .upload-dropzone small { display: block; color: var(--muted); margin-top: 4px; }
 
-  /* Ingestion visualizations. */
-  .bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; display: flex; }
-  .bar > i { display: block; height: 100%; }
-  .seg-processing { background: var(--accent); }
+  .panel-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 16px; }
+  .section-head { display: flex; align-items: center; gap: 8px; margin: 28px 0 10px; }
+  .section-head h3 { margin: 0; }
+
+  .inflight { list-style: none; margin: 0; padding: 0; }
+  .inflight li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .inflight li:last-child { border-bottom: none; }
+  .inflight-top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; align-items: baseline; }
+  .inflight-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inflight-elapsed { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .inflight-stage.is-failed { color: var(--danger); }
+  .inflight-summary { font-size: 13px; margin: 10px 0 4px; }
+  .inflight-retry { background: none; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
+  .inflight-dismiss { background: none; border: 1px solid var(--border-strong); color: var(--muted); border-radius: 4px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
+
+  .flow-bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; display: flex; margin-top: 6px; }
+  .flow-bar > i { display: block; height: 100%; }
+  .stage-bar { background: transparent; gap: 2px; }
+  .stage-seg { flex: 1; height: 100%; background: var(--surface-3); border-radius: 2px; }
   .seg-waiting { background: var(--muted); }
   .seg-failed { background: var(--danger); }
+  .seg-attention { background: var(--warning); }
   .seg-done { background: var(--success); }
-  .stage-list { display: grid; gap: 6px; font-size: 13px; }
-  .stage-list .row { display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); padding: 6px 0; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .seg-processing { background: var(--accent); }
 
-  /* Activity. */
+  /* per-stage colors */
+  .seg-f-extract { background: #5aa0e6; }
+  .seg-f-thumbnail { background: #8a93a6; }
+  .seg-f-chunk_embed { background: #3fb8af; }
+  .seg-f-entities { background: #d8a53f; }
+  .seg-f-ner { background: #e0805a; }
+  .seg-f-entity_graph { background: #a58cff; }
+  .seg-f-relations { background: #e07ba8; }
+  .seg-f-doc_metadata { background: #a8c256; }
+  .seg-f-doc_classify { background: #4bb3d4; }
+  .seg-f-structured_records { background: #4cc266; }
+  .seg-running { animation: stage-pulse 1.6s ease-in-out infinite; }
+  @keyframes stage-pulse { 50% { opacity: .45; } }
+
+  .pipeline-totals { display: grid; gap: 6px; font-size: 13px; padding: 12px 16px; }
+  .pipeline-total-row { display: flex; align-items: center; gap: 12px; }
+  .pipeline-total-name { width: 150px; flex: none; }
+  .pipeline-totals .flow-bar { flex: 1; margin-top: 0; }
+
+  .status-legend-wrap { position: relative; display: inline-flex; }
+  .status-legend-toggle { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border-strong); background: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0; }
+  .status-legend-toggle:hover, .status-legend-toggle[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .status-legend { position: absolute; top: 24px; left: 0; z-index: 20; min-width: 320px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 8px; padding: 10px 14px; font-size: 13px; display: grid; gap: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  .status-legend-row { display: flex; align-items: center; gap: 8px; }
+  .status-legend-row strong { min-width: 130px; }
+  .status-swatch { width: 22px; height: 6px; border-radius: 3px; flex: none; }
+  .status-legend-subhead { text-transform: uppercase; letter-spacing: .06em; font-size: 11px; margin-top: 4px; color: var(--muted); }
+
   .activity { list-style: none; margin: 0; padding: 0; font-size: 13px; }
   .activity li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); align-items: baseline; }
   .activity time { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .badge {
-    font-size: 11px; border: 1px solid var(--border-strong); border-radius: 4px;
-    padding: 1px 6px; color: var(--muted); white-space: nowrap;
-  }
+  .badge { font-size: 11px; border: 1px solid var(--border-strong); border-radius: 4px; padding: 1px 6px; color: var(--muted); white-space: nowrap; }
   .badge.error { color: var(--danger); border-color: var(--danger); }
   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip {
-    font-size: 12px; border: 1px solid var(--border); background: var(--surface);
-    border-radius: 999px; padding: 3px 10px;
-  }
-  .chip b { font-variant-numeric: tabular-nums; margin-left: 6px; }
-
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  .panel-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
-
-  /* In-flight documents: one row per job that has no document record yet. */
-  .inflight { list-style: none; margin: 0; padding: 0; }
-  .inflight li { padding: 8px 0; border-bottom: 1px solid var(--border); }
-  .inflight .row-top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; align-items: baseline; }
-  .inflight .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .inflight .bar { margin-top: 6px; }
-  .inflight .elapsed { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
-
-  /* Status color legend — same semantics everywhere (progress bars, badges, tiles, dots). */
-  .h3-row { display: flex; align-items: center; gap: 8px; margin: 28px 0 10px; }
-  .h3-row h3 { margin: 0; }
-  .legend-toggle {
-    width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border-strong);
-    background: none; color: var(--muted); font-size: 11px; line-height: 1; cursor: pointer;
-    padding: 0; flex: none;
-  }
-  .legend-toggle:hover, .legend-toggle[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
-  .legend {
-    border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
-    padding: 10px 16px; margin: 0 0 10px; font-size: 13px; display: grid; gap: 6px;
-  }
-  .legend .row { display: flex; align-items: center; gap: 8px; }
-  .legend .swatch { width: 22px; height: 6px; border-radius: 3px; flex: none; }
+  .chip { font-size: 12px; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 3px 10px; }
+  .chip b { margin-left: 6px; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <nav class="proto-bar">
-  <span class="note">Overview rework — 4 layout options, mock data, spartan style</span>
-  <button data-view="simple-a" class="active">Simple A</button>
-  <button data-view="simple-b">Simple B</button>
-  <button data-view="advanced-a">Advanced A</button>
-  <button data-view="advanced-b">Advanced B</button>
+  <span class="note">Preview of the SHIPPED implementation (main @ #858–#861) — mock batch: 6 PDFs, OCR lane = 2</span>
+  <button data-view="simple" class="active">Simple</button>
+  <button data-view="advanced">Advanced</button>
 </nav>
 
 <main>
-  <!-- ================= SIMPLE A ================= -->
-  <section id="simple-a">
-    <h2>Overview</h2>
-    <p class="concept"><strong>Simple A — “Focus stack”.</strong> One vertical reading flow: act (drop documents) → see the library (3 tiles) → know the pipeline is fine (one thin bar, one line of text). Zero chrome beyond that.</p>
+<!-- ================= SIMPLE ================= -->
+<section id="simple">
+  <h2>Overview</h2>
+  <div class="upload-dropzone hero" role="button">
+    Drag documents here to ingest
+    <small>or click to browse — they appear in Documents as they process</small>
+  </div>
 
-    <div class="dropzone" role="button">
-      Drag documents here to ingest
-      <small>or click to browse — they appear in Documents as they process</small>
-    </div>
-
-    <h3>Library</h3>
-    <div class="tiles t3">
-      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div></div>
-      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div></div>
-      <div class="tile"><div class="v num">12</div><div class="l">Categories</div></div>
-    </div>
-
-    <h3>Ingestion</h3>
-    <div class="panel-box">
-      <div class="bar" aria-label="ingestion progress">
-        <i class="seg-done" style="width:88%"></i>
-        <i class="seg-processing" style="width:6%"></i>
-        <i class="seg-waiting" style="width:4%"></i>
-        <i class="seg-failed" style="width:2%"></i>
-      </div>
-      <p class="muted num" style="margin:8px 0 0;font-size:13px">5 processing · 3 waiting · <span style="color:var(--danger)">1 failed</span></p>
-    </div>
-  </section>
-
-  <!-- ================= SIMPLE B ================= -->
-  <section id="simple-b" hidden>
-    <h2>Overview</h2>
-    <p class="concept"><strong>Simple B — “Action hero”.</strong> The dropzone is the page. Under it, each document still on its way into the library gets one row with its own progress bar — once it lands in Documents, it leaves this list. Library tiles close the page.</p>
-
-    <div class="dropzone hero" role="button">
-      Drag documents here to ingest
-      <small>or click to browse — they appear in Documents as they process</small>
-    </div>
-
+  <div class="section-head">
     <h3>On the way in</h3>
-    <div class="panel-box" style="padding:6px 16px">
-      <ul class="inflight">
-        <li>
-          <div class="row-top"><span class="fname">contract-2024-11.pdf</span><span class="muted">extracting text</span></div>
-          <div class="bar"><i class="seg-processing" style="width:60%"></i></div>
-        </li>
-        <li>
-          <div class="row-top"><span class="fname">scan-0042.pdf</span><span class="muted">queued</span></div>
-          <div class="bar"><i class="seg-waiting" style="width:6%"></i></div>
-        </li>
-        <li>
-          <div class="row-top"><span class="fname">photo-scan.tiff</span><span style="color:var(--danger)">failed — unsupported type</span></div>
-          <div class="bar"><i class="seg-failed" style="width:100%"></i></div>
-        </li>
-      </ul>
-      <p class="muted num" style="font-size:13px;margin:10px 0 4px">2 on the way in · 1 needs a decision — everything already in Documents lives there, not here.</p>
-    </div>
-
-    <h3>Library</h3>
-    <div class="tiles t3">
-      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div></div>
-      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div></div>
-      <div class="tile"><div class="v num">12</div><div class="l">Categories</div></div>
-    </div>
-  </section>
-
-  <!-- ================= ADVANCED A ================= -->
-  <section id="advanced-a" hidden>
-    <h2>Overview</h2>
-    <p class="concept"><strong>Advanced A — “Dashboard grid”.</strong> KPI strip up top (signal tiles only: failures and attention get their own tiles because they demand action), then a two-column body: pipeline left, recent activity right. Categories close the page.</p>
-
-    <div class="dropzone" role="button">
-      Drag documents here to ingest
-      <small>or click to browse</small>
-    </div>
-
-    <h3>Library</h3>
-    <div class="tiles t6">
-      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div></div>
-      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div></div>
-      <div class="tile"><div class="v num">12</div><div class="l">Categories</div></div>
-      <div class="tile alert"><div class="v num">1</div><div class="l">Failed</div></div>
-      <div class="tile warn"><div class="v num">4</div><div class="l">Needs attention</div></div>
-      <div class="tile"><div class="v num">98.9%</div><div class="l">Success rate</div></div>
-    </div>
-
-    <div class="grid-2" style="margin-top:28px">
-      <div>
-        <h3 style="margin-top:0">Ingestion pipeline</h3>
-        <div class="panel-box">
-          <div class="bar">
-            <i class="seg-done" style="width:88%"></i>
-            <i class="seg-processing" style="width:6%"></i>
-            <i class="seg-waiting" style="width:4%"></i>
-            <i class="seg-failed" style="width:2%"></i>
-          </div>
-          <div class="stage-list" style="margin-top:12px">
-            <div class="row"><span><span class="dot" style="background:var(--accent)"></span>Processing</span><b class="num">5</b></div>
-            <div class="row"><span><span class="dot" style="background:var(--muted)"></span>Waiting</span><b class="num">3</b></div>
-            <div class="row"><span><span class="dot" style="background:var(--danger)"></span>Failed</span><b class="num">1</b></div>
-            <div class="row"><span><span class="dot" style="background:var(--surface-3)"></span>Duplicates</span><b class="num">2</b></div>
-            <div class="row"><span><span class="dot" style="background:var(--warning)"></span>Pending features</span><b class="num">4</b></div>
-          </div>
+    <span class="status-legend-wrap"><button class="status-legend-toggle" aria-expanded="false" title="What do the colors mean?">?</button></span>
+  </div>
+  <div class="panel-box">
+    <ul class="inflight">
+      <li>
+        <div class="inflight-top"><span class="inflight-name">contract-2024-11.pdf</span><span class="muted">Chunk &amp; embed</span><span class="inflight-elapsed">1:12</span></div>
+        <div class="flow-bar stage-bar">
+          <i class="stage-seg filled seg-f-extract" title="Extract / OCR: done"></i><i class="stage-seg filled seg-f-thumbnail" title="Thumbnails: done"></i><i class="stage-seg filled seg-f-chunk_embed seg-running" title="Chunk &amp; embed: running"></i><i class="stage-seg" title="Entities (patterns): pending"></i><i class="stage-seg" title="NER: pending"></i><i class="stage-seg" title="Entity graph: pending"></i><i class="stage-seg" title="Relations: pending"></i><i class="stage-seg" title="Metadata: pending"></i><i class="stage-seg" title="Classification: pending"></i><i class="stage-seg" title="Records: pending"></i>
         </div>
-      </div>
-      <div>
-        <h3 style="margin-top:0">Recent activity</h3>
-        <div class="panel-box">
-          <ul class="activity">
-            <li><time>21:00:34</time><span class="badge">ingested</span><span class="truncate">0000008.pdf</span></li>
-            <li><time>20:58:58</time><span class="badge error">failed</span><span class="truncate">0000006.pdf — process pool error</span></li>
-            <li><time>20:57:12</time><span class="badge">ocr</span><span class="truncate">contract-2024-03.pdf — 14 pages</span></li>
-            <li><time>20:55:41</time><span class="badge">enriched</span><span class="truncate">invoice-march.pdf — 12 entities</span></li>
-            <li><time>20:52:03</time><span class="badge">ingested</span><span class="truncate">meeting-notes.txt</span></li>
-            <li><time>20:47:55</time><span class="badge">categorized</span><span class="truncate">bank-statement-q3.pdf → Finance</span></li>
-          </ul>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">board-pack-q3.pdf</span><span class="muted">Entities (patterns)</span><span class="inflight-elapsed">1:31</span></div>
+        <div class="flow-bar stage-bar">
+          <i class="stage-seg filled seg-f-extract"></i><i class="stage-seg filled seg-f-thumbnail"></i><i class="stage-seg filled seg-f-chunk_embed"></i><i class="stage-seg filled seg-f-entities seg-running"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i>
         </div>
-      </div>
-    </div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0043.pdf</span><span class="muted">Extract / OCR</span><span class="inflight-elapsed">0:22</span></div>
+        <div class="flow-bar stage-bar">
+          <i class="stage-seg filled seg-f-extract seg-running"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i>
+        </div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0044.pdf</span><span class="muted">Extract / OCR</span><span class="inflight-elapsed">0:22</span></div>
+        <div class="flow-bar stage-bar">
+          <i class="stage-seg filled seg-f-extract seg-running"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i>
+        </div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0045.pdf</span><span class="muted">scheduled for Extract / OCR</span><span class="inflight-elapsed">0:20</span></div>
+        <div class="flow-bar stage-bar"><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i></div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0046.pdf</span><span class="muted">scheduled for Extract / OCR</span><span class="inflight-elapsed">0:19</span></div>
+        <div class="flow-bar stage-bar"><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i></div>
+      </li>
+    </ul>
+    <p class="muted inflight-summary">6 in flight — done segments take their stage color; the running stage pulses.</p>
+  </div>
 
-    <h3>Documents by category</h3>
-    <div class="chips">
-      <span class="chip">Finance<b>312</b></span><span class="chip">Contracts<b>208</b></span>
-      <span class="chip">Invoices<b>190</b></span><span class="chip">Personal<b>141</b></span>
-      <span class="chip">Manuals<b>98</b></span><span class="chip">Insurance<b>87</b></span>
-      <span class="chip">Medical<b>64</b></span><span class="chip">Uncategorized<b>184</b></span>
-    </div>
-  </section>
+  <h3>Library</h3>
+  <div class="stat-tiles t3">
+    <div class="stat-tile"><div class="stat-value num">1,284</div><div class="stat-label">Documents</div></div>
+    <div class="stat-tile"><div class="stat-value num">3,891</div><div class="stat-label">Entities</div></div>
+    <div class="stat-tile"><div class="stat-value num">12</div><div class="stat-label">Categories</div></div>
+  </div>
+</section>
 
-  <!-- ================= ADVANCED B ================= -->
-  <section id="advanced-b" hidden>
-    <h2>Overview</h2>
-    <p class="concept"><strong>Advanced B — “Ops console”.</strong> Maximum density: KPI strip, per-document in-flight table (rows leave the moment the document lands in Documents, whatever its status), aggregate pipeline bars, full-width activity log. For the user who watches the pipeline work.</p>
+<!-- ================= ADVANCED ================= -->
+<section id="advanced" hidden>
+  <h2>Overview</h2>
+  <div class="stat-tiles t5">
+    <div class="stat-tile"><div class="stat-value num">1,284</div><div class="stat-label">Documents</div></div>
+    <div class="stat-tile"><div class="stat-value num">3,891</div><div class="stat-label">Entities</div></div>
+    <div class="stat-tile"><div class="stat-value num">12</div><div class="stat-label">Categories</div></div>
+    <div class="stat-tile alert"><div class="stat-value num">1</div><div class="stat-label">Failed</div></div>
+    <div class="stat-tile warn"><div class="stat-value num">4</div><div class="stat-label">Needs attention</div></div>
+  </div>
 
-    <div class="tiles t6">
-      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div><div class="sub muted">+14 this week</div></div>
-      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div><div class="sub muted">3.0 / doc</div></div>
-      <div class="tile"><div class="v num">12</div><div class="l">Categories</div><div class="sub muted">184 uncategorized</div></div>
-      <div class="tile alert"><div class="v num">1</div><div class="l">Failed</div><div class="sub">last 24h</div></div>
-      <div class="tile warn"><div class="v num">4</div><div class="l">Needs attention</div><div class="sub">feature errors</div></div>
-      <div class="tile"><div class="v num">2.1s</div><div class="l">Avg OCR / page</div><div class="sub muted">last 50 pages</div></div>
-    </div>
+  <div class="section-head">
+    <h3>In flight</h3>
+    <span class="status-legend-wrap">
+      <button class="status-legend-toggle" aria-expanded="false" title="What do the colors mean?">?</button>
+      <span class="status-legend" role="note" hidden>
+        <span class="status-legend-row"><i class="status-swatch seg-processing"></i><strong>Processing</strong><span class="muted">work is running right now</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-waiting"></i><strong>Queued / waiting</strong><span class="muted">accepted, waiting its turn</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-failed"></i><strong>Failed</strong><span class="muted">stopped - needs a decision</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-attention"></i><strong>Needs attention</strong><span class="muted">a feature errored; retry from Documents</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-done"></i><strong>Done</strong><span class="muted">fully processed</span></span>
+        <span class="status-legend-row status-legend-subhead">Pipeline stages</span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-extract"></i><strong>Extract / OCR</strong><span class="muted">text + OCR from the original</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-thumbnail"></i><strong>Thumbnails</strong><span class="muted">page previews</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-chunk_embed"></i><strong>Chunk &amp; embed</strong><span class="muted">search vectors</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-entities"></i><strong>Entities (patterns)</strong><span class="muted">emails, dates, amounts, ...</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-ner"></i><strong>NER</strong><span class="muted">people, organizations, places</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-entity_graph"></i><strong>Entity graph</strong><span class="muted">links entities across documents</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-relations"></i><strong>Relations</strong><span class="muted">who did what, where, when</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-doc_metadata"></i><strong>Metadata</strong><span class="muted">title, date, summary</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-doc_classify"></i><strong>Classification</strong><span class="muted">document category</span></span>
+        <span class="status-legend-row"><i class="status-swatch seg-f-structured_records"></i><strong>Records</strong><span class="muted">tables, line items</span></span>
+      </span>
+    </span>
+  </div>
+  <div class="panel-box">
+    <ul class="inflight">
+      <li>
+        <div class="inflight-top"><span class="inflight-name">contract-2024-11.pdf</span><span class="badge">chunk_embed</span><span class="inflight-elapsed">1:12</span></div>
+        <div class="flow-bar stage-bar">
+          <i class="stage-seg filled seg-f-extract" title="Extract / OCR: done"></i><i class="stage-seg filled seg-f-thumbnail" title="Thumbnails: done"></i><i class="stage-seg filled seg-f-chunk_embed seg-running" title="Chunk &amp; embed: running"></i><i class="stage-seg" title="Entities (patterns): pending"></i><i class="stage-seg" title="NER: pending"></i><i class="stage-seg" title="Entity graph: pending"></i><i class="stage-seg" title="Relations: pending"></i><i class="stage-seg" title="Metadata: pending"></i><i class="stage-seg" title="Classification: pending"></i><i class="stage-seg" title="Records: pending"></i>
+        </div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">board-pack-q3.pdf</span><span class="badge">entities</span><span class="inflight-elapsed">1:31</span></div>
+        <div class="flow-bar stage-bar">
+          <i class="stage-seg filled seg-f-extract"></i><i class="stage-seg filled seg-f-thumbnail"></i><i class="stage-seg filled seg-f-chunk_embed"></i><i class="stage-seg filled seg-f-entities seg-running"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i>
+        </div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0043.pdf</span><span class="badge">extract</span><span class="inflight-elapsed">0:22</span></div>
+        <div class="flow-bar stage-bar"><i class="stage-seg filled seg-f-extract seg-running"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i></div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0044.pdf</span><span class="badge">extract</span><span class="inflight-elapsed">0:22</span></div>
+        <div class="flow-bar stage-bar"><i class="stage-seg filled seg-f-extract seg-running"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i></div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0045.pdf</span><span class="muted">scheduled for Extract / OCR</span><span class="inflight-elapsed">0:20</span></div>
+        <div class="flow-bar stage-bar"><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i></div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">scan-0046.pdf</span><span class="muted">scheduled for Extract / OCR</span><span class="inflight-elapsed">0:19</span></div>
+        <div class="flow-bar stage-bar"><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i><i class="stage-seg"></i></div>
+      </li>
+      <li>
+        <div class="inflight-top"><span class="inflight-name">photo-scan.tiff</span><span class="inflight-stage is-failed">failed — unsupported type</span><span class="inflight-elapsed"></span>
+          <span><button class="inflight-retry">Retry</button> <button class="inflight-dismiss">Dismiss</button></span>
+        </div>
+        <div class="flow-bar"><i class="seg-failed" style="width:100%"></i></div>
+      </li>
+    </ul>
+    <p class="muted inflight-summary">6 in flight · 1 needs a decision</p>
+  </div>
 
-    <h3>In flight — not yet in Documents</h3>
-    <div class="panel-box" style="padding:6px 16px">
-      <ul class="inflight">
-        <li>
-          <div class="row-top"><span class="fname">contract-2024-11.pdf</span><span class="badge">extract</span><span class="elapsed">0:42</span></div>
-          <div class="bar"><i class="seg-processing" style="width:60%"></i></div>
-        </li>
-        <li>
-          <div class="row-top"><span class="fname">board-pack-q3.pdf</span><span class="badge">extract</span><span class="elapsed">0:18</span></div>
-          <div class="bar"><i class="seg-processing" style="width:25%"></i></div>
-        </li>
-        <li>
-          <div class="row-top"><span class="fname">scan-0042.pdf</span><span class="badge">queued</span><span class="elapsed">—</span></div>
-          <div class="bar"><i class="seg-waiting" style="width:6%"></i></div>
-        </li>
-        <li>
-          <div class="row-top"><span class="fname">photo-scan.tiff</span><span class="badge error">failed</span><span class="elapsed">unsupported type</span></div>
-          <div class="bar"><i class="seg-failed" style="width:100%"></i></div>
-        </li>
-      </ul>
-    </div>
+  <h3>Stage queues</h3>
+  <div class="panel-box pipeline-totals">
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Extract / OCR</span><div class="flow-bar"><i class="seg-f-extract" style="width:22%"></i><i class="seg-waiting" style="width:22%"></i></div><strong>2 running · 2 queued</strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Thumbnails</span><div class="flow-bar"><i class="seg-f-thumbnail" style="width:11%"></i></div><strong>1 running · 0 queued <span class="muted">· +4 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Chunk &amp; embed</span><div class="flow-bar"><i class="seg-f-chunk_embed" style="width:11%"></i></div><strong>1 running · 1 queued <span class="muted">· +4 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Entities (patterns)</span><div class="flow-bar"><i class="seg-f-entities" style="width:11%"></i></div><strong>1 running · 1 queued <span class="muted">· +4 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">NER</span><div class="flow-bar"></div><strong>0 running · 0 queued <span class="muted">· +6 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Entity graph</span><div class="flow-bar"></div><strong>0 running · 0 queued <span class="muted">· +6 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Relations</span><div class="flow-bar"></div><strong>0 running · 0 queued <span class="muted">· +6 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Metadata</span><div class="flow-bar"></div><strong>0 running · 1 queued <span class="muted">· +5 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Classification</span><div class="flow-bar"></div><strong>0 running · 0 queued <span class="muted">· +6 upstream</span></strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Records</span><div class="flow-bar"></div><strong>0 running · 1 queued <span class="muted">· +5 upstream</span></strong></div>
+  </div>
 
-    <h3>Pipeline totals (pre-intake only)</h3>
-    <div class="panel-box">
-      <div class="stage-list">
-        <div class="row"><span style="width:140px">Processing</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-processing" style="width:35%"></i></div><b class="num">5</b></div>
-        <div class="row"><span style="width:140px">Waiting</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-waiting" style="width:21%"></i></div><b class="num">3</b></div>
-        <div class="row"><span style="width:140px">Failed</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-failed" style="width:7%"></i></div><b class="num">1</b></div>
-        <div class="row"><span style="width:140px">Duplicates</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-done" style="width:14%;background:var(--surface-3)"></i></div><b class="num">2</b></div>
-        <div class="row"><span style="width:140px">Pending features</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-done" style="width:28%;background:var(--warning)"></i></div><b class="num">4</b></div>
-      </div>
-    </div>
+  <h3>Pipeline</h3>
+  <div class="panel-box pipeline-totals">
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Processing</span><div class="flow-bar"><i class="seg-processing" style="width:60%"></i></div><strong>6</strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Waiting</span><div class="flow-bar"><i class="seg-waiting" style="width:10%"></i></div><strong>1</strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Failed</span><div class="flow-bar"><i class="seg-failed" style="width:10%"></i></div><strong>1</strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Duplicates</span><div class="flow-bar"><i class="seg-waiting" style="width:20%"></i></div><strong>2</strong></div>
+    <div class="pipeline-total-row"><span class="pipeline-total-name muted">Needs attention</span><div class="flow-bar"><i class="seg-attention" style="width:40%"></i></div><strong>4</strong></div>
+  </div>
 
-    <h3>Recent activity</h3>
-    <div class="panel-box" style="padding:6px 16px">
-      <ul class="activity">
-        <li><time>2026-10-24 21:00:34</time><span class="badge">ingested</span><span class="truncate">0000008.pdf</span><span class="muted truncate">via upload, 2.4 MB</span></li>
-        <li><time>2026-10-24 20:58:58</time><span class="badge error">failed</span><span class="truncate">0000006.pdf</span><span class="muted truncate">internal_error: process pool terminated</span></li>
-        <li><time>2026-10-24 20:57:12</time><span class="badge">ocr</span><span class="truncate">contract-2024-03.pdf</span><span class="muted truncate">14 pages, 2.1 s/page, conf 0.97</span></li>
-        <li><time>2026-10-24 20:55:41</time><span class="badge">enriched</span><span class="truncate">invoice-march.pdf</span><span class="muted truncate">12 entities, 2 relations</span></li>
-        <li><time>2026-10-24 20:52:03</time><span class="badge">ingested</span><span class="truncate">meeting-notes.txt</span><span class="muted truncate">via folder watch</span></li>
-        <li><time>2026-10-24 20:47:55</time><span class="badge">categorized</span><span class="truncate">bank-statement-q3.pdf</span><span class="muted truncate">→ Finance (0.91)</span></li>
-        <li><time>2026-10-24 20:44:10</time><span class="badge">embedded</span><span class="truncate">handbook-v2.pdf</span><span class="muted truncate">61 chunks</span></li>
-      </ul>
-    </div>
+  <h3>Recent activity</h3>
+  <div class="panel-box" style="padding:6px 16px">
+    <ul class="activity">
+      <li><time>11:03:52</time><span class="badge">extract</span><span class="truncate">scan-0043.pdf — OCR running (2 in lane)</span></li>
+      <li><time>11:02:14</time><span class="badge">chunk_embed</span><span class="truncate">contract-2024-11.pdf — 61 chunks</span></li>
+      <li><time>11:01:40</time><span class="badge error">failed</span><span class="truncate">photo-scan.tiff — unsupported type</span></li>
+      <li><time>10:58:03</time><span class="badge">ingested</span><span class="truncate">batch upload: 6 files</span></li>
+    </ul>
+  </div>
 
-    <h3>Documents by category</h3>
-    <div class="chips">
-      <span class="chip">Finance<b>312</b></span><span class="chip">Contracts<b>208</b></span>
-      <span class="chip">Invoices<b>190</b></span><span class="chip">Personal<b>141</b></span>
-      <span class="chip">Manuals<b>98</b></span><span class="chip">Insurance<b>87</b></span>
-      <span class="chip">Medical<b>64</b></span><span class="chip">Uncategorized<b>184</b></span>
-    </div>
+  <h3>Documents by category</h3>
+  <div class="chips">
+    <span class="chip">Finance<b>312</b></span><span class="chip">Contracts<b>208</b></span>
+    <span class="chip">Invoices<b>190</b></span><span class="chip">Personal<b>141</b></span>
+    <span class="chip">Uncategorized<b>184</b></span>
+  </div>
 
-    <div class="dropzone" style="margin-top:28px" role="button">
-      Drag documents here to ingest
-      <small>or click to browse</small>
-    </div>
-  </section>
+  <div class="upload-dropzone" style="margin-top:28px" role="button">
+    Drag documents here to ingest
+    <small>or click to browse</small>
+  </div>
+</section>
 </main>
 
 <script>
   const buttons = document.querySelectorAll(".proto-bar button");
   function select(id) {
     buttons.forEach((x) => x.classList.toggle("active", x.dataset.view === id));
-    document.querySelectorAll("main > section").forEach((s) => {
-      s.hidden = s.id !== id;
-    });
+    document.querySelectorAll("main > section").forEach((s) => { s.hidden = s.id !== id; });
   }
   buttons.forEach((b) => b.addEventListener("click", () => select(b.dataset.view)));
   if (location.hash) select(location.hash.slice(1));
+  document.querySelectorAll(".status-legend-toggle").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const legend = btn.parentElement.querySelector(".status-legend");
+      if (!legend) return;
+      legend.hidden = !legend.hidden;
+      btn.setAttribute("aria-expanded", String(!legend.hidden));
+    }),
+  );
 </script>
 </body>
 </html>

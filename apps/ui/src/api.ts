@@ -1668,6 +1668,23 @@ export function fetchStats(signal?: AbortSignal): Promise<Stats> {
   return getJson<Stats>("/api/v1/stats", signal);
 }
 
+export interface IngestionJob {
+  id: string;
+  tenant_id: string;
+  /** null while the job has not become a repository document yet (pre-intake). */
+  document_id: string | null;
+  source_path: string;
+  status: string;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export function fetchIngestionJobs(signal?: AbortSignal): Promise<IngestionJob[]> {
+  return getJson<IngestionJob[]>("/api/v1/ingestion/jobs", signal);
+}
+
 export interface Citation {
   index: number;
   document_id: string;

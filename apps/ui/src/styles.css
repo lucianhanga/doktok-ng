@@ -7259,3 +7259,228 @@ tr.row-selected {
   gap: 1rem;
   margin-bottom: 0.5rem;
 }
+
+/* ---------------------------------------------------------------------------
+ * Overview rework (#848, stories 5.1/5.2): stat tiles, in-flight rows, status
+ * legend, mode toggle. Spartan: flat surfaces, 1px borders, the number is the
+ * hero. Status colors are ONE semantic set used everywhere:
+ *   accent(blue)=processing  muted(gray)=queued/waiting  danger(red)=failed
+ *   warning(amber)=needs attention  success(green)=done
+ * ------------------------------------------------------------------------- */
+
+.mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.mode-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mode-toggle-btn.active {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.stat-tiles {
+  display: grid;
+  gap: 10px;
+}
+.stat-tiles.t3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.stat-tiles.t5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+.stat-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.stat-tile .stat-value {
+  font-size: 26px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.stat-tile .stat-label {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.stat-tile.alert {
+  border-color: var(--danger);
+}
+.stat-tile.alert .stat-value {
+  color: var(--danger);
+}
+.stat-tile.warn .stat-value {
+  color: var(--warning);
+}
+
+.upload-dropzone.hero {
+  padding: 56px 18px;
+  font-size: 17px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-head h3 {
+  margin: 0;
+}
+
+.panel-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 16px;
+}
+
+.flow-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+  display: flex;
+}
+.flow-bar > i {
+  display: block;
+  height: 100%;
+}
+.seg-processing {
+  background: var(--accent);
+}
+.seg-waiting {
+  background: var(--muted);
+}
+.seg-failed {
+  background: var(--danger);
+}
+.seg-attention {
+  background: var(--warning);
+}
+.seg-done {
+  background: var(--success);
+}
+
+.inflight {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.inflight li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.inflight li:last-child {
+  border-bottom: none;
+}
+.inflight-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  align-items: baseline;
+}
+.inflight-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inflight .flow-bar {
+  margin-top: 6px;
+}
+.inflight-stage.is-failed {
+  color: var(--danger);
+}
+.inflight-summary {
+  font-size: 13px;
+  margin: 10px 0 4px;
+}
+
+.pipeline-totals {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  padding: 12px 16px;
+}
+.pipeline-total-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pipeline-total-name {
+  width: 140px;
+  flex: none;
+}
+.pipeline-totals .flow-bar {
+  flex: 1;
+}
+.pipeline-totals strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.status-legend-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.status-legend-toggle {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+}
+.status-legend-toggle:hover,
+.status-legend-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.status-legend {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  z-index: 20;
+  min-width: 300px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  display: grid;
+  gap: 6px;
+  box-shadow: 0 4px 16px var(--shadow);
+}
+.status-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-legend-row strong {
+  min-width: 110px;
+}
+.status-swatch {
+  width: 22px;
+  height: 6px;
+  border-radius: 3px;
+  flex: none;
+}
+.inflight-elapsed {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}

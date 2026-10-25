@@ -138,3 +138,23 @@ FEATURE_CATALOG: list[FeatureSpec] = [
         "Renders a first-page preview image for the document card and grid/list views.",
     ),
 ]
+
+
+# The stage DAG (feature, prerequisite) edges, derived from the processor classes so this constant
+# can never drift from what the reconciler actually enforces. The worker builds the same edge set
+# from live processor instances; the backend's stats query uses this constant (it has no
+# processors) to tell "queued" (claimable now) from "blocked upstream" (2026-10-25 queue display).
+PROCESSOR_CLASSES = (
+    ChunkEmbedFeature,
+    EntitiesFeature,
+    NerFeature,
+    EntityGraphFeature,
+    RelationExtractFeature,
+    DocMetadataFeature,
+    DocClassifyFeature,
+    StructuredRecordsFeature,
+    ThumbnailFeature,
+)
+FEATURE_DEPENDENCIES: tuple[tuple[str, str], ...] = tuple(
+    (cls.name, dep) for cls in PROCESSOR_CLASSES for dep in getattr(cls, "dependencies", ())
+)

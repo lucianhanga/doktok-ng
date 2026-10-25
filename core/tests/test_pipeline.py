@@ -220,3 +220,29 @@ def test_quarantined_file_creates_a_terminal_document(tmp_path: Path) -> None:
     assert len(quarantined) == 1
     assert quarantined[0].original_filename == "evil.exe"
     assert quarantined[0].metadata["error_code"] == "quarantined"
+
+
+def test_redrop_while_processing_marks_duplicate_not_a_twin(tmp_path: Path) -> None:
+    # Dedup saw only ACTIVE documents, so re-dropping a file mid-pipeline created twin processing
+    # documents (2026-10-25: the same batch twice in 'In flight'). In-flight copies count too.
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+
+    services, layout = build_services(tmp_path, mime="text/plain")
+    services.staged_ingestion = True
+    services.feature_repo = InMemoryFeatureRepository()
+    services.stage_ledger = [("extract", 1)]
+
+    first = process_file(services, drop(layout, "a.txt", b"same content"))
+    assert first.status is JobStatus.ACTIVE  # intake handoff; the document is now 'processing'
+    assert first.document_id is not None
+    original = services.document_repo.get(TENANT, first.document_id)
+    assert original is not None and original.status is DocumentStatus.PROCESSING
+
+    second = process_file(services, drop(layout, "a-copy.txt", b"same content"))
+    assert second.status is JobStatus.DUPLICATE
+
+    docs, _, _ = services.document_repo.list_documents(TENANT)
+    processing = [d for d in docs if d.status is DocumentStatus.PROCESSING]
+    assert len(processing) == 1  # no twin
+    duplicates = [d for d in docs if d.status is DocumentStatus.DUPLICATE]
+    assert len(duplicates) == 1 and duplicates[0].duplicate_of == original.id

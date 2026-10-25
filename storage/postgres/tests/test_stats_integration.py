@@ -101,3 +101,37 @@ def test_summary_reports_per_stage_queue_counts(db: Database) -> None:
     assert queues[claimed.feature].queued == 0
     other = "entities" if claimed.feature == "extract" else "extract"
     assert queues[other].queued == 1
+
+
+def test_stage_queues_split_claimable_from_blocked(db: Database) -> None:
+    # A document queues for OCR FIRST: downstream stages with unfinished prerequisites are
+    # "blocked", not "queued" - 'Relations: 10 queued' was nonsense when nothing could run them.
+    docs = PostgresDocumentRepository(db)
+    docs.add(
+        Document(
+            id="d1",
+            tenant_id=TENANT,
+            sha256="b" * 64,
+            original_filename="d1.txt",
+            status=DocumentStatus.PROCESSING,
+            created_at=datetime.now(UTC),
+        )
+    )
+    PostgresFeatureRepository(db).seed_for_document(TENANT, "d1", [("extract", 1), ("entities", 1)])
+
+    deps = [("entities", "extract")]
+    summary = PostgresStatsRepository(db).summary(TENANT, dependencies=deps)
+    queues = {q.feature: q for q in summary.stage_queues}
+    assert queues["extract"].queued == 1 and queues["extract"].blocked == 0
+    # entities waits on extract: not queued, blocked instead
+    assert queues["entities"].queued == 0 and queues["entities"].blocked == 1
+
+    # Once extract completes, entities becomes claimable.
+    features = PostgresFeatureRepository(db)
+    now = datetime.now(UTC)
+    claimed = features.claim_next(TENANT, now=now, reclaim_before=now - timedelta(seconds=900))
+    assert claimed is not None and claimed.feature == "extract"
+    features.mark_done(claimed.id, feature_version=1)
+    summary = PostgresStatsRepository(db).summary(TENANT, dependencies=deps)
+    queues = {q.feature: q for q in summary.stage_queues}
+    assert queues["entities"].queued == 1 and queues["entities"].blocked == 0

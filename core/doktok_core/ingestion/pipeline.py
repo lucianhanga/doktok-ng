@@ -320,6 +320,27 @@ def _requeue_stale_job(services: IngestionServices, job: IngestionJob) -> bool:
     src = Path(job.source_path)
     prior_status = job.status.value  # captured before the tombstone overwrite below
     try:
+        # Crash inside the staged-intake handoff (document + ledger created, job row never
+        # updated to ACTIVE): the job looks abandoned but a processing document already owns
+        # its source file. Re-queuing would strand that document on a deleted path - complete
+        # the handoff instead and leave the workdir untouched.
+        handed_off_to = services.document_repo.find_processing_by_staged_source(
+            services.tenant_id, job.source_path
+        )
+        if handed_off_to is not None:
+            job.document_id = handed_off_to
+            job.status = JobStatus.ACTIVE
+            job.finished_at = datetime.now(UTC)
+            services.job_repo.update(job)
+            logger.warning(
+                "stale job %s (was %s, tenant=%s) had already handed off to document %s; "
+                "completing the intake handoff instead of re-queuing",
+                job.id,
+                prior_status,
+                services.tenant_id,
+                handed_off_to,
+            )
+            return True
         strikes = _crash_strikes(services, job, src)
         if strikes >= MAX_STALE_RECOVERIES:
             return _quarantine_crash_loop(services, job, src, original_name, strikes)
@@ -792,6 +813,9 @@ def fail_interrupted_processing(services: IngestionServices, *, older_than: date
 
     - extract feature row terminally failed (attempts exhausted, #850) -> fail the document;
     - no extract row at all past the cutoff -> intake crashed mid-handoff -> fail the document;
+    - the staged source file is gone (e.g. moved away by an older stale-job recovery) -> the
+      extract stage can never succeed -> fail the document, regardless of attempt count (a
+      manual feature retry resets attempts, which would otherwise mask this forever);
     - a pending/running extract row means the work is legitimately in flight -> never reap.
     """
     if services.feature_repo is None:
@@ -800,7 +824,11 @@ def fail_interrupted_processing(services: IngestionServices, *, older_than: date
     for doc in services.document_repo.list_processing(services.tenant_id, older_than=older_than):
         rows = services.feature_repo.list_for_document(services.tenant_id, doc.id)
         extract = next((r for r in rows if r.feature == "extract"), None)
-        if extract is None:
+        staged = doc.metadata.get("staged_source")
+        if staged and not Path(str(staged)).exists():
+            code = "source_missing"
+            message = f"staged source file is gone: {staged}"
+        elif extract is None:
             code = "intake_interrupted"
             message = "stage ledger was never seeded (worker died during the intake handoff)"
         elif extract.status == FeatureStatus.FAILED and extract.attempts >= extract.max_attempts:

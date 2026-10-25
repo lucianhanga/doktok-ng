@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Callable
+from pathlib import Path
 
 from doktok_contracts.errors import DuplicateActiveDocumentError, RenderLimitExceededError
 from doktok_contracts.ports import DocumentRepository, FileStorage
@@ -48,6 +49,25 @@ class ExtractStage:
         self._files_root = files_root  # the layout is tenant-scoped, so build it per call
         self._extract = extractor
 
+    def _resolve_source(self, layout: FilesystemLayout, document_id: str, source: str) -> str:
+        """Return the staged source path, raising ``FileNotFoundError`` if it is truly gone.
+
+        Crash window (2026-10-25 incident): a previous attempt completed artifact writing
+        (``write_document_artifacts`` MOVES the source into the document's canonical directory)
+        but died before activation. On retry the staged path is gone, so extraction would fail
+        deterministically while the bytes sit in ``docs.active/<doc_id>/original.*``. Move the
+        original back and resume; a successful rerun writes it straight back to the same place.
+        """
+        if Path(source).is_file():
+            return source
+        active_dir = layout.active_dir(document_id)
+        originals = sorted(active_dir.glob("original.*"))
+        if not originals:
+            raise FileNotFoundError(f"no such file: '{source}'")
+        Path(source).parent.mkdir(parents=True, exist_ok=True)
+        self._files.move(str(originals[0]), source)
+        return source
+
     def process(self, tenant_id: str, document_id: str) -> None:
         document = self._documents.get(tenant_id, document_id)
         if document is None or document.status is not DocumentStatus.PROCESSING:
@@ -58,6 +78,7 @@ class ExtractStage:
 
         layout = FilesystemLayout(self._files_root, tenant_id)
         try:
+            source = self._resolve_source(layout, document_id, str(source))
             result, normalized_pdf = self._extract(
                 tenant_id, document.detected_mime or "", str(source)
             )
@@ -69,6 +90,17 @@ class ExtractStage:
                 tenant_id,
                 document_id,
                 error_code="render_limit_exceeded",
+                error_message=str(exc),
+            )
+            return
+        except FileNotFoundError as exc:
+            # Raised by _resolve_source when the staged source is gone AND no artifacts from a
+            # previous attempt survive to resume from. Retrying can never succeed - fail
+            # terminally so the document does not sit 'processing' forever.
+            self._documents.fail(
+                tenant_id,
+                document_id,
+                error_code="source_missing",
                 error_message=str(exc),
             )
             return

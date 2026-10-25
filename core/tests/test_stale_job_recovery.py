@@ -171,10 +171,14 @@ def test_crash_loop_quarantine_creates_a_terminal_document(tmp_path: Path) -> No
 
 
 def _processing_document(
-    services: IngestionServices, doc_id: str, *, age_minutes: int
+    services: IngestionServices, doc_id: str, *, age_minutes: int, source_exists: bool = True
 ) -> None:
     from doktok_contracts.schemas import Document, DocumentStatus  # noqa: F401
 
+    staged = services.layout.job_workdir(f"job-{doc_id}") / "source.pdf"
+    if source_exists:
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        staged.write_bytes(b"%PDF-1.4 staged\n")
     doc = Document(
         id=doc_id,
         tenant_id=TENANT,
@@ -183,7 +187,7 @@ def _processing_document(
         title=doc_id,
         status=DocumentStatus.PROCESSING,
         created_at=datetime.now(UTC) - timedelta(minutes=age_minutes),
-        metadata={"staged_source": f"/data/in.process/{doc_id}/source.pdf"},
+        metadata={"staged_source": str(staged)},
     )
     services.document_repo.add(doc)
 
@@ -254,3 +258,63 @@ def test_old_processing_document_without_any_ledger_is_failed(tmp_path: Path) ->
     assert orphan is not None and orphan.status is DocumentStatus.FAILED
     fresh = services.document_repo.get(TENANT, "doc-fresh")
     assert fresh is not None and fresh.status is DocumentStatus.PROCESSING
+
+
+def test_stale_job_that_already_handed_off_is_completed_not_requeued(tmp_path: Path) -> None:
+    # Crash window in the staged-intake handoff: the processing document (with its seeded
+    # ledger) already references the workdir source, but the job row was never updated to
+    # ACTIVE. Recovery must complete the handoff - moving the file back to ingest would strand
+    # the document on a deleted path (extract then fails with "no such file" forever).
+    from doktok_contracts.schemas import Document, DocumentStatus
+
+    services = _services(tmp_path)
+    job = _stranded_job(services, age_minutes=30, name="handed.pdf")
+    services.document_repo.add(
+        Document(
+            id="doc-handed",
+            tenant_id=TENANT,
+            sha256="h" * 64,
+            original_filename="handed.pdf",
+            title="handed",
+            status=DocumentStatus.PROCESSING,
+            created_at=datetime.now(UTC) - timedelta(minutes=30),
+            metadata={"staged_source": job.source_path},
+        )
+    )
+
+    recovered = recover_stale_jobs(services, older_than=datetime.now(UTC) - timedelta(minutes=10))
+
+    assert len(recovered) == 1
+    updated = services.job_repo.get(TENANT, job.id)
+    assert updated is not None
+    assert updated.status is JobStatus.ACTIVE
+    assert updated.document_id == "doc-handed"
+    # The source stays in the workdir for the extract stage; nothing is re-queued to ingest.
+    assert Path(job.source_path).is_file()
+    assert not (services.layout.ingest / "handed.pdf").exists()
+
+
+def test_processing_document_with_missing_staged_source_is_failed(tmp_path: Path) -> None:
+    # A manual feature retry resets attempts, masking the attempts-exhausted branch - but a
+    # staged source that no longer exists can never extract, so the sweep must fail the
+    # document anyway.
+    from doktok_contracts.schemas import DocumentStatus
+    from doktok_core.features.inmemory import InMemoryFeatureRepository
+    from doktok_core.ingestion.pipeline import fail_interrupted_processing
+
+    services = _services(tmp_path)
+    services.feature_repo = InMemoryFeatureRepository()
+    _processing_document(services, "doc-gone", age_minutes=120, source_exists=False)
+    services.feature_repo.seed_for_document(TENANT, "doc-gone", [("extract", 1)])
+    _processing_document(services, "doc-there", age_minutes=120)
+    services.feature_repo.seed_for_document(TENANT, "doc-there", [("extract", 1)])
+
+    failed = fail_interrupted_processing(
+        services, older_than=datetime.now(UTC) - timedelta(minutes=30)
+    )
+    assert failed == 1
+    gone = services.document_repo.get(TENANT, "doc-gone")
+    assert gone is not None and gone.status is DocumentStatus.FAILED
+    assert gone.metadata["error_code"] == "source_missing"
+    there = services.document_repo.get(TENANT, "doc-there")
+    assert there is not None and there.status is DocumentStatus.PROCESSING

@@ -228,6 +228,10 @@ services:
       # Disable on N95/Alder Lake-N (oneDNN PIR crash); harmless to leave true on capable CPUs.
       DOKTOK_OCR_ENABLE_MKLDNN: ${DOKTOK_OCR_ENABLE_MKLDNN:-true}
       DOKTOK_INGEST_CONCURRENCY: ${DOKTOK_INGEST_CONCURRENCY:-2}
+      # Staged ingestion (ADR-0015): intake becomes instant (hash/detect/document row) and OCR runs
+      # in the reconciler's extract lane instead of inline at intake - queued documents start the
+      # moment OCR capacity frees, instead of waiting behind INGEST_CONCURRENCY-wide intake.
+      DOKTOK_STAGED_INGESTION: ${DOKTOK_STAGED_INGESTION:-true}
       DOKTOK_OPENAI_RECONCILE_CONCURRENCY: ${DOKTOK_OPENAI_RECONCILE_CONCURRENCY:-6}
       # Hard ceiling on concurrent OpenAI calls (process-wide semaphore in the client; bounds the
       # enrichment lanes AND the OCR judge AND RAG). 10 per the 2026-10 capacity review (#848).

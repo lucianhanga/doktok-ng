@@ -352,9 +352,12 @@ export interface Stats {
 
 export interface StageQueue {
   feature: string;
+  /** Pending AND claimable now (prerequisites done). */
   queued: number;
   running: number;
   failed: number;
+  /** Pending but waiting on an upstream stage - not in this queue yet. */
+  blocked: number;
 }
 
 export function fetchDocument(id: string, signal?: AbortSignal): Promise<DokDocument> {

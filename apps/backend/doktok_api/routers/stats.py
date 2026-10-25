@@ -6,6 +6,7 @@ from typing import Annotated
 
 from doktok_contracts.ports import StatsRepository
 from doktok_contracts.schemas import StatsSummary
+from doktok_core.features.catalog import FEATURE_DEPENDENCIES
 from doktok_core.ingestion.layout import FilesystemLayout
 from fastapi import APIRouter, Depends, Request
 
@@ -18,7 +19,7 @@ Repo = Annotated[StatsRepository, Depends(get_stats_repository)]
 
 @router.get("", response_model=StatsSummary)
 def stats(request: Request, tenant: Tenant, repo: Repo) -> StatsSummary:
-    summary = repo.summary(tenant.tenant_id)
+    summary = repo.summary(tenant.tenant_id, dependencies=FEATURE_DEPENDENCIES)
     files_root = request.app.state.settings.files_root
     summary.pending_ingest = FilesystemLayout(files_root, tenant.tenant_id).pending_ingest_count()
     return summary

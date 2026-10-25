@@ -1,4 +1,5 @@
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,9 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeStatsRepository:
-    def summary(self, tenant_id: str) -> StatsSummary:  # noqa: ARG002
+    def summary(
+        self, tenant_id: str, *, dependencies: Sequence[tuple[str, str]] = ()
+    ) -> StatsSummary:  # noqa: ARG002
         return StatsSummary(documents=3, jobs={"active": 2, "failed": 1}, entities=5)
 
 

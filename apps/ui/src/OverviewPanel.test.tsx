@@ -479,3 +479,43 @@ test("advanced heading is 'In flight' (processing documents ARE in Documents now
   await waitFor(() => expect(screen.getByText("In flight")).toBeInTheDocument());
   expect(screen.queryByText(/not yet in Documents/)).not.toBeInTheDocument();
 });
+
+test("a not-yet-started document is 'scheduled for' its FIRST pipeline stage, whatever the row order", async () => {
+  // The ledger rows arrive unordered; the label must follow pipeline order, not array order -
+  // otherwise a fresh document reads "next: Chunk & embed" when it has not even had OCR.
+  stubApi({
+    inflight: [
+      {
+        document_id: "d1",
+        filename: "fresh.pdf",
+        title: null,
+        created_at: "2026-06-10T00:00:00Z",
+        features: [
+          { feature: "chunk_embed", status: "pending" },
+          { feature: "entities", status: "pending" },
+          { feature: "extract", status: "pending" },
+        ],
+      },
+    ],
+  });
+  render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("fresh.pdf")).toBeInTheDocument());
+  expect(screen.getByText("scheduled for Extract / OCR")).toBeInTheDocument();
+});
+
+test("stage queues count only claimable rows; upstream-blocked show as '+N'", async () => {
+  stubApi({
+    stats: {
+      ...EMPTY_STATS,
+      stage_queues: [
+        { feature: "extract", queued: 4, running: 1, failed: 0, blocked: 0 },
+        { feature: "relations", queued: 0, running: 0, failed: 0, blocked: 9 },
+      ],
+    },
+  });
+  render(<OverviewPanel mode="advanced" />);
+  await waitFor(() => expect(screen.getByText("Stage queues")).toBeInTheDocument());
+  const relations = screen.getByText("Relations").closest(".pipeline-total-row");
+  expect(relations).toHaveTextContent("0 running · 0 queued");
+  expect(relations).toHaveTextContent("+9 upstream");
+});

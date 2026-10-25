@@ -117,6 +117,13 @@ class DocumentRepository(Protocol):
         source - matches the uq_documents_active_sha invariant (not the job ledger)."""
         ...
 
+    def find_unfinished_by_sha256(self, tenant_id: str, sha256: str) -> str | None:
+        """Id of an active OR still-processing document with this content hash, if any. Dedup at
+        intake must see in-flight copies too: without it, re-dropping a file while its first copy
+        is still processing creates twin processing documents until the activation race resolves
+        (2026-10-25 duplicate in-flight rows)."""
+        ...
+
     def list_documents(
         self,
         tenant_id: str,
@@ -1480,7 +1487,12 @@ class MemoryRepository(Protocol):
 
 @runtime_checkable
 class StatsRepository(Protocol):
-    def summary(self, tenant_id: str) -> StatsSummary: ...
+    def summary(
+        self, tenant_id: str, *, dependencies: Sequence[tuple[str, str]] = ()
+    ) -> StatsSummary:
+        """``dependencies`` = the stage DAG edges (feature, prerequisite): pending rows whose
+        prerequisites are not all done are reported as ``blocked``, not ``queued`` (#848)."""
+        ...
 
 
 @runtime_checkable

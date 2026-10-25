@@ -258,18 +258,33 @@ function FeatureStageBar({ features }: { features: InflightDocument["features"] 
 }
 
 function docStage(features: InflightDocument["features"]): { label: string; failed: boolean } {
-  const failed = features.find((f) => f.status === "failed");
+  // The ledger rows arrive unordered; the label must follow PIPELINE order, not array order -
+  // otherwise a fresh document reads "next: Chunk & embed" when it has not even had OCR.
+  const ordered = [...features].sort(
+    (a, b) =>
+      (FEATURE_STAGE_ORDER.indexOf(a.feature) === -1
+        ? 99
+        : FEATURE_STAGE_ORDER.indexOf(a.feature)) -
+      (FEATURE_STAGE_ORDER.indexOf(b.feature) === -1
+        ? 99
+        : FEATURE_STAGE_ORDER.indexOf(b.feature)),
+  );
+  const failed = ordered.find((f) => f.status === "failed");
   if (failed) {
     return { label: `failed: ${FEATURE_STAGE_LABELS[failed.feature] ?? failed.feature}`, failed: true };
   }
-  const running = features.find((f) => f.status === "running");
+  const running = ordered.find((f) => f.status === "running");
   if (running) return { label: FEATURE_STAGE_LABELS[running.feature] ?? running.feature, failed: false };
-  if (features.length > 0 && features.every((f) => f.status === "done")) {
+  if (ordered.length > 0 && ordered.every((f) => f.status === "done")) {
     return { label: "finishing up", failed: false };
   }
-  const next = features.find((f) => f.status === "pending");
+  // Pending-but-gated rows are scheduled for their stage once upstream finishes; the FIRST
+  // pending stage in pipeline order is what the document is scheduled for.
+  const next = ordered.find((f) => f.status === "pending");
   return {
-    label: next ? `queued - next: ${FEATURE_STAGE_LABELS[next.feature] ?? next.feature}` : "queued",
+    label: next
+      ? `scheduled for ${FEATURE_STAGE_LABELS[next.feature] ?? next.feature}`
+      : "scheduled",
     failed: false,
   };
 }
@@ -548,6 +563,11 @@ export function OverviewPanel({
                   <strong>
                     {q.running} running · {q.queued} queued
                     {q.failed > 0 ? ` · ${q.failed} failed` : ""}
+                    {q.blocked > 0 ? (
+                      <span className="muted"> · +{q.blocked} upstream</span>
+                    ) : (
+                      ""
+                    )}
                   </strong>
                 </div>
               );

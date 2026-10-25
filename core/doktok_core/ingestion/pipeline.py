@@ -637,15 +637,17 @@ def _activate(services: IngestionServices, job: IngestionJob, workdir: Path) -> 
 
 
 def _find_original_document_id(services: IngestionServices, job: IngestionJob) -> str | None:
-    """Return the id of an already-active document with the same content, if any (per tenant).
+    """Return the id of an active OR in-flight document with the same content, if any (per tenant).
 
     Queries the documents table - the authoritative dedup source that matches the active-sha unique
     constraint - rather than the job ledger (a job can be deleted while its document stays active,
-    which previously let a duplicate slip through to a hard unique-constraint failure).
+    which previously let a duplicate slip through to a hard unique-constraint failure). In-flight
+    (``processing``) documents count too: re-dropping a file while its first copy is still in the
+    pipeline must not create twin processing documents (2026-10-25 duplicate in-flight rows).
     """
     if not job.sha256:
         return None
-    return services.document_repo.find_active_by_sha256(services.tenant_id, job.sha256)
+    return services.document_repo.find_unfinished_by_sha256(services.tenant_id, job.sha256)
 
 
 def _original_filename(job: IngestionJob) -> str:

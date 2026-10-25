@@ -449,6 +449,16 @@ class PostgresDocumentRepository:
             ).fetchone()
         return str(row["id"]) if row else None
 
+    def find_unfinished_by_sha256(self, tenant_id: str, sha256: str) -> str | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id FROM documents WHERE tenant_id=%s AND sha256=%s "
+                "AND status IN ('active', 'processing') ORDER BY created_at LIMIT 1",
+                (tenant_id, sha256),
+            ).fetchone()
+        return str(row["id"]) if row else None
+
     def set_metadata(
         self,
         tenant_id: str,
@@ -2252,7 +2262,9 @@ class PostgresStatsRepository:
         row = cur.execute(sql, (tenant_id,)).fetchone()
         return int(row["n"]) if row else 0
 
-    def summary(self, tenant_id: str) -> StatsSummary:
+    def summary(
+        self, tenant_id: str, *, dependencies: Sequence[tuple[str, str]] = ()
+    ) -> StatsSummary:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             documents = self._scalar(
@@ -2289,14 +2301,34 @@ class PostgresStatsRepository:
                 "WHERE tenant_id=%s AND status IN ('pending', 'running')",
                 tenant_id,
             )
-            # Per-stage queue depths (#848): the overview's stage-queues section reads these.
+            # Per-stage queue depths (#848): "queued" = claimable NOW (all prerequisites done);
+            # pending rows waiting on an upstream stage are "blocked" - they are not in this
+            # queue yet (a document queues for OCR first, downstream stages only after).
             stage_rows = cur.execute(
-                "SELECT feature, "
-                "COUNT(*) FILTER (WHERE status='pending') AS queued, "
-                "COUNT(*) FILTER (WHERE status='running') AS running, "
-                "COUNT(*) FILTER (WHERE status='failed') AS failed "
-                "FROM document_features WHERE tenant_id=%s GROUP BY feature ORDER BY feature",
-                (tenant_id,),
+                "WITH deps(feature, prereq) AS ("
+                "  SELECT * FROM unnest(%(dep_features)s::text[], %(dep_prereqs)s::text[])"
+                "    AS t(feature, prereq)"
+                ") "
+                "SELECT f.feature, "
+                "COUNT(*) FILTER (WHERE f.status='running') AS running, "
+                "COUNT(*) FILTER (WHERE f.status='failed') AS failed, "
+                "COUNT(*) FILTER (WHERE f.status='pending' AND NOT EXISTS ("
+                "  SELECT 1 FROM deps d WHERE d.feature = f.feature AND NOT EXISTS ("
+                "    SELECT 1 FROM document_features p WHERE p.tenant_id = f.tenant_id"
+                "      AND p.document_id = f.document_id AND p.feature = d.prereq"
+                "      AND p.status = 'done'))) AS queued, "
+                "COUNT(*) FILTER (WHERE f.status='pending' AND EXISTS ("
+                "  SELECT 1 FROM deps d WHERE d.feature = f.feature AND NOT EXISTS ("
+                "    SELECT 1 FROM document_features p WHERE p.tenant_id = f.tenant_id"
+                "      AND p.document_id = f.document_id AND p.feature = d.prereq"
+                "      AND p.status = 'done'))) AS blocked "
+                "FROM document_features f WHERE f.tenant_id=%(tenant)s "
+                "GROUP BY f.feature ORDER BY f.feature",
+                {
+                    "tenant": tenant_id,
+                    "dep_features": [d[0] for d in dependencies],
+                    "dep_prereqs": [d[1] for d in dependencies],
+                },
             ).fetchall()
         return StatsSummary(
             documents=documents,
@@ -2310,6 +2342,7 @@ class PostgresStatsRepository:
                     queued=int(row["queued"]),
                     running=int(row["running"]),
                     failed=int(row["failed"]),
+                    blocked=int(row["blocked"]),
                 )
                 for row in stage_rows
             ],

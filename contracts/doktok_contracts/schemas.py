@@ -1318,9 +1318,10 @@ class StageQueue(BaseModel):
     """Per-stage queue depth for the overview's stage-queues section (#848)."""
 
     feature: str
-    queued: int = 0
+    queued: int = 0  # pending AND claimable now (prerequisites done)
     running: int = 0
     failed: int = 0
+    blocked: int = 0  # pending but waiting on an upstream stage - not in this queue yet
 
 
 class StatsSummary(BaseModel):

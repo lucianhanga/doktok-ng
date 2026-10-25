@@ -63,6 +63,16 @@ class InMemoryDocumentRepository:
                 return d.id
         return None
 
+    def find_unfinished_by_sha256(self, tenant_id: str, sha256: str) -> str | None:
+        for d in self._docs.values():
+            if (
+                d.tenant_id == tenant_id
+                and d.sha256 == sha256
+                and d.status in (DocumentStatus.ACTIVE, DocumentStatus.PROCESSING)
+            ):
+                return d.id
+        return None
+
     def get(self, tenant_id: str, document_id: str) -> Document | None:
         doc = self._docs.get(document_id)
         if doc is None or doc.tenant_id != tenant_id:

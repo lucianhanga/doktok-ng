@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from pathlib import Path
 from typing import Annotated
 
 from doktok_contracts.ports import IngestionJobRepository
-from doktok_contracts.schemas import AuditEventType, IngestionJob, IngestUploadResult
+from doktok_contracts.schemas import AuditEventType, IngestionJob, IngestUploadResult, JobStatus
 from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.ingestion.layout import FilesystemLayout
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -125,4 +126,43 @@ def get_job(job_id: str, tenant: Tenant, repo: Repo) -> IngestionJob:
     job = repo.get(tenant.tenant_id, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
+    return job
+
+
+@router.post("/jobs/{job_id}/retry", response_model=IngestionJob)
+def retry_job(job_id: str, tenant: Tenant, request: Request, repo: Repo) -> IngestionJob:
+    """Manually requeue a failed/quarantined job (#848): move its stranded source file back into
+    the tenant ingest folder under its original name, so the worker's next scan picks it up as a
+    fresh job. The failed row stays as a tombstone (same shape as the worker's stale-job
+    recovery), and the crash tripwire still applies if the file keeps killing workers."""
+    job = repo.get(tenant.tenant_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status not in (JobStatus.FAILED, JobStatus.QUARANTINED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"only failed/quarantined jobs can be retried (status: {job.status})",
+        )
+    src = Path(job.source_path)
+    if not src.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="the source file no longer exists on the server - re-upload it",
+        )
+    settings = request.app.state.settings
+    layout = FilesystemLayout(settings.files_root, tenant.tenant_id)
+    layout.ensure()
+    original = Path(str(job.metadata.get("original_ingest_path") or src.name)).name
+    safe = _safe_filename(original) or f"retry-{job.id[:8]}{src.suffix}"
+    target = _unique_target(layout.ingest, safe)
+    shutil.move(str(src), target)  # same volume: atomic rename, no partial copies
+    record_activity(
+        get_audit_repository(request),
+        tenant.tenant_id,
+        AuditEventType.DOCUMENT_UPLOADED,
+        actor=actor_identity(tenant),
+        actor_kind="user",
+        doc_filename=target.name,
+        description=f"retried after {job.error_code or job.status}",
+    )
     return job

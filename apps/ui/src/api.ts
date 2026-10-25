@@ -1685,6 +1685,18 @@ export function fetchIngestionJobs(signal?: AbortSignal): Promise<IngestionJob[]
   return getJson<IngestionJob[]>("/api/v1/ingestion/jobs", signal);
 }
 
+/** Requeue a failed/quarantined job: the backend moves its stranded file back into the tenant
+ * ingest folder; the worker's next scan picks it up as a fresh job (#848). */
+export async function retryIngestionJob(jobId: string): Promise<void> {
+  const response = await fetch(`/api/v1/ingestion/jobs/${encodeURIComponent(jobId)}/retry`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(detail.detail ?? `retry failed (${response.status})`);
+  }
+}
+
 export interface Citation {
   index: number;
   document_id: string;

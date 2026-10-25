@@ -5,6 +5,7 @@ import {
   fetchCategories,
   fetchIngestionJobs,
   fetchStats,
+  retryIngestionJob,
   uploadDocuments,
   type AuditEvent,
   type CategorySummary,
@@ -157,27 +158,55 @@ function jobStage(job: IngestionJob): { label: string; pct: number; cls: string 
 }
 
 /** One row per job that has not become a repository document yet (#848): the moment the document
- * lands in Documents - whatever its status - the row leaves this list. */
-function InFlightList({ jobs }: { jobs: IngestionJob[] }) {
+ * lands in Documents - whatever its status - the row leaves this list. Broken rows (failed before
+ * intake) carry a Retry action: the file is still on the server, so one click requeues it. */
+function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: () => void }) {
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const moving = jobs.filter((j) => !BROKEN_JOB.has(j.status));
   const broken = jobs.filter((j) => BROKEN_JOB.has(j.status));
+
+  async function retry(job: IngestionJob) {
+    setRetrying(job.id);
+    setRetryError(null);
+    try {
+      await retryIngestionJob(job.id);
+      onChanged();
+    } catch (e) {
+      setRetryError(e instanceof Error ? e.message : "retry failed");
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   return (
     <div className="panel-box">
       <ul className="inflight">
         {[...moving, ...broken].map((job) => {
           const stage = jobStage(job);
+          const isBroken = BROKEN_JOB.has(job.status);
           return (
             <li key={job.id}>
               <div className="inflight-top">
                 <span className="inflight-name" title={fileName(job.source_path)}>
                   {fileName(job.source_path)}
                 </span>
-                <span className={BROKEN_JOB.has(job.status) ? "inflight-stage is-failed" : "inflight-stage muted"}>
+                <span className={isBroken ? "inflight-stage is-failed" : "inflight-stage muted"}>
                   {stage.label}
                 </span>
                 <span className="inflight-elapsed muted">
-                  {BROKEN_JOB.has(job.status) ? "" : elapsed(job.started_at)}
+                  {isBroken ? "" : elapsed(job.started_at)}
                 </span>
+                {isBroken && (
+                  <button
+                    type="button"
+                    className="inflight-retry"
+                    disabled={retrying === job.id}
+                    onClick={() => void retry(job)}
+                  >
+                    {retrying === job.id ? "Retrying…" : "Retry"}
+                  </button>
+                )}
               </div>
               <div className="flow-bar">
                 <i className={stage.cls} style={{ width: `${stage.pct}%` }} />
@@ -186,6 +215,11 @@ function InFlightList({ jobs }: { jobs: IngestionJob[] }) {
           );
         })}
       </ul>
+      {retryError && (
+        <p role="alert" className="status-error">
+          Retry failed: {retryError}
+        </p>
+      )}
       <p className="muted inflight-summary">
         {moving.length} on the way in
         {broken.length > 0 ? ` · ${broken.length} need${broken.length === 1 ? "s" : ""} a decision` : ""}{" "}
@@ -299,7 +333,7 @@ export function OverviewPanel({
         {inFlight.length === 0 ? (
           <p className="muted">Pipeline idle - every document is fully processed.</p>
         ) : (
-          <InFlightList jobs={inFlight} />
+          <InFlightList jobs={inFlight} onChanged={load} />
         )}
       </div>
 

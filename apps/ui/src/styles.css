@@ -7602,3 +7602,17 @@ tr.row-selected {
     animation: none;
   }
 }
+
+/* Per-stage colors (#848): each pipeline stage has its own hue - the same class colors the
+ * per-document bar segments, the stage-queue bars, and the legend swatches. Pending segments
+ * stay on the bare track (no seg-f-* class), so color always means "this stage ran/is running". */
+.seg-f-extract { background: #5aa0e6; }
+.seg-f-thumbnail { background: #8a93a6; }
+.seg-f-chunk_embed { background: #3fb8af; }
+.seg-f-entities { background: #d8a53f; }
+.seg-f-ner { background: #e0805a; }
+.seg-f-entity_graph { background: #a58cff; }
+.seg-f-relations { background: #e07ba8; }
+.seg-f-doc_metadata { background: #a8c256; }
+.seg-f-doc_classify { background: #4bb3d4; }
+.seg-f-structured_records { background: #4cc266; }

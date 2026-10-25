@@ -10,12 +10,19 @@ const ITEMS = [
   { cls: "seg-done", label: "Done", hint: "fully processed" },
 ] as const;
 
-// Pipeline stage color groups (the segmented in-flight bar).
+// The granular pipeline stages, each with its own color (#848) - the same seg-f-* classes color
+// the per-document bar segments and the stage-queue bars.
 const STAGES = [
-  { cls: "seg-intake", label: "Intake", hint: "reading, hashing, converting" },
-  { cls: "seg-processing", label: "Extracting text", hint: "text extraction / OCR" },
-  { cls: "seg-index", label: "Indexing", hint: "chunking + embeddings" },
-  { cls: "seg-done", label: "Finishing", hint: "activation" },
+  { cls: "seg-f-extract", label: "Extract / OCR", hint: "text + OCR from the original" },
+  { cls: "seg-f-thumbnail", label: "Thumbnails", hint: "page previews" },
+  { cls: "seg-f-chunk_embed", label: "Chunk & embed", hint: "search vectors" },
+  { cls: "seg-f-entities", label: "Entities (patterns)", hint: "emails, dates, amounts, ..." },
+  { cls: "seg-f-ner", label: "NER", hint: "people, organizations, places" },
+  { cls: "seg-f-entity_graph", label: "Entity graph", hint: "links entities across documents" },
+  { cls: "seg-f-relations", label: "Relations", hint: "who did what, where, when" },
+  { cls: "seg-f-doc_metadata", label: "Metadata", hint: "title, date, summary" },
+  { cls: "seg-f-doc_classify", label: "Classification", hint: "document category" },
+  { cls: "seg-f-structured_records", label: "Records", hint: "tables, line items" },
 ] as const;
 
 /** Small (?) button that explains the status color codes on demand. */

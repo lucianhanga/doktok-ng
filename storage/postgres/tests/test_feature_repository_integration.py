@@ -286,3 +286,68 @@ def test_llm_group_cap_limits_total_external_calls_across_features(db: Database)
     repo.mark_done(c1.id, feature_version=1)
     freed = claim()
     assert freed is not None and freed.feature in ("entities", "doc_metadata")
+
+
+def test_lane_limit_holds_under_concurrent_claims(db: Database) -> None:
+    # Prod 2026-10-25: a batch landed and FIVE extracts ran with a lane of 2. Autocommit means each
+    # claim sees its own snapshot - near-simultaneous claims all count 'running' before anyone's
+    # mark commits, so the lane leaks. The lane must hold under concurrent claimants.
+    import threading
+
+    docs = PostgresDocumentRepository(db)
+    for i in range(6):
+        _active_doc(docs, f"c{i}")
+    repo = PostgresFeatureRepository(db)
+    for i in range(6):
+        repo.seed_for_document(TENANT, f"c{i}", [("extract", 1)])
+
+    now = datetime.now(UTC)
+    claimed: list[str] = []
+    lock = threading.Lock()
+
+    def claim() -> None:
+        row = repo.claim_next(
+            TENANT,
+            now=now,
+            reclaim_before=now - timedelta(seconds=900),
+            lane_limits={"extract": 2},
+        )
+        with lock:
+            if row is not None:
+                claimed.append(row.id)
+
+    threads = [threading.Thread(target=claim) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(claimed) == 2  # the lane held - not 3+
+
+
+def test_claim_serializes_on_the_tenant_advisory_lock(db: Database) -> None:
+    # Prod 2026-10-25: five extract claims landed within 9ms - each claim's snapshot counted
+    # 'running' before the sibling commits, so the lane leaked. Claims must serialize per tenant
+    # on an advisory lock so the lane check sees every prior claim.
+    import threading
+
+    docs = PostgresDocumentRepository(db)
+    _active_doc(docs, "L1")
+    repo = PostgresFeatureRepository(db)
+    repo.seed_for_document(TENANT, "L1", [("extract", 1)])
+
+    now = datetime.now(UTC)
+    with db.connection() as conn:
+        conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (f"feature-claim:{TENANT}",))
+        claimed: list[DocumentFeature | None] = []
+        t = threading.Thread(
+            target=lambda: claimed.append(
+                repo.claim_next(TENANT, now=now, reclaim_before=now - timedelta(seconds=900))
+            )
+        )
+        t.start()
+        t.join(timeout=2.0)
+        assert claimed == []  # still blocked on the advisory lock
+        conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (f"feature-claim:{TENANT}",))
+    t.join(timeout=5.0)
+    assert claimed and claimed[0] is not None  # proceeds once the lock is released

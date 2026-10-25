@@ -2532,21 +2532,31 @@ class PostgresFeatureRepository:
             "gcap_maxes": list(lane_group_limits.values()),
         }
         with self._db.connection() as conn:
-            # Crash-bound the reclaim loop first: a 'running' row that was never marked done/failed
-            # means the worker process died mid-attempt (SIGKILL/OOM - no handler runs). Reclaiming
-            # such rows unconditionally retries them forever (2026-10-25: 585 attempts on
-            # gliner-relex relations). Once attempts hit max_attempts, fail the row so it surfaces
-            # as 'Needs attention' instead of spinning invisibly.
+            # Serialize claims per tenant on a session advisory lock: autocommit gives every
+            # statement its own snapshot, so without it near-simultaneous claims all count
+            # 'running' rows before anyone's mark commits and the lane caps leak (prod 2026-10-25:
+            # five extract claims in 9ms with a lane of 2). Claims are millisecond-cheap, so
+            # serialization costs nothing. Session (not xact) lock because connections are
+            # autocommit; unlocked in finally before the connection returns to the pool.
             conn.execute(
-                "UPDATE document_features SET status='failed', "
-                "last_error='attempts exhausted: never ran to completion (likely crashed/OOM)', "
-                "next_attempt_at=NULL, updated_at=now() "
-                "WHERE tenant_id=%(tenant)s AND status='running' "
-                "AND attempts >= max_attempts AND last_attempt_at < %(reclaim_before)s",
-                params,
+                "SELECT pg_advisory_lock(hashtext(%s))", (f"feature-claim:{tenant_id}",)
             )
-            cur = conn.cursor(row_factory=dict_row)
-            row = cur.execute(
+            try:
+                # Crash-bound the reclaim loop first: a 'running' row that was never marked
+                # done/failed means the worker process died mid-attempt (SIGKILL/OOM - no handler
+                # runs). Reclaiming such rows unconditionally retries them forever (2026-10-25:
+                # 585 attempts on gliner-relex relations). Once attempts hit max_attempts, fail
+                # the row so it surfaces as 'Needs attention' instead of spinning invisibly.
+                conn.execute(
+                    "UPDATE document_features SET status='failed', "
+                    "last_error='attempts exhausted: never ran to completion (likely crashed/OOM)'"
+                    ", next_attempt_at=NULL, updated_at=now() "
+                    "WHERE tenant_id=%(tenant)s AND status='running' "
+                    "AND attempts >= max_attempts AND last_attempt_at < %(reclaim_before)s",
+                    params,
+                )
+                cur = conn.cursor(row_factory=dict_row)
+                row = cur.execute(
                 # ``deps`` is the (feature, prerequisite) edge set. A row is only claimable when
                 # none of its prerequisites is still missing a 'done' row on the same document - so
                 # a stage waits for its inputs. Empty deps -> no gating (backward compatible).
@@ -2595,6 +2605,10 @@ class PostgresFeatureRepository:
                 f"RETURNING {_FEATURE_COLUMNS_F}",
                 params,
             ).fetchone()
+            finally:
+                conn.execute(
+                    "SELECT pg_advisory_unlock(hashtext(%s))", (f"feature-claim:{tenant_id}",)
+                )
         return _row_to_feature(row) if row else None
 
     def mark_done(

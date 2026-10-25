@@ -449,7 +449,7 @@ test("simple mode does not show the stage queues", async () => {
   expect(screen.queryByText("Stage queues")).not.toBeInTheDocument();
 });
 
-test("processing documents show the per-stage gradient bar and current stage", async () => {
+test("processing documents show per-stage colored segments and the current stage", async () => {
   stubApi({
     inflight: [
       {
@@ -467,10 +467,10 @@ test("processing documents show the per-stage gradient bar and current stage", a
   });
   const { container } = render(<OverviewPanel />);
   await waitFor(() => expect(screen.getByText("contract-2024.pdf")).toBeInTheDocument());
-  // The current stage is named, and done segments carry the gradient-toward-green class.
+  // The current stage is named, and each segment carries its own stage color class.
   expect(screen.getByText(/chunk/i)).toBeInTheDocument();
-  expect(container.querySelectorAll(".stage-seg.stage-grad").length).toBe(1); // the done segment
-  expect(container.querySelectorAll(".stage-seg.seg-running").length).toBe(1);
+  expect(container.querySelectorAll(".stage-seg.seg-f-extract").length).toBe(1); // done segment
+  expect(container.querySelectorAll(".stage-seg.seg-f-chunk_embed.seg-running").length).toBe(1);
 });
 
 test("advanced heading is 'In flight' (processing documents ARE in Documents now)", async () => {
@@ -518,4 +518,30 @@ test("stage queues count only claimable rows; upstream-blocked show as '+N'", as
   const relations = screen.getByText("Relations").closest(".pipeline-total-row");
   expect(relations).toHaveTextContent("0 running · 0 queued");
   expect(relations).toHaveTextContent("+9 upstream");
+});
+
+test("stage colors are granular and distinct per stage (NER, KEG, Records, ...)", async () => {
+  stubApi({
+    inflight: [
+      {
+        document_id: "d1",
+        filename: "deep.pdf",
+        title: null,
+        created_at: "2026-06-10T00:00:00Z",
+        features: [
+          { feature: "extract", status: "done" },
+          { feature: "chunk_embed", status: "done" },
+          { feature: "ner", status: "done" },
+          { feature: "entity_graph", status: "done" },
+          { feature: "structured_records", status: "done" },
+        ],
+      },
+    ],
+  });
+  const { container } = render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("deep.pdf")).toBeInTheDocument());
+  // Each done stage carries its OWN color class - no shared "indexing" bucket.
+  for (const f of ["extract", "chunk_embed", "ner", "entity_graph", "structured_records"]) {
+    expect(container.querySelectorAll(`.stage-seg.seg-f-${f}`).length).toBe(1);
+  }
 });

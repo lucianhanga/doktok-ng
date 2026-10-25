@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   dismissIngestionJob,
@@ -233,25 +233,21 @@ function FeatureStageBar({ features }: { features: InflightDocument["features"] 
         ? 99
         : FEATURE_STAGE_ORDER.indexOf(b.feature)),
   );
-  const n = ordered.length;
   return (
     <div className="flow-bar stage-bar">
-      {ordered.map((f, i) => {
-        const frac = n > 1 ? i / (n - 1) : 1;
+      {ordered.map((f) => {
+        // Each stage carries its own color (seg-f-*); pending segments stay on the bare track.
+        // Running pulses; failed goes red regardless of stage.
         let cls = "stage-seg";
-        let style: CSSProperties | undefined;
         if (f.status === "failed") {
           cls += " filled seg-failed";
         } else if (f.status === "running") {
-          cls += " filled seg-running";
+          cls += ` filled seg-f-${f.feature} seg-running`;
         } else if (f.status === "done") {
-          cls += " filled stage-grad";
-          style = {
-            background: `color-mix(in oklab, var(--accent) ${Math.round((1 - frac) * 100)}%, var(--success))`,
-          };
+          cls += ` filled seg-f-${f.feature}`;
         }
         const label = FEATURE_STAGE_LABELS[f.feature] ?? f.feature;
-        return <i key={f.feature} className={cls} style={style} title={`${label}: ${f.status}`} />;
+        return <i key={f.feature} className={cls} title={`${label}: ${f.status}`} />;
       })}
     </div>
   );
@@ -546,7 +542,7 @@ export function OverviewPanel({
                     {total > 0 && (
                       <>
                         <i
-                          className="seg-processing"
+                          className={`seg-f-${q.feature}`}
                           style={{ width: `${(q.running / stageMax) * 100}%` }}
                         />
                         <i

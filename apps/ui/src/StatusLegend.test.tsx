@@ -18,3 +18,11 @@ test("the legend is collapsed until the (?) button is clicked", () => {
   fireEvent.click(toggle);
   expect(screen.queryByText("Queued / waiting")).not.toBeInTheDocument();
 });
+
+test("the legend enumerates the granular stages with their color codes", () => {
+  render(<StatusLegend />);
+  fireEvent.click(screen.getByRole("button", { name: /explain status colors/i }));
+  for (const label of ["Extract / OCR", "Chunk & embed", "NER", "Entity graph", "Relations", "Records"]) {
+    expect(screen.getByText(label)).toBeInTheDocument();
+  }
+});

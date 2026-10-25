@@ -77,7 +77,7 @@ class FakeFeatureRepository:
 
 def _client() -> TestClient:
     registry = build_registry()
-    registry.register(FeatureRepository, FakeFeatureRepository())  # type: ignore[type-abstract]
+    registry.register(FeatureRepository, FakeFeatureRepository())
     settings = Settings(env="test", tenant_tokens=TOKENS, _env_file=None)  # type: ignore[call-arg]
     return TestClient(create_app(settings=settings, registry=registry))
 

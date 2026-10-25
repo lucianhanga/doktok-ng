@@ -346,6 +346,15 @@ export interface Stats {
   pending_ingest: number;
   documents_pending_features: number;
   documents_processing_features: number;
+  /** Per-stage queue depths (extract, entities, relations, ...) for the advanced overview. */
+  stage_queues?: StageQueue[];
+}
+
+export interface StageQueue {
+  feature: string;
+  queued: number;
+  running: number;
+  failed: number;
 }
 
 export function fetchDocument(id: string, signal?: AbortSignal): Promise<DokDocument> {

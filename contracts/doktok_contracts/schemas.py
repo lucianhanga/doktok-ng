@@ -1314,6 +1314,15 @@ class DocumentLayout(BaseModel):
     pages: list[LayoutPage] = Field(default_factory=list)
 
 
+class StageQueue(BaseModel):
+    """Per-stage queue depth for the overview's stage-queues section (#848)."""
+
+    feature: str
+    queued: int = 0
+    running: int = 0
+    failed: int = 0
+
+
 class StatsSummary(BaseModel):
     """At-a-glance tenant counts for the overview dashboard."""
 
@@ -1327,6 +1336,7 @@ class StatsSummary(BaseModel):
     documents_processing_features: int = (
         0  # documents with >=1 feature still queued/running (in-progress (re)processing)
     )
+    stage_queues: list[StageQueue] = Field(default_factory=list)  # per-stage queue depths (#848)
 
 
 class HealthStatus(BaseModel):

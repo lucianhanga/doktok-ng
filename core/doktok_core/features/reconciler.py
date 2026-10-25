@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
@@ -41,6 +41,12 @@ class FeatureReconciler:
         lease_seconds: float = 1800.0,
         max_per_pass: int = 1000,
         concurrency: int = 1,
+        # Per-stage WIP lanes (#848): each feature is its own queue. lane_limits caps concurrent
+        # runs per feature; lane_groups/lane_group_limits add a SHARED budget across features
+        # (e.g. every LLM-backed feature in the 'llm' group totals <= N external calls).
+        lane_limits: Mapping[str, int] | None = None,
+        lane_groups: Mapping[str, str] | None = None,
+        lane_group_limits: Mapping[str, int] | None = None,
         clock: Callable[[], datetime] = _utcnow,
         audit_log: AuditLogRepository | None = None,
     ) -> None:
@@ -57,6 +63,9 @@ class FeatureReconciler:
         self._lease_seconds = lease_seconds
         self._max_per_pass = max_per_pass
         self._concurrency = max(1, int(concurrency))
+        self._lane_limits = lane_limits or {}
+        self._lane_groups = lane_groups or {}
+        self._lane_group_limits = lane_group_limits or {}
         self._clock = clock
 
     def set_processors(self, processors: Sequence[FeatureProcessor]) -> None:
@@ -93,6 +102,9 @@ class FeatureReconciler:
             now=now,
             reclaim_before=reclaim_before,
             dependencies=self._dependencies,
+            lane_limits=self._lane_limits,
+            lane_groups=self._lane_groups,
+            lane_group_limits=self._lane_group_limits,
         )
 
     def _process(self, tenant_id: str, row: DocumentFeature) -> None:

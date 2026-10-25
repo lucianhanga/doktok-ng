@@ -229,6 +229,9 @@ services:
       DOKTOK_OCR_ENABLE_MKLDNN: ${DOKTOK_OCR_ENABLE_MKLDNN:-true}
       DOKTOK_INGEST_CONCURRENCY: ${DOKTOK_INGEST_CONCURRENCY:-2}
       DOKTOK_OPENAI_RECONCILE_CONCURRENCY: ${DOKTOK_OPENAI_RECONCILE_CONCURRENCY:-6}
+      # Hard ceiling on concurrent OpenAI calls (process-wide semaphore in the client; bounds the
+      # enrichment lanes AND the OCR judge AND RAG). 10 per the 2026-10 capacity review (#848).
+      DOKTOK_OPENAI_MAX_CONCURRENCY: ${DOKTOK_OPENAI_MAX_CONCURRENCY:-10}
     volumes:
       - doktok-files:/data/files
     logging: *logging

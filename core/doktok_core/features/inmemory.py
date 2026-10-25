@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 from doktok_contracts.schemas import DocumentFeature, FeatureMetrics, FeatureStatus
@@ -123,7 +123,13 @@ class InMemoryFeatureRepository:
         now: datetime,
         reclaim_before: datetime,
         dependencies: Sequence[tuple[str, str]] = (),
+        lane_limits: Mapping[str, int] | None = None,
+        lane_groups: Mapping[str, str] | None = None,
+        lane_group_limits: Mapping[str, int] | None = None,
     ) -> DocumentFeature | None:
+        lane_limits = lane_limits or {}
+        lane_groups = lane_groups or {}
+        lane_group_limits = lane_group_limits or {}
         prereqs: dict[str, set[str]] = {}
         for feature, prereq in dependencies:
             prereqs.setdefault(feature, set()).add(prereq)
@@ -143,6 +149,36 @@ class InMemoryFeatureRepository:
                 row.status = FeatureStatus.FAILED
                 row.last_error = "attempts exhausted: never ran to completion (likely crashed/OOM)"
                 row.next_attempt_at = None
+
+        def running_count(feature: str) -> int:
+            return sum(
+                1
+                for r in self.rows
+                if r.tenant_id == tenant_id
+                and r.feature == feature
+                and r.status is FeatureStatus.RUNNING
+            )
+
+        def group_running(group: str) -> int:
+            members = {f for f, g in lane_groups.items() if g == group}
+            return sum(
+                1
+                for r in self.rows
+                if r.tenant_id == tenant_id
+                and r.feature in members
+                and r.status is FeatureStatus.RUNNING
+            )
+
+        def lane_open(row: DocumentFeature) -> bool:
+            limit = lane_limits.get(row.feature)
+            if limit is not None and running_count(row.feature) >= limit:
+                return False
+            group = lane_groups.get(row.feature)
+            if group is not None:
+                cap = lane_group_limits.get(group)
+                if cap is not None and group_running(group) >= cap:
+                    return False
+            return True
 
         def ready(row: DocumentFeature) -> bool:
             # Every prerequisite of this feature must have a 'done' row on the same document.
@@ -177,7 +213,7 @@ class InMemoryFeatureRepository:
                     and row.last_attempt_at < reclaim_before
                 )
             )
-            if due and ready(row):
+            if due and ready(row) and lane_open(row):
                 row.status = FeatureStatus.RUNNING
                 row.attempts += 1
                 row.last_attempt_at = now

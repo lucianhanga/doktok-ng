@@ -287,6 +287,13 @@ class Settings(BaseSettings):
     # is just the reconciler's worker count and should be <= that ceiling to avoid idle blocked
     # workers. Kept modest so a small OpenAI rate tier is not overwhelmed out of the box.
     openai_reconcile_concurrency: int = 5
+    # Shared budget for ALL LLM-backed feature lanes (entities/ner/relations/metadata/classify/
+    # records) when the pipeline runs on a remote provider (#848): any single stage may use the
+    # whole budget when the others are idle (every queue progresses when work exists), but the
+    # group total never exceeds this. Keep it <= DOKTOK_OPENAI_MAX_CONCURRENCY (the hard
+    # process-wide semaphore in the OpenAI client). On the local Ollama path the group cap falls
+    # back to reconcile_concurrency instead - a single GPU thrashes under high parallelism.
+    llm_max_concurrency: int = 10
     # A job left in a non-terminal state (extracting/indexing/...) longer than this was abandoned by
     # a killed worker; the worker re-queues it (file back to ingest) so it never lingers invisibly.
     # Keep it above the slowest legitimate single-document extraction. Set to 0 to disable recovery.

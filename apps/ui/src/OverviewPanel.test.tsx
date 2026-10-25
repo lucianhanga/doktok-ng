@@ -413,3 +413,33 @@ test("in-flight rows show the granular pipeline stage and a segmented stage bar"
   // The stage bar is segmented (one segment per pipeline stage).
   expect(container.querySelectorAll(".stage-seg").length).toBeGreaterThanOrEqual(9);
 });
+
+test("advanced mode shows the per-stage queues with running/queued counts", async () => {
+  stubApi({
+    stats: {
+      ...EMPTY_STATS,
+      stage_queues: [
+        { feature: "extract", queued: 3, running: 1, failed: 0 },
+        { feature: "relations", queued: 5, running: 2, failed: 1 },
+      ],
+    },
+  });
+  render(<OverviewPanel mode="advanced" />);
+  await waitFor(() => expect(screen.getByText("Stage queues")).toBeInTheDocument());
+  expect(screen.getByText("Extract / OCR")).toBeInTheDocument();
+  expect(screen.getByText("Relations")).toBeInTheDocument();
+  expect(screen.getByText(/1 running/)).toBeInTheDocument();
+  expect(screen.getByText(/5 queued/)).toBeInTheDocument();
+});
+
+test("simple mode does not show the stage queues", async () => {
+  stubApi({
+    stats: {
+      ...EMPTY_STATS,
+      stage_queues: [{ feature: "extract", queued: 3, running: 1, failed: 0 }],
+    },
+  });
+  render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("Library")).toBeInTheDocument());
+  expect(screen.queryByText("Stage queues")).not.toBeInTheDocument();
+});

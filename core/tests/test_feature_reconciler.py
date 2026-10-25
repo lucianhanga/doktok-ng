@@ -269,7 +269,7 @@ def test_concurrent_drain_processes_every_row_exactly_once() -> None:
         def ensure_for_active(self, tenant_id, registered):  # type: ignore[no-untyped-def]
             return 0
 
-        def claim_next(self, tenant_id, *, now, reclaim_before, dependencies=()):  # type: ignore[no-untyped-def]
+        def claim_next(self, tenant_id, *, now, reclaim_before, dependencies=(), **_lanes):  # type: ignore[no-untyped-def]
             with lock:
                 return next(cursor, None)
 

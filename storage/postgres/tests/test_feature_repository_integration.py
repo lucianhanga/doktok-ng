@@ -351,3 +351,22 @@ def test_claim_serializes_on_the_tenant_advisory_lock(db: Database) -> None:
         conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (f"feature-claim:{TENANT}",))
     t.join(timeout=5.0)
     assert claimed and claimed[0] is not None  # proceeds once the lock is released
+
+
+def test_reset_does_not_interrupt_a_running_feature(db: Database) -> None:
+    docs = PostgresDocumentRepository(db)
+    _active_doc(docs, "d1")
+    repo = PostgresFeatureRepository(db)
+    repo.ensure_for_active(TENANT, [("relations", 1)])
+
+    now = datetime.now(UTC)
+    claimed = repo.claim_next(TENANT, now=now, reclaim_before=now - timedelta(seconds=900))
+    assert claimed is not None and claimed.status is FeatureStatus.RUNNING
+
+    # A reprocess/retry while the feature is mid-flight must not reset it: the running attempt
+    # would keep writing from stale data while a fresh attempt re-runs concurrently
+    # (2026-10-25 kg_edges FK incident). Orphaned running rows are recovered by
+    # requeue_running / lease reclaim instead.
+    assert repo.reset(TENANT, "d1", "relations") is False
+    (row,) = [r for r in repo.list_for_document(TENANT, "d1") if r.feature == "relations"]
+    assert row.status is FeatureStatus.RUNNING

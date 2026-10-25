@@ -53,3 +53,22 @@ def test_activation_records_done_features(tmp_path: Path) -> None:
     assert by_name["extract"].status is FeatureStatus.DONE
     assert by_name["entities"].status is FeatureStatus.DONE  # entity_repo present
     assert "chunk_embed" not in by_name  # no chunk repo wired in this test
+
+
+def test_reset_does_not_interrupt_a_running_feature() -> None:
+    # A retry/reprocess landing while the feature is mid-flight must not reset it: the running
+    # attempt would keep writing from stale data while a fresh attempt re-runs concurrently
+    # (2026-10-25 kg_edges FK incident).
+    repo = InMemoryFeatureRepository()
+    repo.seed_for_document(TENANT, "d1", [("relations", 1)])
+    (row,) = repo.list_for_document(TENANT, "d1")
+    row.status = FeatureStatus.RUNNING
+    repo.rows = [row]  # list_for_document returns copies; store the mutation
+
+    assert repo.reset(TENANT, "d1", "relations") is False
+    assert repo.list_for_document(TENANT, "d1")[0].status is FeatureStatus.RUNNING
+
+    row.status = FeatureStatus.FAILED  # a failed row resets normally
+    repo.rows = [row]
+    assert repo.reset(TENANT, "d1", "relations") is True
+    assert repo.list_for_document(TENANT, "d1")[0].status is FeatureStatus.PENDING

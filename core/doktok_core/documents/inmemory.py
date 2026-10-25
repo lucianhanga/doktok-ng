@@ -73,6 +73,16 @@ class InMemoryDocumentRepository:
                 return d.id
         return None
 
+    def find_processing_by_staged_source(self, tenant_id: str, staged_source: str) -> str | None:
+        for d in self._docs.values():
+            if (
+                d.tenant_id == tenant_id
+                and d.status is DocumentStatus.PROCESSING
+                and d.metadata.get("staged_source") == staged_source
+            ):
+                return d.id
+        return None
+
     def get(self, tenant_id: str, document_id: str) -> Document | None:
         doc = self._docs.get(document_id)
         if doc is None or doc.tenant_id != tenant_id:

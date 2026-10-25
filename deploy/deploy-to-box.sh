@@ -9,7 +9,7 @@
 # docs/operations/deploy-fresh-box-runbook.md section 3. This script fails fast if it is missing.
 #
 # Config (env vars, all have defaults so a bare `make deploy-box` works):
-#   DOKTOK_BOX_HOST   ssh target           (default lh@10.0.0.70)
+#   DOKTOK_BOX_HOST   ssh target           (default lh@192.168.1.10)
 #   DOKTOK_BOX_KEY    ssh private key path  (default the on-prem N95 key)
 #   DOKTOK_BOX_DIR    remote deploy dir     (default /opt/doktok)
 #   DOKTOK_BOX_SERVICES  images to rebuild  (default "backend caddy worker backup-runner")
@@ -18,7 +18,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/lib.sh  # ok()/warn()/err() colour helpers: green=success, red=failure, yellow=warning
 
-HOST="${DOKTOK_BOX_HOST:-lh@10.0.0.70}"
+HOST="${DOKTOK_BOX_HOST:-lh@192.168.1.10}"
 KEY="${DOKTOK_BOX_KEY:-$HOME/Library/CloudStorage/OneDrive-Personal/Documents/paperless/ssh.keys/onprem.paperless.hostT0003.pem}"
 DIR="${DOKTOK_BOX_DIR:-/opt/doktok}"
 SERVICES="${DOKTOK_BOX_SERVICES:-backend caddy worker backup-runner}"

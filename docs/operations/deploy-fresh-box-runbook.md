@@ -276,7 +276,7 @@ N95):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOKTOK_BOX_HOST` | `lh@10.0.0.70` | ssh target |
+| `DOKTOK_BOX_HOST` | `lh@192.168.1.10` | ssh target |
 | `DOKTOK_BOX_KEY` | the on-prem N95 key path | ssh private key |
 | `DOKTOK_BOX_DIR` | `/opt/doktok` | remote deploy dir |
 | `DOKTOK_BOX_SERVICES` | `backend caddy worker backup-runner` | images to rebuild |

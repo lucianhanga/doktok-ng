@@ -459,6 +459,16 @@ class PostgresDocumentRepository:
             ).fetchone()
         return str(row["id"]) if row else None
 
+    def find_processing_by_staged_source(self, tenant_id: str, staged_source: str) -> str | None:
+        with self._db.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            row = cur.execute(
+                "SELECT id FROM documents WHERE tenant_id=%s AND status='processing' "
+                "AND metadata->>'staged_source'=%s LIMIT 1",
+                (tenant_id, staged_source),
+            ).fetchone()
+        return str(row["id"]) if row else None
+
     def set_metadata(
         self,
         tenant_id: str,
@@ -535,7 +545,7 @@ class PostgresDocumentRepository:
         with self._db.connection() as conn:
             cur = conn.execute(
                 "UPDATE documents SET status='failed', "
-                "metadata = metadata || %s "
+                "metadata = metadata || %s::jsonb "
                 "WHERE id=%s AND tenant_id=%s AND status='processing'",
                 (Json(metadata), document_id, tenant_id),
             )

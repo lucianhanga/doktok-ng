@@ -124,6 +124,13 @@ class DocumentRepository(Protocol):
         (2026-10-25 duplicate in-flight rows)."""
         ...
 
+    def find_processing_by_staged_source(self, tenant_id: str, staged_source: str) -> str | None:
+        """Id of a ``processing`` document whose ``metadata.staged_source`` is this path, if any.
+        Stale-job recovery uses it to detect that an apparently-abandoned ingestion job already
+        handed off to a document (crash inside the intake handoff window) - re-queuing such a
+        job's file would strand the document on a path that no longer exists."""
+        ...
+
     def list_documents(
         self,
         tenant_id: str,

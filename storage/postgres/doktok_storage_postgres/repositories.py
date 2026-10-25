@@ -2457,6 +2457,19 @@ class PostgresFeatureRepository:
             "dep_prereqs": [d[1] for d in dependencies],
         }
         with self._db.connection() as conn:
+            # Crash-bound the reclaim loop first: a 'running' row that was never marked done/failed
+            # means the worker process died mid-attempt (SIGKILL/OOM - no handler runs). Reclaiming
+            # such rows unconditionally retries them forever (2026-10-25: 585 attempts on
+            # gliner-relex relations). Once attempts hit max_attempts, fail the row so it surfaces
+            # as 'Needs attention' instead of spinning invisibly.
+            conn.execute(
+                "UPDATE document_features SET status='failed', "
+                "last_error='attempts exhausted: never ran to completion (likely crashed/OOM)', "
+                "next_attempt_at=NULL, updated_at=now() "
+                "WHERE tenant_id=%(tenant)s AND status='running' "
+                "AND attempts >= max_attempts AND last_attempt_at < %(reclaim_before)s",
+                params,
+            )
             cur = conn.cursor(row_factory=dict_row)
             row = cur.execute(
                 # ``deps`` is the (feature, prerequisite) edge set. A row is only claimable when
@@ -2470,7 +2483,8 @@ class PostgresFeatureRepository:
                 "    f.status='pending'"
                 "    OR (f.status='failed' AND f.attempts < f.max_attempts "
                 "        AND (f.next_attempt_at IS NULL OR f.next_attempt_at <= %(now)s))"
-                "    OR (f.status='running' AND f.last_attempt_at < %(reclaim_before)s))"
+                "    OR (f.status='running' AND f.attempts < f.max_attempts "
+                "        AND f.last_attempt_at < %(reclaim_before)s))"
                 "  AND NOT EXISTS ("
                 "    SELECT 1 FROM deps d WHERE d.feature = f.feature AND NOT EXISTS ("
                 "      SELECT 1 FROM document_features p WHERE p.tenant_id = f.tenant_id"

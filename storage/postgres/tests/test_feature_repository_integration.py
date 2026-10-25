@@ -152,3 +152,32 @@ def test_feature_counts_for_documents_is_batched(db: Database) -> None:
     total_failed = counts["d1"][1] + counts["d2"][1]
     assert total_failed == 1
     assert repo.feature_counts_for_documents(TENANT, []) == {}
+
+
+def test_crashed_running_feature_is_failed_after_max_attempts(db: Database) -> None:
+    """A claimed feature whose worker process dies (SIGKILL/OOM) never reaches mark_failed - the
+    row stays 'running' and the stale-claim reclaims it forever (2026-10-25 prod incident: 585
+    attempts on gliner-relex relations). Crashed attempts must count like failed ones: once
+    attempts hit max_attempts the row is failed (surfacing as 'Needs attention') and never
+    claimed again."""
+    docs = PostgresDocumentRepository(db)
+    _active_doc(docs, "d1")
+    repo = PostgresFeatureRepository(db)
+    repo.ensure_for_active(TENANT, [("relations", 1)])
+
+    t0 = datetime.now(UTC)
+    # max_attempts defaults to 3: three crashed attempts (claimed, never completed, reclaimed
+    # after the 15-minute stale window).
+    for i in range(1, 4):
+        now = t0 + timedelta(minutes=16 * i)
+        claimed = repo.claim_next(TENANT, now=now, reclaim_before=now - timedelta(minutes=15))
+        assert claimed is not None and claimed.attempts == i
+        # no mark_done / mark_failed: the worker process died mid-run
+
+    later = t0 + timedelta(minutes=16 * 4)
+    assert (
+        repo.claim_next(TENANT, now=later, reclaim_before=later - timedelta(minutes=15)) is None
+    )
+    row = next(r for r in repo.list_for_document(TENANT, "d1") if r.feature == "relations")
+    assert row.status is FeatureStatus.FAILED
+    assert row.last_error  # explains the crash loop instead of sitting silent

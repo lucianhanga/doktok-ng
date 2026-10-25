@@ -7586,3 +7586,19 @@ tr.row-selected {
   background: var(--danger);
   color: var(--accent-contrast);
 }
+
+/* Running stage in the per-document feature bar: accent with a quiet pulse (motion-safe). */
+.stage-seg.filled.seg-running {
+  background: var(--accent);
+  animation: stage-pulse 1.6s ease-in-out infinite;
+}
+@keyframes stage-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stage-seg.filled.seg-running {
+    animation: none;
+  }
+}

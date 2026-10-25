@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import {
   dismissIngestionJob,
   fetchActivity,
   fetchCategories,
+  fetchInflightDocuments,
   fetchIngestionJobs,
   fetchStats,
   retryIngestionJob,
   uploadDocuments,
   type AuditEvent,
   type CategorySummary,
+  type InflightDocument,
   type IngestionJob,
   type Stats,
 } from "./api";
@@ -191,10 +193,99 @@ function brokenStage(job: IngestionJob): string {
   return job.error_message || job.error_code || "failed";
 }
 
-/** One row per job that has not become a repository document yet (#848): the moment the document
- * lands in Documents - whatever its status - the row leaves this list. Broken rows (failed before
- * intake) carry a Retry action: the file is still on the server, so one click requeues it. */
-function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: () => void }) {
+// The feature stages in pipeline order (#848): per-document progress bars and the stage-queues
+// section share this ordering and the labels.
+const FEATURE_STAGE_ORDER = [
+  "extract",
+  "thumbnail",
+  "chunk_embed",
+  "entities",
+  "ner",
+  "entity_graph",
+  "relations",
+  "doc_metadata",
+  "doc_classify",
+  "structured_records",
+];
+const FEATURE_STAGE_LABELS: Record<string, string> = {
+  extract: "Extract / OCR",
+  thumbnail: "Thumbnails",
+  chunk_embed: "Chunk & embed",
+  entities: "Entities (patterns)",
+  ner: "Entities (NER)",
+  entity_graph: "Entity graph",
+  relations: "Relations",
+  doc_metadata: "Metadata",
+  doc_classify: "Classification",
+  structured_records: "Records",
+};
+
+/** Segmented per-stage bar for a document moving through the feature ledger (#848): done
+ * segments gradient from accent blue toward green as the document advances; the running stage is
+ * accent; failed is red; pending stays on the track. */
+function FeatureStageBar({ features }: { features: InflightDocument["features"] }) {
+  const ordered = [...features].sort(
+    (a, b) =>
+      (FEATURE_STAGE_ORDER.indexOf(a.feature) === -1
+        ? 99
+        : FEATURE_STAGE_ORDER.indexOf(a.feature)) -
+      (FEATURE_STAGE_ORDER.indexOf(b.feature) === -1
+        ? 99
+        : FEATURE_STAGE_ORDER.indexOf(b.feature)),
+  );
+  const n = ordered.length;
+  return (
+    <div className="flow-bar stage-bar">
+      {ordered.map((f, i) => {
+        const frac = n > 1 ? i / (n - 1) : 1;
+        let cls = "stage-seg";
+        let style: CSSProperties | undefined;
+        if (f.status === "failed") {
+          cls += " filled seg-failed";
+        } else if (f.status === "running") {
+          cls += " filled seg-running";
+        } else if (f.status === "done") {
+          cls += " filled stage-grad";
+          style = {
+            background: `color-mix(in oklab, var(--accent) ${Math.round((1 - frac) * 100)}%, var(--success))`,
+          };
+        }
+        const label = FEATURE_STAGE_LABELS[f.feature] ?? f.feature;
+        return <i key={f.feature} className={cls} style={style} title={`${label}: ${f.status}`} />;
+      })}
+    </div>
+  );
+}
+
+function docStage(features: InflightDocument["features"]): { label: string; failed: boolean } {
+  const failed = features.find((f) => f.status === "failed");
+  if (failed) {
+    return { label: `failed: ${FEATURE_STAGE_LABELS[failed.feature] ?? failed.feature}`, failed: true };
+  }
+  const running = features.find((f) => f.status === "running");
+  if (running) return { label: FEATURE_STAGE_LABELS[running.feature] ?? running.feature, failed: false };
+  if (features.length > 0 && features.every((f) => f.status === "done")) {
+    return { label: "finishing up", failed: false };
+  }
+  const next = features.find((f) => f.status === "pending");
+  return {
+    label: next ? `queued - next: ${FEATURE_STAGE_LABELS[next.feature] ?? next.feature}` : "queued",
+    failed: false,
+  };
+}
+
+/** In-flight work (#848): pre-intake jobs (intake stage bar) plus documents moving through the
+ * feature ledger (gradient stage bar). A row leaves the moment its work is terminal - active,
+ * failed, duplicate, quarantined - terminal outcomes live in Documents. */
+function InFlightList({
+  jobs,
+  docs,
+  onChanged,
+}: {
+  jobs: IngestionJob[];
+  docs: InflightDocument[];
+  onChanged: () => void;
+}) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const moving = jobs.filter((j) => !BROKEN_JOB.has(j.status));
@@ -270,6 +361,23 @@ function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: ()
             </li>
           );
         })}
+        {docs.map((doc) => {
+          const stage = docStage(doc.features);
+          return (
+            <li key={doc.document_id}>
+              <div className="inflight-top">
+                <span className="inflight-name" title={doc.title ?? doc.filename}>
+                  {doc.title ?? doc.filename}
+                </span>
+                <span className={stage.failed ? "inflight-stage is-failed" : "inflight-stage muted"}>
+                  {stage.label}
+                </span>
+                <span className="inflight-elapsed muted">{elapsed(doc.created_at)}</span>
+              </div>
+              <FeatureStageBar features={doc.features} />
+            </li>
+          );
+        })}
       </ul>
       {actionError && (
         <p role="alert" className="status-error">
@@ -277,9 +385,9 @@ function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: ()
         </p>
       )}
       <p className="muted inflight-summary">
-        {moving.length} on the way in
+        {moving.length + docs.length} in flight
         {broken.length > 0 ? ` · ${broken.length} need${broken.length === 1 ? "s" : ""} a decision` : ""}{" "}
-        — everything already in Documents lives there, not here.
+        — done segments shade from blue to green as each document advances.
       </p>
     </div>
   );
@@ -298,15 +406,23 @@ export function OverviewPanel({
   const [recent, setRecent] = useState<AuditEvent[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
+  const [inflightDocs, setInflightDocs] = useState<InflightDocument[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    Promise.all([fetchStats(), fetchActivity(), fetchCategories(), fetchIngestionJobs()])
-      .then(([s, a, c, j]) => {
+    Promise.all([
+      fetchStats(),
+      fetchActivity(),
+      fetchCategories(),
+      fetchIngestionJobs(),
+      fetchInflightDocuments(),
+    ])
+      .then(([s, a, c, j, d]) => {
         setStats(s);
         setRecent(a.slice(0, 8));
         setCategories(c);
         setJobs(j);
+        setInflightDocs(d);
         setError(null);
       })
       .catch((err: unknown) =>
@@ -354,36 +470,10 @@ export function OverviewPanel({
   ];
   const pipelineMax = Math.max(1, ...pipelineRows.map((r) => r.count));
 
-  // Per-stage queues (#848): every processing stage is its own queue; the advanced overview shows
-  // each one's depth so a backed-up stage is visible at a glance. Ordered by pipeline position.
-  const STAGE_ORDER = [
-    "extract",
-    "thumbnail",
-    "chunk_embed",
-    "entities",
-    "ner",
-    "entity_graph",
-    "relations",
-    "doc_metadata",
-    "doc_classify",
-    "structured_records",
-  ];
-  const STAGE_LABELS: Record<string, string> = {
-    extract: "Extract / OCR",
-    thumbnail: "Thumbnails",
-    chunk_embed: "Chunk & embed",
-    entities: "Entities (patterns)",
-    ner: "Entities (NER)",
-    entity_graph: "Entity graph",
-    relations: "Relations",
-    doc_metadata: "Metadata",
-    doc_classify: "Classification",
-    structured_records: "Records",
-  };
   const stageQueues = [...(stats?.stage_queues ?? [])].sort(
     (a, b) =>
-      (STAGE_ORDER.indexOf(a.feature) === -1 ? 99 : STAGE_ORDER.indexOf(a.feature)) -
-      (STAGE_ORDER.indexOf(b.feature) === -1 ? 99 : STAGE_ORDER.indexOf(b.feature)),
+      (FEATURE_STAGE_ORDER.indexOf(a.feature) === -1 ? 99 : FEATURE_STAGE_ORDER.indexOf(a.feature)) -
+      (FEATURE_STAGE_ORDER.indexOf(b.feature) === -1 ? 99 : FEATURE_STAGE_ORDER.indexOf(b.feature)),
   );
   const stageMax = Math.max(1, ...stageQueues.map((q) => q.queued + q.running + q.failed));
 
@@ -416,13 +506,13 @@ export function OverviewPanel({
 
       <div className="doc-section">
         <div className="section-head">
-          <h3>{mode === "advanced" ? "In flight — not yet in Documents" : "On the way in"}</h3>
+          <h3>{mode === "advanced" ? "In flight" : "On the way in"}</h3>
           <StatusLegend />
         </div>
-        {inFlight.length === 0 ? (
+        {inFlight.length === 0 && inflightDocs.length === 0 ? (
           <p className="muted">Pipeline idle - every document is fully processed.</p>
         ) : (
-          <InFlightList jobs={inFlight} onChanged={load} />
+          <InFlightList jobs={inFlight} docs={inflightDocs} onChanged={load} />
         )}
       </div>
 
@@ -435,7 +525,7 @@ export function OverviewPanel({
               return (
                 <div key={q.feature} className="pipeline-total-row">
                   <span className="pipeline-total-name muted">
-                    {STAGE_LABELS[q.feature] ?? q.feature}
+                    {FEATURE_STAGE_LABELS[q.feature] ?? q.feature}
                   </span>
                   <div className="flow-bar">
                     {total > 0 && (

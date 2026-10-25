@@ -1720,6 +1720,19 @@ export async function dismissIngestionJob(jobId: string): Promise<void> {
   }
 }
 
+export interface InflightDocument {
+  document_id: string;
+  filename: string;
+  title: string | null;
+  created_at: string;
+  features: { feature: string; status: string }[];
+}
+
+/** Documents still moving through the stage ledger (staged ingestion), with per-stage states. */
+export function fetchInflightDocuments(signal?: AbortSignal): Promise<InflightDocument[]> {
+  return getJson<InflightDocument[]>("/api/v1/features/inflight", signal);
+}
+
 export interface Citation {
   index: number;
   document_id: string;

@@ -22,12 +22,14 @@ function stubApi({
   activity = [],
   categories = [],
   jobs = [],
+  inflight = [],
   uploadResult = { accepted: ["a.pdf"], rejected: [] },
 }: {
   stats?: object;
   activity?: object[];
   categories?: object[];
   jobs?: object[];
+  inflight?: object[];
   uploadResult?: object;
 } = {}) {
   const calls: string[] = [];
@@ -41,6 +43,9 @@ function stubApi({
       }
       if (url.includes("/api/v1/ingestion/jobs")) {
         return new Response(JSON.stringify(jobs), { status: 200 });
+      }
+      if (url.includes("/api/v1/features/inflight")) {
+        return new Response(JSON.stringify(inflight), { status: 200 });
       }
       if (url.includes("/api/v1/ingestion/upload")) {
         return new Response(JSON.stringify(uploadResult), { status: 200 });
@@ -442,4 +447,35 @@ test("simple mode does not show the stage queues", async () => {
   render(<OverviewPanel />);
   await waitFor(() => expect(screen.getByText("Library")).toBeInTheDocument());
   expect(screen.queryByText("Stage queues")).not.toBeInTheDocument();
+});
+
+test("processing documents show the per-stage gradient bar and current stage", async () => {
+  stubApi({
+    inflight: [
+      {
+        document_id: "d1",
+        filename: "contract-2024.pdf",
+        title: null,
+        created_at: "2026-06-10T00:00:00Z",
+        features: [
+          { feature: "extract", status: "done" },
+          { feature: "chunk_embed", status: "running" },
+          { feature: "entities", status: "pending" },
+        ],
+      },
+    ],
+  });
+  const { container } = render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("contract-2024.pdf")).toBeInTheDocument());
+  // The current stage is named, and done segments carry the gradient-toward-green class.
+  expect(screen.getByText(/chunk/i)).toBeInTheDocument();
+  expect(container.querySelectorAll(".stage-seg.stage-grad").length).toBe(1); // the done segment
+  expect(container.querySelectorAll(".stage-seg.seg-running").length).toBe(1);
+});
+
+test("advanced heading is 'In flight' (processing documents ARE in Documents now)", async () => {
+  stubApi();
+  render(<OverviewPanel mode="advanced" />);
+  await waitFor(() => expect(screen.getByText("In flight")).toBeInTheDocument());
+  expect(screen.queryByText(/not yet in Documents/)).not.toBeInTheDocument();
 });

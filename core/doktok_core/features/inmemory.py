@@ -267,6 +267,14 @@ class InMemoryFeatureRepository:
         rows.sort(key=lambda r: (r.document_id, r.feature))
         return rows[:limit]
 
+    def documents_with_open_features(self, tenant_id: str) -> set[str]:
+        return {
+            r.document_id
+            for r in self.rows
+            if r.tenant_id == tenant_id
+            and r.status in (FeatureStatus.PENDING, FeatureStatus.RUNNING)
+        }
+
     def list_for_documents(self, tenant_id: str, document_ids: list[str]) -> list[DocumentFeature]:
         wanted = set(document_ids)
         rows = [

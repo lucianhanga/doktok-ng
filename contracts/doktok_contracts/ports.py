@@ -1558,6 +1558,10 @@ class FeatureRepository(Protocol):
 
     def list_for_document(self, tenant_id: str, document_id: str) -> list[DocumentFeature]: ...
     def list_for_tenant(self, tenant_id: str, *, limit: int = 2000) -> list[DocumentFeature]: ...
+
+    def documents_with_open_features(self, tenant_id: str) -> set[str]:
+        """Ids of documents with any feature row still pending/running (#848 in-flight list)."""
+        ...
     def list_for_documents(self, tenant_id: str, document_ids: list[str]) -> list[DocumentFeature]:
         """Feature rows for a specific set of documents (the list view's visible page), uncapped.
 

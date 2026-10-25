@@ -2677,6 +2677,16 @@ class PostgresFeatureRepository:
             ).fetchall()
         return [_row_to_feature(row) for row in rows]
 
+    def documents_with_open_features(self, tenant_id: str) -> set[str]:
+        with self._db.connection() as conn:
+            cur = conn.cursor()
+            rows = cur.execute(
+                "SELECT DISTINCT document_id FROM document_features "
+                "WHERE tenant_id=%s AND status IN ('pending', 'running')",
+                (tenant_id,),
+            ).fetchall()
+        return {str(r[0]) for r in rows}
+
     def list_for_documents(self, tenant_id: str, document_ids: list[str]) -> list[DocumentFeature]:
         if not document_ids:
             return []

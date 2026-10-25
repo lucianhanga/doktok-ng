@@ -1853,6 +1853,7 @@ export function DocumentsPanel({
             <option value="">All</option>
             <option value="active">Active</option>
             <option value="failed">Failed</option>
+            <option value="quarantined">Quarantined</option>
             <option value="duplicate">Duplicate</option>
           </select>
         </label>

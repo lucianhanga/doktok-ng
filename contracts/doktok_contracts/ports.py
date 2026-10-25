@@ -229,6 +229,9 @@ class DocumentRepository(Protocol):
         if the document is not ``processing`` (already activated/failed or gone)."""
         ...
 
+    def list_processing(self, tenant_id: str, *, older_than: datetime) -> list[Document]:
+        """All ``processing`` documents created before the cutoff (stale/zombie sweeps)."""
+
 
 @runtime_checkable
 class DocumentVersionRepository(Protocol):

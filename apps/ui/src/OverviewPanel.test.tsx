@@ -365,3 +365,51 @@ test("a failed pre-intake row can be dismissed when its file is gone", async () 
     expect(calls.some((c) => c === "DELETE /api/v1/ingestion/jobs/j7")).toBe(true),
   );
 });
+
+test("in-flight rows show the ORIGINAL filename, not the workdir source.pdf", async () => {
+  stubApi({
+    jobs: [
+      {
+        id: "j1",
+        source_path: "/data/files/dev/in.process/abc123/source.pdf",
+        status: "extracting",
+        document_id: null,
+        started_at: null,
+        metadata: { original_ingest_path: "/data/files/dev/ingest/contract-2024.pdf" },
+      },
+    ],
+  });
+  render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("contract-2024.pdf")).toBeInTheDocument());
+  expect(screen.queryByText("source.pdf")).not.toBeInTheDocument();
+});
+
+test("in-flight rows show the granular pipeline stage and a segmented stage bar", async () => {
+  stubApi({
+    jobs: [
+      {
+        id: "j1",
+        source_path: "/i/report.pdf",
+        status: "extracting",
+        document_id: null,
+        started_at: null,
+        metadata: { original_ingest_path: "/i/report.pdf" },
+      },
+      {
+        id: "j2",
+        source_path: "/i/scan.pdf",
+        status: "queued",
+        document_id: null,
+        started_at: null,
+        metadata: {},
+      },
+    ],
+  });
+  const { container } = render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+  // Human-readable stage labels, not a bare "processing".
+  expect(screen.getByText("extracting text / OCR")).toBeInTheDocument();
+  expect(screen.getByText("queued")).toBeInTheDocument();
+  // The stage bar is segmented (one segment per pipeline stage).
+  expect(container.querySelectorAll(".stage-seg").length).toBeGreaterThanOrEqual(9);
+});

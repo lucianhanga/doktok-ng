@@ -136,8 +136,12 @@ function activityDetail(ev: AuditEvent): string {
   return String(m.summary ?? m.error_code ?? m.filename ?? "");
 }
 
-function fileName(sourcePath: string): string {
-  return sourcePath.split(/[\\/]/).pop() || sourcePath;
+function fileName(job: IngestionJob): string {
+  // The workdir rename (in.process/<job>/source.pdf) is meaningless in the UI - show the name the
+  // file had when the user dropped it.
+  const original = job.metadata?.original_ingest_path;
+  const raw = typeof original === "string" && original ? original : job.source_path;
+  return raw.split(/[\\/]/).pop() || raw;
 }
 
 function elapsed(startedAt: string | null): string {
@@ -146,16 +150,45 @@ function elapsed(startedAt: string | null): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+// The intake stage flow (JobStatus order, ADR-0004) with its human label + color group. Under
+// staged ingestion the job goes terminal at the handoff, so the extract-onward stages show only
+// on the non-staged path; either way the bar always reflects the job's real stage.
+const STAGE_FLOW = [
+  "queued",
+  "detecting",
+  "hashing",
+  "normalizing",
+  "extracting",
+  "chunking",
+  "embedding",
+  "indexing",
+  "activating",
+] as const;
+
+const STAGE_META: Record<string, { label: string; cls: string }> = {
+  queued: { label: "queued", cls: "seg-waiting" },
+  detecting: { label: "reading file type", cls: "seg-intake" },
+  hashing: { label: "hashing", cls: "seg-intake" },
+  normalizing: { label: "converting to PDF", cls: "seg-intake" },
+  extracting: { label: "extracting text / OCR", cls: "seg-processing" },
+  chunking: { label: "chunking", cls: "seg-index" },
+  embedding: { label: "embedding", cls: "seg-index" },
+  indexing: { label: "indexing", cls: "seg-index" },
+  activating: { label: "finishing up", cls: "seg-done" },
+};
+
+function stageOf(status: string): { label: string; index: number } {
+  const index = STAGE_FLOW.indexOf(status as (typeof STAGE_FLOW)[number]);
+  if (index >= 0) return { label: STAGE_META[status].label, index };
+  return { label: status, index: 0 }; // unknown stage: show it verbatim at the start of the bar
+}
+
 // Terminal-but-broken pre-intake states: these jobs never became documents, so Documents cannot
 // show them - they stay pinned here until the user deals with them.
 const BROKEN_JOB = new Set(["failed", "quarantined"]);
 
-function jobStage(job: IngestionJob): { label: string; pct: number; cls: string } {
-  if (BROKEN_JOB.has(job.status)) {
-    return { label: job.error_message || job.error_code || "failed", pct: 100, cls: "seg-failed" };
-  }
-  if (job.status === "queued") return { label: "queued", pct: 6, cls: "seg-waiting" };
-  return { label: "processing", pct: 60, cls: "seg-processing" };
+function brokenStage(job: IngestionJob): string {
+  return job.error_message || job.error_code || "failed";
 }
 
 /** One row per job that has not become a repository document yet (#848): the moment the document
@@ -184,16 +217,16 @@ function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: ()
     <div className="panel-box">
       <ul className="inflight">
         {[...moving, ...broken].map((job) => {
-          const stage = jobStage(job);
           const isBroken = BROKEN_JOB.has(job.status);
+          const stage = stageOf(job.status);
           return (
             <li key={job.id}>
               <div className="inflight-top">
-                <span className="inflight-name" title={fileName(job.source_path)}>
-                  {fileName(job.source_path)}
+                <span className="inflight-name" title={fileName(job)}>
+                  {fileName(job)}
                 </span>
                 <span className={isBroken ? "inflight-stage is-failed" : "inflight-stage muted"}>
-                  {stage.label}
+                  {isBroken ? brokenStage(job) : stage.label}
                 </span>
                 <span className="inflight-elapsed muted">
                   {isBroken ? "" : elapsed(job.started_at)}
@@ -220,9 +253,20 @@ function InFlightList({ jobs, onChanged }: { jobs: IngestionJob[]; onChanged: ()
                   </>
                 )}
               </div>
-              <div className="flow-bar">
-                <i className={stage.cls} style={{ width: `${stage.pct}%` }} />
-              </div>
+              {isBroken ? (
+                <div className="flow-bar">
+                  <i className="seg-failed" style={{ width: "100%" }} />
+                </div>
+              ) : (
+                <div className="flow-bar stage-bar" aria-label={`stage: ${stage.label}`}>
+                  {STAGE_FLOW.map((s, i) => (
+                    <i
+                      key={s}
+                      className={`stage-seg${i <= stage.index ? ` filled ${STAGE_META[s].cls}` : ""}`}
+                    />
+                  ))}
+                </div>
+              )}
             </li>
           );
         })}

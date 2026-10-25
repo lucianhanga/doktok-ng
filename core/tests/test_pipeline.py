@@ -206,3 +206,17 @@ def test_dedup_is_per_tenant(tmp_path: Path) -> None:
 
     assert j1.status is JobStatus.ACTIVE and j2.status is JobStatus.ACTIVE
     assert j1.tenant_id == "t1" and j2.tenant_id == "t2"
+
+
+def test_quarantined_file_creates_a_terminal_document(tmp_path: Path) -> None:
+    # The processing invariant: every accepted file ends with a terminal document row, so a
+    # policy-quarantined file is visible in Documents (with its error), not only as a job row.
+    services, layout = build_services(tmp_path, mime="application/x-dosexec")
+    job = process_file(services, drop(layout, "evil.exe", b"MZ\x90\x00"))
+
+    assert job.status is JobStatus.QUARANTINED
+    docs, _, _ = services.document_repo.list_documents(TENANT)
+    quarantined = [d for d in docs if d.status is DocumentStatus.QUARANTINED]
+    assert len(quarantined) == 1
+    assert quarantined[0].original_filename == "evil.exe"
+    assert quarantined[0].metadata["error_code"] == "quarantined"

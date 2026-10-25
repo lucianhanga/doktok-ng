@@ -58,6 +58,7 @@ from doktok_contracts.schemas import (
     DocumentEntity,
     DocumentStatus,
     EntityType,
+    FeatureStatus,
     IngestionJob,
     JobStatus,
     SecurityDecision,
@@ -376,10 +377,14 @@ def _quarantine_crash_loop(
         f"abandoned mid-pipeline {strikes + 1} times (worker crash suspected); quarantined"
     )
     job.finished_at = datetime.now(UTC)
+    dest_dir = services.layout.quarantine_dir(job.id)
     if src.is_file():
-        dest_dir = services.layout.quarantine_dir(job.id)
         dest_dir.mkdir(parents=True, exist_ok=True)
         services.file_storage.move(str(src), str(dest_dir / original_name))
+    # Terminal document row too (audit 2026-10 F2): crash-quarantined files show in Documents.
+    job.document_id = _record_terminal_document(
+        services, job, status=DocumentStatus.QUARANTINED, storage_path=str(dest_dir)
+    )
     services.job_repo.update(job)
     workdir = services.layout.job_workdir(job.id)
     if workdir.exists():
@@ -759,12 +764,51 @@ def _quarantine(services: IngestionServices, job: IngestionJob, workdir: Path) -
     job.finished_at = datetime.now(UTC)
     if workdir.exists():
         services.quarantine_service.quarantine(str(workdir), reason=job.error_message)
+    # The processing invariant: every accepted file ends with a terminal DOCUMENT row (audit
+    # 2026-10 F1) - a quarantined file must be visible in Documents, not only as a job row.
+    job.document_id = _record_terminal_document(
+        services,
+        job,
+        status=DocumentStatus.QUARANTINED,
+        storage_path=str(services.layout.quarantine / job.id),
+    )
     services.job_repo.update(job)
     _audit(
         services,
         AuditEventType.DOCUMENT_QUARANTINED,
         job,
+        document_id=job.document_id,
         mime=job.detected_mime,
         reason=job.error_message,
     )
     return job
+
+
+def fail_interrupted_processing(services: IngestionServices, *, older_than: datetime) -> int:
+    """Fail ``processing`` documents whose extract stage can no longer complete (audit 2026-10
+    F3-F5): the worker died after the staged handoff, so no error handler ever ran.
+
+    - extract feature row terminally failed (attempts exhausted, #850) -> fail the document;
+    - no extract row at all past the cutoff -> intake crashed mid-handoff -> fail the document;
+    - a pending/running extract row means the work is legitimately in flight -> never reap.
+    """
+    if services.feature_repo is None:
+        return 0
+    failed = 0
+    for doc in services.document_repo.list_processing(services.tenant_id, older_than=older_than):
+        rows = services.feature_repo.list_for_document(services.tenant_id, doc.id)
+        extract = next((r for r in rows if r.feature == "extract"), None)
+        if extract is None:
+            code = "intake_interrupted"
+            message = "stage ledger was never seeded (worker died during the intake handoff)"
+        elif extract.status == FeatureStatus.FAILED and extract.attempts >= extract.max_attempts:
+            code = "extract_interrupted"
+            message = extract.last_error or "extract failed terminally"
+        else:
+            continue  # still queued or running - legitimate work in flight
+        if services.document_repo.fail(
+            services.tenant_id, doc.id, error_code=code, error_message=message
+        ):
+            failed += 1
+            logger.warning("failed interrupted processing document %s (%s)", doc.id, code)
+    return failed

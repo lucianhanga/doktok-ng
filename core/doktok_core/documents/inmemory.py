@@ -151,6 +151,15 @@ class InMemoryDocumentRepository:
         doc.metadata = {**doc.metadata, "error_code": error_code, "error_message": error_message}
         return True
 
+    def list_processing(self, tenant_id: str, *, older_than: datetime) -> list[Document]:
+        return [
+            d.model_copy(deep=True)
+            for d in self._docs.values()
+            if d.tenant_id == tenant_id
+            and d.status is DocumentStatus.PROCESSING
+            and d.created_at < older_than
+        ]
+
     def _sort_value(self, d: Document, sort: DocumentSort) -> _SortVal:
         if sort is DocumentSort.ACQUIRED:
             return d.created_at

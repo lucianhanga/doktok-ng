@@ -22,7 +22,12 @@ from pathlib import Path
 
 from doktok_contracts.schemas import IngestionJob
 from doktok_core.features.reconciler import FeatureReconciler
-from doktok_core.ingestion.pipeline import IngestionServices, process_file, recover_stale_jobs
+from doktok_core.ingestion.pipeline import (
+    IngestionServices,
+    fail_interrupted_processing,
+    process_file,
+    recover_stale_jobs,
+)
 from doktok_core.ingestion.stability import FileObservation, StabilityTracker
 from doktok_core.visualizations.service import ProjectionRunner
 
@@ -124,8 +129,13 @@ class IngestionWorker:
         total = 0
         for services in self._services:
             total += len(recover_stale_jobs(services, older_than=cutoff))
+            # Same sweep resolves documents orphaned by a crash AFTER the staged handoff (the job
+            # went terminal at intake, so job recovery alone can never see them - audit F3/F4).
+            total += fail_interrupted_processing(services, older_than=cutoff)
         if total:
-            logger.warning("re-queued %d stale ingestion job(s) abandoned by a prior worker", total)
+            logger.warning(
+                "recovered %d stale ingestion job(s)/document(s) abandoned by a prior worker", total
+            )
         return total
 
     def run_once(self) -> list[IngestionJob]:

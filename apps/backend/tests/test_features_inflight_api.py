@@ -55,14 +55,33 @@ def test_inflight_returns_processing_documents_with_stage_states() -> None:
     _doc(docs, "d-active", DocumentStatus.ACTIVE)
     features.seed_for_document("tenant-a", "d-proc", [("extract", 1), ("entities", 1)])
     features.seed_for_document("tenant-a", "d-active", [("extract", 1)])
+    features.record_done("tenant-a", "d-active", "extract", 1)  # ledger complete -> not in flight
 
     body = _client(docs, features).get("/api/v1/features/inflight", headers=AUTH).json()
-    assert len(body) == 1  # only the processing document
+    assert len(body) == 1  # only the still-processing document
     entry = body[0]
     assert entry["document_id"] == "d-proc"
     assert entry["filename"] == "d-proc.pdf"
     states = {f["feature"]: f["status"] for f in entry["features"]}
     assert states == {"extract": "pending", "entities": "pending"}
+
+
+def test_inflight_keeps_active_documents_while_features_still_run() -> None:
+    # Extract ACTIVATES the document (processing -> active), but enrichment stages still run after
+    # that - the row must stay in the list until the whole ledger is done (user report 2026-10-25).
+    docs = InMemoryDocumentRepository()
+    features = InMemoryFeatureRepository()
+    _doc(docs, "d-enriching", DocumentStatus.ACTIVE)
+    _doc(docs, "d-done", DocumentStatus.ACTIVE)
+    features.seed_for_document("tenant-a", "d-enriching", [("extract", 1), ("relations", 1)])
+    features.seed_for_document("tenant-a", "d-done", [("extract", 1)])
+    features.record_done("tenant-a", "d-enriching", "extract", 1)
+    features.record_done("tenant-a", "d-done", "extract", 1)
+
+    body = _client(docs, features).get("/api/v1/features/inflight", headers=AUTH).json()
+    ids = [d["document_id"] for d in body]
+    assert "d-enriching" in ids  # still enriching -> stays
+    assert "d-done" not in ids  # ledger complete -> leaves the list
 
 
 def test_inflight_requires_a_token() -> None:

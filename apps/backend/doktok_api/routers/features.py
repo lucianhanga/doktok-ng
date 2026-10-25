@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from doktok_contracts.ports import DocumentRepository, FeatureRepository
-from doktok_contracts.schemas import DocumentFeature
+from doktok_contracts.schemas import Document, DocumentFeature, DocumentStatus
 from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -114,25 +114,39 @@ DocRepo = Annotated[DocumentRepository, Depends(get_document_repository)]
 
 @router.get("/inflight", response_model=list[InflightDocument])
 def inflight_documents(tenant: Tenant, docs: DocRepo, repo: Repo) -> list[InflightDocument]:
-    """Documents still being processed (staged ingestion, ADR-0015) plus each stage's state.
+    """Documents still being processed, plus each stage's ledger state.
 
-    Oldest first, so the longest-waiting document tops the list. Terminal documents never appear
-    here - they live in Documents (#848 rule).
+    "Still being processed" = status ``processing`` OR any stage row still pending/running:
+    extract activates the document long before enrichment finishes, and the row must stay in the
+    overview until the whole ledger is done (#848, user report 2026-10-25). Terminal-only
+    documents (and failed ones - they surface under Needs attention) never appear here.
     """
-    processing = docs.list_processing(tenant.tenant_id, older_than=datetime.now(UTC))
-    result: list[InflightDocument] = []
-    for doc in sorted(processing, key=lambda d: d.created_at):
+    now = datetime.now(UTC)
+    by_id: dict[str, InflightDocument] = {}
+
+    def emit(doc: Document) -> None:
         rows = repo.list_for_document(tenant.tenant_id, doc.id)
-        result.append(
-            InflightDocument(
-                document_id=doc.id,
-                filename=doc.original_filename,
-                title=doc.title,
-                created_at=doc.created_at,
-                features=[
-                    FeatureStageState(feature=row.feature, status=row.status.value)
-                    for row in rows
-                ],
-            )
+        by_id[doc.id] = InflightDocument(
+            document_id=doc.id,
+            filename=doc.original_filename,
+            title=doc.title,
+            created_at=doc.created_at,
+            features=[
+                FeatureStageState(feature=row.feature, status=row.status.value) for row in rows
+            ],
         )
-    return result
+
+    for doc in docs.list_processing(tenant.tenant_id, older_than=now):
+        emit(doc)
+    for doc_id in repo.documents_with_open_features(tenant.tenant_id):
+        if doc_id in by_id:
+            continue
+        candidate = docs.get(tenant.tenant_id, doc_id)
+        # Only genuinely in-flight states: a failed/quarantined document with leftover open rows
+        # is shown under Needs attention, not here.
+        if candidate is not None and candidate.status in (
+            DocumentStatus.PROCESSING,
+            DocumentStatus.ACTIVE,
+        ):
+            emit(candidate)
+    return sorted(by_id.values(), key=lambda d: d.created_at)

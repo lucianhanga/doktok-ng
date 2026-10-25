@@ -7560,3 +7560,29 @@ tr.row-selected {
   font-size: 11px;
   margin-top: 4px;
 }
+
+/* Failed-document reprocess affordance (audit F6). */
+.doc-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.doc-reprocess {
+  font-size: 12px;
+}
+.doc-card-reprocess {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.doc-card-reprocess:hover {
+  background: var(--danger);
+  color: var(--accent-contrast);
+}

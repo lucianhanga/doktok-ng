@@ -797,20 +797,44 @@ def build_services(
     # Fan the reconciler wider when the pipeline is remote (OpenAI): its enrichment features are
     # network-bound and the API parallelizes well, whereas the local Ollama path thrashes a single
     # GPU. (Concurrency is set at startup; a live provider switch keeps this value.)
+    llm_cap = (
+        settings.llm_max_concurrency if use_openai_pipeline else settings.reconcile_concurrency
+    )
+    # Per-stage WIP lanes (#848): every stage is its own queue and progresses whenever it has
+    # work - no single global cap. Resource-bound stages get tight lanes (the OCR pool bounds
+    # extract, the embedder bounds chunk_embed, the renderer bounds thumbnail); the LLM-backed
+    # stages share the 'llm' group budget, which any one of them may use in full when alone.
+    lane_limits = {
+        "extract": settings.ocr_concurrency,
+        "thumbnail": 1,
+        "chunk_embed": 2,
+        "entity_graph": 2,
+        "entities": llm_cap,
+        "ner": llm_cap,
+        "relations": llm_cap,
+        "doc_metadata": llm_cap,
+        "doc_classify": llm_cap,
+        "structured_records": llm_cap,
+    }
+    llm_features = ("entities", "ner", "relations", "doc_metadata", "doc_classify",
+                    "structured_records")
+    lane_groups = dict.fromkeys(llm_features, "llm")
+    lane_group_limits = {"llm": llm_cap}
     reconcile_concurrency = (
-        settings.openai_reconcile_concurrency
-        if use_openai_pipeline
-        else settings.reconcile_concurrency
+        settings.ocr_concurrency + 1 + 2 + 2 + llm_cap  # one thread per unit of lane capacity
     )
     if use_openai_pipeline:
         logger.info(
-            "pipeline on OpenAI: reconciler fans out to %d in parallel", reconcile_concurrency
+            "pipeline on OpenAI: reconciler lanes %s, llm group cap %d", lane_limits, llm_cap
         )
     reconciler = FeatureReconciler(
         feature_repo,
         processors,
         watched_tenants,
         concurrency=reconcile_concurrency,
+        lane_limits=lane_limits,
+        lane_groups=lane_groups,
+        lane_group_limits=lane_group_limits,
         audit_log=audit_log,
     )
 

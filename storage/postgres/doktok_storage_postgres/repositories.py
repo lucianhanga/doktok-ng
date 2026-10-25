@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -66,6 +66,7 @@ from doktok_contracts.schemas import (
     RecordTypeCount,
     SimilarDocument,
     SortDir,
+    StageQueue,
     StatsSummary,
     Tag,
     Tenant,
@@ -2288,12 +2289,30 @@ class PostgresStatsRepository:
                 "WHERE tenant_id=%s AND status IN ('pending', 'running')",
                 tenant_id,
             )
+            # Per-stage queue depths (#848): the overview's stage-queues section reads these.
+            stage_rows = cur.execute(
+                "SELECT feature, "
+                "COUNT(*) FILTER (WHERE status='pending') AS queued, "
+                "COUNT(*) FILTER (WHERE status='running') AS running, "
+                "COUNT(*) FILTER (WHERE status='failed') AS failed "
+                "FROM document_features WHERE tenant_id=%s GROUP BY feature ORDER BY feature",
+                (tenant_id,),
+            ).fetchall()
         return StatsSummary(
             documents=documents,
             jobs={row["status"]: int(row["n"]) for row in job_rows},
             entities=entities,
             documents_pending_features=pending_feature_docs,
             documents_processing_features=processing_feature_docs,
+            stage_queues=[
+                StageQueue(
+                    feature=row["feature"],
+                    queued=int(row["queued"]),
+                    running=int(row["running"]),
+                    failed=int(row["failed"]),
+                )
+                for row in stage_rows
+            ],
         )
 
 
@@ -2459,13 +2478,25 @@ class PostgresFeatureRepository:
         now: datetime,
         reclaim_before: datetime,
         dependencies: Sequence[tuple[str, str]] = (),
+        lane_limits: Mapping[str, int] | None = None,
+        lane_groups: Mapping[str, str] | None = None,
+        lane_group_limits: Mapping[str, int] | None = None,
     ) -> DocumentFeature | None:
+        lane_limits = lane_limits or {}
+        lane_groups = lane_groups or {}
+        lane_group_limits = lane_group_limits or {}
         params = {
             "tenant": tenant_id,
             "now": now,
             "reclaim_before": reclaim_before,
             "dep_features": [d[0] for d in dependencies],
             "dep_prereqs": [d[1] for d in dependencies],
+            "lane_features": list(lane_limits),
+            "lane_maxes": list(lane_limits.values()),
+            "group_features": list(lane_groups),
+            "group_names": list(lane_groups.values()),
+            "gcap_names": list(lane_group_limits),
+            "gcap_maxes": list(lane_group_limits.values()),
         }
         with self._db.connection() as conn:
             # Crash-bound the reclaim loop first: a 'running' row that was never marked done/failed
@@ -2489,6 +2520,12 @@ class PostgresFeatureRepository:
                 "WITH deps(feature, prereq) AS ("
                 "  SELECT * FROM unnest(%(dep_features)s::text[], %(dep_prereqs)s::text[])"
                 "    AS t(feature, prereq)"
+                "), lanes(feature, lim) AS ("
+                "  SELECT * FROM unnest(%(lane_features)s::text[], %(lane_maxes)s::int[])"
+                "), groups(feature, grp) AS ("
+                "  SELECT * FROM unnest(%(group_features)s::text[], %(group_names)s::text[])"
+                "), gcaps(grp, lim) AS ("
+                "  SELECT * FROM unnest(%(gcap_names)s::text[], %(gcap_maxes)s::int[])"
                 "), due AS ("
                 "  SELECT f.id FROM document_features f WHERE f.tenant_id=%(tenant)s AND ("
                 "    f.status='pending'"
@@ -2496,6 +2533,20 @@ class PostgresFeatureRepository:
                 "        AND (f.next_attempt_at IS NULL OR f.next_attempt_at <= %(now)s))"
                 "    OR (f.status='running' AND f.attempts < f.max_attempts "
                 "        AND f.last_attempt_at < %(reclaim_before)s))"
+                # Lane gating (#848): each stage is its own queue with its own WIP limit; a full
+                # lane blocks only that feature, never the others.
+                "  AND (SELECT count(*) FROM document_features r WHERE r.tenant_id=f.tenant_id "
+                "       AND r.feature=f.feature AND r.status='running')"
+                "       < COALESCE((SELECT lim FROM lanes WHERE lanes.feature=f.feature),"
+                "                  2147483647)"
+                # Shared group budget (e.g. all LLM-backed features share one 'llm' cap bounding
+                # external API concurrency); rows without a group are uncapped here.
+                "  AND COALESCE((SELECT count(*) FROM document_features r JOIN groups g0"
+                "       ON g0.feature=r.feature"
+                "       WHERE r.tenant_id=f.tenant_id AND r.status='running'"
+                "       AND g0.grp = (SELECT grp FROM groups WHERE groups.feature=f.feature)), 0)"
+                "       < COALESCE((SELECT lim FROM gcaps WHERE gcaps.grp ="
+                "           (SELECT grp FROM groups WHERE groups.feature=f.feature)), 2147483647)"
                 "  AND NOT EXISTS ("
                 "    SELECT 1 FROM deps d WHERE d.feature = f.feature AND NOT EXISTS ("
                 "      SELECT 1 FROM document_features p WHERE p.tenant_id = f.tenant_id"

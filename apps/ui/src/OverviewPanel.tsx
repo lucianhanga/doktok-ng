@@ -354,6 +354,39 @@ export function OverviewPanel({
   ];
   const pipelineMax = Math.max(1, ...pipelineRows.map((r) => r.count));
 
+  // Per-stage queues (#848): every processing stage is its own queue; the advanced overview shows
+  // each one's depth so a backed-up stage is visible at a glance. Ordered by pipeline position.
+  const STAGE_ORDER = [
+    "extract",
+    "thumbnail",
+    "chunk_embed",
+    "entities",
+    "ner",
+    "entity_graph",
+    "relations",
+    "doc_metadata",
+    "doc_classify",
+    "structured_records",
+  ];
+  const STAGE_LABELS: Record<string, string> = {
+    extract: "Extract / OCR",
+    thumbnail: "Thumbnails",
+    chunk_embed: "Chunk & embed",
+    entities: "Entities (patterns)",
+    ner: "Entities (NER)",
+    entity_graph: "Entity graph",
+    relations: "Relations",
+    doc_metadata: "Metadata",
+    doc_classify: "Classification",
+    structured_records: "Records",
+  };
+  const stageQueues = [...(stats?.stage_queues ?? [])].sort(
+    (a, b) =>
+      (STAGE_ORDER.indexOf(a.feature) === -1 ? 99 : STAGE_ORDER.indexOf(a.feature)) -
+      (STAGE_ORDER.indexOf(b.feature) === -1 ? 99 : STAGE_ORDER.indexOf(b.feature)),
+  );
+  const stageMax = Math.max(1, ...stageQueues.map((q) => q.queued + q.running + q.failed));
+
   return (
     <section aria-label="Overview" className="panel">
       <div className="result-head">
@@ -392,6 +425,46 @@ export function OverviewPanel({
           <InFlightList jobs={inFlight} onChanged={load} />
         )}
       </div>
+
+      {mode === "advanced" && stageQueues.length > 0 && (
+        <div className="doc-section">
+          <h3>Stage queues</h3>
+          <div className="panel-box pipeline-totals">
+            {stageQueues.map((q) => {
+              const total = q.queued + q.running + q.failed;
+              return (
+                <div key={q.feature} className="pipeline-total-row">
+                  <span className="pipeline-total-name muted">
+                    {STAGE_LABELS[q.feature] ?? q.feature}
+                  </span>
+                  <div className="flow-bar">
+                    {total > 0 && (
+                      <>
+                        <i
+                          className="seg-processing"
+                          style={{ width: `${(q.running / stageMax) * 100}%` }}
+                        />
+                        <i
+                          className="seg-waiting"
+                          style={{ width: `${(q.queued / stageMax) * 100}%` }}
+                        />
+                        <i
+                          className="seg-failed"
+                          style={{ width: `${(q.failed / stageMax) * 100}%` }}
+                        />
+                      </>
+                    )}
+                  </div>
+                  <strong>
+                    {q.running} running · {q.queued} queued
+                    {q.failed > 0 ? ` · ${q.failed} failed` : ""}
+                  </strong>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {mode === "advanced" && (
         <div className="doc-section">

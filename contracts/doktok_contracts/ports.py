@@ -9,7 +9,7 @@ See brief section 9 for the full list.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import date, datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -1515,10 +1515,18 @@ class FeatureRepository(Protocol):
         now: datetime,
         reclaim_before: datetime,
         dependencies: Sequence[tuple[str, str]] = (),
+        lane_limits: Mapping[str, int] | None = None,
+        lane_groups: Mapping[str, str] | None = None,
+        lane_group_limits: Mapping[str, int] | None = None,
     ) -> DocumentFeature | None:
         """Claim the next due feature row (pending / retryable-failed / stale-running). A row is
         only claimable once every ``(feature, prerequisite)`` edge in ``dependencies`` for its
-        feature has a ``done`` row on the same document - so a stage waits for its inputs."""
+        feature has a ``done`` row on the same document - so a stage waits for its inputs.
+
+        Each stage is its own queue with its own WIP lane (#848): a row is claimable only while
+        its feature has fewer running rows than ``lane_limits[feature]`` (default: unlimited).
+        ``lane_groups``/``lane_group_limits`` add a SHARED cap across features (e.g. all
+        LLM-backed features share one 'llm' budget bounding external API concurrency)."""
         ...
 
     def mark_done(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from doktok_contracts.schemas import (
     Document,
@@ -74,3 +74,30 @@ def test_summary_counts(db: Database) -> None:
     # The pending feature is counted as in-progress, not as "needs attention" (failed).
     assert summary.documents_processing_features == 1
     assert summary.documents_pending_features == 0
+
+
+def test_summary_reports_per_stage_queue_counts(db: Database) -> None:
+    # The overview's stage-queue section (#848) reads per-feature pending/running/failed counts.
+    docs = PostgresDocumentRepository(db)
+    docs.add(
+        Document(
+            id="d1",
+            tenant_id=TENANT,
+            sha256="s" * 64,
+            original_filename="d1.txt",
+            status=DocumentStatus.ACTIVE,
+            created_at=datetime.now(UTC),
+        )
+    )
+    features = PostgresFeatureRepository(db)
+    features.seed_for_document(TENANT, "d1", [("extract", 1), ("entities", 1)])
+    now = datetime.now(UTC)
+    claimed = features.claim_next(TENANT, now=now, reclaim_before=now - timedelta(seconds=900))
+    assert claimed is not None
+
+    summary = PostgresStatsRepository(db).summary(TENANT)
+    queues = {q.feature: q for q in summary.stage_queues}
+    assert queues[claimed.feature].running == 1
+    assert queues[claimed.feature].queued == 0
+    other = "entities" if claimed.feature == "extract" else "extract"
+    assert queues[other].queued == 1

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from doktok_contracts.schemas import (
     Document,
+    DocumentFeature,
     DocumentStatus,
     FeatureMetrics,
     FeatureStatus,
@@ -211,3 +212,77 @@ def test_prerequisite_stage_is_claimed_before_the_older_backlog(db: Database) ->
     )
     # Without priority this returns d1's (older) entities row and OCR waits.
     assert nxt is not None and nxt.feature == "extract" and nxt.document_id == "d2"
+
+
+def test_lane_limits_cap_concurrent_claims_per_feature_but_other_lanes_flow(db: Database) -> None:
+    # Each stage is its own queue with its own WIP lane (#848): a full extract lane must not block
+    # other stages, and freeing the lane lets the next extract claim through.
+    docs = PostgresDocumentRepository(db)
+    for d in ("d1", "d2", "d3"):
+        _active_doc(docs, d)
+    repo = PostgresFeatureRepository(db)
+    for d in ("d1", "d2", "d3"):
+        repo.seed_for_document(TENANT, d, [("extract", 1), ("entities", 1)])
+
+    now = datetime.now(UTC)
+    before = now - timedelta(seconds=900)
+    deps = [("entities", "extract")]
+    lanes = {"extract": 1}
+    first = repo.claim_next(
+        TENANT, now=now, reclaim_before=before, dependencies=deps, lane_limits=lanes
+    )
+    assert first is not None and first.feature == "extract" and first.document_id == "d1"
+    # extract lane is full (1 running); the next claim must come from another lane whose
+    # dependency is satisfied (d1's extract just got claimed, not done - so entities of d1 is
+    # still gated; but entities of NO doc is due yet). Nothing claimable -> None, not a 2nd extract.
+    second = repo.claim_next(
+        TENANT, now=now, reclaim_before=before, dependencies=deps, lane_limits=lanes
+    )
+    assert second is None
+    # Finishing the running extract frees the lane AND unblocks d1's entities.
+    repo.mark_done(first.id, feature_version=1)
+    nxt = repo.claim_next(
+        TENANT, now=now, reclaim_before=before, dependencies=deps, lane_limits=lanes
+    )
+    assert nxt is not None and nxt.feature == "extract" and nxt.document_id == "d2"
+    nxt2 = repo.claim_next(
+        TENANT, now=now, reclaim_before=before, dependencies=deps, lane_limits=lanes
+    )
+    assert nxt2 is not None and nxt2.feature == "entities" and nxt2.document_id == "d1"
+
+
+def test_llm_group_cap_limits_total_external_calls_across_features(db: Database) -> None:
+    # The shared LLM budget (e.g. OpenAI <= 10 concurrent calls) spans ALL LLM-backed features:
+    # a single feature may use the whole budget when alone, but the group total never exceeds it.
+    docs = PostgresDocumentRepository(db)
+    for d in ("d1", "d2", "d3"):
+        _active_doc(docs, d)
+    repo = PostgresFeatureRepository(db)
+    for d in ("d1", "d2", "d3"):
+        repo.seed_for_document(TENANT, d, [("entities", 1), ("doc_metadata", 1), ("thumbnail", 1)])
+
+    now = datetime.now(UTC)
+    before = now - timedelta(seconds=900)
+
+    def claim() -> DocumentFeature | None:
+        # both LLM features may each take the whole budget when alone, but the shared llm
+        # group caps their combined total at 2
+        return repo.claim_next(
+            TENANT,
+            now=now,
+            reclaim_before=before,
+            lane_limits={"entities": 2, "doc_metadata": 2, "thumbnail": 1},
+            lane_groups={"entities": "llm", "doc_metadata": "llm"},
+            lane_group_limits={"llm": 2},
+        )
+
+    c1 = claim()
+    c2 = claim()
+    assert c1 is not None and c2 is not None
+    assert {c1.feature, c2.feature} <= {"entities", "doc_metadata"}
+    # group budget exhausted: a third LLM-backed claim is blocked...
+    third = claim()
+    assert third is not None and third.feature == "thumbnail"  # ...but other lanes still flow
+    repo.mark_done(c1.id, feature_version=1)
+    freed = claim()
+    assert freed is not None and freed.feature in ("entities", "doc_metadata")

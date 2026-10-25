@@ -565,6 +565,7 @@ function DocumentCard({
   selected,
   onToggle,
   onOpen,
+  onReprocessFailed,
   onReprocessFeature,
   onReprocessFeatureGroup,
   featureGroups,
@@ -580,6 +581,7 @@ function DocumentCard({
   selected: boolean;
   onToggle: (id: string, shiftKey: boolean) => void;
   onOpen?: (id: string) => void;
+  onReprocessFailed?: (documentId: string, filename: string) => void;
   onReprocessFeature?: (documentId: string, feature: string, filename: string) => void;
   onReprocessFeatureGroup?: (documentId: string, members: string[], groupLabel: string, filename: string) => void;
   featureGroups?: FeatureGroup[];
@@ -613,6 +615,18 @@ function DocumentCard({
           />
         </span>
         <span className={`badge status-${doc.status} doc-card-status`}>{doc.status}</span>
+        {doc.status === "failed" && onReprocessFailed && (
+          <button
+            type="button"
+            className="doc-card-reprocess"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReprocessFailed(doc.id, doc.title ?? doc.original_filename);
+            }}
+          >
+            Reprocess
+          </button>
+        )}
         {doc.unidentifiable && (
           <span className="badge badge-unidentifiable doc-card-unidentifiable" title="Unidentifiable: extraction succeeded but the content is not meaningful">
             unidentifiable
@@ -1512,6 +1526,24 @@ export function DocumentsPanel({
       });
   }
 
+  // Re-ingest a FAILED document straight from the list (audit F6): the whole document goes back
+  // through the pipeline from its preserved original. Failed documents keep their source in
+  // docs.failed/, so this always works without a re-upload.
+  function reprocessFailedDocument(documentId: string, filename: string) {
+    if (!window.confirm(`Reprocess ${filename}? It is re-ingested from the original.`)) return;
+    setBusy(true);
+    setNotice("");
+    void reingestDocument(documentId)
+      .then(() => setNotice(`${filename}: queued for reingestion.`))
+      .catch((err: unknown) =>
+        setNotice(`Reprocess failed: ${err instanceof Error ? err.message : "error"}`),
+      )
+      .finally(() => {
+        setBusy(false);
+        load();
+      });
+  }
+
   // Click a group chip to re-queue all present group members for that document.
   // `members` already contains only features that exist on this doc (filtered in buildChipSections).
   function reprocessOneGroup(
@@ -1706,7 +1738,23 @@ export function DocumentsPanel({
         accessorFn: (d) => d.status,
         cell: ({ row }) => {
           const d = row.original;
-          return <span className={`badge status-${d.status}`}>{d.status}</span>;
+          return (
+            <span className="doc-status-cell">
+              <span className={`badge status-${d.status}`}>{d.status}</span>
+              {d.status === "failed" && (
+                <button
+                  type="button"
+                  className="link-button doc-reprocess"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    reprocessFailedDocument(d.id, d.title ?? d.original_filename);
+                  }}
+                >
+                  Reprocess
+                </button>
+              )}
+            </span>
+          );
         },
       },
       // 4. File — hideable (hidden by default via initialVisibility)
@@ -1816,7 +1864,7 @@ export function DocumentsPanel({
         },
       },
     ],
-    [allLoadedSelected, toggleAll, selected, toggle, onOpenDocument, state, reprocessOne, reprocessOneGroup, featureGroups],
+    [allLoadedSelected, toggleAll, selected, toggle, onOpenDocument, state, reprocessOne, reprocessOneGroup, reprocessFailedDocument, featureGroups],
   );
 
   return (
@@ -2206,6 +2254,7 @@ export function DocumentsPanel({
                 selected={selected.has(doc.id)}
                 onToggle={toggle}
                 onOpen={onOpenDocument}
+                onReprocessFailed={reprocessFailedDocument}
                 onReprocessFeature={reprocessOne}
                 onReprocessFeatureGroup={reprocessOneGroup}
                 featureGroups={featureGroups}

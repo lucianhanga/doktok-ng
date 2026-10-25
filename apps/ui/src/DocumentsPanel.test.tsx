@@ -1085,3 +1085,33 @@ test("the toolbar tag filter narrows the query with the match mode and persists 
   expect(prefs.tags).toEqual(["t1"]);
   expect(prefs.tagMatch).toBe("any");
 });
+
+test("the status filter offers Quarantined (audit F6)", async () => {
+  mockDocs([]);
+  render(<DocumentsPanel />);
+  await waitFor(() =>
+    expect(screen.getByText(/No documents match this filter/i)).toBeInTheDocument(),
+  );
+  const select = screen.getByRole("combobox", { name: /^Status$/i });
+  expect(within(select).getByRole("option", { name: "Quarantined" })).toBeInTheDocument();
+});
+
+test("a failed document row offers Reprocess, which reingests it (audit F6)", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const fetchMock = mockDocs([
+    doc({ id: "fail-1", original_filename: "broken.pdf", status: "failed" }),
+  ]);
+  render(<DocumentsPanel />);
+  const button = await screen.findByRole("button", { name: /Reprocess/i });
+  fireEvent.click(button);
+  await waitFor(() =>
+    expect(
+      (
+        fetchMock.mock.calls as unknown as [RequestInfo | URL, RequestInit?][]
+      ).some(
+        ([input, init]) =>
+          String(input).includes("/api/v1/documents/fail-1/reingest") && init?.method === "POST",
+      ),
+    ).toBe(true),
+  );
+});

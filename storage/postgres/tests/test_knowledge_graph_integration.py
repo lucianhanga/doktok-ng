@@ -521,3 +521,62 @@ def test_dismiss_family_pair_is_idempotent_and_tenant_scoped(db: Database) -> No
     kg.dismiss_family_pair(TENANT_608, key)  # idempotent, no error
     assert key in kg.dismissed_family_pairs(TENANT_608)
     assert key not in kg.dismissed_family_pairs("test-kg-608-other")
+
+
+def test_replace_edges_drops_edges_whose_endpoints_were_pruned(db: Database) -> None:
+    # A stale in-flight relations run can hold node ids that a concurrent reprocess already
+    # pruned from kg_entities; inserting those edges must not abort the whole replace with an
+    # FK violation (2026-10-25 relations incident).
+    _add_document(db, TENANT, "d1")
+    _add_mention(db, TENANT, "d1", EntityType.PERSON, "Ada Lovelace")
+    kg = PostgresKnowledgeGraphRepository(db)
+    EntityGraphFeature(PostgresEntityRepository(db), kg).process(TENANT, "d1")
+    ada = canonical_entity_id(TENANT, EntityType.PERSON.value, "Ada Lovelace")
+
+    good = KgEdge(
+        id="edge-good", tenant_id=TENANT, src_entity_id=ada, predicate="knows", dst_entity_id=ada
+    )
+    stale = KgEdge(
+        id="edge-stale",
+        tenant_id=TENANT,
+        src_entity_id="e-pruned",
+        predicate="knows",
+        dst_entity_id=ada,
+    )
+    provs = [
+        KgEdgeProvenance(
+            id=f"p-{e.id}", tenant_id=TENANT, edge_id=e.id, document_id="d1", evidence="ev"
+        )
+        for e in (good, stale)
+    ]
+
+    kg.replace_edges_for_document(TENANT, "d1", [good, stale], provs)
+
+    assert {e.id for e in kg.edges_for_entity(TENANT, ada)} == {"edge-good"}
+
+
+def test_add_edges_drops_edges_whose_endpoints_were_pruned(db: Database) -> None:
+    _add_document(db, TENANT, "d1")
+    _add_mention(db, TENANT, "d1", EntityType.PERSON, "Ada Lovelace")
+    kg = PostgresKnowledgeGraphRepository(db)
+    EntityGraphFeature(PostgresEntityRepository(db), kg).process(TENANT, "d1")
+    ada = canonical_entity_id(TENANT, EntityType.PERSON.value, "Ada Lovelace")
+
+    stale = KgEdge(
+        id="edge-stale",
+        tenant_id=TENANT,
+        src_entity_id="e-pruned",
+        predicate="knows",
+        dst_entity_id=ada,
+    )
+    kg.add_edges(
+        [stale],
+        [
+            KgEdgeProvenance(
+                id="p-stale", tenant_id=TENANT, edge_id="edge-stale", document_id="d1",
+                evidence="ev",
+            )
+        ],
+    )
+
+    assert kg.edges_for_entity(TENANT, ada) == []

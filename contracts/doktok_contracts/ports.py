@@ -1577,7 +1577,12 @@ class FeatureRepository(Protocol):
         """
         ...
 
-    def reset(self, tenant_id: str, document_id: str, feature: str) -> bool: ...
+    def reset(self, tenant_id: str, document_id: str, feature: str) -> bool:
+        """Requeue a feature for another attempt (manual retry). Refuses ``running`` rows (returns
+        False): a mid-flight attempt would otherwise double-run and write from stale data while
+        the fresh attempt re-runs concurrently. Orphaned ``running`` rows are recovered by
+        ``requeue_running`` / lease reclaim instead."""
+        ...
     def requeue_running(self, tenant_id: str) -> int:
         """Reset any ``running`` feature rows back to ``pending`` (returns the count). Called at
         worker startup: with no worker draining yet, a ``running`` row can only be an orphan left by

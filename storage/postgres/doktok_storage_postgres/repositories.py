@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
@@ -94,6 +95,8 @@ from psycopg.types.json import Json
 
 from doktok_storage_postgres.crypto import decrypt_secret, encrypt_secret
 from doktok_storage_postgres.db import Database
+
+logger = logging.getLogger(__name__)
 
 
 def to_vector_literal(values: list[float]) -> str:
@@ -1199,6 +1202,38 @@ class PostgresKnowledgeGraphRepository:
     def __init__(self, db: Database) -> None:
         self._db = db
 
+    @staticmethod
+    def _drop_edges_with_missing_endpoints(
+        conn: Any,
+        edges: list[KgEdge],
+        provenance: list[KgEdgeProvenance],
+        *,
+        context: str,
+    ) -> tuple[list[KgEdge], list[KgEdgeProvenance]]:
+        """Drop edges whose endpoints are not (or no longer) in kg_entities, with their provenance.
+
+        A stale in-flight ``relations`` run can hold node ids that a concurrent reprocess already
+        pruned; inserting such an edge violates the FK and rolls back the WHOLE write, failing
+        the feature (2026-10-25 relations incident). The re-run with consistent data recreates
+        any edge that is still real.
+        """
+        ids = list({e.src_entity_id for e in edges} | {e.dst_entity_id for e in edges})
+        if not ids:
+            return edges, provenance
+        rows = conn.execute("SELECT id FROM kg_entities WHERE id = ANY(%s)", (ids,)).fetchall()
+        existing = {row[0] for row in rows}
+        kept = [e for e in edges if e.src_entity_id in existing and e.dst_entity_id in existing]
+        if len(kept) != len(edges):
+            dropped = {e.id for e in edges} - {e.id for e in kept}
+            logger.warning(
+                "dropping %d edge(s) with pruned endpoints (%s): %s",
+                len(dropped),
+                context,
+                sorted(dropped),
+            )
+            provenance = [p for p in provenance if p.edge_id not in dropped]
+        return kept, provenance
+
     def relations_for_document(self, tenant_id: str, document_id: str) -> DocumentRelations:
         with self._db.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
@@ -1407,6 +1442,9 @@ class PostgresKnowledgeGraphRepository:
                 (tenant_id, document_id),
             )
             # Step 2: upsert edge rows (idempotent; DO UPDATE to refresh updated_at)
+            edges, provenance = self._drop_edges_with_missing_endpoints(
+                conn, edges, provenance, context=f"replace_edges_for_document({document_id})"
+            )
             for edge in edges:
                 conn.execute(
                     "INSERT INTO kg_edges "
@@ -1460,6 +1498,9 @@ class PostgresKnowledgeGraphRepository:
         if not edges and not provenance:
             return
         with self._db.connection() as conn, conn.transaction():
+            edges, provenance = self._drop_edges_with_missing_endpoints(
+                conn, edges, provenance, context="add_edges"
+            )
             for edge in edges:
                 conn.execute(
                     "INSERT INTO kg_edges "
@@ -2714,7 +2755,9 @@ class PostgresFeatureRepository:
             cur = conn.execute(
                 "UPDATE document_features SET status='pending', attempts=0, last_error=NULL, "
                 "next_attempt_at=NULL, updated_at=now() "
-                "WHERE tenant_id=%s AND document_id=%s AND feature=%s",
+                "WHERE tenant_id=%s AND document_id=%s AND feature=%s "
+                "AND status <> 'running'",  # a running attempt must finish (or be reclaimed as
+                # orphaned); resetting it would run the feature twice on stale data
                 (tenant_id, document_id, feature),
             )
             return cur.rowcount > 0

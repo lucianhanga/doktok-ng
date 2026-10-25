@@ -287,8 +287,8 @@ class InMemoryFeatureRepository:
 
     def reset(self, tenant_id: str, document_id: str, feature: str) -> bool:
         row = self._find(tenant_id, document_id, feature)
-        if row is None:
-            return False
+        if row is None or row.status is FeatureStatus.RUNNING:
+            return False  # never reset a running row: the attempt would double-run on stale data
         row.status = FeatureStatus.PENDING
         row.attempts = 0
         row.last_error = None

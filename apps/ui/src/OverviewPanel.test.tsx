@@ -8,179 +8,215 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("renders counts and recent activity", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/v1/stats")) {
-        return new Response(
-          JSON.stringify({
-            documents: 3,
-            jobs: { active: 3, failed: 1 },
-            entities: 7,
-            pending_ingest: 9,
-            documents_pending_features: 5,
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response(
-        JSON.stringify([
-          {
-            id: "e1",
-            event_type: "document.activated",
-            actor: "worker",
-            document_id: "d1",
-            job_id: "j1",
-            timestamp: "2026-06-10T00:00:00Z",
-            metadata: { summary: "Parsed plain text (1 page(s))" },
-          },
-        ]),
-        { status: 200 },
-      );
-    }),
-  );
-  render(<OverviewPanel />);
-  await waitFor(() => expect(screen.getByText("7")).toBeInTheDocument()); // entities (unique count)
-  // Library counters
-  expect(screen.getByText("Documents")).toBeInTheDocument();
-  expect(screen.getByText("Entities")).toBeInTheDocument();
-  // Ingestion pipeline surfaces only actionable states - no "Jobs"/"active" count
-  expect(screen.getByText("Ingestion")).toBeInTheDocument();
-  expect(screen.getByText("Waiting")).toBeInTheDocument();
-  expect(screen.getByText("9")).toBeInTheDocument(); // waiting in ingest
-  expect(screen.getByText("Processing")).toBeInTheDocument();
-  expect(screen.getByText("Needs attention")).toBeInTheDocument();
-  expect(screen.getByText("5")).toBeInTheDocument(); // documents with a failed feature
-  expect(screen.queryByText("Jobs by status")).not.toBeInTheDocument();
-  expect(screen.getByText(/Parsed plain text/)).toBeInTheDocument();
-});
+const EMPTY_STATS = {
+  documents: 0,
+  jobs: {},
+  entities: 0,
+  pending_ingest: 0,
+  documents_pending_features: 0,
+  documents_processing_features: 0,
+};
 
-test("recent-activity error/warning rows are tinted (same colors as the Activity tab)", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/v1/stats")) {
-        return new Response(
-          JSON.stringify({ documents: 1, jobs: {}, entities: 0, pending_ingest: 0 }),
-          { status: 200 },
-        );
-      }
-      return new Response(
-        JSON.stringify([
-          { id: "e-err", event_type: "feature.failed", actor: "worker", document_id: "d1", job_id: null, timestamp: "2026-06-10T00:00:00Z", severity: "error", metadata: { error: "entity_graph failed" } },
-          { id: "e-warn", event_type: "feature.retried", actor: "user", document_id: "d2", job_id: null, timestamp: "2026-06-10T00:00:00Z", severity: "warning", metadata: {} },
-        ]),
-        { status: 200 },
-      );
-    }),
-  );
-  render(<OverviewPanel />);
-  const errRow = (await screen.findByText("feature.failed")).closest("button");
-  expect(errRow?.className).toContain("timeline-entry--error");
-  const warnRow = screen.getByText("feature.retried").closest("button");
-  expect(warnRow?.className).toContain("timeline-entry--warning");
-});
-
-test("counts documents whose features are reprocessing as Processing (no non-terminal job)", async () => {
-  // Re-scheduled extraction: the doc is already 'active' (terminal job), the work is in its
-  // features. Without documents_processing_features the Processing count read 0 (#bug).
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/v1/stats")) {
-        return new Response(
-          JSON.stringify({
-            documents: 2,
-            jobs: { active: 2 }, // all terminal -> 0 from jobs
-            entities: 1,
-            pending_ingest: 0,
-            documents_pending_features: 0,
-            documents_processing_features: 6,
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify([]), { status: 200 });
-    }),
-  );
-  render(<OverviewPanel />);
-  // The Processing counter shows the 6 documents being reprocessed, and the pipeline is not "idle".
-  const processing = await screen.findByText("Processing");
-  expect(processing.parentElement).toHaveTextContent("6");
-  expect(
-    screen.queryByText(/Pipeline idle/),
-  ).not.toBeInTheDocument();
-});
-
-test("shows the duplicates count and opens a recent-activity entry in the Activity tab", async () => {
-  const onOpenActivity = vi.fn();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/v1/stats")) {
-        return new Response(
-          JSON.stringify({ documents: 2, jobs: { active: 2, duplicate: 4 }, entities: 1 }),
-          { status: 200 },
-        );
-      }
-      return new Response(
-        JSON.stringify([
-          {
-            id: "ev9",
-            event_type: "document.activated",
-            actor: "worker",
-            document_id: "d9",
-            job_id: null,
-            timestamp: "2026-06-10T00:00:00Z",
-            metadata: {},
-            description: "Document activated and searchable",
-            doc_filename: "report.pdf",
-          },
-        ]),
-        { status: 200 },
-      );
-    }),
-  );
-  render(<OverviewPanel onOpenActivity={onOpenActivity} />);
-  await waitFor(() => expect(screen.getByText("Duplicates")).toBeInTheDocument());
-  // The duplicates count is surfaced.
-  expect(screen.getByText("4")).toBeInTheDocument();
-  // The recent-activity row shows the document name + description, and is clickable.
-  expect(screen.getByText("report.pdf")).toBeInTheDocument();
-  await screen.getByText("report.pdf").click();
-  expect(onOpenActivity).toHaveBeenCalledWith("ev9");
-});
-
-test("dropping/selecting documents uploads them for ingestion and shows feedback", async () => {
+function stubApi({
+  stats = EMPTY_STATS,
+  activity = [],
+  categories = [],
+  jobs = [],
+  uploadResult = { accepted: ["a.pdf"], rejected: [] },
+}: {
+  stats?: object;
+  activity?: object[];
+  categories?: object[];
+  jobs?: object[];
+  uploadResult?: object;
+} = {}) {
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       calls.push(url);
-      if (url.includes("/api/v1/ingestion/upload")) {
-        return new Response(JSON.stringify({ accepted: ["a.pdf"], rejected: [] }), { status: 200 });
-      }
       if (url.includes("/api/v1/stats")) {
-        return new Response(
-          JSON.stringify({
-            documents: 0,
-            jobs: {},
-            entities: 0,
-            pending_ingest: 0,
-            documents_pending_features: 0,
-          }),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify(stats), { status: 200 });
+      }
+      if (url.includes("/api/v1/ingestion/jobs")) {
+        return new Response(JSON.stringify(jobs), { status: 200 });
+      }
+      if (url.includes("/api/v1/ingestion/upload")) {
+        return new Response(JSON.stringify(uploadResult), { status: 200 });
+      }
+      if (url.includes("/api/v1/audit")) {
+        return new Response(JSON.stringify(activity), { status: 200 });
+      }
+      if (url.includes("/api/v1/categories")) {
+        return new Response(JSON.stringify(categories), { status: 200 });
       }
       return new Response(JSON.stringify([]), { status: 200 });
     }),
   );
+  return calls;
+}
+
+test("simple mode (default): hero dropzone, library tiles, in-flight rows - and nothing else", async () => {
+  stubApi({
+    stats: { ...EMPTY_STATS, documents: 3, entities: 7 },
+    activity: [
+      {
+        id: "e1",
+        event_type: "document.activated",
+        actor: "worker",
+        document_id: "d1",
+        job_id: "j1",
+        timestamp: "2026-06-10T00:00:00Z",
+        metadata: { summary: "Parsed plain text (1 page(s))" },
+      },
+    ],
+    jobs: [
+      {
+        id: "j1",
+        source_path: "/data/ingest/contract.pdf",
+        status: "processing",
+        document_id: null,
+        started_at: "2026-06-10T00:00:00Z",
+      },
+    ],
+  });
+  render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("contract.pdf")).toBeInTheDocument());
+  expect(screen.getByText("Drag documents here to ingest")).toBeInTheDocument();
+  expect(screen.getByText("On the way in")).toBeInTheDocument();
+  expect(screen.getByText("7")).toBeInTheDocument(); // entities tile
+  expect(screen.getByText("Documents")).toBeInTheDocument();
+  expect(screen.getByText("Entities")).toBeInTheDocument();
+  expect(screen.getByText("Categories")).toBeInTheDocument();
+  // Simple mode cuts the advanced surfaces.
+  expect(screen.queryByText("Recent activity")).not.toBeInTheDocument();
+  expect(screen.queryByText("Pipeline")).not.toBeInTheDocument();
+  expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+});
+
+test("in-flight rows are only jobs without a document; pre-intake failures stay pinned", async () => {
+  stubApi({
+    jobs: [
+      { id: "j1", source_path: "/i/a.pdf", status: "processing", document_id: null, started_at: null },
+      { id: "j2", source_path: "/i/b.pdf", status: "queued", document_id: null, started_at: null },
+      // Already in Documents -> never shown in the overview, whatever the status.
+      { id: "j3", source_path: "/i/c.pdf", status: "processing", document_id: "doc-1", started_at: null },
+      // Failed BEFORE it became a document -> invisible in Documents, so it stays here.
+      {
+        id: "j4",
+        source_path: "/i/d.tiff",
+        status: "failed",
+        document_id: null,
+        error_code: "unsupported_type",
+        error_message: "unsupported type",
+        started_at: null,
+      },
+    ],
+  });
+  render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("a.pdf")).toBeInTheDocument());
+  expect(screen.getByText("b.pdf")).toBeInTheDocument();
+  expect(screen.getByText("d.tiff")).toBeInTheDocument();
+  expect(screen.getByText(/unsupported type/)).toBeInTheDocument();
+  expect(screen.queryByText("c.pdf")).not.toBeInTheDocument();
+});
+
+test("advanced mode: KPI tiles, pipeline totals, recent activity, categories, dropzone", async () => {
+  stubApi({
+    stats: {
+      documents: 3,
+      jobs: { active: 3, failed: 1, duplicate: 4 },
+      entities: 7,
+      pending_ingest: 9,
+      documents_pending_features: 5,
+      documents_processing_features: 0,
+    },
+    activity: [
+      {
+        id: "ev9",
+        event_type: "document.activated",
+        actor: "worker",
+        document_id: "d9",
+        job_id: null,
+        timestamp: "2026-06-10T00:00:00Z",
+        metadata: {},
+        description: "Document activated and searchable",
+        doc_filename: "report.pdf",
+      },
+    ],
+    categories: [{ name: "Finance", document_count: 12 }],
+  });
+  const onOpenActivity = vi.fn();
+  render(<OverviewPanel mode="advanced" onOpenActivity={onOpenActivity} />);
+  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+  // KPI strip
+  expect(screen.getAllByText("Failed").length).toBeGreaterThanOrEqual(2); // tile + pipeline row
+  expect(screen.getAllByText("Needs attention").length).toBeGreaterThanOrEqual(1);
+  expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(2); // tile + pipeline row
+  // Pipeline totals (pre-intake work)
+  expect(screen.getByText("Pipeline")).toBeInTheDocument();
+  expect(screen.getByText("Processing")).toBeInTheDocument();
+  expect(screen.getByText("Waiting")).toBeInTheDocument();
+  expect(screen.getByText("9")).toBeInTheDocument(); // waiting in ingest
+  expect(screen.getByText("Duplicates")).toBeInTheDocument();
+  expect(screen.getByText("4")).toBeInTheDocument(); // duplicates
+  // Categories + recent activity (clickable into the Activity tab)
+  expect(screen.getByText("Finance")).toBeInTheDocument();
+  await screen.getByText("report.pdf").click();
+  expect(onOpenActivity).toHaveBeenCalledWith("ev9");
+  // Dropzone is present in advanced mode too (docked at the bottom).
+  expect(screen.getByText("Drag documents here to ingest")).toBeInTheDocument();
+});
+
+test("recent-activity error/warning rows are tinted (same colors as the Activity tab)", async () => {
+  stubApi({
+    activity: [
+      { id: "e-err", event_type: "feature.failed", actor: "worker", document_id: "d1", job_id: null, timestamp: "2026-06-10T00:00:00Z", severity: "error", metadata: { error: "entity_graph failed" } },
+      { id: "e-warn", event_type: "feature.retried", actor: "user", document_id: "d2", job_id: null, timestamp: "2026-06-10T00:00:00Z", severity: "warning", metadata: {} },
+    ],
+  });
+  render(<OverviewPanel mode="advanced" />);
+  const errRow = (await screen.findByText("feature.failed")).closest("button");
+  expect(errRow?.className).toContain("timeline-entry--error");
+  const warnRow = screen.getByText("feature.retried").closest("button");
+  expect(warnRow?.className).toContain("timeline-entry--warning");
+});
+
+test("Processing counts only pre-intake jobs; documents already in the list stay out of it", async () => {
+  // User rule (#848): once a document is in Documents it no longer shows in the overview - so
+  // reprocessing features (documents_processing_features) no longer inflate the Processing count.
+  stubApi({
+    stats: {
+      documents: 2,
+      jobs: { active: 2, queued: 3 },
+      entities: 1,
+      pending_ingest: 0,
+      documents_pending_features: 0,
+      documents_processing_features: 6,
+    },
+  });
+  render(<OverviewPanel mode="advanced" />);
+  const processing = await screen.findByText("Processing");
+  expect(processing.parentElement).toHaveTextContent("3"); // the 3 queued jobs, not 3+6
+});
+
+test("the (?) legend button explains the status colors", async () => {
+  stubApi();
+  render(<OverviewPanel />);
+  await waitFor(() => expect(screen.getByText("On the way in")).toBeInTheDocument());
+  const toggle = screen.getByRole("button", { name: /explain status colors/i });
+  expect(screen.queryByText("Queued / waiting")).not.toBeInTheDocument();
+  fireEvent.click(toggle);
+  expect(screen.getByText("Queued / waiting")).toBeInTheDocument();
+  expect(screen.getByText("Processing")).toBeInTheDocument();
+  expect(screen.getByText("Failed")).toBeInTheDocument();
+  expect(screen.getByText("Needs attention")).toBeInTheDocument();
+  expect(screen.getByText("Done")).toBeInTheDocument();
+});
+
+test("dropping/selecting documents uploads them for ingestion and shows feedback", async () => {
+  const calls = stubApi();
   const { container } = render(<OverviewPanel />);
   const input = container.querySelector('input[type="file"]') as HTMLInputElement;
   const file = new File(["hello"], "a.pdf", { type: "application/pdf" });
@@ -190,15 +226,7 @@ test("dropping/selecting documents uploads them for ingestion and shows feedback
 });
 
 test("refuses a batch over the file-count limit without uploading", async () => {
-  const calls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      calls.push(url);
-      return new Response(JSON.stringify([]), { status: 200 });
-    }),
-  );
+  const calls = stubApi();
   const { container } = render(<OverviewPanel />);
   const input = container.querySelector('input[type="file"]') as HTMLInputElement;
   const files = Array.from(
@@ -212,30 +240,7 @@ test("refuses a batch over the file-count limit without uploading", async () => 
 });
 
 test("files forwarded by the global overlay go through the same upload path", async () => {
-  const calls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      calls.push(url);
-      if (url.includes("/api/v1/ingestion/upload")) {
-        return new Response(JSON.stringify({ accepted: ["b.pdf"], rejected: [] }), { status: 200 });
-      }
-      if (url.includes("/api/v1/stats")) {
-        return new Response(
-          JSON.stringify({
-            documents: 0,
-            jobs: {},
-            entities: 0,
-            pending_ingest: 0,
-            documents_pending_features: 0,
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify([]), { status: 200 });
-    }),
-  );
+  const calls = stubApi();
   render(<OverviewPanel />);
   const file = new File(["hello"], "b.pdf", { type: "application/pdf" });
   window.dispatchEvent(
@@ -248,30 +253,7 @@ test("files forwarded by the global overlay go through the same upload path", as
 test("the upload message is a toast and clears itself (no stale 'queued' label)", async () => {
   vi.useFakeTimers();
   try {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url.includes("/api/v1/ingestion/upload")) {
-          return new Response(JSON.stringify({ accepted: ["c.pdf"], rejected: [] }), {
-            status: 200,
-          });
-        }
-        if (url.includes("/api/v1/stats")) {
-          return new Response(
-            JSON.stringify({
-              documents: 0,
-              jobs: {},
-              entities: 0,
-              pending_ingest: 0,
-              documents_pending_features: 0,
-            }),
-            { status: 200 },
-          );
-        }
-        return new Response(JSON.stringify([]), { status: 200 });
-      }),
-    );
+    stubApi();
     render(<OverviewPanel />);
     const file = new File(["hello"], "c.pdf", { type: "application/pdf" });
     window.dispatchEvent(new CustomEvent(INGEST_FILES_EVENT, { detail: { files: [file] } }));

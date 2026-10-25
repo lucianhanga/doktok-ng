@@ -3,14 +3,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchActivity,
   fetchCategories,
+  fetchIngestionJobs,
   fetchStats,
   uploadDocuments,
   type AuditEvent,
   type CategorySummary,
+  type IngestionJob,
   type Stats,
 } from "./api";
 import { INGEST_FILES_EVENT } from "./GlobalDropOverlay";
 import { useInterval } from "./hooks";
+import type { UiMode } from "./mode";
+import { StatusLegend } from "./StatusLegend";
 
 // Max files per upload; mirrors the backend DOKTOK_MAX_UPLOAD_FILES so a too-large drop is refused
 // up front instead of after a long upload. Per-file size is enforced + reported by the backend.
@@ -18,7 +22,7 @@ const MAX_UPLOAD_FILES = 101;
 
 // Drag-and-drop (or click-to-browse) document upload (M14 #370). Dropped files are sent to the
 // backend, which writes them into the tenant ingest folder; the normal worker pipeline takes over.
-function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
+function UploadDropZone({ hero, onUploaded }: { hero?: boolean; onUploaded: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -80,7 +84,7 @@ function UploadDropZone({ onUploaded }: { onUploaded: () => void }) {
 
   return (
     <div
-      className={`upload-dropzone${dragging ? " is-dragging" : ""}`}
+      className={`upload-dropzone${hero ? " hero" : ""}${dragging ? " is-dragging" : ""}`}
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -130,24 +134,89 @@ function activityDetail(ev: AuditEvent): string {
   return String(m.summary ?? m.error_code ?? m.filename ?? "");
 }
 
+function fileName(sourcePath: string): string {
+  return sourcePath.split(/[\\/]/).pop() || sourcePath;
+}
+
+function elapsed(startedAt: string | null): string {
+  if (!startedAt) return "—";
+  const s = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// Terminal-but-broken pre-intake states: these jobs never became documents, so Documents cannot
+// show them - they stay pinned here until the user deals with them.
+const BROKEN_JOB = new Set(["failed", "quarantined"]);
+
+function jobStage(job: IngestionJob): { label: string; pct: number; cls: string } {
+  if (BROKEN_JOB.has(job.status)) {
+    return { label: job.error_message || job.error_code || "failed", pct: 100, cls: "seg-failed" };
+  }
+  if (job.status === "queued") return { label: "queued", pct: 6, cls: "seg-waiting" };
+  return { label: "processing", pct: 60, cls: "seg-processing" };
+}
+
+/** One row per job that has not become a repository document yet (#848): the moment the document
+ * lands in Documents - whatever its status - the row leaves this list. */
+function InFlightList({ jobs }: { jobs: IngestionJob[] }) {
+  const moving = jobs.filter((j) => !BROKEN_JOB.has(j.status));
+  const broken = jobs.filter((j) => BROKEN_JOB.has(j.status));
+  return (
+    <div className="panel-box">
+      <ul className="inflight">
+        {[...moving, ...broken].map((job) => {
+          const stage = jobStage(job);
+          return (
+            <li key={job.id}>
+              <div className="inflight-top">
+                <span className="inflight-name" title={fileName(job.source_path)}>
+                  {fileName(job.source_path)}
+                </span>
+                <span className={BROKEN_JOB.has(job.status) ? "inflight-stage is-failed" : "inflight-stage muted"}>
+                  {stage.label}
+                </span>
+                <span className="inflight-elapsed muted">
+                  {BROKEN_JOB.has(job.status) ? "" : elapsed(job.started_at)}
+                </span>
+              </div>
+              <div className="flow-bar">
+                <i className={stage.cls} style={{ width: `${stage.pct}%` }} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="muted inflight-summary">
+        {moving.length} on the way in
+        {broken.length > 0 ? ` · ${broken.length} need${broken.length === 1 ? "s" : ""} a decision` : ""}{" "}
+        — everything already in Documents lives there, not here.
+      </p>
+    </div>
+  );
+}
+
 export function OverviewPanel({
+  mode = "simple",
   onShowPendingFeatures,
   onOpenActivity,
 }: {
+  mode?: UiMode;
   onShowPendingFeatures?: () => void;
   onOpenActivity?: (eventId: string) => void;
 }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<AuditEvent[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
+  const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    Promise.all([fetchStats(), fetchActivity(), fetchCategories()])
-      .then(([s, a, c]) => {
+    Promise.all([fetchStats(), fetchActivity(), fetchCategories(), fetchIngestionJobs()])
+      .then(([s, a, c, j]) => {
         setStats(s);
         setRecent(a.slice(0, 8));
         setCategories(c);
+        setJobs(j);
         setError(null);
       })
       .catch((err: unknown) =>
@@ -158,23 +227,42 @@ export function OverviewPanel({
   useEffect(load, [load]);
   useInterval(load, 5000);
 
-  // The "library" is what the user owns (documents); the "pipeline" is the live ingestion work.
-  // We surface only actionable pipeline states - waiting, processing, failed - never a "done"/
-  // "active" job count, which only duplicates the document count and invites a false comparison.
-  const jobs = stats?.jobs ?? {};
+  const allJobs = stats?.jobs ?? {};
   const TERMINAL_JOB = new Set(["active", "failed", "quarantined", "duplicate"]);
-  // "Processing" = ingestion jobs still moving through the pipeline PLUS documents whose features
-  // are queued/running (e.g. a re-extraction). The latter never appear as a non-terminal job - the
-  // document is already "active" - so without them the count read 0 during reprocessing.
-  const processingJobs = Object.entries(jobs).reduce(
+  // "Processing" covers only pre-intake jobs: once a document exists it is visible in Documents
+  // and stays out of the overview (#848) - so reprocessing features are deliberately NOT added.
+  const processing = Object.entries(allJobs).reduce(
     (sum, [status, n]) => (TERMINAL_JOB.has(status) ? sum : sum + n),
     0,
   );
-  const processing = processingJobs + (stats?.documents_processing_features ?? 0);
-  const failed = (jobs.failed ?? 0) + (jobs.quarantined ?? 0);
+  const failed = (allJobs.failed ?? 0) + (allJobs.quarantined ?? 0);
   const waiting = stats?.pending_ingest ?? 0;
   const pendingFeatures = stats?.documents_pending_features ?? 0;
-  const pipelineBusy = waiting + processing + failed + pendingFeatures > 0;
+  const duplicates = allJobs.duplicate ?? 0;
+
+  // In flight = jobs that have not become documents yet.
+  const inFlight = jobs.filter((j) => j.document_id === null);
+
+  const tiles = [
+    { value: stats?.documents ?? "-", label: "Documents", cls: "" },
+    { value: stats?.entities ?? "-", label: "Entities", cls: "" },
+    { value: stats ? categories.length : "-", label: "Categories", cls: "" },
+  ];
+  if (mode === "advanced") {
+    tiles.push(
+      { value: failed, label: "Failed", cls: failed > 0 ? "alert" : "" },
+      { value: pendingFeatures, label: "Needs attention", cls: pendingFeatures > 0 ? "warn" : "" },
+    );
+  }
+
+  const pipelineRows = [
+    { name: "Processing", count: processing, cls: "seg-processing" },
+    { name: "Waiting", count: waiting, cls: "seg-waiting" },
+    { name: "Failed", count: failed, cls: "seg-failed" },
+    { name: "Duplicates", count: duplicates, cls: "seg-waiting" },
+    { name: "Needs attention", count: pendingFeatures, cls: "seg-attention" },
+  ];
+  const pipelineMax = Math.max(1, ...pipelineRows.map((r) => r.count));
 
   return (
     <section aria-label="Overview" className="panel">
@@ -189,55 +277,110 @@ export function OverviewPanel({
           Could not load overview: {error}
         </p>
       )}
-      <UploadDropZone onUploaded={load} />
-      <div className="cards">
-        <div className="card">
-          <div className="card-value">{stats?.documents ?? "-"}</div>
-          <div className="card-label">Documents</div>
+
+      {mode === "simple" && <UploadDropZone hero onUploaded={load} />}
+
+      {mode === "advanced" && (
+        <div className="stat-tiles t5">
+          {tiles.map((t) => (
+            <div key={t.label} className={`stat-tile ${t.cls}`.trim()}>
+              <div className="stat-value">{t.value}</div>
+              <div className="stat-label">{t.label}</div>
+            </div>
+          ))}
         </div>
-        <div className="card">
-          <div className="card-value">{stats?.entities ?? "-"}</div>
-          <div className="card-label">Entities</div>
-        </div>
-        <div className="card">
-          <div className="card-value">{stats ? categories.length : "-"}</div>
-          <div className="card-label">Categories</div>
-        </div>
-      </div>
+      )}
 
       <div className="doc-section">
-        <h3>Ingestion</h3>
-        <ul className="pipeline-stats">
-          <li>
-            <span className="muted">Waiting</span> <strong>{waiting}</strong>
-          </li>
-          <li>
-            <span className="muted">Processing</span> <strong>{processing}</strong>
-          </li>
-          <li className={failed > 0 ? "pipeline-alert" : undefined}>
-            <span className="muted">Failed</span> <strong>{failed}</strong>
-          </li>
-          <li>
-            <span className="muted">Duplicates</span> <strong>{jobs.duplicate ?? 0}</strong>
-          </li>
-          <li>
+        <div className="section-head">
+          <h3>{mode === "advanced" ? "In flight — not yet in Documents" : "On the way in"}</h3>
+          <StatusLegend />
+        </div>
+        {inFlight.length === 0 ? (
+          <p className="muted">Pipeline idle - every document is fully processed.</p>
+        ) : (
+          <InFlightList jobs={inFlight} />
+        )}
+      </div>
+
+      {mode === "advanced" && (
+        <div className="doc-section">
+          <h3>Pipeline</h3>
+          <div className="panel-box pipeline-totals">
+            {pipelineRows.map((row) => (
+              <div key={row.name} className="pipeline-total-row">
+                <span className="pipeline-total-name muted">{row.name}</span>
+                <div className="flow-bar">
+                  <i
+                    className={row.cls}
+                    style={{ width: `${row.count === 0 ? 0 : Math.max(4, (row.count / pipelineMax) * 100)}%` }}
+                  />
+                </div>
+                <strong>{row.count}</strong>
+              </div>
+            ))}
+          </div>
+          {pendingFeatures > 0 && (
             <button
               type="button"
               className="link-button"
               onClick={onShowPendingFeatures}
-              disabled={!onShowPendingFeatures || !pendingFeatures}
-              title="Show documents with a failed feature (not ones still processing)"
+              disabled={!onShowPendingFeatures}
+              title="Show documents with a failed feature"
             >
-              <span className="muted">Needs attention</span> <strong>{pendingFeatures}</strong>
+              Show documents that need attention
             </button>
-          </li>
-        </ul>
-        {stats && !pipelineBusy && (
-          <p className="muted">Pipeline idle - every document is fully processed.</p>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      {categories.length > 0 && (
+      {mode === "advanced" && (
+        <div className="doc-section">
+          <h3>Recent activity</h3>
+          {recent.length === 0 ? (
+            <p className="empty">No activity yet.</p>
+          ) : (
+            <ul className="timeline">
+              {recent.map((ev) => {
+                const label = activityLabel(ev);
+                const detail = activityDetail(ev);
+                // Tint error/warning rows with the SAME colors as the Activity tab (severity-*).
+                const sev = ev.severity ?? "info";
+                const sevClass =
+                  sev === "error"
+                    ? " timeline-entry--error"
+                    : sev === "warning"
+                      ? " timeline-entry--warning"
+                      : "";
+                return (
+                  <li key={ev.id}>
+                    <button
+                      type="button"
+                      className={`timeline-entry link-button${sevClass}`}
+                      onClick={() => onOpenActivity?.(ev.id)}
+                      disabled={!onOpenActivity}
+                      title="Open in the Activity tab"
+                    >
+                      <time className="muted timeline-time" dateTime={ev.timestamp}>
+                        {new Date(ev.timestamp).toLocaleString()}
+                      </time>
+                      <span className="badge">{ev.event_type}</span>
+                      {label && (
+                        <span className="timeline-doc" title={label}>
+                          {label}
+                        </span>
+                      )}
+                      {detail && <span className="muted timeline-detail">{detail}</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {mode === "advanced" && categories.length > 0 && (
         <div className="doc-section">
           <h3>Documents by category</h3>
           <ul className="entity-chips">
@@ -253,49 +396,21 @@ export function OverviewPanel({
         </div>
       )}
 
-      <div className="doc-section">
-        <h3>Recent activity</h3>
-        {recent.length === 0 ? (
-          <p className="empty">No activity yet.</p>
-        ) : (
-          <ul className="timeline">
-            {recent.map((ev) => {
-              const label = activityLabel(ev);
-              const detail = activityDetail(ev);
-              // Tint error/warning rows with the SAME colors as the Activity tab (severity-*).
-              const sev = ev.severity ?? "info";
-              const sevClass =
-                sev === "error"
-                  ? " timeline-entry--error"
-                  : sev === "warning"
-                    ? " timeline-entry--warning"
-                    : "";
-              return (
-                <li key={ev.id}>
-                  <button
-                    type="button"
-                    className={`timeline-entry link-button${sevClass}`}
-                    onClick={() => onOpenActivity?.(ev.id)}
-                    disabled={!onOpenActivity}
-                    title="Open in the Activity tab"
-                  >
-                    <time className="muted timeline-time" dateTime={ev.timestamp}>
-                      {new Date(ev.timestamp).toLocaleString()}
-                    </time>
-                    <span className="badge">{ev.event_type}</span>
-                    {label && (
-                      <span className="timeline-doc" title={label}>
-                        {label}
-                      </span>
-                    )}
-                    {detail && <span className="muted timeline-detail">{detail}</span>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
+      {mode === "simple" && (
+        <div className="doc-section">
+          <h3>Library</h3>
+          <div className="stat-tiles t3">
+            {tiles.map((t) => (
+              <div key={t.label} className={`stat-tile ${t.cls}`.trim()}>
+                <div className="stat-value">{t.value}</div>
+                <div className="stat-label">{t.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mode === "advanced" && <UploadDropZone onUploaded={load} />}
     </section>
   );
 }

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overview modes — prototype</title>
+<style>
+  /* Theme tokens copied from apps/ui/src/styles.css (dark = default). */
+  :root {
+    --bg: #14171c; --surface: #1a1e25; --surface-2: #212630; --surface-3: #2a303b;
+    --border: #2e3540; --border-strong: #3c4552;
+    --text: #e7e9ee; --muted: #9aa2ae;
+    --accent: #5aa0e6; --accent-strong: #4a90d9;
+    --danger: #e0656d; --success: #4cc266; --warning: #d8a53f;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  /* Prototype chrome (not part of the proposal). */
+  .proto-bar {
+    position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center;
+    padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border-strong);
+  }
+  .proto-bar .note { color: var(--muted); font-size: 12px; margin-right: auto; }
+  .proto-bar button {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .proto-bar button.active { border-color: var(--accent); color: var(--accent); }
+  .concept { color: var(--muted); font-size: 13px; margin: 4px 0 20px; max-width: 70ch; }
+  .concept strong { color: var(--text); }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 64px; }
+  h2 { font-size: 17px; margin: 0 0 4px; }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+  .muted { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* Tiles — flat, 1px border, the number is the hero. */
+  .tiles { display: grid; gap: 10px; }
+  .tiles.t3 { grid-template-columns: repeat(3, 1fr); }
+  .tiles.t6 { grid-template-columns: repeat(6, 1fr); }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tile .sub { font-size: 12px; margin-top: 4px; }
+  .tile.alert { border-color: var(--danger); }
+  .tile.alert .v { color: var(--danger); }
+  .tile.warn .v { color: var(--warning); }
+
+  /* Dropzone. */
+  .dropzone {
+    border: 1.5px dashed var(--border-strong); border-radius: 8px; background: var(--surface);
+    padding: 18px; text-align: center; cursor: pointer;
+  }
+  .dropzone small { display: block; color: var(--muted); margin-top: 4px; }
+  .dropzone.hero { padding: 56px 18px; font-size: 17px; }
+
+  /* Ingestion visualizations. */
+  .bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; display: flex; }
+  .bar > i { display: block; height: 100%; }
+  .seg-processing { background: var(--accent); }
+  .seg-waiting { background: var(--muted); }
+  .seg-failed { background: var(--danger); }
+  .seg-done { background: var(--success); }
+  .stage-list { display: grid; gap: 6px; font-size: 13px; }
+  .stage-list .row { display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); padding: 6px 0; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+  /* Activity. */
+  .activity { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  .activity li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); align-items: baseline; }
+  .activity time { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .badge {
+    font-size: 11px; border: 1px solid var(--border-strong); border-radius: 4px;
+    padding: 1px 6px; color: var(--muted); white-space: nowrap;
+  }
+  .badge.error { color: var(--danger); border-color: var(--danger); }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 12px; border: 1px solid var(--border); background: var(--surface);
+    border-radius: 999px; padding: 3px 10px;
+  }
+  .chip b { font-variant-numeric: tabular-nums; margin-left: 6px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .panel-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+
+  /* In-flight documents: one row per job that has no document record yet. */
+  .inflight { list-style: none; margin: 0; padding: 0; }
+  .inflight li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .inflight .row-top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; align-items: baseline; }
+  .inflight .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inflight .bar { margin-top: 6px; }
+  .inflight .elapsed { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+  /* Status color legend — same semantics everywhere (progress bars, badges, tiles, dots). */
+  .h3-row { display: flex; align-items: center; gap: 8px; margin: 28px 0 10px; }
+  .h3-row h3 { margin: 0; }
+  .legend-toggle {
+    width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border-strong);
+    background: none; color: var(--muted); font-size: 11px; line-height: 1; cursor: pointer;
+    padding: 0; flex: none;
+  }
+  .legend-toggle:hover, .legend-toggle[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .legend {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    padding: 10px 16px; margin: 0 0 10px; font-size: 13px; display: grid; gap: 6px;
+  }
+  .legend .row { display: flex; align-items: center; gap: 8px; }
+  .legend .swatch { width: 22px; height: 6px; border-radius: 3px; flex: none; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<nav class="proto-bar">
+  <span class="note">Overview rework — 4 layout options, mock data, spartan style</span>
+  <button data-view="simple-a" class="active">Simple A</button>
+  <button data-view="simple-b">Simple B</button>
+  <button data-view="advanced-a">Advanced A</button>
+  <button data-view="advanced-b">Advanced B</button>
+</nav>
+
+<main>
+  <!-- ================= SIMPLE A ================= -->
+  <section id="simple-a">
+    <h2>Overview</h2>
+    <p class="concept"><strong>Simple A — “Focus stack”.</strong> One vertical reading flow: act (drop documents) → see the library (3 tiles) → know the pipeline is fine (one thin bar, one line of text). Zero chrome beyond that.</p>
+
+    <div class="dropzone" role="button">
+      Drag documents here to ingest
+      <small>or click to browse — they appear in Documents as they process</small>
+    </div>
+
+    <h3>Library</h3>
+    <div class="tiles t3">
+      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div></div>
+      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div></div>
+      <div class="tile"><div class="v num">12</div><div class="l">Categories</div></div>
+    </div>
+
+    <h3>Ingestion</h3>
+    <div class="panel-box">
+      <div class="bar" aria-label="ingestion progress">
+        <i class="seg-done" style="width:88%"></i>
+        <i class="seg-processing" style="width:6%"></i>
+        <i class="seg-waiting" style="width:4%"></i>
+        <i class="seg-failed" style="width:2%"></i>
+      </div>
+      <p class="muted num" style="margin:8px 0 0;font-size:13px">5 processing · 3 waiting · <span style="color:var(--danger)">1 failed</span></p>
+    </div>
+  </section>
+
+  <!-- ================= SIMPLE B ================= -->
+  <section id="simple-b" hidden>
+    <h2>Overview</h2>
+    <p class="concept"><strong>Simple B — “Action hero”.</strong> The dropzone is the page. Under it, each document still on its way into the library gets one row with its own progress bar — once it lands in Documents, it leaves this list. Library tiles close the page.</p>
+
+    <div class="dropzone hero" role="button">
+      Drag documents here to ingest
+      <small>or click to browse — they appear in Documents as they process</small>
+    </div>
+
+    <h3>On the way in</h3>
+    <div class="panel-box" style="padding:6px 16px">
+      <ul class="inflight">
+        <li>
+          <div class="row-top"><span class="fname">contract-2024-11.pdf</span><span class="muted">extracting text</span></div>
+          <div class="bar"><i class="seg-processing" style="width:60%"></i></div>
+        </li>
+        <li>
+          <div class="row-top"><span class="fname">scan-0042.pdf</span><span class="muted">queued</span></div>
+          <div class="bar"><i class="seg-waiting" style="width:6%"></i></div>
+        </li>
+        <li>
+          <div class="row-top"><span class="fname">photo-scan.tiff</span><span style="color:var(--danger)">failed — unsupported type</span></div>
+          <div class="bar"><i class="seg-failed" style="width:100%"></i></div>
+        </li>
+      </ul>
+      <p class="muted num" style="font-size:13px;margin:10px 0 4px">2 on the way in · 1 needs a decision — everything already in Documents lives there, not here.</p>
+    </div>
+
+    <h3>Library</h3>
+    <div class="tiles t3">
+      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div></div>
+      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div></div>
+      <div class="tile"><div class="v num">12</div><div class="l">Categories</div></div>
+    </div>
+  </section>
+
+  <!-- ================= ADVANCED A ================= -->
+  <section id="advanced-a" hidden>
+    <h2>Overview</h2>
+    <p class="concept"><strong>Advanced A — “Dashboard grid”.</strong> KPI strip up top (signal tiles only: failures and attention get their own tiles because they demand action), then a two-column body: pipeline left, recent activity right. Categories close the page.</p>
+
+    <div class="dropzone" role="button">
+      Drag documents here to ingest
+      <small>or click to browse</small>
+    </div>
+
+    <h3>Library</h3>
+    <div class="tiles t6">
+      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div></div>
+      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div></div>
+      <div class="tile"><div class="v num">12</div><div class="l">Categories</div></div>
+      <div class="tile alert"><div class="v num">1</div><div class="l">Failed</div></div>
+      <div class="tile warn"><div class="v num">4</div><div class="l">Needs attention</div></div>
+      <div class="tile"><div class="v num">98.9%</div><div class="l">Success rate</div></div>
+    </div>
+
+    <div class="grid-2" style="margin-top:28px">
+      <div>
+        <h3 style="margin-top:0">Ingestion pipeline</h3>
+        <div class="panel-box">
+          <div class="bar">
+            <i class="seg-done" style="width:88%"></i>
+            <i class="seg-processing" style="width:6%"></i>
+            <i class="seg-waiting" style="width:4%"></i>
+            <i class="seg-failed" style="width:2%"></i>
+          </div>
+          <div class="stage-list" style="margin-top:12px">
+            <div class="row"><span><span class="dot" style="background:var(--accent)"></span>Processing</span><b class="num">5</b></div>
+            <div class="row"><span><span class="dot" style="background:var(--muted)"></span>Waiting</span><b class="num">3</b></div>
+            <div class="row"><span><span class="dot" style="background:var(--danger)"></span>Failed</span><b class="num">1</b></div>
+            <div class="row"><span><span class="dot" style="background:var(--surface-3)"></span>Duplicates</span><b class="num">2</b></div>
+            <div class="row"><span><span class="dot" style="background:var(--warning)"></span>Pending features</span><b class="num">4</b></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-top:0">Recent activity</h3>
+        <div class="panel-box">
+          <ul class="activity">
+            <li><time>21:00:34</time><span class="badge">ingested</span><span class="truncate">0000008.pdf</span></li>
+            <li><time>20:58:58</time><span class="badge error">failed</span><span class="truncate">0000006.pdf — process pool error</span></li>
+            <li><time>20:57:12</time><span class="badge">ocr</span><span class="truncate">contract-2024-03.pdf — 14 pages</span></li>
+            <li><time>20:55:41</time><span class="badge">enriched</span><span class="truncate">invoice-march.pdf — 12 entities</span></li>
+            <li><time>20:52:03</time><span class="badge">ingested</span><span class="truncate">meeting-notes.txt</span></li>
+            <li><time>20:47:55</time><span class="badge">categorized</span><span class="truncate">bank-statement-q3.pdf → Finance</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <h3>Documents by category</h3>
+    <div class="chips">
+      <span class="chip">Finance<b>312</b></span><span class="chip">Contracts<b>208</b></span>
+      <span class="chip">Invoices<b>190</b></span><span class="chip">Personal<b>141</b></span>
+      <span class="chip">Manuals<b>98</b></span><span class="chip">Insurance<b>87</b></span>
+      <span class="chip">Medical<b>64</b></span><span class="chip">Uncategorized<b>184</b></span>
+    </div>
+  </section>
+
+  <!-- ================= ADVANCED B ================= -->
+  <section id="advanced-b" hidden>
+    <h2>Overview</h2>
+    <p class="concept"><strong>Advanced B — “Ops console”.</strong> Maximum density: KPI strip, per-document in-flight table (rows leave the moment the document lands in Documents, whatever its status), aggregate pipeline bars, full-width activity log. For the user who watches the pipeline work.</p>
+
+    <div class="tiles t6">
+      <div class="tile"><div class="v num">1,284</div><div class="l">Documents</div><div class="sub muted">+14 this week</div></div>
+      <div class="tile"><div class="v num">3,891</div><div class="l">Entities</div><div class="sub muted">3.0 / doc</div></div>
+      <div class="tile"><div class="v num">12</div><div class="l">Categories</div><div class="sub muted">184 uncategorized</div></div>
+      <div class="tile alert"><div class="v num">1</div><div class="l">Failed</div><div class="sub">last 24h</div></div>
+      <div class="tile warn"><div class="v num">4</div><div class="l">Needs attention</div><div class="sub">feature errors</div></div>
+      <div class="tile"><div class="v num">2.1s</div><div class="l">Avg OCR / page</div><div class="sub muted">last 50 pages</div></div>
+    </div>
+
+    <h3>In flight — not yet in Documents</h3>
+    <div class="panel-box" style="padding:6px 16px">
+      <ul class="inflight">
+        <li>
+          <div class="row-top"><span class="fname">contract-2024-11.pdf</span><span class="badge">extract</span><span class="elapsed">0:42</span></div>
+          <div class="bar"><i class="seg-processing" style="width:60%"></i></div>
+        </li>
+        <li>
+          <div class="row-top"><span class="fname">board-pack-q3.pdf</span><span class="badge">extract</span><span class="elapsed">0:18</span></div>
+          <div class="bar"><i class="seg-processing" style="width:25%"></i></div>
+        </li>
+        <li>
+          <div class="row-top"><span class="fname">scan-0042.pdf</span><span class="badge">queued</span><span class="elapsed">—</span></div>
+          <div class="bar"><i class="seg-waiting" style="width:6%"></i></div>
+        </li>
+        <li>
+          <div class="row-top"><span class="fname">photo-scan.tiff</span><span class="badge error">failed</span><span class="elapsed">unsupported type</span></div>
+          <div class="bar"><i class="seg-failed" style="width:100%"></i></div>
+        </li>
+      </ul>
+    </div>
+
+    <h3>Pipeline totals (pre-intake only)</h3>
+    <div class="panel-box">
+      <div class="stage-list">
+        <div class="row"><span style="width:140px">Processing</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-processing" style="width:35%"></i></div><b class="num">5</b></div>
+        <div class="row"><span style="width:140px">Waiting</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-waiting" style="width:21%"></i></div><b class="num">3</b></div>
+        <div class="row"><span style="width:140px">Failed</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-failed" style="width:7%"></i></div><b class="num">1</b></div>
+        <div class="row"><span style="width:140px">Duplicates</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-done" style="width:14%;background:var(--surface-3)"></i></div><b class="num">2</b></div>
+        <div class="row"><span style="width:140px">Pending features</span><div class="bar" style="flex:1;margin:5px 12px 0"><i class="seg-done" style="width:28%;background:var(--warning)"></i></div><b class="num">4</b></div>
+      </div>
+    </div>
+
+    <h3>Recent activity</h3>
+    <div class="panel-box" style="padding:6px 16px">
+      <ul class="activity">
+        <li><time>2026-10-24 21:00:34</time><span class="badge">ingested</span><span class="truncate">0000008.pdf</span><span class="muted truncate">via upload, 2.4 MB</span></li>
+        <li><time>2026-10-24 20:58:58</time><span class="badge error">failed</span><span class="truncate">0000006.pdf</span><span class="muted truncate">internal_error: process pool terminated</span></li>
+        <li><time>2026-10-24 20:57:12</time><span class="badge">ocr</span><span class="truncate">contract-2024-03.pdf</span><span class="muted truncate">14 pages, 2.1 s/page, conf 0.97</span></li>
+        <li><time>2026-10-24 20:55:41</time><span class="badge">enriched</span><span class="truncate">invoice-march.pdf</span><span class="muted truncate">12 entities, 2 relations</span></li>
+        <li><time>2026-10-24 20:52:03</time><span class="badge">ingested</span><span class="truncate">meeting-notes.txt</span><span class="muted truncate">via folder watch</span></li>
+        <li><time>2026-10-24 20:47:55</time><span class="badge">categorized</span><span class="truncate">bank-statement-q3.pdf</span><span class="muted truncate">→ Finance (0.91)</span></li>
+        <li><time>2026-10-24 20:44:10</time><span class="badge">embedded</span><span class="truncate">handbook-v2.pdf</span><span class="muted truncate">61 chunks</span></li>
+      </ul>
+    </div>
+
+    <h3>Documents by category</h3>
+    <div class="chips">
+      <span class="chip">Finance<b>312</b></span><span class="chip">Contracts<b>208</b></span>
+      <span class="chip">Invoices<b>190</b></span><span class="chip">Personal<b>141</b></span>
+      <span class="chip">Manuals<b>98</b></span><span class="chip">Insurance<b>87</b></span>
+      <span class="chip">Medical<b>64</b></span><span class="chip">Uncategorized<b>184</b></span>
+    </div>
+
+    <div class="dropzone" style="margin-top:28px" role="button">
+      Drag documents here to ingest
+      <small>or click to browse</small>
+    </div>
+  </section>
+</main>
+
+<script>
+  const buttons = document.querySelectorAll(".proto-bar button");
+  function select(id) {
+    buttons.forEach((x) => x.classList.toggle("active", x.dataset.view === id));
+    document.querySelectorAll("main > section").forEach((s) => {
+      s.hidden = s.id !== id;
+    });
+  }
+  buttons.forEach((b) => b.addEventListener("click", () => select(b.dataset.view)));
+  if (location.hash) select(location.hash.slice(1));
+</script>
+</body>
+</html>

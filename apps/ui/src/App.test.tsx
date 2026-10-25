@@ -196,3 +196,20 @@ test("a resized Documents column survives navigating to Chat and back (#522)", a
   const remounted = await screen.findByRole("columnheader", { name: /Processing/ });
   expect(remounted.style.width).toBe(widened);
 });
+
+test("the header mode toggle switches Simple/Advanced and persists the choice (#848)", async () => {
+  mockRoutes();
+  localStorage.removeItem("doktok-ui-mode");
+  const { container } = render(<App />);
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Overview" })).toBeInTheDocument(),
+  );
+  const shell = container.querySelector(".app-shell")!;
+  expect(shell.getAttribute("data-mode")).toBe("simple"); // default
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect(shell.getAttribute("data-mode")).toBe("advanced");
+  expect(localStorage.getItem("doktok-ui-mode")).toBe('"advanced"');
+  fireEvent.click(screen.getByRole("button", { name: "Simple" }));
+  expect(shell.getAttribute("data-mode")).toBe("simple");
+  expect(localStorage.getItem("doktok-ui-mode")).toBe('"simple"');
+});

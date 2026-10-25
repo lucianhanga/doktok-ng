@@ -10,9 +10,11 @@ import { InsightsPanel } from "./InsightsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
+import { ModeToggle } from "./ModeToggle";
 import { ThemeToggle } from "./ThemeToggle";
 import { fetchHealth } from "./api";
 import { useInterval } from "./hooks";
+import { loadUiMode, saveUiMode, type UiMode } from "./mode";
 
 /** Small header status dot: green=connected, amber=connecting, red=unreachable. */
 function BackendDot() {
@@ -79,6 +81,8 @@ function hrefFor(view: View): string {
 
 export default function App() {
   const [view, setView] = useState<View>(viewFromHash);
+  // Simple/advanced UI detail level (#848): persisted, simple is the default.
+  const [uiMode, setUiMode] = useState<UiMode>(loadUiMode);
   const [openDoc, setOpenDoc] = useState<string | null>(null);
   const [docsNeedsAttention, setDocsNeedsAttention] = useState(false);
   // Category pre-filter set when navigating from the Categories tab to Documents.
@@ -141,8 +145,13 @@ export default function App() {
     // DocumentsPanel via the key change (which includes docsCategoryFilter).
   }
 
+  function changeUiMode(next: UiMode) {
+    saveUiMode(next);
+    setUiMode(next);
+  }
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-mode={uiMode}>
       <header className="app-header">
         <div className="app-inner">
           <div className="app-header-bar">
@@ -166,6 +175,7 @@ export default function App() {
             </nav>
             <div className="app-header-end">
               <BackendDot />
+              <ModeToggle mode={uiMode} onChange={changeUiMode} />
               <ThemeToggle />
             </div>
           </div>
@@ -187,6 +197,7 @@ export default function App() {
           <div className="app-content" hidden={openDoc !== null}>
             {view === "overview" && (
               <OverviewPanel
+                mode={uiMode}
                 onShowPendingFeatures={showPendingFeatures}
                 onOpenActivity={openActivity}
               />

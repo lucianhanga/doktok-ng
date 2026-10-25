@@ -11,7 +11,7 @@ from doktok_contracts.ports import IngestionJobRepository
 from doktok_contracts.schemas import AuditEventType, IngestionJob, IngestUploadResult, JobStatus
 from doktok_core.audit.logger import actor_identity, record_activity
 from doktok_core.ingestion.layout import FilesystemLayout
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 
 from doktok_api.dependencies import Tenant, get_audit_repository, get_job_repository
 
@@ -166,3 +166,21 @@ def retry_job(job_id: str, tenant: Tenant, request: Request, repo: Repo) -> Inge
         description=f"retried after {job.error_code or job.status}",
     )
     return job
+
+
+@router.delete("/jobs/{job_id}", status_code=204)
+def dismiss_job(job_id: str, tenant: Tenant, repo: Repo) -> Response:
+    """Delete a TERMINAL job row (tombstone cleanup, #848): failed/quarantined tombstones whose
+    source file is long gone would otherwise pin the Overview's in-flight list forever. In-flight
+    jobs are refused - deleting one would orphan the running pipeline."""
+    job = repo.get(tenant.tenant_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    terminal = {JobStatus.ACTIVE, JobStatus.FAILED, JobStatus.QUARANTINED, JobStatus.DUPLICATE}
+    if job.status not in terminal:
+        raise HTTPException(
+            status_code=409,
+            detail=f"only finished jobs can be dismissed (status: {job.status})",
+        )
+    repo.delete(tenant.tenant_id, job_id)
+    return Response(status_code=204)

@@ -88,3 +88,30 @@ def test_retry_requires_a_token(tmp_path: Path) -> None:
     job = _stranded_job(tmp_path)
     resp = _client(tmp_path, [job]).post(f"/api/v1/ingestion/jobs/{job.id}/retry")
     assert resp.status_code == 401
+
+
+def test_dismiss_removes_a_failed_tombstone(tmp_path: Path) -> None:
+    job = _stranded_job(tmp_path)
+    client = _client(tmp_path, [job])
+    resp = client.delete(f"/api/v1/ingestion/jobs/{job.id}", headers=AUTH)
+    assert resp.status_code == 204
+    remaining = client.get("/api/v1/ingestion/jobs", headers=AUTH).json()
+    assert all(j["id"] != job.id for j in remaining)
+
+
+def test_dismiss_unknown_job_is_404(tmp_path: Path) -> None:
+    resp = _client(tmp_path, []).delete("/api/v1/ingestion/jobs/nope", headers=AUTH)
+    assert resp.status_code == 404
+
+
+def test_dismiss_refuses_an_in_flight_job(tmp_path: Path) -> None:
+    job = _stranded_job(tmp_path, status=JobStatus.EXTRACTING)
+    client = _client(tmp_path, [job])
+    resp = client.delete(f"/api/v1/ingestion/jobs/{job.id}", headers=AUTH)
+    assert resp.status_code == 409
+
+
+def test_dismiss_requires_a_token(tmp_path: Path) -> None:
+    job = _stranded_job(tmp_path)
+    resp = _client(tmp_path, [job]).delete(f"/api/v1/ingestion/jobs/{job.id}")
+    assert resp.status_code == 401

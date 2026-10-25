@@ -328,3 +328,40 @@ test("a retry failure is surfaced instead of silently swallowed", async () => {
     expect(screen.getByText(/source file no longer exists/)).toBeInTheDocument(),
   );
 });
+
+test("a failed pre-intake row can be dismissed when its file is gone", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/api/v1/stats")) {
+        return new Response(JSON.stringify(EMPTY_STATS), { status: 200 });
+      }
+      if (url.includes("/api/v1/ingestion/jobs")) {
+        const jobs =
+          (init?.method ?? "GET") === "GET"
+            ? [
+                {
+                  id: "j7",
+                  source_path: "/data/processed/abc/source.pdf",
+                  status: "failed",
+                  document_id: null,
+                  error_code: "worker_crash_recovered",
+                  error_message: "worker crashed",
+                  started_at: null,
+                },
+              ]
+            : [];
+        return new Response(JSON.stringify(jobs), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+  render(<OverviewPanel />);
+  fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+  await waitFor(() =>
+    expect(calls.some((c) => c === "DELETE /api/v1/ingestion/jobs/j7")).toBe(true),
+  );
+});

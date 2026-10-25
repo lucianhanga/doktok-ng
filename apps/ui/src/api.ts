@@ -1697,6 +1697,18 @@ export async function retryIngestionJob(jobId: string): Promise<void> {
   }
 }
 
+/** Delete a terminal job row: tombstone cleanup for failures whose file is long gone (#848). */
+export async function dismissIngestionJob(jobId: string): Promise<void> {
+  const response = await fetch(`/api/v1/ingestion/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok && response.status !== 404) {
+    // 404 = already gone, which is the desired end state - not an error.
+    const detail = (await response.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(detail.detail ?? `dismiss failed (${response.status})`);
+  }
+}
+
 export interface Citation {
   index: number;
   document_id: string;

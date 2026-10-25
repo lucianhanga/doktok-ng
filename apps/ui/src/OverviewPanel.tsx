@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import {
   dismissIngestionJob,
@@ -233,21 +233,27 @@ function FeatureStageBar({ features }: { features: InflightDocument["features"] 
         ? 99
         : FEATURE_STAGE_ORDER.indexOf(b.feature)),
   );
+  const n = ordered.length;
   return (
     <div className="flow-bar stage-bar">
-      {ordered.map((f) => {
-        // Each stage carries its own color (seg-f-*); pending segments stay on the bare track.
-        // Running pulses; failed goes red regardless of stage.
+      {ordered.map((f, i) => {
+        // Done segments shade blue -> green as the document advances; the running stage pulses
+        // accent; a failed stage turns red; pending stays on the bare track.
+        const frac = n > 1 ? i / (n - 1) : 1;
         let cls = "stage-seg";
+        let style: CSSProperties | undefined;
         if (f.status === "failed") {
           cls += " filled seg-failed";
         } else if (f.status === "running") {
-          cls += ` filled seg-f-${f.feature} seg-running`;
+          cls += " filled seg-running";
         } else if (f.status === "done") {
-          cls += ` filled seg-f-${f.feature}`;
+          cls += " filled stage-grad";
+          style = {
+            background: `color-mix(in oklab, var(--accent) ${Math.round((1 - frac) * 100)}%, var(--success))`,
+          };
         }
         const label = FEATURE_STAGE_LABELS[f.feature] ?? f.feature;
-        return <i key={f.feature} className={cls} title={`${label}: ${f.status}`} />;
+        return <i key={f.feature} className={cls} style={style} title={`${label}: ${f.status}`} />;
       })}
     </div>
   );
@@ -291,10 +297,12 @@ function docStage(features: InflightDocument["features"]): { label: string; fail
 function InFlightList({
   jobs,
   docs,
+  departed,
   onChanged,
 }: {
   jobs: IngestionJob[];
   docs: InflightDocument[];
+  departed: InflightDocument[];
   onChanged: () => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -372,6 +380,28 @@ function InFlightList({
             </li>
           );
         })}
+        {departed.map((doc) => (
+          <li key={`done-${doc.document_id}`}>
+            <div className="inflight-top">
+              <span className="inflight-name" title={doc.title ?? doc.filename}>
+                {doc.title ?? doc.filename}
+              </span>
+              <span className="inflight-stage" style={{ color: "var(--success)" }}>
+                done
+              </span>
+              <span className="inflight-elapsed muted" />
+            </div>
+            <div className="flow-bar stage-bar">
+              {doc.features.map((f) => (
+                <i
+                  key={f.feature}
+                  className="stage-seg filled seg-done"
+                  title={`${FEATURE_STAGE_LABELS[f.feature] ?? f.feature}: done`}
+                />
+              ))}
+            </div>
+          </li>
+        ))}
         {docs.map((doc) => {
           const stage = docStage(doc.features);
           return (
@@ -418,6 +448,12 @@ export function OverviewPanel({
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [inflightDocs, setInflightDocs] = useState<InflightDocument[]>([]);
+  // Documents whose ledger just completed linger 30s with a full green bar so the completion is
+  // visible, then leave (#848). Failed departures leave immediately (Documents shows them).
+  const [departed, setDeparted] = useState<Map<string, { doc: InflightDocument; leftAt: number }>>(
+    new Map(),
+  );
+  const inflightRef = useRef<InflightDocument[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -433,7 +469,24 @@ export function OverviewPanel({
         setRecent(a.slice(0, 8));
         setCategories(c);
         setJobs(j);
+        const prevDocs = inflightRef.current;
+        inflightRef.current = d;
         setInflightDocs(d);
+        const byId = new Map(d.map((x) => [x.document_id, x]));
+        const now = Date.now();
+        setDeparted((prev) => {
+          const next = new Map(prev);
+          for (const old of prevDocs) {
+            const hadFailed = old.features.some((f) => f.status === "failed");
+            if (!byId.has(old.document_id) && !hadFailed && !next.has(old.document_id)) {
+              next.set(old.document_id, { doc: old, leftAt: now });
+            }
+          }
+          for (const [id, entry] of next) {
+            if (byId.has(id) || now - entry.leftAt >= 30_000) next.delete(id);
+          }
+          return next;
+        });
         setError(null);
       })
       .catch((err: unknown) =>
@@ -517,13 +570,18 @@ export function OverviewPanel({
 
       <div className="doc-section">
         <div className="section-head">
-          <h3>{mode === "advanced" ? "In flight" : "On the way in"}</h3>
+          <h3>In flight</h3>
           <StatusLegend />
         </div>
-        {inFlight.length === 0 && inflightDocs.length === 0 ? (
+        {inFlight.length === 0 && inflightDocs.length === 0 && departed.size === 0 ? (
           <p className="muted">Pipeline idle - every document is fully processed.</p>
         ) : (
-          <InFlightList jobs={inFlight} docs={inflightDocs} onChanged={load} />
+          <InFlightList
+            jobs={inFlight}
+            docs={inflightDocs}
+            departed={[...departed.values()].map((e) => e.doc)}
+            onChanged={load}
+          />
         )}
       </div>
 
@@ -542,7 +600,7 @@ export function OverviewPanel({
                     {total > 0 && (
                       <>
                         <i
-                          className={`seg-f-${q.feature}`}
+                          className="seg-processing"
                           style={{ width: `${(q.running / stageMax) * 100}%` }}
                         />
                         <i

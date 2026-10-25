@@ -89,7 +89,7 @@ test("simple mode (default): hero dropzone, library tiles, in-flight rows - and 
   render(<OverviewPanel />);
   await waitFor(() => expect(screen.getByText("contract.pdf")).toBeInTheDocument());
   expect(screen.getByText("Drag documents here to ingest")).toBeInTheDocument();
-  expect(screen.getByText("On the way in")).toBeInTheDocument();
+  expect(screen.getByText("In flight")).toBeInTheDocument();
   expect(screen.getByText("7")).toBeInTheDocument(); // entities tile
   expect(screen.getByText("Documents")).toBeInTheDocument();
   expect(screen.getByText("Entities")).toBeInTheDocument();
@@ -209,7 +209,7 @@ test("Processing counts only pre-intake jobs; documents already in the list stay
 test("the (?) legend button explains the status colors", async () => {
   stubApi();
   render(<OverviewPanel />);
-  await waitFor(() => expect(screen.getByText("On the way in")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("In flight")).toBeInTheDocument());
   const toggle = screen.getByRole("button", { name: /explain status colors/i });
   expect(screen.queryByText("Queued / waiting")).not.toBeInTheDocument();
   fireEvent.click(toggle);
@@ -467,10 +467,10 @@ test("processing documents show per-stage colored segments and the current stage
   });
   const { container } = render(<OverviewPanel />);
   await waitFor(() => expect(screen.getByText("contract-2024.pdf")).toBeInTheDocument());
-  // The current stage is named, and each segment carries its own stage color class.
+  // The current stage is named; done segments shade blue->green across the bar, running pulses.
   expect(screen.getByText(/chunk/i)).toBeInTheDocument();
-  expect(container.querySelectorAll(".stage-seg.seg-f-extract").length).toBe(1); // done segment
-  expect(container.querySelectorAll(".stage-seg.seg-f-chunk_embed.seg-running").length).toBe(1);
+  expect(container.querySelectorAll(".stage-seg.stage-grad").length).toBe(1); // the done segment
+  expect(container.querySelectorAll(".stage-seg.seg-running").length).toBe(1);
 });
 
 test("advanced heading is 'In flight' (processing documents ARE in Documents now)", async () => {
@@ -520,7 +520,7 @@ test("stage queues count only claimable rows; upstream-blocked show as '+N'", as
   expect(relations).toHaveTextContent("+9 upstream");
 });
 
-test("stage colors are granular and distinct per stage (NER, KEG, Records, ...)", async () => {
+test("a failed stage segment turns red while done segments keep the gradient", async () => {
   stubApi({
     inflight: [
       {
@@ -531,17 +531,59 @@ test("stage colors are granular and distinct per stage (NER, KEG, Records, ...)"
         features: [
           { feature: "extract", status: "done" },
           { feature: "chunk_embed", status: "done" },
-          { feature: "ner", status: "done" },
-          { feature: "entity_graph", status: "done" },
-          { feature: "structured_records", status: "done" },
+          { feature: "ner", status: "failed" },
+          { feature: "relations", status: "pending" },
         ],
       },
     ],
   });
   const { container } = render(<OverviewPanel />);
   await waitFor(() => expect(screen.getByText("deep.pdf")).toBeInTheDocument());
-  // Each done stage carries its OWN color class - no shared "indexing" bucket.
-  for (const f of ["extract", "chunk_embed", "ner", "entity_graph", "structured_records"]) {
-    expect(container.querySelectorAll(`.stage-seg.seg-f-${f}`).length).toBe(1);
+  expect(container.querySelectorAll(".stage-seg.stage-grad").length).toBe(2); // the 2 done
+  expect(container.querySelectorAll(".stage-seg.filled.seg-failed").length).toBe(1); // ner, red
+});
+
+test("a completed document lingers 30s with a full green bar, then leaves", async () => {
+  vi.useFakeTimers();
+  try {
+    let inflight: object[] = [
+      {
+        document_id: "d1",
+        filename: "almost-done.pdf",
+        created_at: "2026-06-10T00:00:00Z",
+        title: null,
+        features: [
+          { feature: "extract", status: "done" },
+          { feature: "entities", status: "running" },
+        ],
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/v1/stats")) {
+          return new Response(JSON.stringify(EMPTY_STATS), { status: 200 });
+        }
+        if (url.includes("/api/v1/features/inflight")) {
+          return new Response(JSON.stringify(inflight), { status: 200 });
+        }
+        return new Response(JSON.stringify([]), { status: 200 });
+      }),
+    );
+    render(<OverviewPanel />);
+    await vi.waitFor(() => expect(screen.getByText("almost-done.pdf")).toBeInTheDocument());
+
+    inflight = []; // the ledger finished; the endpoint no longer returns the document
+    await vi.advanceTimersByTimeAsync(5_500); // one poll later
+    await vi.waitFor(() => expect(screen.getByText("done")).toBeInTheDocument());
+    expect(screen.getByText("almost-done.pdf")).toBeInTheDocument(); // still visible
+
+    await vi.advanceTimersByTimeAsync(31_000); // past the 30s linger
+    await vi.waitFor(() =>
+      expect(screen.queryByText("almost-done.pdf")).not.toBeInTheDocument(),
+    );
+  } finally {
+    vi.useRealTimers();
   }
 });

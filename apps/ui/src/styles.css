@@ -7375,6 +7375,10 @@ tr.row-selected {
   list-style: none;
   margin: 0;
   padding: 0;
+  /* Pack 2-3 cards per row when the panel is wide; collapses to one column when narrow. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  column-gap: 24px;
 }
 .inflight li {
   padding: 8px 0;

@@ -9,7 +9,8 @@ type IncomingLike = { headers?: Record<string, string | string[] | undefined> };
 const backend: ProxyOptions = {
   // Pin IPv4 loopback: "localhost" resolves to ::1 on macOS, and any OTHER container publishing
   // *:8000 (IPv6 wildcard) would shadow the dev backend and 404 the whole UI (h0me-api did).
-  target: "http://127.0.0.1:8000",
+  // DOKTOK_UI_BACKEND overrides the target (e.g. http://192.168.1.10 to preview against the box).
+  target: process.env.DOKTOK_UI_BACKEND ?? "http://127.0.0.1:8000",
   changeOrigin: true,
   configure: (proxy) => {
     proxy.on(

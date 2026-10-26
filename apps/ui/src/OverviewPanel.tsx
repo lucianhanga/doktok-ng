@@ -591,36 +591,51 @@ export function OverviewPanel({
             {stageQueues.map((q) => {
               // One segment per queue item, like the per-document feature bars: running pulses
               // in the stage's own hue, queued is soft blue, upstream-blocked is track gray,
-              // failed red. Exact state is the segment tooltip; only the total stays as text.
+              // failed red. The spelled-out counts live in tooltips: per segment ("<stage>:
+              // <state>") and the full summary on the total.
               const blocked = q.blocked ?? 0;
               const total = q.queued + q.running + q.failed + blocked;
+              const stageLabel = FEATURE_STAGE_LABELS[q.feature] ?? q.feature;
               const runningCls = FEATURE_STAGE_ORDER.includes(q.feature)
                 ? `seg-f-${q.feature}`
                 : "seg-processing";
               const segments: { cls: string; title: string }[] = [
-                ...Array.from({ length: q.running }, () => ({ cls: runningCls, title: "running" })),
-                ...Array.from({ length: q.queued }, () => ({ cls: "seg-queued", title: "queued" })),
-                ...Array.from({ length: q.failed }, () => ({ cls: "seg-failed", title: "failed" })),
+                ...Array.from({ length: q.running }, () => ({
+                  cls: runningCls,
+                  title: `${stageLabel}: running`,
+                })),
+                ...Array.from({ length: q.queued }, () => ({
+                  cls: "seg-queued",
+                  title: `${stageLabel}: queued`,
+                })),
+                ...Array.from({ length: q.failed }, () => ({
+                  cls: "seg-failed",
+                  title: `${stageLabel}: failed`,
+                })),
                 ...Array.from({ length: blocked }, () => ({
                   cls: "seg-blocked",
-                  title: "upstream-blocked",
+                  title: `${stageLabel}: upstream-blocked`,
                 })),
               ];
+              const summary = [
+                `${q.running} running`,
+                `${q.queued} queued`,
+                ...(q.failed > 0 ? [`${q.failed} failed`] : []),
+                ...(blocked > 0 ? [`+${blocked} upstream`] : []),
+              ].join(" · ");
               return (
                 <div key={q.feature} className="pipeline-total-row">
-                  <span className="pipeline-total-name muted">
-                    {FEATURE_STAGE_LABELS[q.feature] ?? q.feature}
-                  </span>
+                  <span className="pipeline-total-name muted">{stageLabel}</span>
                   <div className="flow-bar queue-bar">
                     {segments.map((s, i) => (
                       <i
                         key={i}
-                        className={`queue-seg ${s.cls}${s.title === "running" ? " seg-running" : ""}`}
+                        className={`queue-seg ${s.cls}${s.title.endsWith(": running") ? " seg-running" : ""}`}
                         title={s.title}
                       />
                     ))}
                   </div>
-                  <strong>{total}</strong>
+                  <strong title={summary}>{total}</strong>
                 </div>
               );
             })}

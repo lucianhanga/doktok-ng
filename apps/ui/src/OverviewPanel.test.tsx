@@ -440,6 +440,11 @@ test("advanced mode shows the per-stage queues as per-item segmented bars", asyn
   expect(relations?.querySelectorAll(".queue-seg.seg-f-relations")).toHaveLength(2);
   expect(relations?.querySelectorAll(".queue-seg.seg-queued")).toHaveLength(5);
   expect(relations?.querySelectorAll(".queue-seg.seg-failed")).toHaveLength(1);
+  // the spelled-out counts live in tooltips: per segment and the full summary on the total
+  expect(relations?.querySelector('[title="Relations: failed"]')).not.toBeNull();
+  expect(relations?.querySelector('strong')?.getAttribute("title")).toBe(
+    "2 running · 5 queued · 1 failed",
+  );
 });
 
 test("simple mode does not show the stage queues", async () => {

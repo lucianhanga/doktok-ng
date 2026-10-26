@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 from typing import Any
 
+import pytest
 from doktok_provider_rapidocr.ocr import RapidOcr
 from PIL import Image
 
@@ -55,7 +56,7 @@ def test_broken_pool_is_rebuilt_and_page_retried(monkeypatch: Any) -> None:
         def __init__(self, value: Any) -> None:
             self._value = value
 
-        def result(self) -> Any:
+        def result(self, timeout: float | None = None) -> Any:
             return self._value
 
     class _BrokenPool:
@@ -86,3 +87,61 @@ def test_broken_pool_is_rebuilt_and_page_retried(monkeypatch: Any) -> None:
     assert len(builds) == 2  # the broken pool was replaced, not reused
     assert ocr.ocr_image(_png()).text == "Hello\nWorld"
     assert len(builds) == 2
+
+
+class _Sentinel:
+    pass
+
+
+def test_pool_uses_spawn_context_and_page_timeout(monkeypatch) -> None:
+    """The pool must spawn (fork inside the multi-threaded worker deadlocks children) and every
+    page call must carry a timeout so a wedged child can never hang the worker (2026-10-26)."""
+    import doktok_provider_rapidocr.ocr as mod
+
+    captured: dict[str, Any] = {}
+    sentinel = _Sentinel()
+
+    class _FakeFuture:
+        def result(self, timeout: float | None = None) -> Any:
+            captured["timeout"] = timeout
+            return sentinel
+
+    class _FakePool:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["kwargs"] = kwargs
+
+        def submit(self, fn: Any, payload: bytes) -> _FakeFuture:
+            return _FakeFuture()
+
+        def shutdown(self, wait: bool = True) -> None:
+            pass
+
+    monkeypatch.setattr(mod, "ProcessPoolExecutor", _FakePool)
+    ocr = RapidOcr(pool_size=2)
+    assert ocr.ocr_image(_png()) is sentinel
+    assert captured["kwargs"]["mp_context"].get_start_method() == "spawn"
+    assert captured["timeout"] == mod._PAGE_TIMEOUT_S
+
+
+def test_wedged_child_discards_pool_and_propagates(monkeypatch) -> None:
+    import doktok_provider_rapidocr.ocr as mod
+
+    class _WedgedFuture:
+        def result(self, timeout: float | None = None) -> Any:
+            raise TimeoutError
+
+    class _FakePool:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def submit(self, fn: Any, payload: bytes) -> _WedgedFuture:
+            return _WedgedFuture()
+
+        def shutdown(self, wait: bool = True) -> None:
+            pass
+
+    monkeypatch.setattr(mod, "ProcessPoolExecutor", _FakePool)
+    ocr = RapidOcr(pool_size=1)
+    with pytest.raises(TimeoutError):
+        ocr.ocr_image(_png())
+    assert ocr._pool is None  # wedged pool dropped so the next call rebuilds fresh

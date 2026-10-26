@@ -539,7 +539,6 @@ export function OverviewPanel({
       (FEATURE_STAGE_ORDER.indexOf(a.feature) === -1 ? 99 : FEATURE_STAGE_ORDER.indexOf(a.feature)) -
       (FEATURE_STAGE_ORDER.indexOf(b.feature) === -1 ? 99 : FEATURE_STAGE_ORDER.indexOf(b.feature)),
   );
-  const stageMax = Math.max(1, ...stageQueues.map((q) => q.queued + q.running + q.failed));
 
   return (
     <section aria-label="Overview" className="panel">
@@ -590,39 +589,38 @@ export function OverviewPanel({
           <h3>Stage queues</h3>
           <div className="panel-box pipeline-totals">
             {stageQueues.map((q) => {
-              const total = q.queued + q.running + q.failed;
+              // One segment per queue item, like the per-document feature bars: running pulses
+              // in the stage's own hue, queued is soft blue, upstream-blocked is track gray,
+              // failed red. Exact state is the segment tooltip; only the total stays as text.
+              const blocked = q.blocked ?? 0;
+              const total = q.queued + q.running + q.failed + blocked;
+              const runningCls = FEATURE_STAGE_ORDER.includes(q.feature)
+                ? `seg-f-${q.feature}`
+                : "seg-processing";
+              const segments: { cls: string; title: string }[] = [
+                ...Array.from({ length: q.running }, () => ({ cls: runningCls, title: "running" })),
+                ...Array.from({ length: q.queued }, () => ({ cls: "seg-queued", title: "queued" })),
+                ...Array.from({ length: q.failed }, () => ({ cls: "seg-failed", title: "failed" })),
+                ...Array.from({ length: blocked }, () => ({
+                  cls: "seg-blocked",
+                  title: "upstream-blocked",
+                })),
+              ];
               return (
                 <div key={q.feature} className="pipeline-total-row">
                   <span className="pipeline-total-name muted">
                     {FEATURE_STAGE_LABELS[q.feature] ?? q.feature}
                   </span>
-                  <div className="flow-bar">
-                    {total > 0 && (
-                      <>
-                        <i
-                          className="seg-processing"
-                          style={{ width: `${(q.running / stageMax) * 100}%` }}
-                        />
-                        <i
-                          className="seg-waiting"
-                          style={{ width: `${(q.queued / stageMax) * 100}%` }}
-                        />
-                        <i
-                          className="seg-failed"
-                          style={{ width: `${(q.failed / stageMax) * 100}%` }}
-                        />
-                      </>
-                    )}
+                  <div className="flow-bar queue-bar">
+                    {segments.map((s, i) => (
+                      <i
+                        key={i}
+                        className={`queue-seg ${s.cls}${s.title === "running" ? " seg-running" : ""}`}
+                        title={s.title}
+                      />
+                    ))}
                   </div>
-                  <strong>
-                    {q.running} running · {q.queued} queued
-                    {q.failed > 0 ? ` · ${q.failed} failed` : ""}
-                    {q.blocked > 0 ? (
-                      <span className="muted"> · +{q.blocked} upstream</span>
-                    ) : (
-                      ""
-                    )}
-                  </strong>
+                  <strong>{total}</strong>
                 </div>
               );
             })}

@@ -419,7 +419,7 @@ test("in-flight rows show the granular pipeline stage and a segmented stage bar"
   expect(container.querySelectorAll(".stage-seg").length).toBeGreaterThanOrEqual(9);
 });
 
-test("advanced mode shows the per-stage queues with running/queued counts", async () => {
+test("advanced mode shows the per-stage queues as per-item segmented bars", async () => {
   stubApi({
     stats: {
       ...EMPTY_STATS,
@@ -431,10 +431,15 @@ test("advanced mode shows the per-stage queues with running/queued counts", asyn
   });
   render(<OverviewPanel mode="advanced" />);
   await waitFor(() => expect(screen.getByText("Stage queues")).toBeInTheDocument());
-  expect(screen.getByText("Extract / OCR")).toBeInTheDocument();
-  expect(screen.getByText("Relations")).toBeInTheDocument();
-  expect(screen.getByText(/1 running/)).toBeInTheDocument();
-  expect(screen.getByText(/5 queued/)).toBeInTheDocument();
+  const extract = screen.getByText("Extract / OCR").closest(".pipeline-total-row");
+  expect(extract).toHaveTextContent("4"); // total only, no spelled-out counts
+  expect(extract?.querySelectorAll(".queue-seg.seg-f-extract")).toHaveLength(1); // running
+  expect(extract?.querySelectorAll(".queue-seg.seg-queued")).toHaveLength(3);
+  const relations = screen.getByText("Relations").closest(".pipeline-total-row");
+  expect(relations).toHaveTextContent("8");
+  expect(relations?.querySelectorAll(".queue-seg.seg-f-relations")).toHaveLength(2);
+  expect(relations?.querySelectorAll(".queue-seg.seg-queued")).toHaveLength(5);
+  expect(relations?.querySelectorAll(".queue-seg.seg-failed")).toHaveLength(1);
 });
 
 test("simple mode does not show the stage queues", async () => {
@@ -503,7 +508,7 @@ test("a not-yet-started document is 'scheduled for' its FIRST pipeline stage, wh
   expect(screen.getByText("scheduled for Extract / OCR")).toBeInTheDocument();
 });
 
-test("stage queues count only claimable rows; upstream-blocked show as '+N'", async () => {
+test("stage queues count only claimable rows; upstream-blocked show as gray segments", async () => {
   stubApi({
     stats: {
       ...EMPTY_STATS,
@@ -516,8 +521,9 @@ test("stage queues count only claimable rows; upstream-blocked show as '+N'", as
   render(<OverviewPanel mode="advanced" />);
   await waitFor(() => expect(screen.getByText("Stage queues")).toBeInTheDocument());
   const relations = screen.getByText("Relations").closest(".pipeline-total-row");
-  expect(relations).toHaveTextContent("0 running · 0 queued");
-  expect(relations).toHaveTextContent("+9 upstream");
+  const blocked = relations?.querySelectorAll(".queue-seg.seg-blocked");
+  expect(blocked).toHaveLength(9);
+  expect(relations).toHaveTextContent("9");
 });
 
 test("a failed stage segment turns red while done segments keep the gradient", async () => {

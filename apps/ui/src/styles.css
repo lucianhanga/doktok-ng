@@ -7621,6 +7621,28 @@ tr.row-selected {
 .seg-f-doc_classify { background: #4bb3d4; }
 .seg-f-structured_records { background: #4cc266; }
 
+/* Stage-queue bars (advanced overview): one segment per queue item, mirroring the per-document
+ * feature bars. Queued = soft blue ("scheduled next"), upstream-blocked = bare track with a
+ * hairline edge, so gray reads as "waiting on earlier stages"; running keeps the stage hue and
+ * pulses. */
+.queue-bar {
+  gap: 2px;
+}
+.queue-bar > .queue-seg {
+  flex: 1;
+  border-radius: 2px;
+}
+.queue-bar > .queue-seg.seg-running {
+  animation: stage-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .queue-bar > .queue-seg.seg-running {
+    animation: none;
+  }
+}
+.seg-queued { background: var(--source); opacity: 0.55; }
+.seg-blocked { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--border); }
+
 /* Legend swatch demonstrating the blue->green stage gradient. */
 .status-swatch.stage-grad-demo {
   background: linear-gradient(to right, var(--accent), var(--success));

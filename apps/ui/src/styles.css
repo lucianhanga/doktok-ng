@@ -7399,6 +7399,13 @@ tr.row-selected {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* In the multi-column grid the card is narrower: keep stage + elapsed on one line (smaller,
+ * never wrapping) and let the document name absorb the truncation. */
+.inflight-stage {
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .inflight .flow-bar {
   margin-top: 6px;
 }
@@ -7487,6 +7494,7 @@ tr.row-selected {
   font-family: var(--font-mono);
   font-size: 12px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .inflight-retry {
   background: none;

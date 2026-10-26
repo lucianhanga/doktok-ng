@@ -808,7 +808,10 @@ def build_services(
         "extract": settings.ocr_concurrency,
         "thumbnail": 1,
         "chunk_embed": 2,
-        "entity_graph": 2,
+        # Serialized: two concurrent entity_graph runs deadlock on kg_entities (upsert + mention
+        # FK key-share + orphan prune take row locks in different orders; 2026-10-26). The stage
+        # is fast (~1s), so a single lane costs little.
+        "entity_graph": 1,
         "entities": llm_cap,
         "ner": llm_cap,
         "relations": llm_cap,

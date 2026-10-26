@@ -125,7 +125,7 @@ def test_no_engine_dispatches_to_worker_pool(monkeypatch: pytest.MonkeyPatch) ->
         def __init__(self, value: object) -> None:
             self._value = value
 
-        def result(self) -> object:
+        def result(self, timeout: float | None = None) -> object:
             return self._value
 
     class _InlineExecutor:
@@ -187,7 +187,12 @@ def test_executor_built_lazily_with_pool_size(monkeypatch: pytest.MonkeyPatch) -
 
     class _FakePool:
         def __init__(
-            self, *, max_workers: int, initializer: object, initargs: tuple[object, ...]
+            self,
+            *,
+            max_workers: int,
+            initializer: object,
+            initargs: tuple[object, ...],
+            **_kwargs: object,
         ) -> None:
             captured["max_workers"] = max_workers
             captured["initargs"] = initargs
@@ -214,7 +219,12 @@ def test_preprocess_flag_passed_to_worker_init(monkeypatch: pytest.MonkeyPatch) 
 
     class _FakePool:
         def __init__(
-            self, *, max_workers: int, initializer: object, initargs: tuple[object, ...]
+            self,
+            *,
+            max_workers: int,
+            initializer: object,
+            initargs: tuple[object, ...],
+            **_kwargs: object,
         ) -> None:
             captured["initargs"] = initargs
 
@@ -270,7 +280,7 @@ def test_broken_pool_is_rebuilt_and_page_retried(monkeypatch: pytest.MonkeyPatch
         def __init__(self, value: object) -> None:
             self._value = value
 
-        def result(self) -> object:
+        def result(self, timeout: float | None = None) -> object:
             return self._value
 
     class _BrokenPool:
@@ -314,3 +324,61 @@ def test_broken_pool_is_rebuilt_and_page_retried(monkeypatch: pytest.MonkeyPatch
     # Later pages keep using the rebuilt pool - no further rebuilds.
     assert ocr.ocr_image(buffer.getvalue()).text == "X"
     assert len(builds) == 2
+
+
+def test_pool_uses_spawn_context_and_page_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pool must spawn (fork inside the multi-threaded worker deadlocks children) and every
+    page call must carry a timeout so a wedged child can never hang the worker (2026-10-26)."""
+    from typing import Any
+
+    import doktok_provider_paddleocr.ocr as mod
+
+    captured: dict[str, Any] = {}
+    sentinel = object()
+
+    class _FakeFuture:
+        def result(self, timeout: float | None = None) -> Any:
+            captured["timeout"] = timeout
+            return sentinel
+
+    class _FakePool:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["kwargs"] = kwargs
+
+        def submit(self, fn: Any, payload: bytes) -> _FakeFuture:
+            return _FakeFuture()
+
+        def shutdown(self, wait: bool = True) -> None:
+            pass
+
+    monkeypatch.setattr(mod, "ProcessPoolExecutor", _FakePool)
+    ocr = PaddleOcr(pool_size=2)
+    assert ocr.ocr_image(b"png") is sentinel
+    assert captured["kwargs"]["mp_context"].get_start_method() == "spawn"
+    assert captured["timeout"] == mod._PAGE_TIMEOUT_S
+
+
+def test_wedged_child_discards_pool_and_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    from typing import Any
+
+    import doktok_provider_paddleocr.ocr as mod
+
+    class _WedgedFuture:
+        def result(self, timeout: float | None = None) -> Any:
+            raise TimeoutError
+
+    class _FakePool:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def submit(self, fn: Any, payload: bytes) -> _WedgedFuture:
+            return _WedgedFuture()
+
+        def shutdown(self, wait: bool = True) -> None:
+            pass
+
+    monkeypatch.setattr(mod, "ProcessPoolExecutor", _FakePool)
+    ocr = PaddleOcr(pool_size=1)
+    with pytest.raises(TimeoutError):
+        ocr.ocr_image(b"png")
+    assert ocr._pool is None  # wedged pool dropped so the next call rebuilds fresh

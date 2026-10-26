@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+import multiprocessing as mp
 import os
 import threading
 from concurrent.futures import ProcessPoolExecutor
@@ -25,6 +26,10 @@ from typing import Any
 from doktok_contracts.media import OcrPageResult, OcrTextLine
 
 logger = logging.getLogger("doktok.ocr.rapid")
+
+# A wedged pool child (deadlock, stuck engine) must fail the page - not block the caller forever,
+# which previously hung the whole reconciler with a full pipe (2026-10-26 scanned-PDF incident).
+_PAGE_TIMEOUT_S = 600  # generous: ~15s/page is typical on an N95; 4-way vote paths stay under this
 
 _WORKER_ENGINE: Any = None
 
@@ -163,8 +168,13 @@ class RapidOcr:
                 raise RuntimeError("RapidOCR pool is shut down")
             if self._pool is None:
                 logger.info("starting RapidOCR process pool (workers=%d)", self._pool_size)
+                # spawn, not fork: the pool is created lazily inside a multi-threaded worker, and
+                # forking inherits locked mutexes (numpy/OpenVINO/logging), which wedged the pool
+                # children deterministically (2026-10-26). Spawn pays a few seconds of interpreter
+                # startup per child, once per pool.
                 self._pool = ProcessPoolExecutor(
                     max_workers=self._pool_size,
+                    mp_context=mp.get_context("spawn"),
                     initializer=_worker_init,
                     initargs=(self._lang, self._cpu_threads, self._backend),
                 )
@@ -174,13 +184,18 @@ class RapidOcr:
         if self._engine is not None:  # in-process (tests)
             return _run_ocr(self._engine, image_png)
         try:
-            return self._executor().submit(_worker_ocr, image_png).result()
+            return self._executor().submit(_worker_ocr, image_png).result(timeout=_PAGE_TIMEOUT_S)
         except BrokenProcessPool:
             # A pool child died (e.g. OOM-killed): the executor is permanently broken, and without
             # a rebuild EVERY later document fails until the worker restarts. Drop it and retry the
             # page once on a fresh pool; a repeat failure propagates (the next call rebuilds again).
             self._discard_pool()
-            return self._executor().submit(_worker_ocr, image_png).result()
+            return self._executor().submit(_worker_ocr, image_png).result(timeout=_PAGE_TIMEOUT_S)
+        except TimeoutError:
+            # A wedged child never returns; the future stays queued/running, so drop the pool and
+            # let the page failure propagate - the document retries on a fresh pool.
+            self._discard_pool()
+            raise
 
     def _discard_pool(self) -> None:
         """Drop the current executor so the next ``_executor()`` builds a fresh pool. No-op when

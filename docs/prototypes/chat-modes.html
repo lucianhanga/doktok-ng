@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chat — Simple / Advanced options</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14171c; --surface: #1a1e25; --surface-2: #212630; --surface-3: #2a303b;
+    --border: #2e3540; --border-strong: #3c4552; --text: #e7e9ee; --muted: #9aa2ae;
+    --accent: #5aa0e6; --accent-soft: rgba(90,160,230,.12); --danger: #e0656d;
+    --success: #4cc266; --warning: #d8a53f; --selected: #202b38; --overlay: rgba(5,8,12,.66);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f5f6f8; --surface: #fff; --surface-2: #eef1f5; --surface-3: #dfe4eb;
+    --border: #d6dce4; --border-strong: #bdc6d1; --text: #20242b; --muted: #667180;
+    --accent: #276fae; --accent-soft: rgba(39,111,174,.09); --danger: #b6404b;
+    --success: #27823d; --warning: #946c18; --selected: #e8f0f8; --overlay: rgba(30,35,42,.38);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, textarea, select, input { font: inherit; }
+  button, select { color: var(--text); }
+  button { cursor: pointer; }
+  button:focus-visible, a:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled, input:disabled { cursor: not-allowed; opacity: .5; }
+  [hidden] { display: none !important; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .icon-button { border: 0; background: transparent; color: var(--muted); padding: 5px 7px; border-radius: 4px; }
+  .icon-button:hover { color: var(--accent); background: var(--accent-soft); }
+  .plain-button { border: 1px solid var(--border); background: var(--surface); padding: 6px 10px; border-radius: 6px; }
+  .plain-button:hover { border-color: var(--accent); }
+  .primary-button { border: 1px solid var(--accent); background: var(--accent); color: var(--bg); padding: 8px 18px; border-radius: 6px; font-weight: 650; }
+
+  .proto-bar { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border-strong); }
+  .proto-title { margin-right: auto; min-width: 190px; }
+  .proto-title strong { display: block; font-size: 13px; }
+  .proto-title span { color: var(--muted); font-size: 11px; }
+  .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .segmented button { border: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 6px 11px; font-size: 12px; }
+  .segmented button:last-child { border-right: 0; }
+  .segmented button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .state-select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; font-size: 12px; }
+
+  .review-note { max-width: 1500px; margin: 0 auto; padding: 10px 18px; color: var(--muted); font-size: 12px; display: flex; gap: 16px; align-items: baseline; }
+  .review-note strong { color: var(--text); }
+  .review-note .recommendation { margin-left: auto; color: var(--accent); white-space: nowrap; }
+
+  .chat-shell { height: calc(100dvh - 104px); min-height: 580px; max-width: 1500px; margin: 0 auto; padding: 0 18px 18px; display: flex; gap: 14px; overflow: hidden; }
+  .threads { flex: 0 0 220px; min-width: 0; flex-direction: column; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 12px 10px; overflow-y: auto; }
+  .threads-head { display: flex; align-items: center; gap: 6px; padding: 0 3px 10px; }
+  .threads-head strong { flex: 1; font-size: 14px; }
+  .new-thread { width: 100%; text-align: left; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+  .thread-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 3px; }
+  .thread-row { display: flex; align-items: center; border-radius: 5px; }
+  .thread-row.active { background: var(--accent-soft); }
+  .thread-open { min-width: 0; flex: 1; display: flex; gap: 7px; align-items: center; border: 0; background: transparent; color: var(--text); text-align: left; padding: 8px 5px; }
+  .thread-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thread-count { color: var(--muted); font-size: 11px; }
+  .thread-actions { display: flex; opacity: 0; }
+  .thread-row:hover .thread-actions, .thread-row:focus-within .thread-actions, .thread-row.active .thread-actions { opacity: 1; }
+  .thread-actions button { border: 0; background: transparent; color: var(--muted); padding: 4px; }
+  .unread-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--accent); }
+  .spinner { width: 11px; height: 11px; flex: none; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .threads-foot { margin-top: 18px; padding: 10px 5px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+
+  .chat-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 9px; }
+  .chat-mobile-bar { display: none; align-items: center; gap: 7px; }
+  .chat-mobile-bar strong { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-title { min-height: 25px; display: flex; gap: 10px; align-items: baseline; padding: 0 2px; }
+  .chat-title h1 { font-size: 16px; margin: 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thread-total { margin-left: auto; color: var(--muted); font: 11px var(--mono); white-space: nowrap; }
+  .transcript { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 18px; scroll-behavior: smooth; }
+  .exchange + .exchange { border-top: 1px solid var(--border); margin-top: 22px; padding-top: 22px; }
+  .question { border-left: 3px solid var(--accent); border-radius: 5px; background: var(--selected); padding: 8px 10px; }
+  .question-row { display: flex; gap: 9px; align-items: flex-start; }
+  .question-text { flex: 1; min-width: 0; margin: 0; font-weight: 600; white-space: pre-wrap; }
+  .who { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+  .question-actions { display: flex; align-items: center; gap: 3px; flex: none; }
+  .question-actions .icon-button { opacity: .35; }
+  .question:hover .icon-button, .question:focus-within .icon-button { opacity: 1; }
+  .time { color: var(--muted); font-size: 11px; white-space: nowrap; margin-right: 4px; }
+  .sources-chip { border: 1px solid var(--border-strong); background: transparent; color: var(--accent); border-radius: 999px; padding: 2px 8px; font-size: 11px; white-space: nowrap; }
+  .sources-chip[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .answer { padding: 12px 3px 0; }
+  .answer p { margin: 0 0 10px; }
+  .answer p:last-child { margin-bottom: 0; }
+  .citation { border: 0; background: transparent; color: var(--accent); padding: 0 1px; font: inherit; vertical-align: baseline; }
+  .answer-label { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 5px !important; }
+  .documents-used { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin: 10px 0 12px; }
+  .doc-pill { display: inline-flex; gap: 6px; align-items: center; max-width: 260px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 5px; padding: 4px 7px; font-size: 11px; }
+  .doc-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-thumb-mini { width: 17px; height: 22px; flex: none; display: grid; place-items: center; background: var(--surface-3); color: var(--muted); font: 7px var(--mono); border-radius: 2px; }
+  .advanced-only { display: none !important; }
+  .mode-advanced .advanced-only { display: revert !important; }
+  .query-meta { color: var(--muted); font-size: 11px; margin: 7px 0 !important; }
+  .composition { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+  .composition span { border: 1px solid var(--border); border-radius: 999px; color: var(--muted); padding: 2px 7px; font-size: 10px; }
+  details.reasoning { margin: 8px 0 12px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 6px 0; color: var(--muted); font-size: 12px; }
+  details.reasoning summary { cursor: pointer; color: var(--accent); }
+  details.reasoning ol { margin: 8px 0 2px; padding-left: 20px; }
+  details.reasoning li { margin: 3px 0; }
+  details.context { margin-top: 6px; color: var(--muted); font-size: 11px; }
+  details.context summary { cursor: pointer; }
+  .usage { color: var(--muted); font: 10px var(--mono); margin-top: 10px !important; }
+  .caret { display: inline-block; width: 7px; height: 15px; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .empty-state { height: 100%; display: grid; place-items: center; color: var(--muted); text-align: center; }
+  .empty-state strong { display: block; color: var(--text); font-size: 20px; font-weight: 550; margin-bottom: 6px; }
+  .empty-state span { font-size: 12px; }
+
+  .composer-options { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; min-height: 26px; font-size: 11px; color: var(--muted); }
+  .option-label { display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
+  .option-label select { border: 1px solid var(--border); background: var(--surface); border-radius: 4px; padding: 2px 4px; font-size: 11px; }
+  .privacy-note { flex: 1 1 100%; color: var(--warning); }
+  .composer { display: flex; gap: 8px; align-items: flex-end; }
+  .composer textarea { flex: 1; min-width: 0; resize: vertical; max-height: 150px; min-height: 68px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface); color: var(--text); padding: 10px 12px; }
+  .composer textarea::placeholder { color: var(--muted); }
+  .composer .primary-button { min-height: 40px; }
+  .local-footer { margin: -3px 0 0; color: var(--muted); font-size: 10px; }
+
+  .rail { flex: 0 0 330px; min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+  .rail-head { flex: none; display: flex; align-items: center; gap: 5px; padding: 8px 9px; border-bottom: 1px solid var(--border); }
+  .rail-tabs { display: flex; gap: 4px; flex: 1; }
+  .rail-tabs button { border: 0; background: transparent; color: var(--muted); padding: 5px 7px; border-radius: 4px; font-size: 12px; }
+  .rail-tabs button.active { color: var(--accent); background: var(--accent-soft); }
+  .rail-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+  .rail-body h2 { font-size: 13px; margin: 0 0 4px; }
+  .rail-body > p { color: var(--muted); font-size: 11px; margin: 0 0 12px; }
+  .activity-list { list-style: none; padding: 0; margin: 0; }
+  .activity-list li { position: relative; padding: 0 0 15px 17px; color: var(--muted); font-size: 11px; }
+  .activity-list li::before { content: ""; position: absolute; left: 2px; top: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .activity-list li::after { content: ""; position: absolute; left: 5px; top: 14px; bottom: 2px; width: 1px; background: var(--border); }
+  .activity-list li:last-child::after { display: none; }
+  .activity-list strong { display: block; color: var(--text); font-size: 12px; font-weight: 550; }
+  .source-list { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+  .source-card { width: 100%; display: flex; gap: 9px; text-align: left; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); padding: 8px; }
+  .source-card:hover { border-color: var(--accent); }
+  .source-thumb { flex: none; width: 48px; height: 64px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-2); color: var(--muted); font: 10px var(--mono); }
+  .source-copy { min-width: 0; }
+  .source-copy strong { display: block; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .source-copy .match { display: block; color: var(--success); font: 9px var(--mono); margin: 3px 0; }
+  .source-copy .snippet { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: 10px; }
+  .document-preview .preview-page { background: #f7f4ec; color: #38362f; min-height: 390px; padding: 25px 19px; box-shadow: inset 0 0 0 1px #d8d3c8; font-family: Georgia, serif; }
+  .preview-page h3 { margin: 0 0 20px; font-size: 17px; }
+  .preview-page p { font-size: 11px; line-height: 1.65; }
+  .preview-highlight { background: #f1d58a; padding: 1px 0; }
+  .preview-back { margin-bottom: 10px; }
+
+  .mode-simple .chat-title .thread-total, .mode-simple .query-meta, .mode-simple .composition,
+  .mode-simple .reasoning, .mode-simple .usage, .mode-simple .context { display: none !important; }
+  .mode-simple .rail { display: none; }
+  .mode-simple.rail-open .rail { display: flex; }
+  .mode-simple .transcript { padding: 20px clamp(14px, 3vw, 42px); }
+  .mode-simple .answer { font-size: 15px; line-height: 1.6; }
+  .option-b.mode-simple .threads { display: none; }
+  .option-b.mode-simple .simple-nav { display: inline-flex; }
+  .option-a.mode-simple .simple-nav { display: none; }
+  .option-b.mode-simple .chat-main { max-width: 900px; width: 100%; margin: 0 auto; }
+  .option-b.mode-simple.rail-open .rail, .option-b.mode-simple .threads.overlay-open { display: flex; position: fixed; z-index: 70; top: 76px; bottom: 18px; width: min(360px, calc(100vw - 36px)); right: 18px; box-shadow: 0 16px 45px var(--overlay); }
+  .option-b.mode-simple .threads.overlay-open { left: 18px; right: auto; width: min(290px, calc(100vw - 36px)); }
+  .scrim { display: none; position: fixed; inset: 0; z-index: 60; border: 0; background: var(--overlay); }
+  .option-b.mode-simple.rail-open .scrim, .option-b.mode-simple .scrim.threads-open { display: block; }
+  .simple-nav { display: none; }
+  .toast { position: fixed; z-index: 100; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100vw - 30px); border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-2); color: var(--text); box-shadow: 0 8px 25px var(--overlay); padding: 8px 12px; font-size: 12px; }
+
+  @media (max-width: 1050px) {
+    .threads { flex-basis: 190px; }
+    .chat-shell { gap: 9px; }
+    .transcript { padding: 13px; }
+    .question-actions .time { display: none; }
+  }
+  @media (max-width: 1024px) {
+    .rail, .mode-simple.rail-open .rail { display: none; }
+    .rail-open .rail, .mode-simple.rail-open .rail { display: flex; position: fixed; z-index: 70; top: 112px; bottom: 12px; right: 10px; width: min(380px, calc(100vw - 20px)); box-shadow: 0 16px 45px var(--overlay); }
+    .rail-open .scrim { display: block; }
+  }
+  @media (max-width: 820px) {
+    .proto-title { min-width: 140px; }
+    .proto-title span, .recommendation { display: none; }
+    .review-note { padding: 8px 12px; }
+    .chat-shell { height: calc(100dvh - 112px); min-height: 520px; padding: 0 10px 10px; }
+    .threads { display: none; }
+    .chat-mobile-bar { display: flex; }
+    .simple-nav, .option-a.mode-simple .simple-nav { display: inline-flex; }
+    .chat-title { display: none; }
+    .rail-open .rail { top: 92px; }
+    .threads.overlay-open { display: block; position: fixed; z-index: 70; top: 92px; bottom: 12px; left: 10px; width: min(300px, calc(100vw - 20px)); box-shadow: 0 16px 45px var(--overlay); }
+    .threads-open .scrim { display: block; }
+    .mode-simple .transcript { padding: 15px; }
+    .composer-options { gap: 6px 12px; }
+  }
+  @media (max-width: 560px) {
+    .proto-bar { gap: 5px; padding: 7px 8px; }
+    .proto-title { flex: 1 1 100%; min-width: 0; }
+    .proto-title strong { font-size: 12px; }
+    .segmented button { padding: 5px 8px; }
+    .state-select { max-width: 105px; }
+    .review-note { font-size: 10px; padding: 6px 10px; }
+    .chat-shell { height: calc(100dvh - 132px); min-height: 470px; padding: 0 7px 7px; }
+    .transcript { padding: 10px; }
+    .mode-simple .transcript { padding: 11px; }
+    .question-row { flex-wrap: wrap; }
+    .question-text { flex-basis: calc(100% - 5px); }
+    .question-actions { width: 100%; justify-content: flex-end; }
+    .question-actions .icon-button { opacity: .8; }
+    .composer textarea { min-height: 58px; font-size: 13px; }
+    .composer .primary-button { padding: 8px 12px; }
+    .documents-used { align-items: flex-start; }
+    .doc-pill { max-width: 100%; }
+    .review-note .note-long { display: none; }
+    .option-a .simple-nav, .option-b.mode-simple #open-threads-responsive { display: none; }
+    .rail-open .rail, .option-b.mode-simple.rail-open .rail,
+    .threads.overlay-open, .option-b.mode-simple .threads.overlay-open { top: 8px; bottom: 8px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+<nav class="proto-bar" aria-label="Prototype controls">
+  <div class="proto-title"><strong>Chat rework · layout review</strong><span>Mock data only — no production API calls</span></div>
+  <div class="segmented" aria-label="Layout option">
+    <button type="button" data-option="a" class="active" aria-pressed="true">Option A</button>
+    <button type="button" data-option="b" aria-pressed="false">Option B</button>
+  </div>
+  <div class="segmented" aria-label="UI mode">
+    <button type="button" data-mode="simple" class="active" aria-pressed="true">Simple</button>
+    <button type="button" data-mode="advanced" aria-pressed="false">Advanced</button>
+  </div>
+  <select id="state-select" class="state-select" aria-label="Conversation state">
+    <option value="normal">Answer + sources</option>
+    <option value="streaming">Streaming</option>
+    <option value="empty">Empty chat</option>
+  </select>
+  <button type="button" id="theme-toggle" class="plain-button" aria-label="Switch to light theme">Light</button>
+</nav>
+
+<div class="review-note">
+  <span><strong id="option-name">Option A — focused chat.</strong> <span id="option-description">Conversations stay visible; diagnostics move to Advanced; sources open on demand.</span></span>
+  <span class="note-long muted">Switch modes and states, then open citations and source cards.</span>
+  <span class="recommendation" id="recommendation">Recommended</span>
+</div>
+
+<main id="app" class="chat-shell option-a mode-simple state-normal" data-option="a" data-mode="simple" data-state="normal">
+  <button type="button" id="scrim" class="scrim" aria-label="Close overlay"></button>
+
+  <aside id="threads" class="threads" aria-label="Conversations">
+    <div class="threads-head"><strong>Conversations</strong><button type="button" class="icon-button" id="close-threads" aria-label="Close conversations">×</button></div>
+    <button type="button" class="new-thread" id="new-thread">+ New conversation</button>
+    <ol class="thread-list" id="thread-list">
+      <li class="thread-row active" data-thread="tax">
+        <button type="button" class="thread-open"><span class="thread-name">Q3 tax documents</span><span class="thread-count">8</span></button>
+        <span class="thread-actions"><button type="button" data-rename aria-label="Rename Q3 tax documents" title="Rename">✎</button><button type="button" data-delete-thread aria-label="Delete Q3 tax documents" title="Delete">×</button></span>
+      </li>
+      <li class="thread-row" data-thread="insurance">
+        <button type="button" class="thread-open"><span class="unread-dot" aria-label="Unread reply"></span><span class="thread-name">Insurance renewal</span><span class="thread-count">4</span></button>
+        <span class="thread-actions"><button type="button" data-rename aria-label="Rename Insurance renewal">✎</button><button type="button" data-delete-thread aria-label="Delete Insurance renewal">×</button></span>
+      </li>
+      <li class="thread-row" data-thread="research">
+        <button type="button" class="thread-open"><span class="spinner" role="status" aria-label="Generating in background"></span><span class="thread-name">Research notes</span><span class="thread-count">12</span></button>
+        <span class="thread-actions"><button type="button" data-rename aria-label="Rename Research notes">✎</button><button type="button" data-delete-thread aria-label="Delete Research notes">×</button></span>
+      </li>
+    </ol>
+    <div class="threads-foot"><span class="unread-dot" style="display:inline-block;margin-right:5px"></span>answer ready &nbsp; <span class="spinner" style="display:inline-block;vertical-align:-2px;margin-right:4px"></span>still working</div>
+  </aside>
+
+  <section class="chat-main" aria-label="Chat conversation">
+    <div class="chat-mobile-bar">
+      <button type="button" id="open-threads" class="plain-button simple-nav" aria-label="Open conversations">☰</button>
+      <button type="button" id="open-threads-responsive" class="plain-button" aria-label="Open conversations">Conversations</button>
+      <strong id="mobile-title">Q3 tax documents</strong>
+      <button type="button" class="plain-button" data-open-sources>Sources</button>
+    </div>
+    <div class="chat-title">
+      <h1 id="conversation-title">Q3 tax documents</h1>
+      <span class="thread-total advanced-only">18.4k tokens · 42.8s</span>
+    </div>
+
+    <div id="transcript" class="transcript" role="log" aria-label="Conversation">
+      <div id="empty-state" class="empty-state" hidden><div><strong>Talk to your documents</strong><span>Ask a question below. Answers include links to their sources.</span></div></div>
+      <div id="turns">
+        <article class="exchange" id="completed-turn">
+          <div class="question">
+            <div class="question-row">
+              <p class="question-text"><span class="who">You</span>Which documents show the Q3 professional-service expenses, and what is the total?</p>
+              <div class="question-actions">
+                <span class="time">4m ago</span>
+                <button type="button" class="sources-chip" data-open-sources aria-expanded="false">Sources (2)</button>
+                <button type="button" class="icon-button" id="copy-question" aria-label="Copy question to composer" title="Re-ask">↩</button>
+                <button type="button" class="icon-button" id="edit-question" aria-label="Edit this question and resubmit" title="Edit & resubmit">✎</button>
+                <button type="button" class="icon-button" id="delete-question" aria-label="Delete this question and everything after it" title="Delete from here">×</button>
+              </div>
+            </div>
+          </div>
+          <div class="answer">
+            <p class="query-meta advanced-only">searched for: Q3 professional services invoices · filtered to: Finance</p>
+            <div class="composition advanced-only" aria-label="How this answer was built"><span>Understand</span><span>Retrieve</span><span>Compose</span><span>2 retrieved</span></div>
+            <div class="documents-used" aria-label="Documents used">
+              <button type="button" class="doc-pill" data-open-preview><span class="doc-thumb-mini">PDF</span><span>consulting-invoice-sept.pdf</span><span class="muted">p.1</span></button>
+              <button type="button" class="doc-pill" data-open-sources><span class="doc-thumb-mini">PDF</span><span>legal-services-q3.pdf</span><span class="muted">p.2</span></button>
+            </div>
+            <details class="reasoning advanced-only"><summary>Reasoning · 3 steps</summary><ol><li>Identified the date range and expense category.</li><li>Retrieved two matching invoice passages.</li><li>Added the net amounts and checked the currency.</li></ol></details>
+            <p class="answer-label">AI</p>
+            <p>Two documents show Q3 professional-service expenses:</p>
+            <ul><li><strong>Northstar Consulting</strong> — €2,400 for September advisory work <button type="button" class="citation" data-open-preview aria-label="Open source 1">[1]</button></li><li><strong>Harbor Legal</strong> — €850 for contract review <button type="button" class="citation" data-open-sources aria-label="Open source 2">[2]</button></li></ul>
+            <p>The total is <strong>€3,250</strong>.</p>
+            <p class="usage advanced-only">1.8k tok · 6.4s</p>
+            <details class="context advanced-only"><summary>Context (~1.6k tok, 12%)</summary><p>Conversation 420 · Retrieved passages 940 · Instructions 240</p></details>
+          </div>
+        </article>
+
+        <article class="exchange" id="streaming-turn" hidden>
+          <div class="question"><div class="question-row"><p class="question-text"><span class="who">You</span>How does that compare with Q2?</p><div class="question-actions"><span class="time">now</span></div></div></div>
+          <div class="answer">
+            <div class="composition advanced-only"><span>Understand</span><span>Retrieve</span><span>Compose…</span></div>
+            <details class="reasoning advanced-only" open><summary>Reasoning · live</summary><ol><li>Resolved “that” to professional-service expenses.</li><li>Searching Q2 invoices…</li></ol></details>
+            <p class="answer-label">AI</p>
+            <p>Q2 contains three matching invoices. I’m checking their totals now<span class="caret" aria-hidden="true"></span></p>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <div class="composer-options">
+      <label class="option-label advanced-only">Mode <select aria-label="Chat mode"><option>Classic (RAG)</option><option>Agent (tools)</option><option>Multi (agents)</option></select></label>
+      <label class="option-label advanced-only"><input type="checkbox" checked /> Show reasoning</label>
+      <label class="option-label"><input id="remember" type="checkbox" checked /> Remember</label>
+      <label class="option-label"><input id="incognito" type="checkbox" /> Incognito</label>
+      <span id="privacy-note" class="privacy-note" hidden>Incognito is on — this conversation will not be saved or remembered.</span>
+    </div>
+    <form id="composer" class="composer">
+      <textarea id="question-input" aria-label="Question" rows="2" placeholder="Ask a follow-up…  (Enter to send, Shift+Enter for newline)"></textarea>
+      <button type="submit" id="ask-button" class="primary-button">Ask</button>
+      <button type="button" id="stop-button" class="primary-button" hidden>Stop</button>
+    </form>
+    <p class="local-footer">Local-first. Network egress is disabled by default.</p>
+  </section>
+
+  <aside id="rail" class="rail" aria-label="Activity">
+    <div class="rail-head">
+      <div class="rail-tabs" role="tablist" aria-label="Right panel">
+        <button type="button" id="sources-tab" role="tab" aria-selected="false">Sources</button>
+        <button type="button" id="activity-tab" role="tab" class="active advanced-only" aria-selected="true">Activity</button>
+      </div>
+      <button type="button" id="close-rail" class="icon-button" aria-label="Close right panel">×</button>
+    </div>
+    <div id="rail-body" class="rail-body"></div>
+  </aside>
+</main>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<template id="activity-template">
+  <h2>Answer activity</h2><p>Live pipeline steps for the current conversation.</p>
+  <ol class="activity-list"><li><strong>Understand</strong>Resolved Q3 and professional services · 180ms</li><li><strong>Retrieve</strong>24 candidates → 2 cited passages · 1.2s</li><li><strong>Compose</strong>Generated the comparison · 4.8s</li><li><strong>Complete</strong>1,842 tokens · grounded answer</li></ol>
+</template>
+<template id="sources-template">
+  <h2>Sources for this answer</h2><p>Ranked passages used to support the answer.</p>
+  <ol class="source-list">
+    <li><button type="button" class="source-card" data-open-preview><span class="source-thumb">PDF<br>p.1</span><span class="source-copy"><strong>[1] consulting-invoice-sept.pdf</strong><span class="match">STRONG MATCH · 91% · #1</span><span class="snippet">Northstar Consulting — professional advisory services for September. Net amount €2,400…</span></span></button></li>
+    <li><button type="button" class="source-card" data-open-sources><span class="source-thumb">PDF<br>p.2</span><span class="source-copy"><strong>[2] legal-services-q3.pdf</strong><span class="match">STRONG MATCH · 84% · #2</span><span class="snippet">Harbor Legal — contract review and professional legal services. Total due €850…</span></span></button></li>
+  </ol>
+</template>
+<template id="preview-template">
+  <div class="document-preview"><button type="button" class="plain-button preview-back" data-open-sources>← Back to sources</button><h2>consulting-invoice-sept.pdf</h2><p>Page 1 · retrieved passage highlighted</p><div class="preview-page"><h3>Northstar Consulting</h3><p>INVOICE · 30 September 2026</p><p>Professional advisory services for the September engagement, including financial process review and management reporting.</p><p class="preview-highlight">Net amount: €2,400<br>Professional services · Q3</p><p>Payment due within 30 days. Thank you for your business.</p></div></div>
+</template>
+
+<script>
+(() => {
+  const app = document.getElementById('app');
+  const railBody = document.getElementById('rail-body');
+  const toast = document.getElementById('toast');
+  const questionInput = document.getElementById('question-input');
+  const stateSelect = document.getElementById('state-select');
+  let railView = 'activity';
+  let toastTimer;
+
+  function notify(message) {
+    clearTimeout(toastTimer);
+    toast.textContent = message;
+    toast.hidden = false;
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+  }
+
+  function setPressed(selector, key, value) {
+    document.querySelectorAll(selector).forEach((button) => {
+      const active = button.dataset[key] === value;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  function setOption(option) {
+    app.dataset.option = option;
+    app.classList.toggle('option-a', option === 'a');
+    app.classList.toggle('option-b', option === 'b');
+    setPressed('button[data-option]', 'option', option);
+    document.getElementById('option-name').textContent = option === 'a' ? 'Option A — focused chat.' : 'Option B — minimal single column.';
+    document.getElementById('option-description').textContent = option === 'a'
+      ? 'Conversations stay visible; diagnostics move to Advanced; sources open on demand.'
+      : 'The transcript owns Simple mode; conversations and sources open as overlays.';
+    document.getElementById('recommendation').hidden = option !== 'a';
+    closeThreads();
+  }
+
+  function setMode(mode) {
+    app.dataset.mode = mode;
+    app.classList.toggle('mode-simple', mode === 'simple');
+    app.classList.toggle('mode-advanced', mode === 'advanced');
+    setPressed('button[data-mode]', 'mode', mode);
+    closeThreads();
+    if (mode === 'advanced') showRail('activity');
+    else closeRail();
+  }
+
+  function setState(state) {
+    app.dataset.state = state;
+    app.classList.remove('state-normal', 'state-streaming', 'state-empty');
+    app.classList.add(`state-${state}`);
+    stateSelect.value = state;
+    document.getElementById('empty-state').hidden = state !== 'empty';
+    document.getElementById('turns').hidden = state === 'empty';
+    document.getElementById('completed-turn').hidden = state === 'empty';
+    document.getElementById('streaming-turn').hidden = state !== 'streaming';
+    document.getElementById('ask-button').hidden = state === 'streaming';
+    document.getElementById('stop-button').hidden = state !== 'streaming';
+    questionInput.disabled = state === 'streaming';
+    questionInput.placeholder = state === 'empty' ? 'Ask a question about your documents…  (Enter to send)' : 'Ask a follow-up…  (Enter to send, Shift+Enter for newline)';
+  }
+
+  function bindPreviewButtons() {
+    railBody.querySelectorAll('[data-open-preview]').forEach((button) => button.addEventListener('click', () => showRail('preview')));
+    railBody.querySelectorAll('[data-open-sources]').forEach((button) => button.addEventListener('click', () => showRail('sources')));
+  }
+
+  function showRail(view) {
+    railView = view;
+    railBody.replaceChildren(document.getElementById(`${view}-template`).content.cloneNode(true));
+    document.getElementById('sources-tab').classList.toggle('active', view !== 'activity');
+    document.getElementById('sources-tab').setAttribute('aria-selected', String(view !== 'activity'));
+    document.getElementById('activity-tab').classList.toggle('active', view === 'activity');
+    document.getElementById('activity-tab').setAttribute('aria-selected', String(view === 'activity'));
+    document.getElementById('rail').setAttribute('aria-label', view === 'preview' ? 'Document preview' : view === 'sources' ? 'Sources' : 'Activity');
+    app.classList.add('rail-open');
+    document.querySelectorAll('.sources-chip').forEach((button) => button.setAttribute('aria-expanded', String(view === 'sources')));
+    bindPreviewButtons();
+  }
+
+  function closeRail() {
+    app.classList.remove('rail-open');
+    document.querySelectorAll('.sources-chip').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+  }
+
+  function openThreads() {
+    document.getElementById('threads').classList.add('overlay-open');
+    document.getElementById('scrim').classList.add('threads-open');
+  }
+  function closeThreads() {
+    document.getElementById('threads').classList.remove('overlay-open');
+    document.getElementById('scrim').classList.remove('threads-open');
+  }
+
+  document.querySelectorAll('button[data-option]').forEach((button) => button.addEventListener('click', () => setOption(button.dataset.option)));
+  document.querySelectorAll('button[data-mode]').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
+  stateSelect.addEventListener('change', () => setState(stateSelect.value));
+  document.getElementById('theme-toggle').addEventListener('click', (event) => {
+    const light = document.documentElement.dataset.theme !== 'light';
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    event.currentTarget.textContent = light ? 'Dark' : 'Light';
+    event.currentTarget.setAttribute('aria-label', `Switch to ${light ? 'dark' : 'light'} theme`);
+  });
+  document.querySelectorAll('[data-open-sources]').forEach((button) => button.addEventListener('click', () => showRail('sources')));
+  document.querySelectorAll('[data-open-preview]').forEach((button) => button.addEventListener('click', () => showRail('preview')));
+  document.getElementById('sources-tab').addEventListener('click', () => showRail('sources'));
+  document.getElementById('activity-tab').addEventListener('click', () => showRail('activity'));
+  document.getElementById('close-rail').addEventListener('click', closeRail);
+  document.getElementById('scrim').addEventListener('click', () => { closeRail(); closeThreads(); });
+  document.getElementById('open-threads').addEventListener('click', openThreads);
+  document.getElementById('open-threads-responsive').addEventListener('click', openThreads);
+  document.getElementById('close-threads').addEventListener('click', closeThreads);
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') { closeRail(); closeThreads(); } });
+
+  document.getElementById('new-thread').addEventListener('click', () => {
+    setState('empty'); closeThreads();
+    document.getElementById('conversation-title').textContent = 'New conversation';
+    document.getElementById('mobile-title').textContent = 'New conversation';
+    document.querySelectorAll('.thread-row').forEach((row) => row.classList.remove('active'));
+    questionInput.focus();
+  });
+  document.querySelectorAll('.thread-open').forEach((button) => button.addEventListener('click', () => {
+    const row = button.closest('.thread-row');
+    document.querySelectorAll('.thread-row').forEach((item) => item.classList.toggle('active', item === row));
+    const title = row.querySelector('.thread-name').textContent;
+    document.getElementById('conversation-title').textContent = title;
+    document.getElementById('mobile-title').textContent = title;
+    row.querySelector('.unread-dot')?.remove();
+    setState(row.dataset.thread === 'research' ? 'streaming' : 'normal');
+    closeThreads();
+  }));
+  document.querySelectorAll('[data-rename]').forEach((button) => button.addEventListener('click', () => {
+    const row = button.closest('.thread-row');
+    const name = row.querySelector('.thread-name');
+    const next = `${name.textContent} (renamed)`;
+    name.textContent = next;
+    if (row.classList.contains('active')) {
+      document.getElementById('conversation-title').textContent = next;
+      document.getElementById('mobile-title').textContent = next;
+    }
+    notify('Conversation renamed in this mockup');
+  }));
+  document.querySelectorAll('[data-delete-thread]').forEach((button) => button.addEventListener('click', () => {
+    const row = button.closest('.thread-row');
+    const wasActive = row.classList.contains('active');
+    row.remove();
+    if (wasActive) setState('empty');
+    notify('Conversation deleted in this mockup');
+  }));
+  document.getElementById('copy-question').addEventListener('click', () => { questionInput.value = 'Which documents show the Q3 professional-service expenses, and what is the total?'; questionInput.focus(); });
+  document.getElementById('edit-question').addEventListener('click', () => { questionInput.value = 'Which documents show the Q3 professional-service expenses, and what is the total?'; questionInput.focus(); notify('Editing this question would replace its answer and later turns'); });
+  document.getElementById('delete-question').addEventListener('click', () => { setState('empty'); notify('Turn deleted in this mockup'); });
+  document.getElementById('incognito').addEventListener('change', (event) => {
+    const on = event.target.checked;
+    document.getElementById('remember').disabled = on;
+    document.getElementById('privacy-note').hidden = !on;
+  });
+  document.getElementById('composer').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!questionInput.value.trim()) return;
+    questionInput.value = '';
+    setState('streaming');
+  });
+  document.getElementById('stop-button').addEventListener('click', () => { setState('normal'); notify('Generation stopped'); });
+  questionInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      document.getElementById('composer').requestSubmit();
+    }
+  });
+
+  const params = new URLSearchParams(window.location.search);
+  setOption(params.get('option') === 'b' ? 'b' : 'a');
+  setState(['normal', 'streaming', 'empty'].includes(params.get('state')) ? params.get('state') : 'normal');
+  if (params.get('theme') === 'light') document.getElementById('theme-toggle').click();
+  setMode(params.get('mode') === 'advanced' ? 'advanced' : 'simple');
+  if (['sources', 'preview', 'activity'].includes(params.get('rail'))) showRail(params.get('rail'));
+  if (params.get('threads') === 'open') openThreads();
+})();
+</script>
+</body>
+</html>

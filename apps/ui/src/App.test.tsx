@@ -213,3 +213,17 @@ test("the header mode toggle switches Simple/Advanced and persists the choice (#
   expect(shell.getAttribute("data-mode")).toBe("simple");
   expect(localStorage.getItem("doktok-ui-mode")).toBe('"simple"');
 });
+
+test("the header mode toggle changes Chat controls without remounting the panel", async () => {
+  mockRoutes();
+  window.location.hash = "#/chat";
+  localStorage.setItem("doktok-ui-mode", '"simple"');
+  render(<App />);
+
+  await waitFor(() => expect(screen.getByLabelText("Question")).toBeInTheDocument());
+  expect(screen.queryByLabelText("Chat mode")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect(screen.getByLabelText("Chat mode")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Simple" }));
+  expect(screen.queryByLabelText("Chat mode")).not.toBeInTheDocument();
+});

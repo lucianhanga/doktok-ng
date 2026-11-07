@@ -224,6 +224,7 @@ export default function App() {
                 onOpenDocument={setOpenDoc}
                 active={view === "chat" && !openDoc}
                 onBackgroundDone={() => setChatUnread(true)}
+                mode={uiMode}
               />
             </div>
             {view === "activity" && (

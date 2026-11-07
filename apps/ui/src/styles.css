@@ -4749,6 +4749,15 @@ tr.row-selected {
   min-height: 0;
 }
 
+.chat-page[data-mode="simple"] .chat-transcript {
+  padding: 1.25rem clamp(0.875rem, 3vw, 2.625rem);
+}
+
+.chat-page[data-mode="simple"] .chat-answer-block .answer {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
 .chat-page-head {
   margin-bottom: 1rem;
 }

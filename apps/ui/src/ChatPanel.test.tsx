@@ -1439,3 +1439,237 @@ test("draft step shows attempt N dimmed when superseded in inline details", asyn
   expect(currentEl).toBeInTheDocument();
   expect(currentEl).toHaveTextContent(/attempt 2/);
 });
+
+test("simple mode hides advanced controls and per-turn diagnostics but keeps daily controls", async () => {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", { rewritten_query: "invoice total", filters: { category: "Finance" } }),
+        frame("step", { trace_step: { kind: "retrieval", label: "Retrieve" } }),
+        frame("reasoning", { delta: "Looking up the invoices." }),
+        frame("token", { delta: "The total is 42 [1]." }),
+        frame("sources", {
+          citations: [
+            { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "invoice.txt", snippet: "total 42" },
+          ],
+        }),
+        frame("metrics", {
+          metrics: {
+            prompt_tokens: 300,
+            answer_tokens: 50,
+            reasoning_tokens: 0,
+            overhead_tokens: 0,
+            reasoning_ms: 0,
+            answer_ms: 0,
+            total_ms: 1200,
+            reused_previous_results: false,
+            estimated: false,
+            context_limit: 32768,
+            context: [{ label: "Instructions", chars: 200, tokens: 50 }],
+          },
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+
+  render(<ChatPanel mode="simple" />);
+  expect(screen.queryByLabelText("Chat mode")).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Show reasoning" })).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Remember" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Incognito" })).toBeInTheDocument();
+
+  await userEvent.type(screen.getByLabelText("Question"), "what is the total?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/The total is 42/)).toBeInTheDocument());
+
+  expect(screen.getByRole("button", { name: /Sources \(1\)/ })).toBeInTheDocument();
+  expect(screen.queryByText(/searched for: invoice total/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/filtered to: Finance/)).not.toBeInTheDocument();
+  expect(screen.queryByTestId("inline-details")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("inline-context")).not.toBeInTheDocument();
+  expect(screen.getByRole("log", { name: "Conversation" })).not.toHaveTextContent("350 tok");
+});
+
+test("simple mode always sends classic even when advanced mode selection was agent", async () => {
+  localStorage.setItem("doktok.chat.mode", '"agent"');
+  let streamBody: Record<string, unknown> | null = null;
+  vi.stubGlobal(
+    "fetch",
+    stubChat((init) => {
+      streamBody = JSON.parse((init?.body as string) ?? "{}");
+      return sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "Classic answer." }),
+        frame("sources", { citations: [] }),
+        frame("done", { grounded: true }),
+      ]);
+    }),
+  );
+
+  render(<ChatPanel mode="simple" />);
+  await userEvent.type(screen.getByLabelText("Question"), "use which mode?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() => expect(screen.getByText("Classic answer.")).toBeInTheDocument());
+  expect(streamBody).not.toBeNull();
+  expect(streamBody!.agent_mode).toBe("classic");
+  expect(streamBody!).not.toHaveProperty("reasoning");
+});
+
+test("switching UI mode preserves the composer draft and changes the visible controls", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  const { rerender } = render(<ChatPanel mode="simple" />);
+  await userEvent.type(screen.getByLabelText("Question"), "Draft worth keeping");
+  expect(screen.queryByLabelText("Chat mode")).not.toBeInTheDocument();
+
+  rerender(<ChatPanel mode="advanced" />);
+  expect(screen.getByLabelText("Question")).toHaveValue("Draft worth keeping");
+  expect(screen.getByLabelText("Chat mode")).toBeInTheDocument();
+
+  rerender(<ChatPanel mode="simple" />);
+  expect(screen.getByLabelText("Question")).toHaveValue("Draft worth keeping");
+  expect(screen.queryByLabelText("Chat mode")).not.toBeInTheDocument();
+});
+
+test("switching UI mode preserves an active stream", async () => {
+  let finish: () => void = () => undefined;
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() => {
+      const enc = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(enc.encode(frame("meta", {})));
+          controller.enqueue(enc.encode(frame("token", { delta: "Still streaming." })));
+          finish = () => {
+            controller.enqueue(enc.encode(frame("sources", { citations: [] })));
+            controller.enqueue(enc.encode(frame("done", { grounded: true })));
+            controller.close();
+          };
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }),
+  );
+
+  const { rerender } = render(<ChatPanel mode="simple" />);
+  await userEvent.type(screen.getByLabelText("Question"), "keep streaming");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/Still streaming/)).toBeInTheDocument());
+
+  rerender(<ChatPanel mode="advanced" />);
+  expect(screen.getByText(/Still streaming/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+  finish();
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument());
+});
+
+test("ChatPanel defaults to advanced for existing callers", () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  render(<ChatPanel />);
+  expect(screen.getByLabelText("Chat mode")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Show reasoning" })).toBeInTheDocument();
+});
+
+function stubOneSourceAnswer() {
+  vi.stubGlobal(
+    "fetch",
+    stubChat(() =>
+      sseResponse([
+        frame("meta", {}),
+        frame("token", { delta: "See the invoice [1]." }),
+        frame("sources", {
+          citations: [
+            { index: 1, document_id: "d1", chunk_id: "c1", original_filename: "invoice.txt", snippet: "total 42" },
+          ],
+        }),
+        frame("done", { grounded: true }),
+      ]),
+    ),
+  );
+}
+
+async function askForOneSourceAnswer() {
+  await userEvent.type(screen.getByLabelText("Question"), "where is the invoice?");
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(screen.getByText(/See the invoice/)).toBeInTheDocument());
+}
+
+test("simple mode hides Activity and opens and closes Sources on demand", async () => {
+  stubOneSourceAnswer();
+  render(<ChatPanel mode="simple" />);
+  expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Activity" })).not.toBeInTheDocument();
+
+  await askForOneSourceAnswer();
+  expect(screen.queryByRole("complementary", { name: "Sources" })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
+  expect(screen.getByRole("complementary", { name: "Sources" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Activity" })).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Close sources panel" }));
+  expect(screen.queryByRole("complementary", { name: "Sources" })).not.toBeInTheDocument();
+});
+
+test("simple sources still open when the advanced right pane was previously collapsed", async () => {
+  localStorage.setItem("doktok.chat.rightPaneCollapsed", "true");
+  stubOneSourceAnswer();
+  render(<ChatPanel mode="simple" />);
+  await askForOneSourceAnswer();
+
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
+  expect(screen.getByRole("complementary", { name: "Sources" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /invoice\.txt/ })).toBeInTheDocument();
+  expect(localStorage.getItem("doktok.chat.rightPaneCollapsed")).toBe("true");
+});
+
+test("collapsed advanced Sources reopen fully in Simple without changing the saved preference", async () => {
+  stubOneSourceAnswer();
+  const { rerender } = render(<ChatPanel mode="advanced" />);
+  await askForOneSourceAnswer();
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Collapse activity panel" }));
+  expect(localStorage.getItem("doktok.chat.rightPaneCollapsed")).toBe("true");
+
+  rerender(<ChatPanel mode="simple" />);
+  expect(screen.getByRole("complementary", { name: "Sources" })).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Sources \(1\)/ })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("button", { name: /invoice\.txt/ })).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /invoice\.txt/ }));
+  expect(screen.getByRole("complementary", { name: "Document preview" })).toBeInTheDocument();
+  expect(localStorage.getItem("doktok.chat.rightPaneCollapsed")).toBe("true");
+
+  rerender(<ChatPanel mode="advanced" />);
+  expect(screen.getByRole("button", { name: "Expand activity panel" })).toBeInTheDocument();
+  expect(localStorage.getItem("doktok.chat.rightPaneCollapsed")).toBe("true");
+});
+
+test("simple document preview closes to the transcript without exposing Activity", async () => {
+  stubOneSourceAnswer();
+  render(<ChatPanel mode="simple" />);
+  await askForOneSourceAnswer();
+  await userEvent.click(screen.getByRole("button", { name: /Sources \(1\)/ }));
+  await userEvent.click(screen.getByRole("button", { name: /invoice\.txt/ }));
+  expect(screen.getByRole("complementary", { name: "Document preview" })).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Close document preview" }));
+  expect(screen.queryByRole("complementary", { name: "Document preview" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Activity" })).not.toBeInTheDocument();
+  expect(screen.getByText(/See the invoice/)).toBeInTheDocument();
+});
+
+test("switching from simple to advanced reveals Activity without clearing the transcript", async () => {
+  stubOneSourceAnswer();
+  const { rerender } = render(<ChatPanel mode="simple" />);
+  await askForOneSourceAnswer();
+  expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument();
+
+  rerender(<ChatPanel mode="advanced" />);
+  expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  expect(screen.getByText(/See the invoice/)).toBeInTheDocument();
+});

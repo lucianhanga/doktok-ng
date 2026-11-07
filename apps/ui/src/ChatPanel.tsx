@@ -27,6 +27,7 @@ import { DocumentDetail } from "./DocumentDetail";
 import { DocumentsUsedBar } from "./DocumentsUsedBar";
 import { Markdown } from "./Markdown";
 import { loadJSON, saveJSON } from "./persist";
+import type { UiMode } from "./mode";
 
 const SIDEBAR_KEY = "doktok.chat.sidebarCollapsed";
 const RIGHT_PANE_KEY = "doktok.chat.rightPaneCollapsed";
@@ -476,6 +477,7 @@ function AnswerBlock({
   canModify = false,
   showReasoning = true,
   turnsToRemove = 1,
+  mode,
 }: {
   turn: TurnView;
   onOpenDocument?: (id: string) => void;
@@ -490,6 +492,7 @@ function AnswerBlock({
   showReasoning?: boolean;
   /** Number of turns (this + all later ones) removed when Edit/Delete is confirmed. */
   turnsToRemove?: number;
+  mode: UiMode;
 }) {
   const [questionExpanded, setQuestionExpanded] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -655,13 +658,13 @@ function AnswerBlock({
       </div>
       {!collapsed && (
         <>
-          {turn.rewrittenQuery && (
+          {mode === "advanced" && turn.rewrittenQuery && (
             <p className="muted chat-rewritten">searched for: {turn.rewrittenQuery}</p>
           )}
-          {describeFilters(turn.filters) && (
+          {mode === "advanced" && describeFilters(turn.filters) && (
             <p className="muted chat-rewritten">filtered to: {describeFilters(turn.filters)}</p>
           )}
-          {turn.steps.length > 0 && (
+          {mode === "advanced" && turn.steps.length > 0 && (
             <div className="chat-composition" aria-label="How this answer was built">
               {turn.steps.map((step, i) => (
                 <span
@@ -693,14 +696,14 @@ function AnswerBlock({
               treat it with caution.
             </p>
           )}
-          {/* Inline reasoning disclosure (personalAI parity): open while streaming so the user
-              watches the model reason token-by-token; collapsed by default once complete. */}
-          <InlineReasoningDetails
-            reasoning={turn.reasoning}
-            steps={turn.steps}
-            showReasoning={showReasoning}
-            defaultOpen={turn.streaming}
-          />
+          {mode === "advanced" && (
+            <InlineReasoningDetails
+              reasoning={turn.reasoning}
+              steps={turn.steps}
+              showReasoning={showReasoning}
+              defaultOpen={turn.streaming}
+            />
+          )}
           <div
             className={!ungrounded || turn.streaming ? "answer" : "answer empty"}
             aria-live={turn.streaming ? "polite" : undefined}
@@ -719,7 +722,7 @@ function AnswerBlock({
               Generation stopped.
             </p>
           )}
-          {!turn.streaming && turn.metrics && metricsTotalTokens(turn.metrics) > 0 && (
+          {mode === "advanced" && !turn.streaming && turn.metrics && metricsTotalTokens(turn.metrics) > 0 && (
             <p
               className="muted chat-usage"
               title={`${turn.metrics.prompt_tokens ?? 0} prompt + ${turn.metrics.answer_tokens ?? 0} reply = ${metricsTotalTokens(turn.metrics)} tokens in ${fmtMs(turn.metrics.total_ms ?? 0)}`}
@@ -729,7 +732,7 @@ function AnswerBlock({
               {fmtMs(turn.metrics.total_ms ?? 0)}
             </p>
           )}
-          {!turn.streaming && (
+          {mode === "advanced" && !turn.streaming && (
             <InlineContextDisclosure metrics={turn.metrics} />
           )}
         </>
@@ -925,10 +928,12 @@ export function ChatPanel({
   onOpenDocument,
   active = true,
   onBackgroundDone,
+  mode = "advanced",
 }: {
   onOpenDocument?: (id: string) => void;
   active?: boolean; // false when the Chat tab is not the visible one
   onBackgroundDone?: () => void; // called when a streamed answer finishes while inactive (off-tab)
+  mode?: UiMode;
 }) {
   const [question, setQuestion] = useState(() => loadDraft());
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
@@ -1151,8 +1156,8 @@ export function ChatPanel({
         const { grounded } = await chatStream(
           q,
           history,
-          // Checked = force reasoning on (override); unchecked = follow the configured setting.
-          showReasoning || undefined,
+          // Advanced can force reasoning on; Simple follows the configured setting and hides it.
+          mode === "advanced" ? showReasoning || undefined : undefined,
           {
             onMeta: (rq, flt) => patchThread(key, (s) => ({ ...s, rewrittenQuery: rq, filters: flt })),
             onStep: (step) => patchThread(key, (s) => ({ ...s, steps: [...s.steps, step] })),
@@ -1167,7 +1172,7 @@ export function ChatPanel({
           },
           controller.signal,
           tid,
-          chatMode,
+          mode === "advanced" ? chatMode : "classic",
           remember && !incognito,
         );
         completeStream(key, grounded);
@@ -1306,8 +1311,9 @@ export function ChatPanel({
     });
   }
 
-  /** Ensure the right pane is open (e.g. when navigating to a source or opening explore). */
+  /** Advanced expansion persists its preference; Simple ignores that Advanced-only collapse state. */
   function expandRightPane() {
+    if (mode === "simple") return;
     setRightPaneCollapsed((c) => {
       if (c) saveJSON(RIGHT_PANE_KEY, false);
       return false;
@@ -1402,7 +1408,7 @@ export function ChatPanel({
   const isEmptyConversation = turns.length === 0;
 
   return (
-    <section aria-label="Chat" className="panel chat-page">
+    <section aria-label="Chat" className="panel chat-page" data-mode={mode}>
       <div className="chat-layout">
         <ThreadList
           threads={threads}
@@ -1421,7 +1427,7 @@ export function ChatPanel({
             <div className="result-head">
               <h3 className="chat-column-title" title={columnTitle}>
                 {columnTitle}
-                {threadTokens > 0 && (
+                {mode === "advanced" && threadTokens > 0 && (
                   <span className="chat-thread-totals">
                     {fmtTokens(threadTokens)} tokens · {fmtMs(threadMs)}
                   </span>
@@ -1455,6 +1461,7 @@ export function ChatPanel({
                   onCopyQuestion={() => setQuestion(turn.question)}
                   showReasoning={showReasoning}
                   turnsToRemove={exchanges.length - i}
+                  mode={mode}
                 />
               </li>
             ))}
@@ -1470,45 +1477,49 @@ export function ChatPanel({
           )}
 
           <div className="chat-toggle-row">
-            <span className="chat-toggle">
-              <label className="chat-reasoning-toggle">
-                <span className="muted">Mode</span>
-                <select
-                  className="chat-mode-select"
-                  value={chatMode}
-                  onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
-                  disabled={streaming !== null}
-                  aria-label="Chat mode"
-                >
-                  <option value="classic">Classic (RAG)</option>
-                  <option value="agent">Agent (tools)</option>
-                  <option value="multi">Multi (agents)</option>
-                </select>
-              </label>
-              <InfoHint label="Chat mode">
-                <strong>Classic</strong> answers from your documents (RAG).{" "}
-                <strong>Agent</strong> can also call tools.{" "}
-                <strong>Multi</strong> uses a planner/researcher/critic/verifier graph.{" "}
-                All modes stream the answer + reasoning.
-              </InfoHint>
-            </span>
+            {mode === "advanced" && (
+              <>
+                <span className="chat-toggle">
+                  <label className="chat-reasoning-toggle">
+                    <span className="muted">Mode</span>
+                    <select
+                      className="chat-mode-select"
+                      value={chatMode}
+                      onChange={(e) => setChatMode(e.target.value as "classic" | "agent" | "multi")}
+                      disabled={streaming !== null}
+                      aria-label="Chat mode"
+                    >
+                      <option value="classic">Classic (RAG)</option>
+                      <option value="agent">Agent (tools)</option>
+                      <option value="multi">Multi (agents)</option>
+                    </select>
+                  </label>
+                  <InfoHint label="Chat mode">
+                    <strong>Classic</strong> answers from your documents (RAG).{" "}
+                    <strong>Agent</strong> can also call tools.{" "}
+                    <strong>Multi</strong> uses a planner/researcher/critic/verifier graph.{" "}
+                    All modes stream the answer + reasoning.
+                  </InfoHint>
+                </span>
 
-            <span className="chat-toggle">
-              <label className="chat-reasoning-toggle">
-                <input
-                  type="checkbox"
-                  checked={showReasoning}
-                  onChange={(e) => setShowReasoning(e.target.checked)}
-                  disabled={streaming !== null}
-                />
-                <span className="muted">Show reasoning</span>
-              </label>
-              <InfoHint label="Show reasoning">
-                Shows the model's <strong>step-by-step reasoning</strong> for each answer in the
-                activity timeline. When <strong>off</strong>, reasoning follows the configured
-                default and stays hidden.
-              </InfoHint>
-            </span>
+                <span className="chat-toggle">
+                  <label className="chat-reasoning-toggle">
+                    <input
+                      type="checkbox"
+                      checked={showReasoning}
+                      onChange={(e) => setShowReasoning(e.target.checked)}
+                      disabled={streaming !== null}
+                    />
+                    <span className="muted">Show reasoning</span>
+                  </label>
+                  <InfoHint label="Show reasoning">
+                    Shows the model's <strong>step-by-step reasoning</strong> in the inline answer
+                    details. When <strong>off</strong>, reasoning follows the configured default and
+                    stays hidden.
+                  </InfoHint>
+                </span>
+              </>
+            )}
 
             <span className="chat-toggle">
               <label className="chat-reasoning-toggle">
@@ -1593,8 +1604,8 @@ export function ChatPanel({
             Local-first. Network egress is disabled by default.
           </p>
         </div>
-        {/* Right pane: persistent and collapsible. Activity by default; sources/preview on demand. */}
-        {rightPaneCollapsed ? (
+        {/* Advanced keeps the persistent Activity rail; Simple opens sources/previews on demand. */}
+        {(mode === "advanced" || rail.mode !== "none") && (mode === "advanced" && rightPaneCollapsed ? (
           <aside
             id="chat-right-pane"
             className="chat-right-pane chat-right-pane--collapsed"
@@ -1640,27 +1651,41 @@ export function ChatPanel({
                     >
                       Sources
                     </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={!sourcesActive}
-                      className={!sourcesActive ? "active" : ""}
-                      onClick={closeRail}
-                    >
-                      Activity
-                    </button>
+                    {mode === "advanced" && (
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={!sourcesActive}
+                        className={!sourcesActive ? "active" : ""}
+                        onClick={closeRail}
+                      >
+                        Activity
+                      </button>
+                    )}
                   </div>
                 );
               })()}
               <button
                 type="button"
                 className="chat-threads-toggle-text"
-                onClick={toggleRightPane}
-                aria-expanded={true}
-                aria-label="Collapse activity panel"
-                title="Collapse activity panel"
+                onClick={mode === "simple" ? closeRail : toggleRightPane}
+                aria-expanded={mode === "advanced" ? true : undefined}
+                aria-label={
+                  mode === "advanced"
+                    ? "Collapse activity panel"
+                    : rail.mode === "preview"
+                      ? "Close document preview"
+                      : "Close sources panel"
+                }
+                title={
+                  mode === "advanced"
+                    ? "Collapse activity panel"
+                    : rail.mode === "preview"
+                      ? "Close document preview"
+                      : "Close sources panel"
+                }
               >
-                Collapse &#8250;
+                {mode === "simple" ? "×" : <>Collapse &#8250;</>}
               </button>
             </div>
             <div className="chat-right-pane-body">
@@ -1701,7 +1726,7 @@ export function ChatPanel({
               )}
             </div>
           </aside>
-        )}
+        ))}
       </div>
     </section>
   );

@@ -24,9 +24,25 @@ import { StatusLegend } from "./StatusLegend";
 // up front instead of after a long upload. Per-file size is enforced + reported by the backend.
 const MAX_UPLOAD_FILES = 101;
 
+interface PendingUploadBatch {
+  id: number;
+  names: string[];
+  knownJobIds: Set<string>;
+  acknowledged: boolean;
+  createdAt: number;
+  acceptedAt: number;
+  afterLoadId: number;
+}
+
 // Drag-and-drop (or click-to-browse) document upload (M14 #370). Dropped files are sent to the
 // backend, which writes them into the tenant ingest folder; the normal worker pipeline takes over.
-function UploadDropZone({ hero, onUploaded }: { hero?: boolean; onUploaded: () => void }) {
+function UploadDropZone({
+  hero,
+  onUploaded,
+}: {
+  hero?: boolean;
+  onUploaded: (accepted: string[], startedAt: number) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,6 +73,7 @@ function UploadDropZone({ hero, onUploaded }: { hero?: boolean; onUploaded: () =
       });
       return;
     }
+    const startedAt = Date.now();
     setBusy(true);
     setMessage(null);
     try {
@@ -65,7 +82,7 @@ function UploadDropZone({ hero, onUploaded }: { hero?: boolean; onUploaded: () =
       if (res.accepted.length) parts.push(`${res.accepted.length} file(s) queued for ingestion`);
       if (res.rejected.length) parts.push(`${res.rejected.length} rejected: ${res.rejected.join("; ")}`);
       showMessage({ ok: res.rejected.length === 0, text: parts.join(" · ") || "Nothing to upload" });
-      onUploaded();
+      onUploaded(res.accepted, startedAt);
     } catch (e) {
       showMessage({ ok: false, text: e instanceof Error ? e.message : "upload failed" });
     } finally {
@@ -447,6 +464,13 @@ export function OverviewPanel({
   const [recent, setRecent] = useState<AuditEvent[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<PendingUploadBatch[]>([]);
+  const [pendingAdjustment, setPendingAdjustment] = useState(0);
+  const [refreshId, setRefreshId] = useState(0);
+  const nextLoadId = useRef(0);
+  const nextUploadId = useRef(0);
+  const pendingUploadsRef = useRef<PendingUploadBatch[]>([]);
+  pendingUploadsRef.current = pendingUploads;
   const [inflightDocs, setInflightDocs] = useState<InflightDocument[]>([]);
   // Documents whose ledger just completed linger 30s with a full green bar so the completion is
   // visible, then leave (#848). Failed departures leave immediately (Documents shows them).
@@ -456,7 +480,27 @@ export function OverviewPanel({
   const inflightRef = useRef<InflightDocument[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  function handleUploaded(accepted: string[], startedAt: number) {
+    if (accepted.length > 0) {
+      nextUploadId.current += 1;
+      const batch: PendingUploadBatch = {
+        id: nextUploadId.current,
+        names: accepted,
+        knownJobIds: new Set(jobs.map((job) => job.id)),
+        acknowledged: false,
+        createdAt: startedAt,
+        acceptedAt: Date.now(),
+        afterLoadId: nextLoadId.current,
+      };
+      setPendingUploads((prev) => [...prev, batch]);
+      setPendingAdjustment(0);
+    }
+    load();
+  }
+
   const load = useCallback(() => {
+    nextLoadId.current += 1;
+    const requestId = nextLoadId.current;
     Promise.all([
       fetchStats(),
       fetchActivity(),
@@ -465,6 +509,7 @@ export function OverviewPanel({
       fetchInflightDocuments(),
     ])
       .then(([s, a, c, j, d]) => {
+        setRefreshId(requestId);
         setStats(s);
         setRecent(a.slice(0, 8));
         setCategories(c);
@@ -497,6 +542,58 @@ export function OverviewPanel({
   useEffect(load, [load]);
   useInterval(load, 5000);
 
+  useEffect(() => {
+    const scheduledJobIds = new Set<string>();
+    for (const batch of pendingUploadsRef.current) {
+      if (refreshId <= batch.afterLoadId) continue;
+      for (const job of jobs) {
+        if (batch.knownJobIds.has(job.id) || scheduledJobIds.has(job.id)) continue;
+        const startedAt = job.started_at ? Date.parse(job.started_at) : null;
+        if (startedAt === null || startedAt + 300_000 < batch.createdAt) continue;
+        if (batch.names.includes(fileName(job))) scheduledJobIds.add(job.id);
+      }
+    }
+    setPendingAdjustment(scheduledJobIds.size);
+    setPendingUploads((prev) => {
+      let changed = false;
+      const next: PendingUploadBatch[] = [];
+      const claimedJobIds = new Set<string>();
+      for (const batch of prev) {
+        if (refreshId <= batch.afterLoadId) {
+          next.push(batch);
+          continue;
+        }
+        const names = [...batch.names];
+        const knownJobIds = new Set(batch.knownJobIds);
+        for (const job of jobs) {
+          if (knownJobIds.has(job.id) || claimedJobIds.has(job.id)) continue;
+          const startedAt = job.started_at ? Date.parse(job.started_at) : null;
+          if (startedAt === null || startedAt + 300_000 < batch.createdAt) continue;
+          const index = names.indexOf(fileName(job));
+          if (index < 0) continue;
+          names.splice(index, 1);
+          knownJobIds.add(job.id);
+          claimedJobIds.add(job.id);
+        }
+        const observedNewJob = names.length !== batch.names.length;
+        const expired = Date.now() - batch.acceptedAt >= 30_000;
+        if (expired || ((stats?.pending_ingest ?? 0) === 0 && observedNewJob)) {
+          changed = true;
+          continue;
+        }
+        if (names.length === 0) {
+          changed = true;
+          continue;
+        }
+        if (names.length !== batch.names.length || knownJobIds.size !== batch.knownJobIds.size || !batch.acknowledged) {
+          changed = true;
+        }
+        next.push({ ...batch, names, knownJobIds, acknowledged: true });
+      }
+      return changed ? next : prev;
+    });
+  }, [stats, jobs, refreshId]);
+
   const allJobs = stats?.jobs ?? {};
   const TERMINAL_JOB = new Set(["active", "failed", "quarantined", "duplicate"]);
   // "Processing" covers only pre-intake jobs: once a document exists it is visible in Documents
@@ -507,6 +604,14 @@ export function OverviewPanel({
   );
   const failed = (allJobs.failed ?? 0) + (allJobs.quarantined ?? 0);
   const waiting = stats?.pending_ingest ?? 0;
+  const remainingUploads = pendingUploads.reduce((sum, batch) => sum + batch.names.length, 0);
+  const unacknowledgedUploads = pendingUploads
+    .filter((batch) => !batch.acknowledged)
+    .reduce((sum, batch) => sum + batch.names.length, 0);
+  const pendingCount = unacknowledgedUploads > 0
+    ? Math.max(0, waiting - pendingAdjustment) + unacknowledgedUploads
+    : Math.max(0, waiting - pendingAdjustment, remainingUploads);
+  const hasPendingIngest = pendingCount > 0 || pendingUploads.some((batch) => batch.names.length > 0);
   const pendingFeatures = stats?.documents_pending_features ?? 0;
   const duplicates = allJobs.duplicate ?? 0;
 
@@ -553,7 +658,7 @@ export function OverviewPanel({
         </p>
       )}
 
-      {mode === "simple" && <UploadDropZone hero onUploaded={load} />}
+      {mode === "simple" && <UploadDropZone hero onUploaded={handleUploaded} />}
 
       {mode === "advanced" && (
         <div className="stat-tiles t5">
@@ -571,7 +676,20 @@ export function OverviewPanel({
           <h3>In flight</h3>
           <StatusLegend />
         </div>
-        {inFlight.length === 0 && inflightDocs.length === 0 && departed.size === 0 ? (
+        {hasPendingIngest && (
+          <div className="pending-ingest" role="status">
+            <strong>{pendingCount} file{pendingCount === 1 ? "" : "s"} waiting to be scheduled</strong>
+            {pendingUploads.some((batch) => batch.names.length > 0) && (
+              <span
+                className="pending-ingest-files muted"
+                title={pendingUploads.flatMap((batch) => batch.names).join(", ")}
+              >
+                {pendingUploads.flatMap((batch) => batch.names).join(" · ")}
+              </span>
+            )}
+          </div>
+        )}
+        {inFlight.length === 0 && inflightDocs.length === 0 && departed.size === 0 && !hasPendingIngest ? (
           <p className="muted">Pipeline idle - every document is fully processed.</p>
         ) : (
           <InFlightList
@@ -758,7 +876,7 @@ export function OverviewPanel({
         </div>
       )}
 
-      {mode === "advanced" && <UploadDropZone onUploaded={load} />}
+      {mode === "advanced" && <UploadDropZone onUploaded={handleUploaded} />}
     </section>
   );
 }

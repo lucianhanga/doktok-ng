@@ -7426,6 +7426,22 @@ tr.row-selected {
   margin: 10px 0 4px;
 }
 
+.pending-ingest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--selected-fill);
+  font-size: 13px;
+}
+.pending-ingest-files {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+
 .pipeline-totals {
   display: grid;
   gap: 6px;

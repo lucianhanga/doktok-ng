@@ -625,3 +625,175 @@ test("refresh updates Pipeline values and their per-item segments", async () => 
   );
   expect(screen.getByText("Waiting").closest(".pipeline-total-row")).toHaveTextContent("2");
 });
+
+test.each(["simple", "advanced"] as const)("accepted uploads immediately show scheduling progress in %s mode", async (mode) => {
+  stubApi();
+  const { container } = render(<OverviewPanel mode={mode} />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [new File(["hello"], "a.pdf", { type: "application/pdf" })] } });
+
+  await waitFor(() => expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument());
+  expect(screen.getByText("a.pdf")).toBeInTheDocument();
+  expect(screen.queryByText("Pipeline idle - every document is fully processed.")).not.toBeInTheDocument();
+});
+
+test("files already waiting in the ingest folder appear in Simple mode", async () => {
+  stubApi({ stats: { ...EMPTY_STATS, pending_ingest: 2 } });
+  render(<OverviewPanel mode="simple" />);
+  await waitFor(() => expect(screen.getByText("2 files waiting to be scheduled")).toBeInTheDocument());
+});
+
+test("only a newly seen job replaces optimistic progress, not an older same-name job", async () => {
+  const jobs: { id: string; source_path: string; status: string; document_id: string | null; started_at: string | null }[] = [
+    { id: "old-terminal", source_path: "/data/ingest/a.pdf", status: "active", document_id: "doc-old", started_at: null },
+  ];
+  stubApi({ jobs });
+  const { container } = render(<OverviewPanel mode="simple" />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [new File(["hello"], "a.pdf", { type: "application/pdf" })] } });
+  await waitFor(() => expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument());
+
+  jobs.push({ id: "new-processing", source_path: "/data/ingest/a.pdf", status: "processing", document_id: null, started_at: new Date(Date.now() - 1_000).toISOString() });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.queryByText("1 file waiting to be scheduled")).not.toBeInTheDocument());
+});
+
+test("repeated same-name uploads reconcile one job per upload", async () => {
+  const jobs: { id: string; source_path: string; status: string; document_id: string | null; started_at: string }[] = [];
+  const stats = { ...EMPTY_STATS, pending_ingest: 2 };
+  stubApi({ jobs, stats });
+  const { container } = render(<OverviewPanel mode="simple" />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  const upload = () => fireEvent.change(input, { target: { files: [new File(["hello"], "a.pdf", { type: "application/pdf" })] } });
+  upload();
+  upload();
+
+  await waitFor(() => expect(screen.getByText("2 files waiting to be scheduled")).toBeInTheDocument());
+  jobs.push({ id: "first", source_path: "/data/ingest/a.pdf", status: "processing", document_id: null, started_at: new Date().toISOString() });
+  stats.pending_ingest = 1;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument());
+  jobs.push({ id: "second", source_path: "/data/ingest/a.pdf", status: "processing", document_id: null, started_at: new Date().toISOString() });
+  stats.pending_ingest = 0;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.queryByText("1 file waiting to be scheduled")).not.toBeInTheDocument());
+});
+
+test("a zero-pending refresh clears uploads beyond the 50-job response window", async () => {
+  const accepted = Array.from({ length: 51 }, (_, i) => `f${i}.pdf`);
+  const jobs: { id: string; source_path: string; status: string; document_id: null; started_at: string }[] = [];
+  const stats = { ...EMPTY_STATS, pending_ingest: 51 };
+  stubApi({ jobs, stats, uploadResult: { accepted, rejected: [] } });
+  const { container } = render(<OverviewPanel mode="simple" />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  const files = accepted.map((name) => new File(["x"], name, { type: "application/pdf" }));
+  fireEvent.change(input, { target: { files } });
+  await waitFor(() => expect(screen.getByText("51 files waiting to be scheduled")).toBeInTheDocument());
+
+  for (let i = 0; i < 50; i++) {
+    jobs.push({ id: `job-${i}`, source_path: `/data/ingest/f${i}.pdf`, status: "processing", document_id: null, started_at: new Date().toISOString() });
+  }
+  stats.pending_ingest = 0;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.queryByText("51 files waiting to be scheduled")).not.toBeInTheDocument());
+  expect(screen.queryByText("1 file waiting to be scheduled")).not.toBeInTheDocument();
+});
+
+test("new uploads are added to the previous folder-pending count before refresh", async () => {
+  stubApi({ stats: { ...EMPTY_STATS, pending_ingest: 2 } });
+  const { container } = render(<OverviewPanel mode="simple" />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [new File(["hello"], "a.pdf", { type: "application/pdf" })] } });
+  await waitFor(() => expect(screen.getByText("3 files waiting to be scheduled")).toBeInTheDocument());
+});
+
+test("a response started before upload cannot consume the new batch", async () => {
+  let initialStats = true;
+  let jobsCalls = 0;
+  let resolveStats!: (value: Response) => void;
+  let resolveJobs!: (value: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/v1/ingestion/upload")) {
+        return new Response(JSON.stringify({ accepted: ["a.pdf"], rejected: [] }), { status: 200 });
+      }
+      if (url.includes("/api/v1/stats")) {
+        if (initialStats) {
+          initialStats = false;
+          return new Promise<Response>((resolve) => { resolveStats = resolve; });
+        }
+        return new Response(JSON.stringify(EMPTY_STATS), { status: 200 });
+      }
+      if (url.includes("/api/v1/ingestion/jobs")) {
+        jobsCalls += 1;
+        if (jobsCalls === 1) {
+          return new Promise<Response>((resolve) => { resolveJobs = resolve; });
+        }
+        if (jobsCalls === 2) {
+          return new Response(JSON.stringify([{ id: "older-inflight", source_path: "/data/ingest/a.pdf", status: "processing", document_id: null, started_at: null }]), { status: 200 });
+        }
+        return new Response(JSON.stringify([{ id: "new-processing", source_path: "/data/ingest/a.pdf", status: "processing", document_id: null, started_at: new Date().toISOString() }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }),
+  );
+  const { container } = render(<OverviewPanel mode="simple" />);
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [new File(["hello"], "a.pdf", { type: "application/pdf" })] } });
+  await waitFor(() => expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument());
+
+  resolveStats(new Response(JSON.stringify(EMPTY_STATS), { status: 200 }));
+  resolveJobs(new Response(JSON.stringify([{ id: "older-inflight", source_path: "/data/ingest/a.pdf", status: "processing", document_id: null, started_at: null }]), { status: 200 }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.queryByText("1 file waiting to be scheduled")).not.toBeInTheDocument());
+});
+
+test("stale optimistic names expire even when unrelated folder files remain pending", async () => {
+  vi.useFakeTimers();
+  try {
+    stubApi({ stats: { ...EMPTY_STATS, pending_ingest: 1 } });
+    const { container } = render(<OverviewPanel mode="simple" />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["hello"], "a.pdf", { type: "application/pdf" })] } });
+    await vi.waitFor(() => expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument());
+
+    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.waitFor(() => expect(screen.queryByText("a.pdf")).not.toBeInTheDocument());
+    expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("an upload lasting over 30 seconds still shows its accepted filenames", async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveUpload!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/v1/ingestion/upload")) {
+          return new Promise<Response>((resolve) => { resolveUpload = resolve; });
+        }
+        if (url.includes("/api/v1/stats")) return new Response(JSON.stringify(EMPTY_STATS), { status: 200 });
+        return new Response(JSON.stringify([]), { status: 200 });
+      }),
+    );
+    const { container } = render(<OverviewPanel mode="simple" />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["hello"], "a.pdf", { type: "application/pdf" })] } });
+
+    await vi.advanceTimersByTimeAsync(31_000);
+    resolveUpload(new Response(JSON.stringify({ accepted: ["a.pdf"], rejected: [] }), { status: 200 }));
+    await vi.waitFor(() => expect(screen.getByText("1 file waiting to be scheduled")).toBeInTheDocument());
+    expect(screen.getByText("a.pdf")).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});

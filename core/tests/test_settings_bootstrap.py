@@ -14,6 +14,8 @@ def _settings(
     pipeline_model: str = "",
     rag_provider: str = "",
     rag_model: str = "",
+    ner_provider: str = "",
+    ner_model: str = "",
     no_egress: bool = False,
 ) -> Settings:
     return Settings(  # type: ignore[call-arg]
@@ -23,6 +25,8 @@ def _settings(
         pipeline_model=pipeline_model,
         rag_provider=rag_provider,
         rag_model=rag_model,
+        ner_provider=ner_provider,
+        ner_model=ner_model,
     )
 
 
@@ -96,3 +100,26 @@ def test_env_default_ai_settings_reflects_env_providers() -> None:
     assert defaults.rag.provider == "openai"
     # Untouched purposes keep the schema defaults.
     assert defaults.ner == AiSettings().ner
+
+
+def test_ner_env_override_seeds_luna_without_changing_pipeline_or_rag() -> None:
+    from doktok_core.settings.bootstrap import env_default_ai_settings
+
+    repo = InMemoryAppSettingsRepository()
+    settings = _settings(ner_provider="openai", ner_model="gpt-6-luna")
+
+    assert seed_ai_settings(repo, settings) is True
+    ai = repo.get_ai_settings()
+    assert ai.ner.provider == "openai" and ai.ner.model == "gpt-6-luna"
+    assert ai.pipeline == AiSettings().pipeline
+    assert ai.rag == AiSettings().rag
+    assert env_default_ai_settings(settings).ner.model == "gpt-6-luna"
+    assert AiSettings().ner.model == "gpt-6-luna"
+
+
+def test_ner_openai_seed_is_skipped_under_no_egress() -> None:
+    repo = InMemoryAppSettingsRepository()
+    settings = _settings(ner_provider="openai", ner_model="gpt-6-luna", no_egress=True)
+
+    assert seed_ai_settings(repo, settings) is False
+    assert repo.has_ai_settings() is False

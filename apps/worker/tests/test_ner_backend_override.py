@@ -82,7 +82,16 @@ def _fake_gliner(factory: object) -> types.ModuleType:
 def test_ner_openai_builds_llm_extractor() -> None:
     ext, token = _ner(_cfg("openai", "gpt-4o-mini"), _NerFallback())
     assert isinstance(ext, OpenAiEntityNerExtractor)
-    assert token == "openai:gpt-4o-mini"
+    assert token == "openai:gpt-4o-mini:off"
+
+
+def test_ner_openai_signature_includes_reasoning() -> None:
+    ext, token = _ner(
+        AiPurposeSettings(provider="openai", model="gpt-6-luna", num_ctx=128000, reasoning="high"),
+        _NerFallback(),
+    )
+    assert isinstance(ext, OpenAiEntityNerExtractor)
+    assert token == "openai:gpt-6-luna:high"
 
 
 def test_ner_openai_blocked_under_no_egress() -> None:

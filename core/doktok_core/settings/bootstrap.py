@@ -25,7 +25,7 @@ def _resolve_purpose(
     purpose: str, provider: str, model: str, default: AiPurposeSettings
 ) -> AiPurposeSettings:
     """Build the purpose settings from env, filling model/context from the catalog when omitted."""
-    options = MODEL_CATALOG.pipeline if purpose == "pipeline" else MODEL_CATALOG.rag
+    options = getattr(MODEL_CATALOG, purpose)
     candidates = [o for o in options if o.provider == provider]
     match = (
         next((o for o in candidates if o.model == model), None)
@@ -42,8 +42,8 @@ def _resolve_purpose(
 def env_default_ai_settings(settings: Settings) -> AiSettings:
     """The AI settings a fresh install with this environment would start from (#696): the schema
     defaults with any env-requested purpose providers (DOKTOK_PIPELINE_PROVIDER /
-    DOKTOK_RAG_PROVIDER) resolved - the same values seed_ai_settings writes on first boot. Served
-    read-only as the \"original system values\" in the Model stack defaults card."""
+    DOKTOK_RAG_PROVIDER / DOKTOK_NER_PROVIDER) resolved - the same values seed_ai_settings writes
+    on first boot. Served as the \"original system values\" in the Model stack defaults card."""
     defaults = AiSettings()
     pipeline = (
         _resolve_purpose(
@@ -57,12 +57,17 @@ def env_default_ai_settings(settings: Settings) -> AiSettings:
         if settings.rag_provider
         else defaults.rag
     )
-    return defaults.model_copy(update={"pipeline": pipeline, "rag": rag})
+    ner = (
+        _resolve_purpose("ner", settings.ner_provider, settings.ner_model, defaults.ner)
+        if settings.ner_provider
+        else defaults.ner
+    )
+    return defaults.model_copy(update={"pipeline": pipeline, "rag": rag, "ner": ner})
 
 
 def seed_ai_settings(repo: AppSettingsRepository, settings: Settings) -> bool:
     """Seed the AI provider split from env if none is saved yet. Returns True if it wrote."""
-    if not (settings.pipeline_provider or settings.rag_provider):
+    if not (settings.pipeline_provider or settings.rag_provider or settings.ner_provider):
         return False
     if repo.has_ai_settings():
         return False
@@ -73,13 +78,22 @@ def seed_ai_settings(repo: AppSettingsRepository, settings: Settings) -> bool:
     if settings.no_egress:
         from doktok_core.security.egress import purpose_requires_egress
 
+        requested = [
+            purpose
+            for purpose, configured in (
+                (seeded.pipeline, settings.pipeline_provider),
+                (seeded.rag, settings.rag_provider),
+                (seeded.ner, settings.ner_provider),
+            )
+            if configured
+        ]
         if any(
             purpose_requires_egress(
                 purpose.provider,
                 purpose.ollama_base_url,
                 default_url=settings.ollama_base_url,
             )
-            for purpose in (seeded.pipeline, seeded.rag)
+            for purpose in requested
         ):
             logger.warning(
                 "DOKTOK_NO_EGRESS is on: skipping the env AI-settings seed (a seeded purpose "
@@ -88,10 +102,12 @@ def seed_ai_settings(repo: AppSettingsRepository, settings: Settings) -> bool:
             return False
     repo.set_ai_settings(seeded)
     logger.info(
-        "seeded AI settings from env: pipeline=%s/%s rag=%s/%s",
+        "seeded AI settings from env: pipeline=%s/%s rag=%s/%s ner=%s/%s",
         seeded.pipeline.provider,
         seeded.pipeline.model,
         seeded.rag.provider,
         seeded.rag.model,
+        seeded.ner.provider,
+        seeded.ner.model,
     )
     return True

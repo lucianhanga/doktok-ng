@@ -239,7 +239,7 @@ the single `RegexEntityExtractor` adapter; NER and lexical run behind their own 
 **Pluggable enrichment backends (ADR-0023).** NER and KAG relation extraction run behind their ports,
 so each can use either the configured pipeline LLM or a local span model:
 
-- **NER** — remote OpenAI `gpt-4o-mini` (most accurate, default) or local **GLiNER** (`gliner_large-v2.5`,
+- **NER** — remote OpenAI `gpt-6-luna` (default) or local **GLiNER** (`gliner_large-v2.5`,
   ~9× faster, no egress).
 - **Relations** (`RelationExtractor`, KAG) — local **GLiNER-Relex** (`gliner-relex-large-v1.0`) is the
   recommended default (best F1 + faster + local on the benchmark corpus); remote OpenAI is the alternative.

@@ -12,6 +12,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from pathlib import Path
+from threading import local
 from typing import Any
 
 from doktok_contracts.media import LlmUsage
@@ -174,25 +175,31 @@ class ChunkEmbedFeature:
         chunker: Chunker,
         embedding_provider: EmbeddingProvider,
         chunk_repo: ChunkRepository,
+        *,
+        batch_size: int = 8,
     ) -> None:
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
         self._documents = document_repo
         self._files = file_storage
         self._chunker = chunker
         self._embedder = embedding_provider
         self._chunks = chunk_repo
+        self._batch_size = batch_size
+        self._usage_local = local()
 
     def get_last_usage(self) -> LlmUsage | None:
-        return _delegate_usage(self._embedder)
+        return getattr(self._usage_local, "value", None)
 
     @property
     def model(self) -> str:
         return _provider_model(self._embedder)
 
     def process(self, tenant_id: str, document_id: str) -> None:
+        self._usage_local.value = None
         document = self._documents.get(tenant_id, document_id)
         if document is None or not document.storage_path:
             return
-        self._chunks.delete_for_document(tenant_id, document_id)
         chunks: list[DocumentChunk] = []
         for page_number, page_text in enumerate(self._pages(document.storage_path), start=1):
             for piece in self._chunker.chunk(page_text):
@@ -213,9 +220,28 @@ class ChunkEmbedFeature:
                         },
                     )
                 )
-        if chunks:
-            embeddings = self._embedder.embed([chunk.text for chunk in chunks])
-            self._chunks.add_chunks(chunks, embeddings)
+
+        embeddings: list[list[float]] = []
+        usages: list[LlmUsage] = []
+        batch_count = (len(chunks) + self._batch_size - 1) // self._batch_size
+        for batch_index, start in enumerate(range(0, len(chunks), self._batch_size), start=1):
+            batch = chunks[start : start + self._batch_size]
+            logger.info(
+                "chunk_embed document %s batch %d/%d: %d chunks",
+                document_id,
+                batch_index,
+                batch_count,
+                len(batch),
+            )
+            embeddings.extend(self._embedder.embed([chunk.text for chunk in batch]))
+            try:
+                usage = _delegate_usage(self._embedder)
+            except Exception:  # noqa: BLE001 - telemetry must not abort a successful embedding batch
+                usage = None
+            if usage is not None:
+                usages.append(usage)
+        self._usage_local.value = _sum_usage(usages)
+        self._chunks.replace_for_document(tenant_id, document_id, chunks, embeddings)
 
     def _pages(self, storage_path: str) -> list[str]:
         return _pages(self._files, storage_path)

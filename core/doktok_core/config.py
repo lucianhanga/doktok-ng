@@ -29,9 +29,11 @@ class Settings(BaseSettings):
     default_model: str = "qwen3.6:27b"
     # qwen3-embedding (1024-dim) handles >512-token chunks; mxbai-embed-large truncates at 512.
     embedding_model: str = "qwen3-embedding:0.6b"
-    # Embedding input is one ~300-token chunk at a time (chunker caps at 1200 chars), so the model's
-    # 32k default context just wastes a huge KV cache. 1024 gives ample headroom over a chunk while
-    # keeping the (already truncation-free) embeddings byte-identical - no re-index needed.
+    # Bound each /api/embed request so a large document cannot exceed the HTTP timeout as one batch.
+    embedding_batch_size: int = 8
+    # Each input chunk is ~300 tokens (chunker caps at 1200 chars), so the model's 32k default
+    # context just wastes a huge KV cache. 1024 gives ample headroom over a chunk while keeping the
+    # (already truncation-free) embeddings byte-identical - no re-index needed.
     embedding_num_ctx: int = 1024
     # Keep the (tiny ~1 GB) embedding model pinned as long as the chat/enrich models, so it is not
     # evicted first and then unable to reload while the 24 GB chat model is pinned - which hangs

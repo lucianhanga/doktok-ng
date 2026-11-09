@@ -511,6 +511,13 @@ class EmbeddingProvider(Protocol):
 @runtime_checkable
 class ChunkRepository(Protocol):
     def add_chunks(self, chunks: list[DocumentChunk], embeddings: list[list[float]]) -> None: ...
+    def replace_for_document(
+        self,
+        tenant_id: str,
+        document_id: str,
+        chunks: list[DocumentChunk],
+        embeddings: list[list[float]],
+    ) -> None: ...
     def delete_for_document(self, tenant_id: str, document_id: str) -> None: ...
 
     def read_embeddings(self, tenant_id: str, limit: int) -> list[tuple[str, str, list[float]]]:

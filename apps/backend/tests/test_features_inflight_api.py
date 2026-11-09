@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from doktok_api.main import create_app
 from doktok_contracts.ports import DocumentRepository, FeatureRepository
-from doktok_contracts.schemas import Document, DocumentStatus
+from doktok_contracts.schemas import Document, DocumentStatus, FeatureStatus
 from doktok_core.config import Settings
 from doktok_core.documents.inmemory import InMemoryDocumentRepository
 from doktok_core.features.inmemory import InMemoryFeatureRepository
@@ -82,6 +82,56 @@ def test_inflight_keeps_active_documents_while_features_still_run() -> None:
     ids = [d["document_id"] for d in body]
     assert "d-enriching" in ids  # still enriching -> stays
     assert "d-done" not in ids  # ledger complete -> leaves the list
+
+
+def _set_feature(
+    features: InMemoryFeatureRepository,
+    doc_id: str,
+    name: str,
+    status: FeatureStatus,
+    attempts: int,
+) -> None:
+    row = next(row for row in features.rows if row.document_id == doc_id and row.feature == name)
+    row.status = status
+    row.attempts = attempts
+    row.max_attempts = 3
+
+
+def test_inflight_excludes_permanently_blocked_document_until_retry() -> None:
+    docs = InMemoryDocumentRepository()
+    features = InMemoryFeatureRepository()
+    _doc(docs, "d-blocked", DocumentStatus.ACTIVE)
+    features.seed_for_document(
+        "tenant-a",
+        "d-blocked",
+        [("extract", 1), ("entities", 1), ("ner", 1), ("entity_graph", 1), ("relations", 1)],
+    )
+    features.record_done("tenant-a", "d-blocked", "extract", 1)
+    features.record_done("tenant-a", "d-blocked", "entities", 1)
+    _set_feature(features, "d-blocked", "ner", FeatureStatus.FAILED, 3)
+
+    body = _client(docs, features).get("/api/v1/features/inflight", headers=AUTH).json()
+    assert body == []
+
+    # A manual retry makes the prerequisite actionable again, so the document returns.
+    _set_feature(features, "d-blocked", "ner", FeatureStatus.PENDING, 0)
+    body = _client(docs, features).get("/api/v1/features/inflight", headers=AUTH).json()
+    assert [doc["document_id"] for doc in body] == ["d-blocked"]
+
+
+def test_inflight_keeps_document_with_retryable_failed_prerequisite() -> None:
+    docs = InMemoryDocumentRepository()
+    features = InMemoryFeatureRepository()
+    _doc(docs, "d-retry", DocumentStatus.ACTIVE)
+    features.seed_for_document(
+        "tenant-a", "d-retry", [("extract", 1), ("entities", 1), ("ner", 1), ("entity_graph", 1)]
+    )
+    features.record_done("tenant-a", "d-retry", "extract", 1)
+    features.record_done("tenant-a", "d-retry", "entities", 1)
+    _set_feature(features, "d-retry", "ner", FeatureStatus.FAILED, 1)
+
+    body = _client(docs, features).get("/api/v1/features/inflight", headers=AUTH).json()
+    assert [doc["document_id"] for doc in body] == ["d-retry"]
 
 
 def test_inflight_requires_a_token() -> None:

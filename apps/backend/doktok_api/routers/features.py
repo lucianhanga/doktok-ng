@@ -6,14 +6,45 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from doktok_contracts.ports import DocumentRepository, FeatureRepository
-from doktok_contracts.schemas import Document, DocumentFeature, DocumentStatus
-from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_GROUPS
+from doktok_contracts.schemas import Document, DocumentFeature, DocumentStatus, FeatureStatus
+from doktok_core.features.catalog import FEATURE_CATALOG, FEATURE_DEPENDENCIES, FEATURE_GROUPS
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from doktok_api.dependencies import Tenant, get_document_repository, get_feature_repository
 
 router = APIRouter(prefix="/api/v1/features", tags=["features"])
+
+
+_PREREQUISITES: dict[str, list[str]] = {}
+for _feature, _prerequisite in FEATURE_DEPENDENCIES:
+    _PREREQUISITES.setdefault(_feature, []).append(_prerequisite)
+
+
+def _has_actionable_features(rows: list[DocumentFeature]) -> bool:
+    by_name = {row.feature: row for row in rows}
+
+    def actionable(name: str, seen: frozenset[str]) -> bool:
+        row = by_name.get(name)
+        if row is None:
+            return True  # legacy/partial ledgers have no failure evidence for this prerequisite
+        if row.status is FeatureStatus.DONE:
+            return True
+        if row.status is FeatureStatus.RUNNING:
+            return True
+        if row.status is FeatureStatus.FAILED:
+            return row.attempts < row.max_attempts
+        if row.status is not FeatureStatus.PENDING or name in seen:
+            return False
+        return all(
+            actionable(prerequisite, seen | {name})
+            for prerequisite in _PREREQUISITES.get(name, [])
+        )
+
+    return any(
+        row.status is not FeatureStatus.DONE and actionable(row.feature, frozenset())
+        for row in rows
+    )
 
 Repo = Annotated[FeatureRepository, Depends(get_feature_repository)]
 
@@ -116,16 +147,15 @@ DocRepo = Annotated[DocumentRepository, Depends(get_document_repository)]
 def inflight_documents(tenant: Tenant, docs: DocRepo, repo: Repo) -> list[InflightDocument]:
     """Documents still being processed, plus each stage's ledger state.
 
-    "Still being processed" = status ``processing`` OR any stage row still pending/running:
+    "Still being processed" = status ``processing`` OR any stage row with actionable work:
     extract activates the document long before enrichment finishes, and the row must stay in the
-    overview until the whole ledger is done (#848, user report 2026-10-25). Terminal-only
-    documents (and failed ones - they surface under Needs attention) never appear here.
+    overview until the whole ledger is done (#848, user report 2026-10-25). Terminal-only and
+    permanently blocked documents surface under Needs attention instead.
     """
     now = datetime.now(UTC)
     by_id: dict[str, InflightDocument] = {}
 
-    def emit(doc: Document) -> None:
-        rows = repo.list_for_document(tenant.tenant_id, doc.id)
+    def emit(doc: Document, rows: list[DocumentFeature]) -> None:
         by_id[doc.id] = InflightDocument(
             document_id=doc.id,
             filename=doc.original_filename,
@@ -137,7 +167,11 @@ def inflight_documents(tenant: Tenant, docs: DocRepo, repo: Repo) -> list[Inflig
         )
 
     for doc in docs.list_processing(tenant.tenant_id, older_than=now):
-        emit(doc)
+        rows = repo.list_for_document(tenant.tenant_id, doc.id)
+        # A processing document with no ledger rows is still in pre-intake work.
+        if rows and not _has_actionable_features(rows):
+            continue
+        emit(doc, rows)
     for doc_id in repo.documents_with_open_features(tenant.tenant_id):
         if doc_id in by_id:
             continue
@@ -148,5 +182,7 @@ def inflight_documents(tenant: Tenant, docs: DocRepo, repo: Repo) -> list[Inflig
             DocumentStatus.PROCESSING,
             DocumentStatus.ACTIVE,
         ):
-            emit(candidate)
+            rows = repo.list_for_document(tenant.tenant_id, candidate.id)
+            if _has_actionable_features(rows):
+                emit(candidate, rows)
     return sorted(by_id.values(), key=lambda d: d.created_at)

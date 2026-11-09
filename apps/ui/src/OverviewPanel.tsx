@@ -532,7 +532,6 @@ export function OverviewPanel({
     { name: "Duplicates", count: duplicates, cls: "seg-waiting" },
     { name: "Needs attention", count: pendingFeatures, cls: "seg-attention" },
   ];
-  const pipelineMax = Math.max(1, ...pipelineRows.map((r) => r.count));
 
   const stageQueues = [...(stats?.stage_queues ?? [])].sort(
     (a, b) =>
@@ -626,7 +625,12 @@ export function OverviewPanel({
               return (
                 <div key={q.feature} className="pipeline-total-row">
                   <span className="pipeline-total-name muted">{stageLabel}</span>
-                  <div className="flow-bar queue-bar">
+                  <div
+                    className="flow-bar queue-bar"
+                    tabIndex={0}
+                    role="region"
+                    aria-label={`${stageLabel}: ${summary}`}
+                  >
                     {segments.map((s, i) => (
                       <i
                         key={i}
@@ -650,11 +654,15 @@ export function OverviewPanel({
             {pipelineRows.map((row) => (
               <div key={row.name} className="pipeline-total-row">
                 <span className="pipeline-total-name muted">{row.name}</span>
-                <div className="flow-bar">
-                  <i
-                    className={row.cls}
-                    style={{ width: `${row.count === 0 ? 0 : Math.max(4, (row.count / pipelineMax) * 100)}%` }}
-                  />
+                <div
+                  className="flow-bar queue-bar"
+                  tabIndex={0}
+                  role="region"
+                  aria-label={`${row.name}: ${row.count}`}
+                >
+                  {Array.from({ length: row.count }, (_, i) => (
+                    <i key={i} className={`queue-seg ${row.cls}`} title={`${row.name}: ${row.count}`} />
+                  ))}
                 </div>
                 <strong>{row.count}</strong>
               </div>

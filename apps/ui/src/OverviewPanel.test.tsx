@@ -166,6 +166,15 @@ test("advanced mode: KPI tiles, pipeline totals, recent activity, categories, dr
   expect(screen.getByText("9")).toBeInTheDocument(); // waiting in ingest
   expect(screen.getByText("Duplicates")).toBeInTheDocument();
   expect(screen.getByText("4")).toBeInTheDocument(); // duplicates
+  const waitingRow = screen.getByText("Waiting").closest(".pipeline-total-row");
+  expect(waitingRow?.querySelectorAll(".queue-seg.seg-waiting")).toHaveLength(9);
+  expect(waitingRow?.querySelector(".queue-bar")).toHaveAttribute("tabindex", "0");
+  expect(waitingRow?.querySelector(".queue-bar")).toHaveAttribute("role", "region");
+  expect(waitingRow?.querySelector(".queue-bar")).toHaveAccessibleName("Waiting: 9");
+  const duplicateRow = screen.getByText("Duplicates").closest(".pipeline-total-row");
+  expect(duplicateRow?.querySelectorAll(".queue-seg.seg-waiting")).toHaveLength(4);
+  const failedRow = screen.getByText("Failed", { selector: ".pipeline-total-name" }).closest(".pipeline-total-row");
+  expect(failedRow?.querySelectorAll(".queue-seg.seg-failed")).toHaveLength(1);
   // Categories + recent activity (clickable into the Activity tab)
   expect(screen.getByText("Finance")).toBeInTheDocument();
   await screen.getByText("report.pdf").click();
@@ -435,6 +444,8 @@ test("advanced mode shows the per-stage queues as per-item segmented bars", asyn
   expect(extract).toHaveTextContent("4"); // total only, no spelled-out counts
   expect(extract?.querySelectorAll(".queue-seg.seg-f-extract")).toHaveLength(1); // running
   expect(extract?.querySelectorAll(".queue-seg.seg-queued")).toHaveLength(3);
+  expect(extract?.querySelector(".queue-bar")).toHaveAttribute("tabindex", "0");
+  expect(extract?.querySelector(".queue-bar")).toHaveAccessibleName("Extract / OCR: 1 running · 3 queued");
   const relations = screen.getByText("Relations").closest(".pipeline-total-row");
   expect(relations).toHaveTextContent("8");
   expect(relations?.querySelectorAll(".queue-seg.seg-f-relations")).toHaveLength(2);
@@ -597,4 +608,20 @@ test("a completed document lingers 30s with a full green bar, then leaves", asyn
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("refresh updates Pipeline values and their per-item segments", async () => {
+  const stats = { ...EMPTY_STATS, pending_ingest: 9 };
+  stubApi({ stats });
+  render(<OverviewPanel mode="advanced" />);
+  await waitFor(() => expect(screen.getByText("Waiting")).toBeInTheDocument());
+  const waitingRow = screen.getByText("Waiting").closest(".pipeline-total-row");
+  expect(waitingRow?.querySelectorAll(".queue-seg.seg-waiting")).toHaveLength(9);
+
+  stats.pending_ingest = 2;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(screen.getByText("Waiting").closest(".pipeline-total-row")?.querySelectorAll(".queue-seg.seg-waiting")).toHaveLength(2),
+  );
+  expect(screen.getByText("Waiting").closest(".pipeline-total-row")).toHaveTextContent("2");
 });

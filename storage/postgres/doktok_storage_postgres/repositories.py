@@ -843,6 +843,39 @@ class PostgresChunkRepository:
                     ),
                 )
 
+    def replace_for_document(
+        self,
+        tenant_id: str,
+        document_id: str,
+        chunks: list[DocumentChunk],
+        embeddings: list[list[float]],
+    ) -> None:
+        with self._db.connection() as conn, conn.transaction():
+            conn.execute(
+                "DELETE FROM document_chunks WHERE tenant_id=%s AND document_id=%s",
+                (tenant_id, document_id),
+            )
+            for chunk, embedding in zip(chunks, embeddings, strict=True):
+                conn.execute(
+                    "INSERT INTO document_chunks "
+                    "(id, tenant_id, document_id, version_id, page_start, page_end, "
+                    "heading_path, text, token_count, embedding, metadata) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s)",
+                    (
+                        chunk.id,
+                        tenant_id,
+                        document_id,
+                        chunk.version_id,
+                        chunk.page_start,
+                        chunk.page_end,
+                        Json(chunk.heading_path),
+                        chunk.text,
+                        chunk.token_count,
+                        to_vector_literal(embedding),
+                        Json(chunk.metadata),
+                    ),
+                )
+
     def delete_for_document(self, tenant_id: str, document_id: str) -> None:
         with self._db.connection() as conn:
             conn.execute(

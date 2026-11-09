@@ -720,6 +720,7 @@ def build_services(
                 chunker,
                 embedding,
                 chunk_repo,
+                batch_size=settings.embedding_batch_size,
             ),
             EntitiesFeature(
                 document_repo,

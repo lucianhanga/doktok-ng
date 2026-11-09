@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from threading import RLock
 
 from doktok_contracts.schemas import DocumentChunk, SimilarDocument
 
@@ -18,20 +19,44 @@ class InMemoryChunkRepository:
     def __init__(self) -> None:
         self.chunks: list[DocumentChunk] = []
         self.embeddings: list[list[float]] = []
+        self._lock = RLock()
 
     def add_chunks(self, chunks: list[DocumentChunk], embeddings: list[list[float]]) -> None:
-        for chunk, embedding in zip(chunks, embeddings, strict=True):
-            self.chunks.append(chunk.model_copy(deep=True))
-            self.embeddings.append(list(embedding))
+        with self._lock:
+            for chunk, embedding in zip(chunks, embeddings, strict=True):
+                self.chunks.append(chunk.model_copy(deep=True))
+                self.embeddings.append(list(embedding))
+
+    def replace_for_document(
+        self,
+        tenant_id: str,
+        document_id: str,
+        chunks: list[DocumentChunk],
+        embeddings: list[list[float]],
+    ) -> None:
+        with self._lock:
+            replacement = [
+                (chunk.model_copy(deep=True), list(embedding))
+                for chunk, embedding in zip(chunks, embeddings, strict=True)
+            ]
+            kept = [
+                (chunk, embedding)
+                for chunk, embedding in zip(self.chunks, self.embeddings, strict=True)
+                if not (chunk.tenant_id == tenant_id and chunk.document_id == document_id)
+            ]
+            kept.extend(replacement)
+            self.chunks = [chunk for chunk, _ in kept]
+            self.embeddings = [embedding for _, embedding in kept]
 
     def delete_for_document(self, tenant_id: str, document_id: str) -> None:
-        kept = [
-            (c, e)
-            for c, e in zip(self.chunks, self.embeddings, strict=True)
-            if not (c.tenant_id == tenant_id and c.document_id == document_id)
-        ]
-        self.chunks = [c for c, _ in kept]
-        self.embeddings = [e for _, e in kept]
+        with self._lock:
+            kept = [
+                (c, e)
+                for c, e in zip(self.chunks, self.embeddings, strict=True)
+                if not (c.tenant_id == tenant_id and c.document_id == document_id)
+            ]
+            self.chunks = [c for c, _ in kept]
+            self.embeddings = [e for _, e in kept]
 
     def read_embeddings(self, tenant_id: str, limit: int) -> list[tuple[str, str, list[float]]]:
         rows = [

@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from typing import Any
 
 from doktok_provider_ollama import OllamaEmbeddingProvider
 
 
 class _FakeResponse:
+    def __init__(self, body: dict[str, Any] | None = None) -> None:
+        self._body = body or {"embeddings": [[0.1, 0.2]]}
+
     def raise_for_status(self) -> None: ...
 
     def json(self) -> dict[str, Any]:
-        return {"embeddings": [[0.1, 0.2]]}
+        return self._body
 
 
 def _capture(monkeypatch: Any) -> dict[str, Any]:
@@ -58,3 +63,25 @@ def test_num_ctx_omitted_by_default(monkeypatch: Any) -> None:
     captured = _capture(monkeypatch)
     OllamaEmbeddingProvider("m", "http://localhost:11434").embed(["x"])
     assert "options" not in captured["json"]
+
+
+def test_usage_is_thread_confined_for_concurrent_calls(monkeypatch: Any) -> None:
+    processed_barrier = Barrier(2)
+
+    def fake_post(url: str, *, json: dict[str, Any], timeout: float) -> _FakeResponse:
+        prompt_tokens = 25 if json["input"] == ["doc-a"] else 50
+        return _FakeResponse({"embeddings": [[0.1, 0.2]], "prompt_eval_count": prompt_tokens})
+
+    monkeypatch.setattr("doktok_provider_ollama.embeddings.httpx.post", fake_post)
+    provider = OllamaEmbeddingProvider("m", "http://localhost:11434")
+
+    def embed(text: str) -> int | None:
+        provider.embed([text])
+        processed_barrier.wait(timeout=2)
+        usage = provider.get_last_usage()
+        return usage.prompt_tokens if usage is not None else None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(embed, ["doc-a", "doc-b"]))
+
+    assert results == [25, 50]

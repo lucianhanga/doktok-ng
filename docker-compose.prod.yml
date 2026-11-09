@@ -233,6 +233,8 @@ services:
       # moment OCR capacity frees, instead of waiting behind INGEST_CONCURRENCY-wide intake.
       DOKTOK_STAGED_INGESTION: ${DOKTOK_STAGED_INGESTION:-true}
       DOKTOK_OPENAI_RECONCILE_CONCURRENCY: ${DOKTOK_OPENAI_RECONCILE_CONCURRENCY:-6}
+      # Bound large-document embedding requests; the complete index is replaced only after all batches.
+      DOKTOK_EMBEDDING_BATCH_SIZE: ${DOKTOK_EMBEDDING_BATCH_SIZE:-8}
       # Hard ceiling on concurrent OpenAI calls (process-wide semaphore in the client; bounds the
       # enrichment lanes AND the OCR judge AND RAG). 10 per the 2026-10 capacity review (#848).
       DOKTOK_OPENAI_MAX_CONCURRENCY: ${DOKTOK_OPENAI_MAX_CONCURRENCY:-10}

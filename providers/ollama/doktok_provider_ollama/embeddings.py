@@ -7,6 +7,8 @@ truncate longer chunks at 512 tokens.
 
 from __future__ import annotations
 
+from threading import local
+
 import httpx
 from doktok_contracts.media import LlmUsage
 
@@ -32,18 +34,18 @@ class OllamaEmbeddingProvider:
         # Cap the context to the chunk size: the model's large default (e.g. 32k) otherwise
         # allocates a needless KV cache. Chunks fit well inside this, so embeddings are unchanged.
         self._num_ctx = num_ctx
-        # Token usage of the most recent embed() call (read by the reconciler via the processor).
-        self._last_usage: LlmUsage | None = None
+        # Token usage of the calling thread's most recent embed() call.
+        self._usage_local = local()
 
     @property
     def model(self) -> str:
         return self._model
 
     def get_last_usage(self) -> LlmUsage | None:
-        return self._last_usage
+        return getattr(self._usage_local, "value", None)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        self._last_usage = None
+        self._usage_local.value = None
         if not texts:
             return []
         payload: dict[str, object] = {"model": self._model, "input": texts}
@@ -60,6 +62,6 @@ class OllamaEmbeddingProvider:
         )
         response.raise_for_status()
         body = response.json()
-        self._last_usage = usage_from_embed(body)
+        self._usage_local.value = usage_from_embed(body)
         embeddings: list[list[float]] = body["embeddings"]
         return embeddings

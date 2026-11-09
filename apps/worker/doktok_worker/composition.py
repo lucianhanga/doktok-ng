@@ -177,7 +177,7 @@ def _resolve_ner_backend(
         effort = openai_reasoning_effort(cfg.reasoning, model)
         return OpenAiEntityNerExtractor(
             model, key, base_url=openai_base_url, timeout=timeout, reasoning_effort=effort
-        ), f"openai:{model}"
+        ), f"openai:{model}:{cfg.reasoning}"
     # ollama (not offered in the catalog, but honored if hand-configured)
     if no_egress and url_requires_egress(cfg.ollama_base_url, default_url=default_url):
         return EgressBlocked("NER"), "ollama:blocked"
@@ -190,7 +190,7 @@ def _resolve_ner_backend(
         num_ctx=cfg.num_ctx,
         think=ollama_think_for(cfg.reasoning, model, structured=True),
         keep_alive=keep_alive,
-    ), f"ollama:{model}:{base}"
+    ), f"ollama:{model}:{base}:{cfg.reasoning}"
 
 
 def _resolve_relation_backend(

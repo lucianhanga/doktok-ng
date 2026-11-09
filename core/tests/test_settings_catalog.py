@@ -38,6 +38,10 @@ def test_openai_reasoning_effort_only_for_reasoning_models() -> None:
     assert openai_reasoning_effort("high", "gpt-5-nano") == "high"
 
 
+def test_ner_catalog_retains_legacy_and_luna_models() -> None:
+    assert {option.model for option in MODEL_CATALOG.ner} >= {"gpt-4o-mini", "gpt-6-luna"}
+
+
 def test_luna_offered_as_cheap_remote_options() -> None:
     # gpt-6-luna (OpenAI's cheapest latest-tier model) is selectable for the enrichment pipeline
     # and RAG/interrogation; like every OpenAI option it is marked as egressing, and as a gpt-6

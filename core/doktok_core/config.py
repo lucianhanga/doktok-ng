@@ -188,6 +188,8 @@ class Settings(BaseSettings):
     pipeline_model: str = ""
     rag_provider: str = ""  # '' | 'ollama' | 'openai'
     rag_model: str = ""
+    ner_provider: str = ""  # '' | 'ollama' | 'openai'
+    ner_model: str = ""
 
     # Read-only MCP server (ADR-0008). The tenant it serves (must be one of DOKTOK_TENANT_TOKENS'
     # tenants; if empty and exactly one tenant is configured, that one is used). For real read-only

@@ -1563,9 +1563,8 @@ def _default_rag() -> AiPurposeSettings:
 
 
 def _default_ner() -> AiPurposeSettings:
-    # Entity NER (M7.4). Default to the benchmark accuracy leader (ADR-0023); local GLiNER
-    # ("gliner") is the recommended on-host alternative, selectable in Settings.
-    return AiPurposeSettings(provider="openai", model="gpt-4o-mini", num_ctx=128000)
+    # Entity NER (M7.4). Default to Luna; local GLiNER remains the on-host alternative.
+    return AiPurposeSettings(provider="openai", model="gpt-6-luna", num_ctx=128000)
 
 
 def _default_keg() -> AiPurposeSettings:

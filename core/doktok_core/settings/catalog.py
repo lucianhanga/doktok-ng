@@ -77,8 +77,15 @@ MODEL_CATALOG = ModelCatalog(
     ner=[
         ModelOption(
             provider="openai",
+            model="gpt-6-luna",
+            label="OpenAI gpt-6-luna - remote",
+            contexts=[128000],
+            supports_reasoning=True,
+        ),
+        ModelOption(
+            provider="openai",
             model="gpt-4o-mini",
-            label="OpenAI gpt-4o-mini - remote (most accurate)",
+            label="OpenAI gpt-4o-mini - remote",
             contexts=[128000],
             supports_reasoning=False,
         ),

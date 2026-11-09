@@ -37,14 +37,14 @@ def _has_actionable_features(rows: list[DocumentFeature]) -> bool:
         if row.status is not FeatureStatus.PENDING or name in seen:
             return False
         return all(
-            actionable(prerequisite, seen | {name})
-            for prerequisite in _PREREQUISITES.get(name, [])
+            actionable(prerequisite, seen | {name}) for prerequisite in _PREREQUISITES.get(name, [])
         )
 
     return any(
         row.status is not FeatureStatus.DONE and actionable(row.feature, frozenset())
         for row in rows
     )
+
 
 Repo = Annotated[FeatureRepository, Depends(get_feature_repository)]
 

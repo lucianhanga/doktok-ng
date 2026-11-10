@@ -1341,7 +1341,7 @@ export function DocumentsPanel({
     ? `Showing ${docs.length} of ${total} document${total === 1 ? "" : "s"}${resultQualifier}`
     : "";
   useEffect(() => {
-    const timer = setTimeout(() => setResultAnnouncement(resultText), 300);
+    const timer = setTimeout(() => setResultAnnouncement(resultText ? `Results updated: ${resultText}` : ""), 300);
     return () => clearTimeout(timer);
   }, [resultText]);
   // How the loaded page sits inside the selection: drives the header checkbox (checked/indeterminate)

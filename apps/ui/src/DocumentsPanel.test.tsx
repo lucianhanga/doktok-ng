@@ -1942,14 +1942,14 @@ test("result summaries and polite announcements distinguish search, filters, and
 
   fireEvent.change(screen.getByLabelText("Search documents"), { target: { value: "report" } });
   await screen.findByText("Showing 1 of 1 document (search)");
-  await waitFor(() => expect(announcement).toHaveTextContent("Showing 1 of 1 document (search)"));
+  await waitFor(() => expect(announcement).toHaveTextContent("Results updated: Showing 1 of 1 document (search)"));
 
   fireEvent.click(screen.getByRole("button", { name: "Filters (1)" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Failed" }));
   await screen.findByText("Showing 1 of 1 document (search + filtered)");
-  await waitFor(() => expect(announcement).toHaveTextContent("Showing 1 of 1 document (search + filtered)"));
+  await waitFor(() => expect(announcement).toHaveTextContent("Results updated: Showing 1 of 1 document (search + filtered)"));
 
   fireEvent.click(screen.getByRole("button", { name: "Remove query: report" }));
   await screen.findByText("Showing 1 of 1 document (filtered)");
-  await waitFor(() => expect(announcement).toHaveTextContent("Showing 1 of 1 document (filtered)"));
+  await waitFor(() => expect(announcement).toHaveTextContent("Results updated: Showing 1 of 1 document (filtered)"));
 });

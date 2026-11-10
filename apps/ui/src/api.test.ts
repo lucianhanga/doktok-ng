@@ -1,13 +1,19 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import {
   eventToTraceStep,
+  fetchDocumentIds,
+  fetchDocuments,
   formatDuration,
   formatTokens,
   parseSse,
   processingRollup,
   type ProcessingSummary,
 } from "./api";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 test("eventToTraceStep prefers the structured payload and coerces delta-only frames", () => {
   // Newer backend: a structured TraceStep travels on the event.
@@ -94,4 +100,75 @@ test("processingRollup builds a concise line and omits absent fields", () => {
 
   // unknown document -> nothing to append
   expect(processingRollup(undefined)).toBeNull();
+});
+
+test("document filters serialize q and repeated status/category values for list and ids", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [], total: 0, next_cursor: null }), { status: 200 }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ ids: [], total: 0, truncated: false }), { status: 200 }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  const filters = {
+    query: "  northstar 2026  ",
+    statuses: ["active", "failed"],
+    categories: ["Invoices", "Contracts"],
+    title: " legacy ",
+    tokens: ["Acme", "Bob"],
+    tokenMatch: "any" as const,
+  };
+  const query =
+    "q=northstar+2026&category=Invoices&category=Contracts" +
+    "&status=active&status=failed&title=legacy&token_match=any&token=Acme&token=Bob";
+
+  await fetchDocuments(filters);
+  await fetchDocumentIds(filters);
+
+  expect(fetchMock).toHaveBeenNthCalledWith(1, `/api/v1/documents?${query}`, {
+    signal: undefined,
+  });
+  expect(fetchMock).toHaveBeenNthCalledWith(2, `/api/v1/documents/ids?${query}`, {
+    signal: undefined,
+  });
+});
+
+test("document filters retain singular legacy status and category serialization", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ ids: [], total: 0, truncated: false }), { status: 200 }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await fetchDocumentIds({ status: "active", category: "Invoices" });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/documents/ids?category=Invoices&status=active",
+    { signal: undefined },
+  );
+});
+
+test("fetchDocuments returns optional per-document stats sidecars", async () => {
+  const stats = {
+    d1: { entity_count: 2, chunk_count: 3, category: "Invoices" },
+  };
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [], total: 0, next_cursor: null, stats }), {
+        status: 200,
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [], total: 0, next_cursor: null }), { status: 200 }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+
+  const withStats = await fetchDocuments();
+  expect(withStats.stats).toEqual(stats);
+  expect(withStats.stats?.d1.category).toBe("Invoices");
+
+  const withoutStats = await fetchDocuments();
+  expect(withoutStats.stats).toBeUndefined();
 });

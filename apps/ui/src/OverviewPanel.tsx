@@ -707,9 +707,9 @@ export function OverviewPanel({
           <div className="panel-box pipeline-totals">
             {stageQueues.map((q) => {
               // One segment per queue item, like the per-document feature bars: running pulses
-              // in the stage's own hue, queued is soft blue, upstream-blocked is track gray,
-              // failed red. The spelled-out counts live in tooltips: per segment ("<stage>:
-              // <state>") and the full summary on the total.
+              // in the stage's own hue, queued uses the same softened stage hue, upstream-blocked
+              // is track gray, failed red. The spelled-out counts live in tooltips: per segment
+              // ("<stage>: <state>") and the full summary on the total.
               const blocked = q.blocked ?? 0;
               const total = q.queued + q.running + q.failed + blocked;
               const stageLabel = FEATURE_STAGE_LABELS[q.feature] ?? q.feature;
@@ -722,7 +722,7 @@ export function OverviewPanel({
                   title: `${stageLabel}: running`,
                 })),
                 ...Array.from({ length: q.queued }, () => ({
-                  cls: "seg-queued",
+                  cls: `${runningCls} seg-queued`,
                   title: `${stageLabel}: queued`,
                 })),
                 ...Array.from({ length: q.failed }, () => ({

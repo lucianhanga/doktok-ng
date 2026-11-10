@@ -18,9 +18,10 @@ import {
   reprocessAllFeature,
   reprocessFeatureGroup,
   retryDocumentFeature,
-  suggestTokens,
   type CategorySummary,
   type DocumentFeature,
+  type DocumentFilters,
+  type DocumentPage,
   type DocumentSort,
   type DokDocument,
   type FeatureCatalogEntry,
@@ -28,11 +29,21 @@ import {
   type ProcessingSummary,
   type SortDir,
   type TagOut,
-  type TokenMatch,
 } from "./api";
 import { AuthImg } from "./AuthImg";
 import { DataTable } from "./DataTable";
+import { DocumentsFilterControls } from "./DocumentsFilterControls";
+import { documentHealth } from "./documentsHealth";
+import {
+  migrateDocumentsUiPrefs,
+  orderToSort,
+  parseDocumentsHash,
+  serializeDocumentsHash,
+  type DocumentOrder,
+  type DocumentsUiPrefs,
+} from "./documentsState";
 import { useInterval } from "./hooks";
+import type { UiMode } from "./mode";
 import { loadJSON, saveJSON } from "./persist";
 import { TagChip } from "./TagsPanel";
 import { tagChipStyle, tagColor } from "./tagPalette";
@@ -45,6 +56,7 @@ type DocsState =
       features: Map<string, DocumentFeature[]>;
       // Per-document processing rollups for the chip tooltip (sidecar map; may be absent per doc).
       processing: Record<string, ProcessingSummary>;
+      stats: NonNullable<DocumentPage["stats"]>;
       // Per-document tags for the chips (#549; sidecar map from the list response).
       tags: Record<string, { id: string; name: string; color: string }[]>;
       total: number;
@@ -72,19 +84,22 @@ const TILE_FIELDS_DEFAULT: TileFields = {
 const PAGE_SIZE = 50;
 const THUMB_SIZE_KEY = "doktok.docs.thumbSize";
 const TILE_FIELDS_KEY = "doktok.docs.tileFields";
-// Synced per-user UI prefs for the documents list (#522): view mode + the filter set, restored on
-// mount (the App's initial* deep-link props win over the stored values).
+const DOCUMENT_DATE_EXPLANATION = "Document date is extracted from the document's content and may be inaccurate — it is not the system ingest time.";
+const UNIDENTIFIABLE_EXPLANATION = "Extraction succeeded but the content is not meaningful";
+// Synced per-user UI prefs for the documents list (#522): explicit URLs are deterministic, while
+// App deep-link props override restored defaults only until an explicit hash is adopted.
 const DOCS_UI_KEY = "doktok.docs.ui";
 
-interface DocsUiPrefs {
-  view?: View;
-  category?: string;
-  status?: string;
-  needsAttention?: boolean;
-  unidentifiable?: boolean;
-  title?: string;
-  tags?: string[];
-  tagMatch?: TokenMatch;
+function withDocumentsDeepLinks(
+  prefs: DocumentsUiPrefs,
+  initialCategory: string,
+  initialNeedsAttention: boolean,
+): DocumentsUiPrefs {
+  return {
+    ...prefs,
+    categories: initialCategory ? [initialCategory] : prefs.categories,
+    needsAttention: initialNeedsAttention || prefs.needsAttention,
+  };
 }
 
 /** Tag chips for a document (#549): up to `cap` chips + a "+N" overflow marker, each clickable to
@@ -169,15 +184,26 @@ function persistTileFields(fields: TileFields): void {
   saveJSON(TILE_FIELDS_KEY, fields);
 }
 
-const SORT_OPTIONS: { value: DocumentSort; label: string }[] = [
-  { value: "acquired", label: "Acquired" },
-  { value: "created", label: "Document date" },
-  { value: "title", label: "Title" },
-  { value: "category", label: "Category" },
+const ORDER_OPTIONS: { value: DocumentOrder; label: string }[] = [
+  { value: "newest", label: "Newest imported" },
+  { value: "oldest", label: "Oldest imported" },
+  { value: "title-asc", label: "Title A–Z" },
+  { value: "title-desc", label: "Title Z–A" },
+  { value: "document-date-desc", label: "Document date, newest" },
+  { value: "document-date-asc", label: "Document date, oldest" },
+  { value: "category-asc", label: "Category A–Z" },
+  { value: "category-desc", label: "Category Z–A" },
 ];
 
+function orderFor(sort: DocumentSort, dir: SortDir): DocumentOrder {
+  return ORDER_OPTIONS.find(({ value }) => {
+    const candidate = orderToSort(value);
+    return candidate.sort === sort && candidate.dir === dir;
+  })?.value ?? "newest";
+}
+
 // Maps parent DocumentSort keys <-> TanStack column ids for controlled sort.
-// "category" has no column in Phase 1; the SortControl dropdown covers it.
+// Category sorting uses the named SortControl rather than a sortable header.
 const SORT_TO_COLUMN: Partial<Record<DocumentSort, string>> = {
   title: "name",
   created: "authored",
@@ -550,19 +576,16 @@ function mimeGlyph(mime: string | null): string {
   return "DOC";
 }
 
-/** A thumbnail card for the gallery view: first-page preview with the selection box, status, and
- * feature badges overlaid, and the title + optional fields below.
- *
- * Enhancement 3: the checkbox and open button are opacity:0 by default and revealed on hover,
- * :focus-within, when the card is selected, or when any bulk selection is active (.bulk-active),
- * using CSS transitions (disabled by prefers-reduced-motion; always-on for touch devices).
- * Enhancement 4: in dark mode the thumbnail image is dimmed via CSS (filter on the img element
- * so the overlay badges and status ring are unaffected). */
+/** A semantic thumbnail card with essential Simple fields and the full Advanced operations. */
 function DocumentCard({
   doc,
   features,
   rollup,
+  processing,
+  category,
+  mode,
   selected,
+  selectionEnabled,
   onToggle,
   onOpen,
   onReprocessFailed,
@@ -578,7 +601,11 @@ function DocumentCard({
   doc: DokDocument;
   features: DocumentFeature[];
   rollup?: string | null;
+  processing?: ProcessingSummary;
+  category?: string | null;
+  mode: UiMode;
   selected: boolean;
+  selectionEnabled: boolean;
   onToggle: (id: string, shiftKey: boolean) => void;
   onOpen?: (id: string) => void;
   onReprocessFailed?: (documentId: string, filename: string) => void;
@@ -592,70 +619,83 @@ function DocumentCard({
   onClickTag?: (tagId: string) => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
+  const title = doc.title ?? doc.original_filename;
+  const titleId = `doc-card-title-${doc.id}`;
+  const unidentifiableDescriptionId = `doc-card-unidentifiable-${doc.id}`;
+  const health = documentHealth(doc, processing);
+  const isAdvanced = mode === "advanced";
   const cardClass = [
     "doc-card-grid",
-    selected ? "selected" : "",
-    anySelected ? "bulk-active" : "",
+    selectionEnabled && selected ? "selected" : "",
+    selectionEnabled && anySelected ? "bulk-active" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <div className={cardClass}>
+    <article className={cardClass} aria-labelledby={titleId}>
       <div className="doc-card-thumb-wrap">
-        {/* Enhancement 3: checkbox is opacity:0 by default, revealed by CSS on hover / selected /
-            bulk-active / focus-within. Always visible on touch (hover:none). */}
-        <span className="doc-card-check" onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            aria-label={`Select ${doc.original_filename}`}
-            checked={selected}
-            onChange={() => undefined}
-            onClick={(e) => onToggle(doc.id, e.shiftKey)}
-          />
+        <button
+          type="button"
+          className="doc-card-preview"
+          aria-label={`Open ${title}`}
+          onClick={() => onOpen?.(doc.id)}
+        >
+          {imgFailed ? (
+            <span className="doc-card-thumb doc-thumb-fallback">
+              {mimeGlyph(doc.detected_mime)}
+            </span>
+          ) : (
+            <AuthImg
+              className="doc-card-thumb"
+              src={documentThumbnailUrl(doc.id)}
+              alt={`Preview of ${title}`}
+              loading="lazy"
+              onError={() => setImgFailed(true)}
+            />
+          )}
+        </button>
+        {selectionEnabled && (
+          <label className="doc-card-check">
+            <input
+              type="checkbox"
+              aria-label={`Select ${doc.original_filename}`}
+              checked={selected}
+              onChange={() => undefined}
+              onClick={(e) => onToggle(doc.id, e.shiftKey)}
+            />
+          </label>
+        )}
+        <span
+          className={`badge status-${doc.status} doc-card-status doc-health ${health.tone}`}
+          aria-describedby={health.label === "Unidentifiable" ? unidentifiableDescriptionId : undefined}
+        >
+          {health.label}
         </span>
-        <span className={`badge status-${doc.status} doc-card-status`}>{doc.status}</span>
-        {doc.status === "failed" && onReprocessFailed && (
+        {health.label === "Unidentifiable" && (
+          <span id={unidentifiableDescriptionId} className="visually-hidden">
+            {UNIDENTIFIABLE_EXPLANATION}
+          </span>
+        )}
+        {isAdvanced && doc.status === "failed" && onReprocessFailed && (
           <button
             type="button"
             className="doc-card-reprocess"
             onClick={(e) => {
               e.stopPropagation();
-              onReprocessFailed(doc.id, doc.title ?? doc.original_filename);
+              onReprocessFailed(doc.id, title);
             }}
           >
             Reprocess
           </button>
         )}
-        {doc.unidentifiable && (
-          <span className="badge badge-unidentifiable doc-card-unidentifiable" title="Unidentifiable: extraction succeeded but the content is not meaningful">
+        {isAdvanced && doc.unidentifiable && health.label !== "Unidentifiable" && (
+          <span className="badge badge-unidentifiable doc-card-unidentifiable" title={`Unidentifiable: ${UNIDENTIFIABLE_EXPLANATION}`}>
             unidentifiable
           </span>
         )}
-        {imgFailed ? (
-          <div
-            className="doc-card-thumb doc-thumb-fallback"
-            role="button"
-            tabIndex={0}
-            aria-label={`Open ${doc.title ?? doc.original_filename}`}
-            onClick={() => onOpen?.(doc.id)}
-            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen?.(doc.id)}
-          >
-            {mimeGlyph(doc.detected_mime)}
-          </div>
-        ) : (
-          <AuthImg
-            className="doc-card-thumb"
-            src={documentThumbnailUrl(doc.id)}
-            alt={`Preview of ${doc.title ?? doc.original_filename}`}
-            loading="lazy"
-            onError={() => setImgFailed(true)}
-            onClick={() => onOpen?.(doc.id)}
-          />
-        )}
-        {features.length > 0 && (
+        {isAdvanced && features.length > 0 && (
           <div className="doc-card-badges">
-            {/* Enhancement 1: thumbnail-specific chips with per-size cap and "+N" overflow. */}
             <ThumbnailFeatureChips
               features={features}
               rollup={rollup}
@@ -675,59 +715,90 @@ function DocumentCard({
             />
           </div>
         )}
-        {/* Enhancement 3: discreet eye button, bottom-right, same opacity reveal as checkbox. */}
-        <button
-          type="button"
-          className="doc-card-open"
-          aria-label="Open document"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpen?.(doc.id);
-          }}
-        >
-          <EyeIcon />
-        </button>
+        {isAdvanced && (
+          <button
+            type="button"
+            className="doc-card-open"
+            aria-label="Open document"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen?.(doc.id);
+            }}
+          >
+            <EyeIcon />
+          </button>
+        )}
       </div>
-      <button
-        type="button"
-        className="link-button doc-card-title"
-        title={doc.title ?? doc.original_filename}
-        onClick={() => onOpen?.(doc.id)}
-      >
-        {doc.title ?? doc.original_filename}
-      </button>
-      {tags.length > 0 && (
-        <p className="doc-card-tags">
-          <TagChipList tags={tags} onClickTag={onClickTag} cap={thumbSize === "s" ? 2 : 3} />
-        </p>
-      )}
-      {/* Enhancement 2: field chooser — render only toggled fields; summary hidden at size S. */}
-      {tileFields.filename && (
-        <p className="doc-card-meta doc-card-meta-filename" title={doc.original_filename}>
-          {doc.original_filename}
-        </p>
-      )}
-      {tileFields.authored && doc.document_date && (
-        <p
-          className="doc-card-meta"
-          title="Authored date is extracted from the document's content and may be inaccurate — it is not the system ingest time."
+      <h3 className="doc-card-heading">
+        <button
+          id={titleId}
+          type="button"
+          className="link-button doc-card-title"
+          title={title}
+          onClick={() => onOpen?.(doc.id)}
         >
-          {formatDate(doc.document_date)}
-        </p>
+          {title}
+        </button>
+      </h3>
+      {isAdvanced ? (
+        <>
+          {tags.length > 0 && (
+            <p className="doc-card-tags">
+              <TagChipList tags={tags} onClickTag={onClickTag} cap={thumbSize === "s" ? 2 : 3} />
+            </p>
+          )}
+          {tileFields.filename && (
+            <p className="doc-card-meta doc-card-meta-filename" title={doc.original_filename}>
+              {doc.original_filename}
+            </p>
+          )}
+          {tileFields.authored && doc.document_date && (
+            <p
+              className="doc-card-meta"
+              title="Authored date is extracted from the document's content and may be inaccurate — it is not the system ingest time."
+            >
+              {formatDate(doc.document_date)}
+            </p>
+          )}
+          {tileFields.acquired && (
+            <p className="doc-card-meta">{formatDate(doc.created_at)}</p>
+          )}
+          {tileFields.summary && thumbSize !== "s" && doc.summary && (
+            <p className="doc-card-summary">{doc.summary}</p>
+          )}
+        </>
+      ) : (
+        <dl className="doc-card-simple-fields">
+          <div>
+            <dt>Category</dt>
+            <dd>{category || <span className="muted">-</span>}</dd>
+          </div>
+          <div>
+            <dt>
+              Document date
+              <span className="visually-hidden"> {DOCUMENT_DATE_EXPLANATION}</span>
+            </dt>
+            <dd>
+              {doc.document_date ? (
+                <time
+                  dateTime={doc.document_date}
+                  title={`Ingested (system): ${formatDate(doc.created_at)}`}
+                >
+                  {formatDate(doc.document_date)}
+                </time>
+              ) : (
+                <span className="muted">-</span>
+              )}
+            </dd>
+          </div>
+        </dl>
       )}
-      {tileFields.acquired && (
-        <p className="doc-card-meta">{formatDate(doc.created_at)}</p>
-      )}
-      {tileFields.summary && thumbSize !== "s" && doc.summary && (
-        <p className="doc-card-summary">{doc.summary}</p>
-      )}
-    </div>
+    </article>
   );
 }
 
-/** Enhancement 2: spartan field-chooser popover, rendered next to the S/M/L size control in
- * thumbnails mode. Toggles which metadata fields appear on each tile. Persisted to localStorage
- * by the parent (mirrors the thumbSize pattern). */
+/** Field-chooser popover for Advanced thumbnails, rendered next to the S/M/L size control.
+ * Persisted to localStorage by the parent (mirrors the thumbSize pattern). */
 function FieldsControl({
   fields,
   onChange,
@@ -737,6 +808,7 @@ function FieldsControl({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -763,6 +835,7 @@ function FieldsControl({
   return (
     <span className="tile-fields-control" ref={containerRef}>
       <button
+        ref={triggerRef}
         type="button"
         className="tile-fields-btn"
         aria-label="Choose tile fields"
@@ -773,7 +846,18 @@ function FieldsControl({
         Fields
       </button>
       {open && (
-        <div className="tile-fields-popover" role="dialog" aria-label="Tile fields">
+        <div
+          className="tile-fields-popover"
+          role="dialog"
+          aria-label="Tile fields"
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+            triggerRef.current?.focus({ preventScroll: true });
+          }}
+        >
           {FIELD_LABELS.map(([key, label]) => (
             <label key={key} className="tile-fields-item">
               <input
@@ -791,15 +875,11 @@ function FieldsControl({
 }
 
 function SortControl({
-  sort,
-  dir,
-  onSort,
-  onDir,
+  order,
+  onChange,
 }: {
-  sort: DocumentSort;
-  dir: SortDir;
-  onSort: (s: DocumentSort) => void;
-  onDir: (d: SortDir) => void;
+  order: DocumentOrder;
+  onChange: (order: DocumentOrder) => void;
 }) {
   return (
     <span className="sort-control">
@@ -807,27 +887,16 @@ function SortControl({
         Sort{" "}
         <select
           aria-label="Sort by"
-          value={sort}
-          onChange={(e) => onSort(e.target.value as DocumentSort)}
+          value={order}
+          onChange={(e) => onChange(e.target.value as DocumentOrder)}
         >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
+          {ORDER_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>
       </label>
-      <button
-        type="button"
-        className="dir-toggle"
-        aria-label={
-          dir === "desc" ? "Descending, switch to ascending" : "Ascending, switch to descending"
-        }
-        title={dir === "desc" ? "Newest / Z→A first" : "Oldest / A→Z first"}
-        onClick={() => onDir(dir === "desc" ? "asc" : "desc")}
-      >
-        {dir === "desc" ? "↓" : "↑"}
-      </button>
     </span>
   );
 }
@@ -854,132 +923,6 @@ function ThumbSizeControl({
         </button>
       ))}
     </span>
-  );
-}
-
-function TokenFilterBar({
-  tokens,
-  match,
-  onAdd,
-  onRemove,
-  onMatch,
-}: {
-  tokens: string[];
-  match: TokenMatch;
-  onAdd: (t: string) => void;
-  onRemove: (t: string) => void;
-  onMatch: (m: TokenMatch) => void;
-}) {
-  const [input, setInput] = useState("");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (debounce.current) clearTimeout(debounce.current);
-    const prefix = input.trim();
-    if (!prefix) {
-      setSuggestions([]);
-      return;
-    }
-    const ctrl = new AbortController();
-    debounce.current = setTimeout(() => {
-      suggestTokens(prefix, tokens, ctrl.signal)
-        .then((s) => setSuggestions(s.map((x) => x.value)))
-        .catch(() => setSuggestions([]));
-    }, 180);
-    return () => ctrl.abort();
-  }, [input, tokens]);
-
-  function add(value: string) {
-    const v = value.trim();
-    if (v && !tokens.some((t) => t.toLowerCase() === v.toLowerCase())) onAdd(v);
-    setInput("");
-    setSuggestions([]);
-  }
-
-  return (
-    <div className="token-bar" role="search">
-      {tokens.map((t) => (
-        <span key={t} className="token-chip">
-          {t}
-          <button type="button" aria-label={`Remove ${t}`} onClick={() => onRemove(t)}>
-            ×
-          </button>
-        </span>
-      ))}
-      <span className="token-input-wrap">
-        <input
-          type="text"
-          aria-label="Filter by token"
-          placeholder="Filter by token…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && input.trim() && add(input)}
-        />
-        {suggestions.length > 0 && (
-          <ul className="token-suggestions">
-            {suggestions.slice(0, 8).map((s) => (
-              <li key={s}>
-                <button type="button" onClick={() => add(s)}>
-                  {s}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </span>
-      {tokens.length > 1 && (
-        <label className="token-match" title="How multiple tokens combine">
-          <select
-            aria-label="Token match mode"
-            value={match}
-            onChange={(e) => onMatch(e.target.value as TokenMatch)}
-          >
-            <option value="all">match all</option>
-            <option value="any">match any</option>
-          </select>
-        </label>
-      )}
-    </div>
-  );
-}
-
-function TitleFilterBar({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [input, setInput] = useState(value);
-  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Follow external changes (e.g. a cleared filter) without clobbering what the user is typing.
-  useEffect(() => {
-    setInput((cur) => (cur.trim() === value ? cur : value));
-  }, [value]);
-
-  // Debounce so each keystroke does not fire a list reload; commit the trimmed value.
-  useEffect(() => {
-    if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => onChange(input.trim()), 300);
-    return () => {
-      if (debounce.current) clearTimeout(debounce.current);
-    };
-  }, [input, onChange]);
-
-  return (
-    <div className="token-bar" role="search">
-      <span className="token-input-wrap">
-        <input
-          type="text"
-          aria-label="Filter by title"
-          placeholder="Filter by title…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        {input && (
-          <button type="button" className="token-chip" aria-label="Clear title filter"
-            onClick={() => setInput("")}>
-            clear ×
-          </button>
-        )}
-      </span>
-    </div>
   );
 }
 
@@ -1078,43 +1021,56 @@ function BulkTagDialog({
   );
 }
 
+function filtersForPrefs(prefs: DocumentsUiPrefs): DocumentFilters {
+  return {
+    query: prefs.query || undefined,
+    statuses: prefs.statuses,
+    categories: prefs.categories,
+    needsAttention: prefs.needsAttention || undefined,
+    unidentifiable: prefs.unidentifiable || undefined,
+    tokens: prefs.tokens,
+    tokenMatch: prefs.tokens?.length ? (prefs.tokenMatch ?? "all") : undefined,
+    tags: prefs.tags.length ? prefs.tags : undefined,
+    tagMatch: prefs.tags.length ? prefs.tagMatch : undefined,
+  };
+}
+
 export function DocumentsPanel({
   onOpenDocument,
+  mode = "advanced",
   initialNeedsAttention = false,
   initialCategory = "",
 }: {
   onOpenDocument?: (id: string) => void;
+  mode?: UiMode;
   initialNeedsAttention?: boolean;
   initialCategory?: string;
 }) {
   const [state, setState] = useState<DocsState>({ kind: "loading" });
   const [categories, setCategories] = useState<CategorySummary[]>([]);
-  // View mode + filters restore from the synced per-user prefs (#522); explicit App deep-link
-  // props (initialCategory/initialNeedsAttention) take precedence over the stored values.
-  const [storedUi] = useState<DocsUiPrefs>(() => loadJSON<DocsUiPrefs>(DOCS_UI_KEY, {}));
-  const [category, setCategory] = useState(initialCategory || storedUi.category || "");
-  const [status, setStatus] = useState(storedUi.status ?? "");
-  const [needsAttention, setNeedsAttention] = useState(
-    initialNeedsAttention || (storedUi.needsAttention ?? false),
-  );
-  const [unidentifiable, setUnidentifiable] = useState(storedUi.unidentifiable ?? false);
-  const [view, setView] = useState<View>(storedUi.view ?? "list");
-  const [sort, setSort] = useState<DocumentSort>("acquired");
-  const [dir, setDir] = useState<SortDir>("desc");
-  const [title, setTitle] = useState(storedUi.title ?? "");
-  const [tokens, setTokens] = useState<string[]>([]);
-  const [tokenMatch, setTokenMatch] = useState<TokenMatch>("all");
-  // The tag filter (#549): selected tag ids + match mode, restored from the synced prefs; the
-  // catalog drives the popover and is hidden at zero tags (mirrors the Category select).
-  const [selectedTags, setSelectedTags] = useState<string[]>(storedUi.tags ?? []);
-  const [tagMatch, setTagMatch] = useState<TokenMatch>(storedUi.tagMatch ?? "all");
+  const [initialUi] = useState<DocumentsUiPrefs>(() => {
+    const stored = migrateDocumentsUiPrefs(loadJSON<unknown>(DOCS_UI_KEY, {}));
+    const parsed = parseDocumentsHash(window.location.hash, stored);
+    return withDocumentsDeepLinks(parsed.prefs, initialCategory, initialNeedsAttention);
+  });
+  const [uiPrefs, setUiPrefs] = useState<DocumentsUiPrefs>(initialUi);
+  const view = uiPrefs.view;
+  const sort = uiPrefs.sort;
+  const dir = uiPrefs.dir;
+  const setView = useCallback((next: View) => setUiPrefs((current) => ({ ...current, view: next })), []);
+  const setOrder = useCallback((next: DocumentOrder) => {
+    setUiPrefs((current) => ({ ...current, ...orderToSort(next) }));
+  }, []);
+  const commitFilters = useCallback((next: DocumentsUiPrefs) => {
+    setUiPrefs(migrateDocumentsUiPrefs(next));
+  }, []);
   const [tagCatalog, setTagCatalog] = useState<TagOut[]>([]);
-  const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const [thumbSize, setThumbSize] = useState<ThumbSize>(() => readThumbSize());
   const [tileFields, setTileFields] = useState<TileFields>(() => readTileFields());
   const [windowSize, setWindowSize] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("manual");
+  const [loading, setLoading] = useState(true);
   // When the snapshot was truncated at the cap, the banner must say "first N of total", not "all".
   const [selectAllTruncated, setSelectAllTruncated] = useState(false);
   const [selectAllTotal, setSelectAllTotal] = useState(0);
@@ -1126,28 +1082,53 @@ export function DocumentsPanel({
   const [reprocessFeature, setReprocessFeature] = useState("");
   const [reprocessAllFeatureValue, setReprocessAllFeatureValue] = useState("");
   const [notice, setNotice] = useState("");
+  const [resultAnnouncement, setResultAnnouncement] = useState("");
   const loadAbort = useRef<AbortController | null>(null);
   const lastToggled = useRef<string | null>(null);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const bulkTagTriggerRef = useRef<HTMLButtonElement>(null);
   // The header "select all" checkbox needs an indeterminate (some-but-not-all) visual; React has no
   // prop for it, so we drive the DOM property from an effect.
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   // The filter snapshot shared by the list load and the "select all matching" id fetch, so the
   // cross-page selection is taken against the exact same query the list is showing.
-  const filters = useMemo(
-    () => ({
-      category: category || undefined,
-      status: status || undefined,
-      needsAttention: needsAttention || undefined,
-      unidentifiable: unidentifiable || undefined,
-      title: title || undefined,
-      tokens,
-      tokenMatch,
-      tags: selectedTags.length ? selectedTags : undefined,
-      tagMatch: selectedTags.length ? tagMatch : undefined,
-    }),
-    [category, status, needsAttention, unidentifiable, title, tokens, tokenMatch, selectedTags, tagMatch],
+  const filters = useMemo<DocumentFilters>(
+    () => filtersForPrefs(uiPrefs),
+    [
+      uiPrefs.query,
+      uiPrefs.statuses,
+      uiPrefs.categories,
+      uiPrefs.needsAttention,
+      uiPrefs.unidentifiable,
+      uiPrefs.tokens,
+      uiPrefs.tokenMatch,
+      uiPrefs.tags,
+      uiPrefs.tagMatch,
+    ],
   );
+  const lastSavedUi = useRef<string | null>(null);
+  const lastUrlUi = useRef<string | null>(null);
+  const adoptedHashUi = useRef<string | null>(null);
+
+  useEffect(() => {
+    function adoptHash() {
+      const route = window.location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
+      if (route !== "documents") return;
+      const stored = migrateDocumentsUiPrefs(loadJSON<unknown>(DOCS_UI_KEY, {}));
+      const parsed = parseDocumentsHash(window.location.hash, stored);
+      const next = parsed.explicit
+        ? parsed.prefs
+        : withDocumentsDeepLinks(parsed.prefs, initialCategory, initialNeedsAttention);
+      const serialized = JSON.stringify(next);
+      adoptedHashUi.current = serialized;
+      lastSavedUi.current = serialized;
+      setUiPrefs(next);
+    }
+    window.addEventListener("hashchange", adoptHash);
+    return () => window.removeEventListener("hashchange", adoptHash);
+  }, [initialCategory, initialNeedsAttention]);
 
   // The tag catalog for the filter popover (fetched once on mount).
   useEffect(() => {
@@ -1158,19 +1139,21 @@ export function DocumentsPanel({
 
   // Click a tag chip anywhere (list cell or card): filter the list to that tag (#549).
   function filterByTag(tagId: string) {
-    setSelectedTags([tagId]);
-    setTagMatch("all");
+    setUiPrefs((current) => ({ ...current, tags: [tagId], tagMatch: "all" }));
     setWindowSize(PAGE_SIZE);
   }
 
-  function toggleTagFilter(tagId: string) {
-    setSelectedTags((prev) =>
-      prev.includes(tagId) ? prev.filter((t) => t !== tagId) : [...prev, tagId],
+  const countDocuments = useCallback(async (draft: DocumentsUiPrefs, signal: AbortSignal) => {
+    const page = await fetchDocuments(
+      { ...filtersForPrefs(draft), sort: draft.sort, dir: draft.dir, limit: 1 },
+      signal,
     );
-  }
+    return page.total;
+  }, []);
 
   const load = useCallback(() => {
     const query = { ...filters, sort, dir };
+    setLoading(true);
     // Abort any in-flight poll so a slow response can't land after a newer one (last-write-wins).
     loadAbort.current?.abort();
     const ctrl = new AbortController();
@@ -1183,6 +1166,7 @@ export function DocumentsPanel({
       let cursor: string | undefined;
       let next: string | null = null;
       const processing: Record<string, ProcessingSummary> = {};
+      const stats: NonNullable<DocumentPage["stats"]> = {};
       const tagsMap: Record<string, { id: string; name: string; color: string }[]> = {};
       do {
         const page = await fetchDocuments({ ...query, cursor, limit: PAGE_SIZE }, ctrl.signal);
@@ -1191,6 +1175,7 @@ export function DocumentsPanel({
         next = page.next_cursor;
         cursor = next ?? undefined;
         Object.assign(processing, page.processing ?? {});
+        Object.assign(stats, page.stats ?? {});
         Object.assign(tagsMap, page.tags ?? {});
       } while (next && items.length < windowSize);
       // Scope badges to the loaded documents, not the whole tenant (whose ledger is row-capped and
@@ -1206,12 +1191,17 @@ export function DocumentsPanel({
         hasMore: next !== null,
         features: groupByDocument(features),
         processing,
+        stats,
         tags: tagsMap,
       });
-    })().catch((err: unknown) => {
-      if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
-      setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
-    });
+    })()
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted) return; // superseded by a newer load; ignore
+        setState({ kind: "error", message: err instanceof Error ? err.message : "unknown error" });
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
   }, [filters, sort, dir, windowSize]);
 
   useEffect(load, [load]);
@@ -1225,7 +1215,19 @@ export function DocumentsPanel({
     setSelected(new Set());
     setSelectionMode("manual");
     setSelectAllTruncated(false);
-  }, [category, status, needsAttention, unidentifiable, sort, dir, title, tokens, tokenMatch]);
+  }, [
+    uiPrefs.query,
+    uiPrefs.statuses,
+    uiPrefs.categories,
+    uiPrefs.needsAttention,
+    uiPrefs.unidentifiable,
+    sort,
+    dir,
+    uiPrefs.tokens,
+    uiPrefs.tokenMatch,
+    uiPrefs.tags,
+    uiPrefs.tagMatch,
+  ]);
 
   // Thumbnail size + tile fields persist per user; the mount run adopts the restored value
   // without writing it back (anti-clobber guard, #522).
@@ -1250,30 +1252,36 @@ export function DocumentsPanel({
     lastSavedTile.current = serialized;
     persistTileFields(tileFields);
   }, [tileFields]);
-  // Persist the view mode + filter set per user (#522): restored on the next mount, synced to the
-  // server store for other devices. The mount run adopts the restored prefs as baseline WITHOUT
-  // writing (same anti-clobber guard as the table layout).
-  const lastSavedUi = useRef<string | null>(null);
+  // Persist committed library state per user without writing back the restored mount baseline.
   useEffect(() => {
-    const prefs: DocsUiPrefs = {
-      view,
-      category,
-      status,
-      needsAttention,
-      unidentifiable,
-      title,
-      tags: selectedTags,
-      tagMatch,
-    };
-    const serialized = JSON.stringify(prefs);
+    const serialized = JSON.stringify(uiPrefs);
     if (lastSavedUi.current === null) {
       lastSavedUi.current = serialized;
       return;
     }
     if (lastSavedUi.current === serialized) return;
     lastSavedUi.current = serialized;
-    saveJSON(DOCS_UI_KEY, prefs);
-  }, [view, category, status, needsAttention, unidentifiable, title, selectedTags, tagMatch]);
+    saveJSON(DOCS_UI_KEY, uiPrefs);
+  }, [uiPrefs]);
+
+  // Desktop search is debounced, desktop filters commit immediately, and mobile drafts commit on Apply.
+  useEffect(() => {
+    const route = window.location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
+    if (route !== "documents") return;
+    const serialized = JSON.stringify(uiPrefs);
+    if (lastUrlUi.current === serialized) return;
+    const first = lastUrlUi.current === null;
+    lastUrlUi.current = serialized;
+    if (adoptedHashUi.current === serialized) {
+      adoptedHashUi.current = null;
+      return;
+    }
+    adoptedHashUi.current = null;
+    if (first && !initialCategory && !initialNeedsAttention) return;
+    const nextHash = serializeDocumentsHash(uiPrefs);
+    if (window.location.hash === nextHash) return;
+    window.history.replaceState(window.history.state, "", nextHash);
+  }, [uiPrefs, initialCategory, initialNeedsAttention]);
 
   // Keep the bulk selection in sync with what's actually shown (filter/poll can drop documents),
   // so an action never targets a hidden/gone document and select-all stays correct. CRITICAL: in
@@ -1312,7 +1320,30 @@ export function DocumentsPanel({
   const docs = state.kind === "ok" ? state.docs : [];
   const total = state.kind === "ok" ? state.total : 0;
   const hasMore = state.kind === "ok" && state.hasMore;
-  const isFiltered = Boolean(category || status || needsAttention || unidentifiable || tokens.length);
+  const hasSearch = Boolean(uiPrefs.query);
+  const hasFilters = Boolean(
+    uiPrefs.statuses.length ||
+      uiPrefs.categories.length ||
+      uiPrefs.tags.length ||
+      uiPrefs.tokens?.length ||
+      uiPrefs.needsAttention ||
+      uiPrefs.unidentifiable,
+  );
+  const isFiltered = hasSearch || hasFilters;
+  const resultQualifier = hasSearch && hasFilters
+    ? " (search + filtered)"
+    : hasSearch
+      ? " (search)"
+      : hasFilters
+        ? " (filtered)"
+        : "";
+  const resultText = state.kind === "ok"
+    ? `Showing ${docs.length} of ${total} document${total === 1 ? "" : "s"}${resultQualifier}`
+    : "";
+  useEffect(() => {
+    const timer = setTimeout(() => setResultAnnouncement(resultText), 300);
+    return () => clearTimeout(timer);
+  }, [resultText]);
   // How the loaded page sits inside the selection: drives the header checkbox (checked/indeterminate)
   // and the "select all matching" reveal rule.
   const loadedSelectedCount = docs.filter((d) => selected.has(d.id)).length;
@@ -1330,6 +1361,24 @@ export function DocumentsPanel({
     setSelectAllTruncated(false);
   }
 
+  function clearAllFilters() {
+    commitFilters({
+      ...uiPrefs,
+      query: "",
+      statuses: [],
+      categories: [],
+      needsAttention: false,
+      unidentifiable: false,
+      tags: [],
+      tagMatch: "all",
+      tokens: [],
+      tokenMatch: "all",
+    });
+    setWindowSize(PAGE_SIZE);
+    lastToggled.current = null;
+    clearSelection();
+  }
+
   function toggle(id: string, shiftKey: boolean) {
     // A manual row change while in all-matching mode collapses the cross-page snapshot back to the
     // loaded page (the row being clicked is currently ticked, so this deselects it).
@@ -1345,10 +1394,10 @@ export function DocumentsPanel({
       lastToggled.current = id;
       return;
     }
+    const anchor = lastToggled.current;
     setSelected((prev) => {
       const next = new Set(prev);
       const order = docs.map((d) => d.id);
-      const anchor = lastToggled.current;
       if (shiftKey && anchor && order.includes(anchor) && order.includes(id)) {
         const a = order.indexOf(anchor);
         const b = order.indexOf(id);
@@ -1389,6 +1438,7 @@ export function DocumentsPanel({
   }
 
   async function runBulk(action: (id: string) => Promise<void>, label: string) {
+    if (modeRef.current !== "advanced") return;
     setBusy(true);
     setNotice("");
     const ids = [...selected];
@@ -1400,6 +1450,7 @@ export function DocumentsPanel({
     let cursor = 0;
     async function worker() {
       for (;;) {
+        if (modeRef.current !== "advanced") return;
         const index = cursor++;
         if (index >= ids.length) return;
         try {
@@ -1416,11 +1467,13 @@ export function DocumentsPanel({
     clearSelection();
     setBulkProgress(null);
     setBusy(false);
-    setNotice(
-      failed === 0
-        ? `${label}: ${ids.length} document(s) succeeded.`
-        : `${label}: ${ids.length - failed} succeeded, ${failed} failed.`,
-    );
+    if (modeRef.current === "advanced") {
+      setNotice(
+        failed === 0
+          ? `${label}: ${ids.length} document(s) succeeded.`
+          : `${label}: ${ids.length - failed} succeeded, ${failed} failed.`,
+      );
+    }
     load();
   }
 
@@ -1452,6 +1505,11 @@ export function DocumentsPanel({
   // (not the per-document fan-out), then refresh and clear.
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [bulkTagApplying, setBulkTagApplying] = useState(false);
+
+  function closeBulkTags() {
+    setBulkTagOpen(false);
+    bulkTagTriggerRef.current?.focus({ preventScroll: true });
+  }
 
   async function applyBulkTags(add: string[], remove: string[]) {
     setBulkTagApplying(true);
@@ -1642,24 +1700,23 @@ export function DocumentsPanel({
 
   // --- DataTable controlled sort wiring ---------------------------------------------------------
   // Derive a TanStack SortingState from the parent's sort/dir (which also drives the fetch).
-  // category sort has no column; when it is active the table shows no indicator (dropdown covers it).
+  // Category has no sortable header; the named select owns it and the table shows no indicator.
   const tableSorting = useMemo((): SortingState => {
     const colId = SORT_TO_COLUMN[sort];
     if (!colId) return [];
     return [{ id: colId, desc: dir === "desc" }];
   }, [sort, dir]);
 
-  // Clicking a sortable column header -> translate back to the parent's sort/dir state (triggering
-  // the existing load()). setSort/setDir are stable React state setters, no deps needed.
+  // Clicking a sortable column header updates the same named ordering used by the select.
   const handleTableSortingChange = useCallback((next: SortingState) => {
-    if (next.length === 0) return;
+    if (next.length === 0) {
+      setOrder(orderFor(sort, "asc"));
+      return;
+    }
     const [first] = next;
     const docSort = COLUMN_TO_SORT[first.id];
-    if (docSort) {
-      setSort(docSort);
-      setDir(first.desc ? "desc" : "asc");
-    }
-  }, []);
+    if (docSort) setOrder(orderFor(docSort, first.desc ? "desc" : "asc"));
+  }, [setOrder, sort]);
 
   // --- Column definitions -----------------------------------------------------------------------
   const columns = useMemo<ColumnDef<DokDocument, unknown>[]>(
@@ -1733,14 +1790,18 @@ export function DocumentsPanel({
         id: "status",
         header: "Status",
         enableSorting: false,
-        size: 100,
-        minSize: 70,
+        size: 130,
+        minSize: 100,
         accessorFn: (d) => d.status,
         cell: ({ row }) => {
           const d = row.original;
+          const health = documentHealth(
+            d,
+            state.kind === "ok" ? state.processing[d.id] : undefined,
+          );
           return (
             <span className="doc-status-cell">
-              <span className={`badge status-${d.status}`}>{d.status}</span>
+              <span className={`doc-health ${health.tone}`}>{health.label}</span>
               {d.status === "failed" && (
                 <button
                   type="button"
@@ -1781,7 +1842,18 @@ export function DocumentsPanel({
           <span title={row.original.detected_mime ?? undefined}>{getValue<string>()}</span>
         ),
       },
-      // 6. Authored date — hideable, sortable -> created
+      // 6. Category — hideable; sorting stays in the named select
+      {
+        id: "category",
+        header: "Category",
+        enableHiding: true,
+        enableSorting: false,
+        size: 140,
+        minSize: 90,
+        accessorFn: (d) => (state.kind === "ok" ? state.stats[d.id]?.category : null) ?? "",
+        cell: ({ getValue }) => getValue<string>() || <span className="muted">-</span>,
+      },
+      // 7. Authored date — hideable, sortable -> created
       {
         id: "authored",
         header: () => (
@@ -1812,7 +1884,7 @@ export function DocumentsPanel({
           );
         },
       },
-      // 7. Ingested — hideable, hidden by default, sortable -> acquired
+      // 8. Ingested — hideable, hidden by default, sortable -> acquired
       {
         id: "ingested",
         header: "Ingested",
@@ -1823,7 +1895,7 @@ export function DocumentsPanel({
         accessorFn: (d) => d.created_at,
         cell: ({ getValue }) => formatDate(getValue<string>()),
       },
-      // 8. Tag chips (#549) — palette-colored, clickable to filter; not sortable
+      // 9. Tag chips (#549) — palette-colored, clickable to filter; not sortable
       {
         id: "tags",
         header: "Tags",
@@ -1837,7 +1909,7 @@ export function DocumentsPanel({
           return <TagChipList tags={docTags} onClickTag={filterByTag} />;
         },
       },
-      // 9. Processing chips — not hideable, not sortable
+      // 10. Processing chips — not hideable, not sortable
       {
         id: "processing",
         header: "Processing",
@@ -1867,8 +1939,93 @@ export function DocumentsPanel({
     [allLoadedSelected, toggleAll, selected, toggle, onOpenDocument, state, reprocessOne, reprocessOneGroup, reprocessFailedDocument, featureGroups],
   );
 
+  const simpleColumns = useMemo<ColumnDef<DokDocument, unknown>[]>(
+    () => [
+      {
+        id: "name",
+        header: "Document",
+        enableHiding: false,
+        enableSorting: false,
+        size: 280,
+        minSize: 160,
+        accessorFn: (d) => d.title ?? d.original_filename,
+        cell: ({ row }) => {
+          const d = row.original;
+          return (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => onOpenDocument?.(d.id)}
+            >
+              {d.title ?? d.original_filename}
+            </button>
+          );
+        },
+      },
+      {
+        id: "category",
+        header: "Category",
+        enableHiding: false,
+        enableSorting: false,
+        size: 160,
+        minSize: 100,
+        accessorFn: (d) => (state.kind === "ok" ? state.stats[d.id]?.category : null) ?? "",
+        cell: ({ getValue }) => getValue<string>() || <span className="muted">-</span>,
+      },
+      {
+        id: "authored",
+        header: () => (
+          <>
+            Document date{" "}
+            <span
+              className="doc-date-warning"
+              title={DOCUMENT_DATE_EXPLANATION}
+              aria-hidden="true"
+              onClick={(e) => e.stopPropagation()}
+            >
+              ⚠
+            </span>
+            <span className="visually-hidden">{DOCUMENT_DATE_EXPLANATION}</span>
+          </>
+        ),
+        enableHiding: false,
+        enableSorting: false,
+        size: 140,
+        minSize: 100,
+        accessorFn: (d) => d.document_date ?? "",
+        cell: ({ row }) => {
+          const d = row.original;
+          if (!d.document_date) return <span className="muted">-</span>;
+          return (
+            <span title={`Ingested (system): ${formatDate(d.created_at)}`}>
+              {formatDate(d.document_date)}
+            </span>
+          );
+        },
+      },
+      {
+        id: "status",
+        header: "Status",
+        enableHiding: false,
+        enableSorting: false,
+        size: 150,
+        minSize: 110,
+        accessorFn: (d) => d.status,
+        cell: ({ row }) => {
+          const d = row.original;
+          const health = documentHealth(
+            d,
+            state.kind === "ok" ? state.processing[d.id] : undefined,
+          );
+          return <span className={`doc-health ${health.tone}`}>{health.label}</span>;
+        },
+      },
+    ],
+    [onOpenDocument, state],
+  );
+
   return (
-    <section aria-label="Documents" className="panel">
+    <section aria-label="Documents" className="panel" data-mode={mode}>
       <div className="result-head">
         <h2>Documents</h2>
         <nav className="tabs docs-subtabs" aria-label="Document view">
@@ -1894,115 +2051,29 @@ export function DocumentsPanel({
         </button>
       </div>
 
+      <DocumentsFilterControls
+        prefs={uiPrefs}
+        categories={categories}
+        tags={tagCatalog}
+        loading={loading}
+        onChange={commitFilters}
+        onClearAll={clearAllFilters}
+        count={countDocuments}
+      />
+
       <div className="docs-toolbar">
-        <label>
-          Status{" "}
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="active">Active</option>
-            <option value="failed">Failed</option>
-            <option value="quarantined">Quarantined</option>
-            <option value="duplicate">Duplicate</option>
-          </select>
-        </label>
-        {categories.length > 0 && (
-          <label>
-            Category{" "}
-            <select value={category} onChange={(e) => setCategory(e.target.value)}>
-              <option value="">All</option>
-              {categories.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name} ({c.document_count})
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {tagCatalog.length > 0 && (
-          <span className="docs-tag-filter">
-            <button
-              type="button"
-              aria-expanded={tagFilterOpen}
-              onClick={() => setTagFilterOpen((v) => !v)}
-            >
-              Tags{selectedTags.length > 0 ? ` (${selectedTags.length})` : ""} ▾
-            </button>
-            {tagFilterOpen && (
-              <div className="docs-tag-filter-pop" role="dialog" aria-label="Filter by tags">
-                <div role="radiogroup" aria-label="Tag match mode" className="docs-tag-match">
-                  <label>
-                    <input
-                      type="radio"
-                      name="tag-match"
-                      checked={tagMatch === "all"}
-                      onChange={() => setTagMatch("all")}
-                    />{" "}
-                    All
-                  </label>
-                  <label>
-                    <input
-                      type="radio"
-                      name="tag-match"
-                      checked={tagMatch === "any"}
-                      onChange={() => setTagMatch("any")}
-                    />{" "}
-                    Any
-                  </label>
-                </div>
-                <ul className="bulk-tag-list">
-                  {tagCatalog.map((t) => (
-                    <li key={t.id}>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={selectedTags.includes(t.id)}
-                          onChange={() => toggleTagFilter(t.id)}
-                        />{" "}
-                        <TagChip name={t.name} color={t.color} />
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </span>
-        )}
-        <label title="Documents with a failed feature (red badge) - not ones still processing">
-          <input
-            type="checkbox"
-            checked={needsAttention}
-            onChange={(e) => setNeedsAttention(e.target.checked)}
-          />{" "}
-          Needs attention
-        </label>
-        <label title="Documents the system could not identify (extraction succeeded but the content is not meaningful)">
-          <input
-            type="checkbox"
-            checked={unidentifiable}
-            onChange={(e) => setUnidentifiable(e.target.checked)}
-          />{" "}
-          Unidentifiable
-        </label>
-        <SortControl sort={sort} dir={dir} onSort={setSort} onDir={setDir} />
+        <SortControl order={orderFor(sort, dir)} onChange={setOrder} />
         {view === "thumbnails" && (
           <>
             <ThumbSizeControl size={thumbSize} onChange={setThumbSize} />
-            <FieldsControl fields={tileFields} onChange={setTileFields} />
+            {mode === "advanced" && (
+              <FieldsControl fields={tileFields} onChange={setTileFields} />
+            )}
           </>
         )}
       </div>
 
-      <TitleFilterBar value={title} onChange={setTitle} />
-
-      <TokenFilterBar
-        tokens={tokens}
-        match={tokenMatch}
-        onAdd={(t) => setTokens((prev) => [...prev, t])}
-        onRemove={(t) => setTokens((prev) => prev.filter((x) => x !== t))}
-        onMatch={setTokenMatch}
-      />
-
-      {(featureGroups.length > 0 || catalog.length > 0) && (
+      {mode === "advanced" && (featureGroups.length > 0 || catalog.length > 0) && (
         <div className="bulk-bar" role="region" aria-label="Reprocess all documents">
           <span className="bulk-reprocess">
             <select
@@ -2038,7 +2109,7 @@ export function DocumentsPanel({
         </div>
       )}
 
-      {selected.size > 0 && (
+      {mode === "advanced" && selected.size > 0 && (
         <div className="bulk-bar" role="region" aria-label="Bulk actions">
           <span>
             {bulkProgress
@@ -2046,6 +2117,7 @@ export function DocumentsPanel({
               : `${selected.size.toLocaleString()} selected`}
           </span>
           <button
+            ref={bulkTagTriggerRef}
             type="button"
             disabled={busy}
             onClick={() => setBulkTagOpen(true)}
@@ -2137,16 +2209,16 @@ export function DocumentsPanel({
         </div>
       )}
 
-      {bulkTagOpen && (
+      {mode === "advanced" && bulkTagOpen && (
         <BulkTagDialog
           count={selected.size}
           applying={bulkTagApplying}
           onApply={(add, remove) => void applyBulkTags(add, remove)}
-          onClose={() => setBulkTagOpen(false)}
+          onClose={closeBulkTags}
         />
       )}
 
-      {showSelectAllBanner && (
+      {mode === "advanced" && showSelectAllBanner && (
         <div
           className="bulk-bar select-all-banner"
           role="region"
@@ -2182,13 +2254,21 @@ export function DocumentsPanel({
       )}
 
       {state.kind === "ok" && (
-        <p className="muted result-count">
-          Showing {docs.length} of {total} document{total === 1 ? "" : "s"}
-          {isFiltered && " (filtered)"}
+        <p className="muted result-count" aria-hidden="true">
+          {resultText}
         </p>
       )}
+      <p
+        role="log"
+        aria-label="Document results"
+        aria-live="polite"
+        aria-atomic="true"
+        className="visually-hidden"
+      >
+        {resultAnnouncement}
+      </p>
 
-      {state.kind === "ok" && docs.length > 0 && (
+      {mode === "advanced" && state.kind === "ok" && docs.length > 0 && (
         <p className="chip-legend muted">
           Processing: <span className="chip">text</span> extraction
           {" · "}
@@ -2214,36 +2294,48 @@ export function DocumentsPanel({
         </p>
       )}
       {state.kind === "ok" && docs.length === 0 && (
-        <p className="empty">No documents match this filter.</p>
+        <div className="empty docs-empty-recovery">
+          <p>No documents match this filter.</p>
+          {isFiltered && (
+            <button type="button" onClick={clearAllFilters}>Clear filters</button>
+          )}
+        </div>
       )}
 
       {state.kind === "ok" && docs.length > 0 && view === "list" && (
         <DataTable<DokDocument>
+          key={mode}
           data={docs}
-          columns={columns}
+          columns={mode === "simple" ? simpleColumns : columns}
           getRowId={(doc) => doc.id}
-          persistKey="documents-table"
-          initialVisibility={DOCS_INITIAL_VISIBILITY}
-          sorting={tableSorting}
-          onSortingChange={handleTableSortingChange}
+          label="Documents table"
+          persistKey={mode === "simple" ? "documents-table-simple" : "documents-table"}
+          initialVisibility={mode === "simple" ? {} : DOCS_INITIAL_VISIBILITY}
+          sorting={mode === "simple" ? [] : tableSorting}
+          onSortingChange={mode === "simple" ? undefined : handleTableSortingChange}
           manualSorting
-          rowClassName={(doc) => (selected.has(doc.id) ? "row-selected" : undefined)}
+          showColumnControls={mode === "advanced"}
+          rowClassName={(doc) =>
+            mode === "advanced" && selected.has(doc.id) ? "row-selected" : undefined
+          }
         />
       )}
 
       {state.kind === "ok" && docs.length > 0 && view === "thumbnails" && (
         <>
-          <div className="docs-select-all">
-            <label>
-              <input
-                type="checkbox"
-                aria-label="Select all loaded documents"
-                checked={allLoadedSelected}
-                onChange={toggleAll}
-              />{" "}
-              Select all loaded
-            </label>
-          </div>
+          {mode === "advanced" && (
+            <div className="docs-select-all">
+              <label>
+                <input
+                  type="checkbox"
+                  aria-label="Select all loaded documents"
+                  checked={allLoadedSelected}
+                  onChange={toggleAll}
+                />{" "}
+                Select all loaded
+              </label>
+            </div>
+          )}
           <div className="docs-grid" data-size={thumbSize}>
             {docs.map((doc) => (
               <DocumentCard
@@ -2251,7 +2343,11 @@ export function DocumentsPanel({
                 doc={doc}
                 features={state.features.get(doc.id) ?? []}
                 rollup={processingRollup(state.processing[doc.id])}
+                processing={state.processing[doc.id]}
+                category={state.stats[doc.id]?.category}
+                mode={mode}
                 selected={selected.has(doc.id)}
+                selectionEnabled={mode === "advanced"}
                 onToggle={toggle}
                 onOpen={onOpenDocument}
                 onReprocessFailed={reprocessFailedDocument}

@@ -102,6 +102,10 @@ export interface DocumentPage {
   // Per-document processing summaries keyed by document id (sidecar map; list response only).
   // Old/absent docs are simply missing from the map - callers must tolerate `undefined`.
   processing?: Record<string, ProcessingSummary>;
+  stats?: Record<
+    string,
+    { entity_count: number; chunk_count: number; category: string | null }
+  >;
   // Per-document tags for the list/cards chips (#549); sidecar map, only on the list response.
   tags?: Record<string, { id: string; name: string; color: string }[]>;
 }
@@ -112,8 +116,11 @@ export type TokenMatch = "all" | "any";
 
 /** The filter fields shared by the documents list and the "select all matching" id endpoint. */
 export interface DocumentFilters {
+  query?: string;
   category?: string;
+  categories?: string[];
   status?: string;
+  statuses?: string[];
   needsAttention?: boolean;
   unidentifiable?: boolean;
   title?: string;
@@ -135,8 +142,11 @@ export interface DocumentQuery extends DocumentFilters {
  * "select all matching" snapshot is taken against the exact same filter the visible list shows. */
 function documentFilterParams(opts: DocumentFilters): URLSearchParams {
   const params = new URLSearchParams();
+  if (opts.query?.trim()) params.set("q", opts.query.trim());
   if (opts.category) params.set("category", opts.category);
+  (opts.categories ?? []).forEach((category) => params.append("category", category));
   if (opts.status) params.set("status", opts.status);
+  (opts.statuses ?? []).forEach((status) => params.append("status", status));
   if (opts.needsAttention) params.set("needs_attention", "true");
   if (opts.unidentifiable) params.set("unidentifiable", "true");
   if (opts.title?.trim()) params.set("title", opts.title.trim());

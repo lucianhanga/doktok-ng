@@ -221,12 +221,19 @@ class InMemoryDocumentRepository:
             return requested <= linked
         return bool(requested & linked)
 
+    def _matches_query(self, d: Document, q: str | None) -> bool:
+        terms = q.lower().split() if q else []
+        values = [d.title or "", d.original_filename]
+        values.extend(value for _, value in self.tokens_by_doc.get(d.id, set()))
+        return all(any(term in value.lower() for value in values) for term in terms)
+
     def _filtered(
         self,
         tenant_id: str,
         *,
-        status: DocumentStatus | None,
-        category: str | None,
+        q: str | None,
+        status: DocumentStatus | tuple[DocumentStatus, ...] | None,
+        category: str | tuple[str, ...] | None,
         needs_attention: bool,
         unidentifiable: bool | None,
         title: str | None,
@@ -236,14 +243,16 @@ class InMemoryDocumentRepository:
         tag_ids: tuple[str, ...],
         tag_match: TokenMatch,
     ) -> list[Document]:
+        statuses = {status} if isinstance(status, DocumentStatus) else set(status or ())
+        categories = {category} if isinstance(category, str) else set(category or ())
         title_clean = title.strip().lower() if title and title.strip() else None
         return [
             d
             for d in self._docs.values()
             if d.tenant_id == tenant_id
-            and (status is None or d.status == status)
+            and (not statuses or d.status in statuses)
             and (not needs_attention or d.id in self.attention_ids)
-            and (category is None or category in self.categories_by_doc.get(d.id, set()))
+            and (not categories or categories & self.categories_by_doc.get(d.id, set()))
             and (title_clean is None or (d.title is not None and title_clean in d.title.lower()))
             # True = only flagged; False = exclude flagged (NULL 'unassessed' stays shown) - matches
             # the Postgres `IS NOT TRUE` semantics.
@@ -251,6 +260,7 @@ class InMemoryDocumentRepository:
                 unidentifiable is None
                 or (d.unidentifiable is True if unidentifiable else d.unidentifiable is not True)
             )
+            and self._matches_query(d, q)
             and self._matches_tokens(d, tokens, token_type, token_match)
             and self._matches_tags(d, tag_ids, tag_match)
         ]
@@ -261,8 +271,9 @@ class InMemoryDocumentRepository:
         *,
         limit: int = 50,
         cursor: ListAnchor | None = None,
-        status: DocumentStatus | None = None,
-        category: str | None = None,
+        q: str | None = None,
+        status: DocumentStatus | tuple[DocumentStatus, ...] | None = None,
+        category: str | tuple[str, ...] | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
@@ -276,6 +287,7 @@ class InMemoryDocumentRepository:
     ) -> tuple[list[Document], int, ListAnchor | None]:
         docs = self._filtered(
             tenant_id,
+            q=q,
             status=status,
             category=category,
             needs_attention=needs_attention,
@@ -329,8 +341,9 @@ class InMemoryDocumentRepository:
         self,
         tenant_id: str,
         *,
-        status: DocumentStatus | None = None,
-        category: str | None = None,
+        q: str | None = None,
+        status: DocumentStatus | tuple[DocumentStatus, ...] | None = None,
+        category: str | tuple[str, ...] | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
         title: str | None = None,
@@ -345,6 +358,7 @@ class InMemoryDocumentRepository:
             d.id
             for d in self._filtered(
                 tenant_id,
+                q=q,
                 status=status,
                 category=category,
                 needs_attention=needs_attention,

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:documents-layout": "pnpm build && node scripts/check-documents-layout.mjs"
   },
   "dependencies": {
     "@deck.gl/core": "^9.3.5",

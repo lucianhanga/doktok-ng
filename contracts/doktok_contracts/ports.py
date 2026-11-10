@@ -137,8 +137,9 @@ class DocumentRepository(Protocol):
         *,
         limit: int = 50,
         cursor: ListAnchor | None = None,
-        status: DocumentStatus | None = None,
-        category: str | None = None,
+        q: str | None = None,
+        status: DocumentStatus | tuple[DocumentStatus, ...] | None = None,
+        category: str | tuple[str, ...] | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
@@ -153,12 +154,14 @@ class DocumentRepository(Protocol):
         """Keyset-paginated documents ordered by ``sort``/``direction`` with ``id`` as tie-breaker.
 
         ``cursor`` is the ``ListAnchor`` of the last row already seen (None = first page); it must
-        match the requested ``sort``/``direction``. Null sort values always sort last. ``title``
-        keeps only documents whose title contains it (case-insensitive substring). ``tokens``
-        keeps only documents carrying those entity/keyword values (combined per ``token_match``,
-        optionally constrained to ``token_type``); ``needs_attention`` keeps documents with a
-        non-done feature; ``category`` keeps documents linked to that active category. All filters
-        compose. Returns ``(items, total, next_anchor)``; ``next_anchor`` is None on the last page.
+        match the requested ``sort``/``direction``. Null sort values always sort last. Each ``q``
+        term matches title, original filename, or normalized entity value; terms are ANDed.
+        ``title`` keeps only documents whose title contains it (case-insensitive substring).
+        ``tokens`` keeps only documents carrying those entity/keyword values (combined per
+        ``token_match``, optionally constrained to ``token_type``); ``needs_attention`` keeps
+        documents with a non-done feature. Repeated statuses and categories are ORed within each
+        attribute, and all filters compose. Returns ``(items, total, next_anchor)``;
+        ``next_anchor`` is None on the last page.
         """
         ...
 
@@ -166,8 +169,9 @@ class DocumentRepository(Protocol):
         self,
         tenant_id: str,
         *,
-        status: DocumentStatus | None = None,
-        category: str | None = None,
+        q: str | None = None,
+        status: DocumentStatus | tuple[DocumentStatus, ...] | None = None,
+        category: str | tuple[str, ...] | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
         title: str | None = None,

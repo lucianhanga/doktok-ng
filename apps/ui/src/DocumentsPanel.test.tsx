@@ -1,12 +1,13 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { BULK_CONCURRENCY, DocumentsPanel } from "./DocumentsPanel";
-import type { DokDocument } from "./api";
+import type { DocumentPage, DokDocument } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
+  window.location.hash = "";
 });
 
 /** A fetch mock for the select-all-matching flow: the documents list reports a `total` larger than
@@ -35,7 +36,9 @@ function mockSelectAll(opts: {
       );
     }
     if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
-    if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/categories") || url.includes("/api/v1/tags")) {
+      return new Response("[]", { status: 200 });
+    }
     if (init?.method === "DELETE") {
       const id = decodeURIComponent(url.replace("/api/v1/documents/", ""));
       deleted.push(id);
@@ -50,7 +53,14 @@ function mockSelectAll(opts: {
   return { fetchMock, deleted };
 }
 
-function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknown[] = [], groups: unknown[] = [], tagsMap: Record<string, unknown[]> = {}) {
+function mockDocs(
+  docs: DokDocument[],
+  features: unknown[] = [],
+  catalog: unknown[] = [],
+  groups: unknown[] = [],
+  tagsMap: Record<string, unknown[]> = {},
+  page: Pick<DocumentPage, "processing" | "stats"> = {},
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/api/v1/features/catalog")) {
@@ -63,12 +73,19 @@ function mockDocs(docs: DokDocument[], features: unknown[] = [], catalog: unknow
     if (url.includes("/api/v1/features")) {
       return new Response(JSON.stringify(features), { status: 200 });
     }
-    if (url.includes("/api/v1/categories")) {
+    if (url.includes("/api/v1/categories") || url.includes("/api/v1/tags")) {
       return new Response(JSON.stringify([]), { status: 200 });
     }
     // The documents list is a keyset-paginated envelope (single page in tests).
     return new Response(
-      JSON.stringify({ items: docs, total: docs.length, next_cursor: null, tags: tagsMap }),
+      JSON.stringify({
+        items: docs,
+        total: docs.length,
+        next_cursor: null,
+        tags: tagsMap,
+        processing: page.processing,
+        stats: page.stats,
+      }),
       { status: 200 },
     );
   });
@@ -113,7 +130,8 @@ test("shows the unidentifiable badge and filters by it", async () => {
   // The neutral badge is shown for flagged documents.
   expect(screen.getByText("unidentifiable", { selector: ".badge-unidentifiable" })).toBeInTheDocument();
 
-  // Ticking the filter sends unidentifiable=true on the next documents query.
+  // Ticking the disclosed filter sends unidentifiable=true on the next documents query.
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   fireEvent.click(screen.getByLabelText("Unidentifiable"));
   await waitFor(() =>
     expect(
@@ -258,6 +276,7 @@ test("shows a count line and sends needs_attention when the filter is toggled", 
   render(<DocumentsPanel />);
   await waitFor(() => expect(screen.getByText(/Showing 1 of 1 document/i)).toBeInTheDocument());
 
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   fireEvent.click(screen.getByLabelText(/Needs attention/i));
   await waitFor(() =>
     expect(
@@ -283,24 +302,32 @@ test("Load more pages through the keyset cursor", async () => {
 
   render(<DocumentsPanel />);
   await waitFor(() => expect(screen.getByText(/Showing 50 of 60/i)).toBeInTheDocument());
-  expect(screen.queryByText("d59.pdf")).not.toBeInTheDocument(); // off the first window
+  expect(screen.queryByText("d59.pdf")).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Load more"));
   await waitFor(() => expect(screen.getByText(/Showing 60 of 60/i)).toBeInTheDocument());
-  expect(screen.getByText("d59.pdf")).toBeInTheDocument(); // now loaded
-  expect(screen.queryByText("Load more")).not.toBeInTheDocument(); // last page reached
+  expect(screen.getByText("d59.pdf")).toBeInTheDocument();
+  expect(screen.queryByText("Load more")).not.toBeInTheDocument();
+  const listUrls = fetchMock.mock.calls
+    .map(([input]) => String(input))
+    .filter((url) => url.startsWith("/api/v1/documents?"));
+  expect(listUrls).toHaveLength(3);
+  expect(new URL(listUrls[0], "http://x").searchParams.get("cursor")).toBeNull();
+  expect(new URL(listUrls[1], "http://x").searchParams.get("cursor")).toBeNull();
+  expect(new URL(listUrls[2], "http://x").searchParams.get("cursor")).toBe("50");
+  for (const url of listUrls) {
+    expect(new URL(url, "http://x").searchParams.get("sort")).toBe("acquired");
+    expect(new URL(url, "http://x").searchParams.get("dir")).toBe("desc");
+  }
 });
 
 test("Thumbnails subtab shows a thumbnail grid for the same documents", async () => {
   const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf", title: "Report" })]);
   render(<DocumentsPanel />);
-  // With an explicit title, the Name column shows "Report" (not the raw filename)
-  await waitFor(() => expect(screen.getByText("Report")).toBeInTheDocument()); // list default
+  await waitFor(() => expect(screen.getByText("Report")).toBeInTheDocument());
 
   fireEvent.click(screen.getByText("Thumbnails"));
-  // No refetch needed: the card renders from the same data with a first-page preview image.
   expect(screen.getByLabelText("Select all loaded documents")).toBeInTheDocument();
-  // AuthImg loads the bytes through the (authenticated) fetch and renders a blob object URL.
   const img = (await screen.findByAltText("Preview of Report")) as HTMLImageElement;
   expect(img.getAttribute("src")).toMatch(/^blob:/);
   expect(
@@ -310,84 +337,173 @@ test("Thumbnails subtab shows a thumbnail grid for the same documents", async ()
   ).toBe(true);
 });
 
-test("sort control changes the documents query", async () => {
+test("one named sort select exposes all eight outcomes and maps them to the API", async () => {
+  const cases = [
+    ["newest", "Newest imported", "acquired", "desc"],
+    ["oldest", "Oldest imported", "acquired", "asc"],
+    ["title-asc", "Title A–Z", "title", "asc"],
+    ["title-desc", "Title Z–A", "title", "desc"],
+    ["document-date-desc", "Document date, newest", "created", "desc"],
+    ["document-date-asc", "Document date, oldest", "created", "asc"],
+    ["category-asc", "Category A–Z", "category", "asc"],
+    ["category-desc", "Category Z–A", "category", "desc"],
+  ] as const;
   const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
   render(<DocumentsPanel />);
-  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+  await screen.findByText("report.pdf");
 
-  fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "title" } });
-  await waitFor(() => {
-    const calledTitleSort = fetchMock.mock.calls.some(([input]) =>
-      String(input).includes("sort=title"),
-    );
-    expect(calledTitleSort).toBe(true);
-  });
-});
-
-test("clicking the Name column header sorts by title", async () => {
-  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
-  const { container } = render(<DocumentsPanel />);
-  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
-
-  // Find the Name header sort label in the DataTable and click it
-  const allLabels = container.querySelectorAll(".datatable-th-label");
-  const nameLabel = Array.from(allLabels).find((el) => el.textContent?.trim().startsWith("Name"));
-  expect(nameLabel).toBeTruthy();
-  fireEvent.click(nameLabel!);
-
-  await waitFor(() =>
-    expect(
-      fetchMock.mock.calls.some(([input]) => String(input).includes("sort=title")),
-    ).toBe(true),
+  const select = screen.getByLabelText("Sort by");
+  expect(within(select).getAllByRole("option").map((option) => [option.getAttribute("value"), option.textContent])).toEqual(
+    cases.map(([order, label]) => [order, label]),
   );
+  expect(select).toHaveValue("newest");
+  expect(screen.queryByRole("button", { name: /switch to (ascending|descending)/ })).not.toBeInTheDocument();
+
+  for (const [order, , sort, dir] of cases) {
+    fireEvent.change(select, { target: { value: order } });
+    expect(select).toHaveValue(order);
+    await waitFor(() => {
+      const matched = fetchMock.mock.calls.some(([input]) => {
+        const url = new URL(String(input), "http://x");
+        return url.pathname === "/api/v1/documents" &&
+          url.searchParams.get("sort") === sort &&
+          url.searchParams.get("dir") === dir;
+      });
+      expect(matched).toBe(true);
+    });
+  }
 });
 
-test("clicking the Authored date column header sorts by created", async () => {
+test("Advanced header clicks update the named selection and all table indicators", async () => {
+  localStorage.setItem("documents-table", JSON.stringify({ columnVisibility: { ingested: true } }));
   const fetchMock = mockDocs([
     doc({ id: "a", original_filename: "report.pdf", document_date: "2025-01-15" }),
   ]);
   const { container } = render(<DocumentsPanel />);
-  await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
+  await screen.findByRole("button", { name: "report.pdf" });
+  const clickHeader = (name: string) => {
+    const label = Array.from(container.querySelectorAll(".datatable-th-label")).find((element) =>
+      element.textContent?.trim().startsWith(name),
+    );
+    expect(label).toBeTruthy();
+    fireEvent.click(label!);
+  };
 
-  const allLabels = container.querySelectorAll(".datatable-th-label");
-  const authoredLabel = Array.from(allLabels).find((el) =>
-    el.textContent?.trim().startsWith("Authored"),
-  );
-  expect(authoredLabel).toBeTruthy();
-  fireEvent.click(authoredLabel!);
+  expect(screen.getByRole("columnheader", { name: /Ingested/ })).toHaveAttribute("aria-sort", "descending");
+  expect(screen.getByRole("columnheader", { name: /^Name/ })).toHaveAttribute("aria-sort", "none");
 
+  clickHeader("Ingested");
+  expect(screen.getByLabelText("Sort by")).toHaveValue("oldest");
+  expect(screen.getByRole("columnheader", { name: /Ingested/ })).toHaveAttribute("aria-sort", "ascending");
+  clickHeader("Ingested");
+  expect(screen.getByLabelText("Sort by")).toHaveValue("newest");
+  expect(screen.getByRole("columnheader", { name: /Ingested/ })).toHaveAttribute("aria-sort", "descending");
+
+  clickHeader("Name");
+  expect(screen.getByLabelText("Sort by")).toHaveValue("title-asc");
+  expect(screen.getByRole("columnheader", { name: /^Name/ })).toHaveAttribute("aria-sort", "ascending");
+  expect(screen.getByRole("columnheader", { name: /Ingested/ })).toHaveAttribute("aria-sort", "none");
+  clickHeader("Name");
+  expect(screen.getByLabelText("Sort by")).toHaveValue("title-desc");
+  expect(screen.getByRole("columnheader", { name: /^Name/ })).toHaveAttribute("aria-sort", "descending");
+  clickHeader("Name");
+  expect(screen.getByLabelText("Sort by")).toHaveValue("title-asc");
+  expect(screen.getByRole("columnheader", { name: /^Name/ })).toHaveAttribute("aria-sort", "ascending");
+
+  clickHeader("Authored");
+  expect(screen.getByLabelText("Sort by")).toHaveValue("document-date-asc");
+  expect(screen.getByRole("columnheader", { name: /Authored/ })).toHaveAttribute("aria-sort", "ascending");
+  expect(screen.getByRole("columnheader", { name: /^Name/ })).toHaveAttribute("aria-sort", "none");
   await waitFor(() =>
-    expect(
-      fetchMock.mock.calls.some(([input]) => String(input).includes("sort=created")),
-    ).toBe(true),
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = new URL(String(input), "http://x");
+      return url.searchParams.get("sort") === "created" && url.searchParams.get("dir") === "asc";
+    })).toBe(true),
   );
 });
 
-test("typing in the title filter narrows the query", async () => {
+test("named ordering persists across remounts and explicit URL state wins on return", async () => {
+  window.location.hash = "#/documents";
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  const first = render(<DocumentsPanel />);
+  await screen.findByText("report.pdf");
+  fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "category-desc" } });
+  await waitFor(() => {
+    expect(JSON.parse(localStorage.getItem("doktok.docs.ui") ?? "{}")).toMatchObject({
+      sort: "category",
+      dir: "desc",
+    });
+    expect(new URLSearchParams(window.location.hash.split("?")[1]).get("order")).toBe("category-desc");
+  });
+  first.unmount();
+
+  window.history.replaceState(null, "", "#/documents");
+  const second = render(<DocumentsPanel />);
+  expect(await screen.findByLabelText("Sort by")).toHaveValue("category-desc");
+  second.unmount();
+
+  window.history.replaceState(null, "", "#/documents?order=document-date-asc");
+  render(<DocumentsPanel />);
+  expect(await screen.findByLabelText("Sort by")).toHaveValue("document-date-asc");
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = new URL(String(input), "http://x");
+      return url.searchParams.get("sort") === "created" && url.searchParams.get("dir") === "asc";
+    })).toBe(true),
+  );
+});
+
+test("changing named ordering aborts the superseded list request", async () => {
+  let initialSignal: AbortSignal | undefined;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/documents?")) {
+      if (!url.includes("dir=asc")) {
+        initialSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }
+      return new Response(JSON.stringify({ items: [], total: 0, next_cursor: null }), { status: 200 });
+    }
+    return new Response("[]", { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<DocumentsPanel />);
+  await waitFor(() => expect(initialSignal).toBeDefined());
+
+  fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "oldest" } });
+
+  await screen.findByText("No documents match this filter.");
+  expect(initialSignal?.aborted).toBe(true);
+  expect(fetchMock.mock.calls.some(([input]) => {
+    const url = new URL(String(input), "http://x");
+    return url.searchParams.get("sort") === "acquired" && url.searchParams.get("dir") === "asc";
+  })).toBe(true);
+});
+
+test("typing in the unified query narrows the documents request", async () => {
   const fetchMock = mockDocs([doc({ id: "a", original_filename: "swm.pdf", title: "SWM Rechnung" })]);
   render(<DocumentsPanel />);
-  // With an explicit title, Name column shows "SWM Rechnung"
   await waitFor(() => expect(screen.getByText("SWM Rechnung")).toBeInTheDocument());
 
-  fireEvent.change(screen.getByLabelText("Filter by title"), { target: { value: "rechnung" } });
+  fireEvent.change(screen.getByLabelText("Search documents"), { target: { value: "rechnung" } });
 
   await waitFor(() => {
-    const calledWithTitle = fetchMock.mock.calls.some((call) => {
+    const calledWithQuery = fetchMock.mock.calls.some((call) => {
       const url = String(call[0]);
-      return url.includes("/api/v1/documents?") && url.includes("title=rechnung");
+      return url.includes("/api/v1/documents?") && url.includes("q=rechnung");
     });
-    expect(calledWithTitle).toBe(true);
+    expect(calledWithQuery).toBe(true);
   });
 });
 
-test("adding a token filter narrows the query", async () => {
+test("a restored legacy token still narrows the query without adding a token input", async () => {
+  localStorage.setItem("doktok.docs.ui", JSON.stringify({ tokens: ["Acme"] }));
   const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
   render(<DocumentsPanel />);
   await waitFor(() => expect(screen.getByText("report.pdf")).toBeInTheDocument());
 
-  const input = screen.getByLabelText("Filter by token");
-  fireEvent.change(input, { target: { value: "Acme" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  expect(screen.queryByLabelText("Filter by token")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove legacy token: Acme" })).toBeInTheDocument();
   await waitFor(() => {
     const calledWithToken = fetchMock.mock.calls.some((call) => {
       const url = String(call[0]);
@@ -662,6 +778,20 @@ test("thumbnail selection checkbox is present in the DOM for keyboard access (ho
   expect(await screen.findByLabelText("Select kbd.pdf")).toBeInTheDocument();
 });
 
+test("thumbnail selection activates from the padded label area", async () => {
+  mockDocs([doc({ id: "a", original_filename: "touch.pdf" })]);
+  render(<DocumentsPanel />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+
+  const checkbox = await screen.findByLabelText("Select touch.pdf");
+  const hitArea = checkbox.parentElement;
+  expect(hitArea?.tagName).toBe("LABEL");
+  fireEvent.click(hitArea!);
+
+  expect(checkbox).toBeChecked();
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+});
+
 // --- Feature group badge collapsing (#521) -------------------------------------------------------
 
 const KG_GROUPS = [
@@ -903,7 +1033,8 @@ test("the status filter persists across remounts (#522)", async () => {
   const fetchMock = mockDocs([doc({ id: "a", original_filename: "note.txt" })]);
   const first = render(<DocumentsPanel />);
   await screen.findByText("note.txt");
-  fireEvent.change(screen.getByLabelText(/Status/), { target: { value: "failed" } });
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Failed" }));
   await waitFor(() =>
     expect(
       fetchMock.mock.calls.some(([u]) => String(u).includes("status=failed")),
@@ -913,7 +1044,8 @@ test("the status filter persists across remounts (#522)", async () => {
 
   render(<DocumentsPanel />);
   await screen.findByText("note.txt");
-  expect((screen.getByLabelText(/Status/) as HTMLSelectElement).value).toBe("failed");
+  fireEvent.click(screen.getByRole("button", { name: "Filters (1)" }));
+  expect(screen.getByRole("checkbox", { name: "Failed" })).toBeChecked();
 });
 
 test("an App deep-link (initialCategory) wins over the stored filter prefs (#522)", async () => {
@@ -925,6 +1057,7 @@ test("an App deep-link (initialCategory) wins over the stored filter prefs (#522
       if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
       if (url.includes("/api/v1/features/groups")) return new Response("[]", { status: 200 });
       if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/tags")) return new Response("[]", { status: 200 });
       if (url.includes("/api/v1/categories")) {
         return new Response(
           JSON.stringify([
@@ -946,7 +1079,8 @@ test("an App deep-link (initialCategory) wins over the stored filter prefs (#522
   );
   render(<DocumentsPanel initialCategory="deep-cat" />);
   await screen.findByText("note.txt");
-  expect((screen.getByLabelText(/Category/) as HTMLSelectElement).value).toBe("deep-cat");
+  fireEvent.click(screen.getByRole("button", { name: "Filters (1)" }));
+  expect(await screen.findByRole("checkbox", { name: "deep-cat (2)" })).toBeChecked();
 });
 
 test("the bulk Tags dialog assigns the picked tags to the selection (#548)", async () => {
@@ -1033,6 +1167,9 @@ test("tag chips render in the list and clicking one filters to that tag (#549)",
     a: [{ id: "t1", name: "Rome Trip", color: "teal" }],
   });
   render(<DocumentsPanel />);
+  await waitFor(() =>
+    expect(document.querySelector(".docs-filter-controls")).toHaveAttribute("aria-busy", "false"),
+  );
   const chip = await screen.findByRole("button", { name: "Rome Trip" });
   fireEvent.click(chip);
   await waitFor(() =>
@@ -1072,7 +1209,7 @@ test("the toolbar tag filter narrows the query with the match mode and persists 
     }),
   );
   render(<DocumentsPanel />);
-  fireEvent.click(await screen.findByRole("button", { name: /Tags/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: /Rome Trip/ }));
   fireEvent.click(screen.getByRole("radio", { name: "Any" }));
   await waitFor(() =>
@@ -1092,8 +1229,8 @@ test("the status filter offers Quarantined (audit F6)", async () => {
   await waitFor(() =>
     expect(screen.getByText(/No documents match this filter/i)).toBeInTheDocument(),
   );
-  const select = screen.getByRole("combobox", { name: /^Status$/i });
-  expect(within(select).getByRole("option", { name: "Quarantined" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+  expect(screen.getByRole("checkbox", { name: "Quarantined" })).toBeInTheDocument();
 });
 
 test("a failed document row offers Reprocess, which reingests it (audit F6)", async () => {
@@ -1102,6 +1239,9 @@ test("a failed document row offers Reprocess, which reingests it (audit F6)", as
     doc({ id: "fail-1", original_filename: "broken.pdf", status: "failed" }),
   ]);
   render(<DocumentsPanel />);
+  await waitFor(() =>
+    expect(document.querySelector(".docs-filter-controls")).toHaveAttribute("aria-busy", "false"),
+  );
   const button = await screen.findByRole("button", { name: /Reprocess/i });
   fireEvent.click(button);
   await waitFor(() =>
@@ -1114,4 +1254,702 @@ test("a failed document row offers Reprocess, which reingests it (audit F6)", as
       ),
     ).toBe(true),
   );
+});
+
+// ---- Simple / Advanced document views ----
+
+test("Simple lists Document, Category, Document date, and Status with document-level health", async () => {
+  const onOpen = vi.fn();
+  mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf", title: "Report", document_date: "2026-01-15" })],
+    [],
+    [],
+    [],
+    {},
+    {
+      processing: {
+        a: {
+          extraction_method: "text",
+          ocr_outcome: "not_needed",
+          page_count: 1,
+          normalized_from_mime: "application/pdf",
+          status: "active",
+          features_done: 4,
+          features_failed: 0,
+        },
+      },
+      stats: { a: { entity_count: 2, chunk_count: 3, category: "Invoices" } },
+    },
+  );
+  render(<DocumentsPanel mode="simple" onOpenDocument={onOpen} />);
+
+  await screen.findByRole("button", { name: "Report" });
+  const headers = screen.getAllByRole("columnheader");
+  expect(headers.map((header) => header.textContent?.replace("⚠", "").trim())).toEqual([
+    "Document",
+    "Category",
+    "Document date Document date is extracted from the document's content and may be inaccurate — it is not the system ingest time.",
+    "Status",
+  ]);
+  expect(screen.getByText("Invoices")).toBeInTheDocument();
+  expect(screen.getByText("Ready", { selector: ".doc-health" })).toBeInTheDocument();
+  expect(screen.getByTitle(/Ingested \(system\)/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Report" }));
+  expect(onOpen).toHaveBeenCalledWith("a");
+});
+
+test("Simple hides advanced operations in both layouts but keeps Refresh", async () => {
+  mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf" })],
+    [],
+    [{ name: "entities", version: 3, label: "Entities", description: "..." }],
+  );
+  render(<DocumentsPanel mode="simple" />);
+  await screen.findByText("report.pdf");
+
+  expect(screen.queryByRole("checkbox", { name: /Select/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Bulk actions" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Reprocess all documents" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Columns" })).not.toBeInTheDocument();
+  expect(document.querySelector(".chip-legend")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Thumbnails" }));
+  const preview = await screen.findByAltText("Preview of report.pdf");
+  await waitFor(() => expect(preview.getAttribute("src")).toMatch(/^blob:/));
+  expect(screen.queryByLabelText("Select all loaded documents")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Select report.pdf")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+});
+
+test("Simple sorts through the named select rather than the Document header", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  const { container } = render(<DocumentsPanel mode="simple" />);
+  await screen.findByText("report.pdf");
+
+  const documentLabel = Array.from(container.querySelectorAll(".datatable-th-label")).find((el) =>
+    el.textContent?.trim().startsWith("Document"),
+  );
+  expect(documentLabel).toBeTruthy();
+  const callCount = fetchMock.mock.calls.length;
+  fireEvent.click(documentLabel!);
+  expect(fetchMock.mock.calls.length).toBe(callCount);
+  expect(
+    fetchMock.mock.calls.some(([input]) => String(input).includes("sort=title")),
+  ).toBe(false);
+
+  fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "title-asc" } });
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("sort=title")),
+    ).toBe(true),
+  );
+});
+
+test("mode changes preserve query state and all loaded pages", async () => {
+  const all = Array.from({ length: 60 }, (_, i) =>
+    doc({ id: `d${i}`, original_filename: `d${i}.pdf` }),
+  );
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/v1/features/catalog")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/features/groups")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+    const start = Number(new URL(url, "http://x").searchParams.get("cursor") ?? "0");
+    const items = all.slice(start, start + 50);
+    const nextStart = start + 50;
+    return new Response(
+      JSON.stringify({
+        items,
+        total: all.length,
+        next_cursor: nextStart < all.length ? String(nextStart) : null,
+      }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const { rerender } = render(<DocumentsPanel mode="simple" />);
+  await screen.findByText(/Showing 50 of 60/);
+  fireEvent.change(screen.getByLabelText("Search documents"), { target: { value: "report" } });
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("q=report")),
+    ).toBe(true),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  await screen.findByText(/Showing 60 of 60/);
+  expect(screen.getByText("d59.pdf")).toBeInTheDocument();
+
+  rerender(<DocumentsPanel mode="advanced" />);
+  expect(screen.getByLabelText("Search documents")).toHaveValue("report");
+  expect(screen.getByText(/Showing 60 of 60/)).toBeInTheDocument();
+  expect(screen.getByText("d59.pdf")).toBeInTheDocument();
+
+  rerender(<DocumentsPanel mode="simple" />);
+  expect(screen.getByLabelText("Search documents")).toHaveValue("report");
+  expect(screen.getByText(/Showing 60 of 60/)).toBeInTheDocument();
+  expect(screen.getByText("d59.pdf")).toBeInTheDocument();
+});
+
+test("mode changes preserve selection without exposing hidden Simple bulk actions", async () => {
+  const fetchMock = mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  const { rerender } = render(<DocumentsPanel mode="advanced" />);
+  await waitFor(() =>
+    expect(document.querySelector(".docs-filter-controls")).toHaveAttribute("aria-busy", "false"),
+  );
+  fireEvent.click(await screen.findByLabelText("Select report.pdf"));
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+  rerender(<DocumentsPanel mode="simple" />);
+  expect(screen.queryByRole("region", { name: "Bulk actions" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reingest selected" })).not.toBeInTheDocument();
+  expect(
+    (fetchMock.mock.calls as unknown as [RequestInfo | URL, RequestInit?][]).some(
+      ([, init]) => init?.method === "DELETE",
+    ),
+  ).toBe(false);
+
+  rerender(<DocumentsPanel mode="advanced" />);
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+  expect(screen.getByLabelText("Select report.pdf")).toBeChecked();
+});
+
+test.each([
+  { status: "failed", health: "Failed", featuresFailed: 0 },
+  { status: "processing", health: "Processing", featuresFailed: 0 },
+  { status: "active", health: "Needs attention", featuresFailed: 1 },
+])("Simple thumbnails use shared $health health instead of raw $status status", async ({ status, health, featuresFailed }) => {
+  mockDocs(
+    [doc({ id: "a", original_filename: "report.pdf", status })],
+    [],
+    [],
+    [],
+    {},
+    {
+      processing: {
+        a: {
+          extraction_method: "text",
+          ocr_outcome: "not_needed",
+          page_count: 1,
+          normalized_from_mime: "application/pdf",
+          status,
+          features_done: 4,
+          features_failed: featuresFailed,
+        },
+      },
+    },
+  );
+  render(<DocumentsPanel mode="simple" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+
+  await waitFor(() =>
+    expect(screen.getByText(health, { selector: ".doc-card-status" })).toBeVisible(),
+  );
+  expect(screen.queryByText(status, { selector: ".doc-card-status" })).not.toBeInTheDocument();
+});
+
+test("Simple thumbnail articles keep only essential fields and native open controls", async () => {
+  const onOpen = vi.fn();
+  mockDocs(
+    [
+      doc({
+        id: "a",
+        original_filename: "report.pdf",
+        title: "Report",
+        document_date: "2026-01-15",
+        summary: "Operational summary",
+      }),
+    ],
+    [feat("a", "chunk_embed")],
+    [],
+    [],
+    { a: [{ id: "t1", name: "Rome Trip", color: "teal" }] },
+    { stats: { a: { entity_count: 2, chunk_count: 3, category: "Invoices" } } },
+  );
+  render(<DocumentsPanel mode="simple" onOpenDocument={onOpen} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+
+  const card = await screen.findByRole("article", { name: "Report" });
+  expect(within(card).getByRole("heading", { name: "Report" })).toBeVisible();
+  expect(within(card).getByText("Invoices")).toBeVisible();
+  expect(within(card).getByText(new Date("2026-01-15").toLocaleDateString())).toBeVisible();
+  expect(within(card).getByText("Ready", { selector: ".doc-health" })).toBeVisible();
+  expect(within(card).queryByText("Operational summary")).not.toBeInTheDocument();
+  expect(within(card).queryByRole("button", { name: "Rome Trip" })).not.toBeInTheDocument();
+  expect(card.querySelector(".feature-chips")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Choose tile fields")).not.toBeInTheDocument();
+
+  const preview = await within(card).findByAltText("Preview of Report");
+  expect(preview).toHaveAttribute("loading", "lazy");
+  const previewButton = within(card).getByRole("button", { name: "Open Report" });
+  fireEvent.click(previewButton);
+  expect(onOpen).toHaveBeenCalledWith("a");
+});
+
+test("Simple thumbnail image failure falls back to a native MIME button", async () => {
+  const onOpen = vi.fn();
+  const baseFetch = mockDocs([
+    doc({ id: "a", original_filename: "report.pdf", detected_mime: "application/pdf" }),
+  ]);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/thumbnail")) return new Response(null, { status: 404 });
+      return baseFetch(input);
+    }),
+  );
+  render(<DocumentsPanel mode="simple" onOpenDocument={onOpen} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+
+  const fallback = await screen.findByRole("button", { name: "Open report.pdf" });
+  expect(fallback.tagName).toBe("BUTTON");
+  expect(fallback).toHaveTextContent("PDF");
+  fireEvent.click(fallback);
+  expect(onOpen).toHaveBeenCalledWith("a");
+});
+
+test("Simple S/M/L selection persists without exposing Advanced field choices", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  const first = render(<DocumentsPanel mode="simple" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Large thumbnails" }));
+
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem("doktok.docs.thumbSize") ?? "null")).toBe("l"),
+  );
+  expect(document.querySelector(".docs-grid")).toHaveAttribute("data-size", "l");
+  first.unmount();
+
+  render(<DocumentsPanel mode="simple" />);
+  expect(await screen.findByRole("radio", { name: "Large thumbnails" })).toBeChecked();
+  expect(screen.queryByLabelText("Choose tile fields")).not.toBeInTheDocument();
+});
+
+test("Advanced thumbnail articles retain selection, badges, actions, and tile fields", async () => {
+  const features = [
+    feat("a", "chunk_embed"),
+    feat("a", "doc_classify"),
+    feat("a", "doc_metadata"),
+    feat("a", "entities"),
+    feat("a", "extract"),
+    feat("a", "ner"),
+    feat("a", "structured_records"),
+    feat("a", "thumbnail"),
+  ];
+  mockDocs([
+    doc({
+      id: "a",
+      original_filename: "report.pdf",
+      title: "Report",
+      status: "failed",
+      document_date: "2026-01-15",
+      summary: "A brief summary",
+    }),
+  ], features);
+  render(<DocumentsPanel mode="advanced" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+
+  const card = await screen.findByRole("article", { name: "Report" });
+  expect(within(card).getByLabelText("Select report.pdf")).toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "Reprocess" })).toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "Open document" })).toBeInTheDocument();
+  expect(within(card).getByText("+2")).toBeInTheDocument();
+  expect(card.querySelector(".tile-feature-chips")).toBeInTheDocument();
+  expect(within(card).getByText("A brief summary")).toBeInTheDocument();
+  expect(within(card).getByText(new Date("2026-01-15").toLocaleDateString())).toBeInTheDocument();
+  expect(screen.getByLabelText("Choose tile fields")).toBeInTheDocument();
+});
+
+
+// ---- Filter disclosure, applied chips, and shared snapshots ----
+
+test("desktop filter changes retain current rows without a scroll jump while the replacement loads", async () => {
+  const replacement = (() => {
+    let resolve!: (page: DocumentPage) => void;
+    const promise = new Promise<DocumentPage>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  })();
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/tokens/suggest")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/tags")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+      if (url.includes("/api/v1/documents") && url.includes("status=failed")) {
+        return new Response(JSON.stringify(await replacement.promise), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          items: [doc({ id: "current", original_filename: "current.pdf" })],
+          total: 1,
+          next_cursor: null,
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  render(<DocumentsPanel />);
+  await screen.findByText("current.pdf");
+
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Failed" }));
+
+  expect(screen.getByText("current.pdf")).toBeInTheDocument();
+  expect(document.querySelector(".docs-filter-controls")).toHaveAttribute("aria-busy", "true");
+  expect(scrollTo).not.toHaveBeenCalled();
+  replacement.resolve({ items: [], total: 0, next_cursor: null });
+  await screen.findByText("No documents match this filter.");
+});
+
+test("Clear all preserves view and order while resetting selection, loaded window, and legacy filters", async () => {
+  localStorage.setItem(
+    "doktok.docs.ui",
+    JSON.stringify({
+      view: "thumbnails",
+      query: "report",
+      statuses: ["active"],
+      categories: ["Invoices"],
+      tags: ["t1"],
+      tagMatch: "any",
+      needsAttention: true,
+      unidentifiable: true,
+      tokens: ["Acme"],
+      tokenMatch: "any",
+      sort: "title",
+      dir: "asc",
+    }),
+  );
+  const all = Array.from({ length: 60 }, (_, i) =>
+    doc({ id: `d${i}`, original_filename: `d${i}.pdf` }),
+  );
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/v1/tokens/suggest") || url.includes("/api/v1/tags")) {
+      return new Response("[]", { status: 200 });
+    }
+    if (url.includes("/api/v1/features")) return new Response("[]", { status: 200 });
+    if (url.includes("/api/v1/categories")) return new Response("[]", { status: 200 });
+    const start = Number(new URL(url, "http://x").searchParams.get("cursor") ?? "0");
+    const items = all.slice(start, start + 50);
+    const nextStart = start + 50;
+    return new Response(
+      JSON.stringify({
+        items,
+        total: all.length,
+        next_cursor: nextStart < all.length ? String(nextStart) : null,
+      }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<DocumentsPanel />);
+
+  await screen.findByText("Showing 50 of 60 documents (search + filtered)");
+  fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  await screen.findByText("Showing 60 of 60 documents (search + filtered)");
+  fireEvent.click(screen.getByLabelText("Select d0.pdf"));
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+  await screen.findByText("Showing 50 of 60 documents");
+  expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Thumbnails" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByLabelText("Sort by")).toHaveValue("title-asc");
+  expect(screen.queryByRole("button", { name: /switch to (ascending|descending)/ })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Search documents")).toHaveValue("");
+  await waitFor(() => {
+    const saved = JSON.parse(localStorage.getItem("doktok.docs.ui") ?? "{}");
+    expect(saved.query).toBe("");
+    expect(saved.statuses).toEqual([]);
+    expect(saved.categories).toEqual([]);
+    expect(saved.tags).toEqual([]);
+    expect(saved.needsAttention).toBe(false);
+    expect(saved.unidentifiable).toBe(false);
+    expect(saved.tokens).toBeUndefined();
+    expect(saved.dir).toBe("asc");
+  });
+});
+
+test("the list and select-all-matching requests use the same unified multi-value snapshot", async () => {
+  localStorage.setItem(
+    "doktok.docs.ui",
+    JSON.stringify({
+      query: "invoice",
+      statuses: ["active", "failed"],
+      categories: ["Invoices", "Receipts"],
+      tags: ["t1"],
+      tagMatch: "any",
+      needsAttention: true,
+      unidentifiable: true,
+      tokens: ["Acme"],
+      tokenMatch: "any",
+    }),
+  );
+  const { fetchMock } = mockSelectAll({
+    pageDocs: [doc({ id: "d0", original_filename: "d0.pdf" })],
+    total: 2,
+    ids: ["d0", "d1"],
+  });
+  render(<DocumentsPanel />);
+  await screen.findByText("d0.pdf");
+  fireEvent.click(screen.getByLabelText("Select all"));
+  fireEvent.click(screen.getByRole("button", { name: "Select all 2 matching" }));
+  await screen.findByText("All 2 matching are selected.");
+
+  const listCall = fetchMock.mock.calls.find(([input]) => {
+    const url = String(input);
+    return url.includes("/api/v1/documents?") && !url.includes("/documents/ids");
+  });
+  const idsCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/documents/ids?"));
+  const listParams = new URL(String(listCall![0]), "http://x").searchParams;
+  const idsParams = new URL(String(idsCall![0]), "http://x").searchParams;
+  for (const params of [listParams, idsParams]) {
+    expect(params.get("q")).toBe("invoice");
+    expect(params.getAll("status")).toEqual(["active", "failed"]);
+    expect(params.getAll("category")).toEqual(["Invoices", "Receipts"]);
+    expect(params.getAll("tag")).toEqual(["t1"]);
+    expect(params.get("tag_match")).toBe("any");
+    expect(params.get("needs_attention")).toBe("true");
+    expect(params.get("unidentifiable")).toBe("true");
+    expect(params.getAll("token")).toEqual(["Acme"]);
+    expect(params.get("token_match")).toBe("any");
+  }
+});
+
+test("zero filtered results offer a working Clear filters recovery", async () => {
+  localStorage.setItem("doktok.docs.ui", JSON.stringify({ query: "nothing-matches" }));
+  const fetchMock = mockDocs([]);
+  render(<DocumentsPanel />);
+  await screen.findByText("No documents match this filter.");
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Search documents")).toHaveValue("");
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([input]) => {
+        const url = String(input);
+        return url.includes("/api/v1/documents") && !url.includes("q=");
+      }),
+    ).toBe(true),
+  );
+});
+
+
+// ---- Task 7: final operations and accessibility regressions ----
+
+function mockControlledDeletes(pageDocs: DokDocument[], ids: string[]) {
+  const deleted: string[] = [];
+  const releases = new Map<string, () => void>();
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/api/v1/features/catalog") || url.includes("/api/v1/features/groups")) {
+      return new Response("[]", { status: 200 });
+    }
+    if (url.includes("/api/v1/documents/ids")) {
+      return new Response(
+        JSON.stringify({ ids, total: ids.length, truncated: false }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/api/v1/features") || url.includes("/api/v1/categories") || url.includes("/api/v1/tags")) {
+      return new Response("[]", { status: 200 });
+    }
+    if (init?.method === "DELETE") {
+      const id = decodeURIComponent(url.replace("/api/v1/documents/", ""));
+      deleted.push(id);
+      return new Promise<Response>((resolve) => {
+        releases.set(id, () => resolve(new Response(null, { status: 204 })));
+      });
+    }
+    return new Response(
+      JSON.stringify({ items: pageDocs, total: ids.length, next_cursor: null }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { deleted, releases };
+}
+
+test("shift selection selects the inclusive loaded range", async () => {
+  mockDocs([
+    doc({ id: "d0", original_filename: "d0.pdf" }),
+    doc({ id: "d1", original_filename: "d1.pdf" }),
+    doc({ id: "d2", original_filename: "d2.pdf" }),
+  ]);
+  render(<DocumentsPanel mode="advanced" />);
+  await screen.findByText("d0.pdf");
+
+  fireEvent.click(screen.getByLabelText("Select d0.pdf"));
+  const shiftKeys: boolean[] = [];
+  screen.getByLabelText("Select d2.pdf").addEventListener("click", (event) => {
+    shiftKeys.push(event.shiftKey);
+  });
+  fireEvent.click(screen.getByLabelText("Select d2.pdf"), { shiftKey: true });
+
+  expect(shiftKeys).toEqual([true]);
+  expect(screen.getByText("3 selected")).toBeInTheDocument();
+  expect(screen.getByLabelText("Select d0.pdf")).toBeChecked();
+  expect(screen.getByLabelText("Select d1.pdf")).toBeChecked();
+  expect(screen.getByLabelText("Select d2.pdf")).toBeChecked();
+});
+
+test("bulk actions expose live progress and a final outcome", async () => {
+  const pageDocs = [
+    doc({ id: "d0", original_filename: "d0.pdf" }),
+    doc({ id: "d1", original_filename: "d1.pdf" }),
+  ];
+  const { deleted, releases } = mockControlledDeletes(pageDocs, ["d0", "d1"]);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<DocumentsPanel mode="advanced" />);
+  await screen.findByText("d0.pdf");
+  fireEvent.click(screen.getByLabelText("Select all"));
+  fireEvent.click(screen.getByText("Delete selected"));
+
+  await screen.findByText("Delete: 0/2…");
+  expect(deleted).toHaveLength(2);
+  releases.get("d0")!();
+  await screen.findByText("Delete: 1/2…");
+  releases.get("d1")!();
+  await screen.findByText("Delete: 2 document(s) succeeded.");
+});
+
+test("switching to Simple stops queued selection operations", async () => {
+  const ids = Array.from({ length: 8 }, (_, index) => `d${index}`);
+  const pageDocs = ids.slice(0, 2).map((id) => doc({ id, original_filename: `${id}.pdf` }));
+  const { deleted, releases } = mockControlledDeletes(pageDocs, ids);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const { rerender } = render(<DocumentsPanel mode="advanced" />);
+  await screen.findByText("d0.pdf");
+  fireEvent.click(screen.getByLabelText("Select all"));
+  fireEvent.click(screen.getByRole("button", { name: "Select all 8 matching" }));
+  await screen.findByText("All 8 matching are selected.");
+  fireEvent.click(screen.getByText("Delete selected"));
+  await waitFor(() => expect(deleted).toHaveLength(BULK_CONCURRENCY));
+
+  rerender(<DocumentsPanel mode="simple" />);
+  const inFlight = [...deleted];
+  await act(async () => {
+    for (const id of inFlight) releases.get(id)!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(deleted).toHaveLength(BULK_CONCURRENCY);
+  expect(screen.queryByRole("region", { name: "Bulk actions" })).not.toBeInTheDocument();
+});
+
+test("result announcements are polite and debounced without delaying the visible count", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel />);
+  await screen.findByText("Showing 1 of 1 document");
+
+  const announcement = screen.getByRole("log", { name: "Document results" });
+  expect(announcement).toHaveAttribute("aria-live", "polite");
+  expect(announcement).toHaveAttribute("aria-atomic", "true");
+  expect(announcement).toHaveTextContent("");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(announcement).toHaveTextContent("");
+  await waitFor(() => expect(announcement).toHaveTextContent("Showing 1 of 1 document"));
+});
+
+test("Escape closes tile fields and restores focus to their trigger", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel mode="advanced" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+  const preview = await screen.findByAltText("Preview of report.pdf");
+  await waitFor(() => expect(preview.getAttribute("src")).toMatch(/^blob:/));
+  const trigger = screen.getByRole("button", { name: "Choose tile fields" });
+  fireEvent.click(trigger);
+  const dialog = screen.getByRole("dialog", { name: "Tile fields" });
+  screen.getByRole("checkbox", { name: "Summary" }).focus();
+
+  fireEvent.keyDown(dialog, { key: "Escape" });
+
+  expect(screen.queryByRole("dialog", { name: "Tile fields" })).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+});
+
+test("cancelling bulk tags restores focus to the Tags trigger", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel mode="advanced" />);
+  await screen.findByText("report.pdf");
+  fireEvent.click(screen.getByLabelText("Select report.pdf"));
+  const trigger = screen.getByRole("button", { name: "Tags…" });
+  fireEvent.click(trigger);
+  await screen.findByRole("dialog", { name: "Bulk tag update" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByRole("dialog", { name: "Bulk tag update" })).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+});
+
+
+test("an explicit hash change replaces an earlier App deep-link category", async () => {
+  window.location.hash = "#/documents";
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel initialCategory="deep-cat" />);
+  await screen.findByRole("button", { name: "Remove category: deep-cat" });
+
+  act(() => {
+    window.location.hash = "#/documents?category=Invoices";
+  });
+
+  await screen.findByRole("button", { name: "Remove category: Invoices" });
+  expect(screen.queryByRole("button", { name: "Remove category: deep-cat" })).not.toBeInTheDocument();
+  expect(window.location.hash).toContain("category=Invoices");
+});
+
+test("Simple document-date explanations remain available without a tooltip", async () => {
+  const explanation = "Document date is extracted from the document's content and may be inaccurate — it is not the system ingest time.";
+  mockDocs([doc({ id: "a", original_filename: "report.pdf", document_date: "2026-01-15" })]);
+  render(<DocumentsPanel mode="simple" />);
+  await screen.findByText("report.pdf");
+  expect(screen.getByText(explanation, { selector: ".visually-hidden" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Thumbnails" }));
+  await screen.findByRole("article", { name: "report.pdf" });
+  expect(screen.getByText(explanation, { selector: ".visually-hidden" })).toBeInTheDocument();
+});
+
+test("Advanced thumbnails show one described Unidentifiable health label", async () => {
+  mockDocs([doc({ id: "u", original_filename: "junk.jpg", unidentifiable: true })]);
+  render(<DocumentsPanel mode="advanced" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thumbnails" }));
+  const card = await screen.findByRole("article", { name: "junk.jpg" });
+
+  expect(card.querySelectorAll(".doc-card-status, .doc-card-unidentifiable")).toHaveLength(1);
+  const health = within(card).getByText("Unidentifiable", { selector: ".doc-card-status" });
+  expect(health).toHaveAccessibleDescription(
+    "Extraction succeeded but the content is not meaningful",
+  );
+});
+
+test("result summaries and polite announcements distinguish search, filters, and both", async () => {
+  mockDocs([doc({ id: "a", original_filename: "report.pdf" })]);
+  render(<DocumentsPanel />);
+  await screen.findByText("Showing 1 of 1 document");
+  const announcement = screen.getByRole("log", { name: "Document results" });
+
+  fireEvent.change(screen.getByLabelText("Search documents"), { target: { value: "report" } });
+  await screen.findByText("Showing 1 of 1 document (search)");
+  await waitFor(() => expect(announcement).toHaveTextContent("Showing 1 of 1 document (search)"));
+
+  fireEvent.click(screen.getByRole("button", { name: "Filters (1)" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Failed" }));
+  await screen.findByText("Showing 1 of 1 document (search + filtered)");
+  await waitFor(() => expect(announcement).toHaveTextContent("Showing 1 of 1 document (search + filtered)"));
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove query: report" }));
+  await screen.findByText("Showing 1 of 1 document (filtered)");
+  await waitFor(() => expect(announcement).toHaveTextContent("Showing 1 of 1 document (filtered)"));
 });

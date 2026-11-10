@@ -442,14 +442,14 @@ test("advanced mode shows the per-stage queues as per-item segmented bars", asyn
   await waitFor(() => expect(screen.getByText("Stage queues")).toBeInTheDocument());
   const extract = screen.getByText("Extract / OCR").closest(".pipeline-total-row");
   expect(extract).toHaveTextContent("4"); // total only, no spelled-out counts
-  expect(extract?.querySelectorAll(".queue-seg.seg-f-extract")).toHaveLength(1); // running
-  expect(extract?.querySelectorAll(".queue-seg.seg-queued")).toHaveLength(3);
+  expect(extract?.querySelectorAll(".queue-seg.seg-running.seg-f-extract")).toHaveLength(1);
+  expect(extract?.querySelectorAll(".queue-seg.seg-queued.seg-f-extract")).toHaveLength(3);
   expect(extract?.querySelector(".queue-bar")).toHaveAttribute("tabindex", "0");
   expect(extract?.querySelector(".queue-bar")).toHaveAccessibleName("Extract / OCR: 1 running · 3 queued");
   const relations = screen.getByText("Relations").closest(".pipeline-total-row");
   expect(relations).toHaveTextContent("8");
-  expect(relations?.querySelectorAll(".queue-seg.seg-f-relations")).toHaveLength(2);
-  expect(relations?.querySelectorAll(".queue-seg.seg-queued")).toHaveLength(5);
+  expect(relations?.querySelectorAll(".queue-seg.seg-running.seg-f-relations")).toHaveLength(2);
+  expect(relations?.querySelectorAll(".queue-seg.seg-queued.seg-f-relations")).toHaveLength(5);
   expect(relations?.querySelectorAll(".queue-seg.seg-failed")).toHaveLength(1);
   // the spelled-out counts live in tooltips: per segment and the full summary on the total
   expect(relations?.querySelector('[title="Relations: failed"]')).not.toBeNull();

@@ -372,3 +372,67 @@ def test_sort_by_chunks_paginates_with_cursor() -> None:
     ).json()
     assert [d["id"] for d in p2["items"]] == ["d1", "d3"]
     assert p2["next_cursor"] is None
+
+
+def test_unified_query_matches_title_filename_and_entities_with_anded_terms() -> None:
+    title = _doc("title", title="Northstar")
+    filename = _doc("filename", title="Other")
+    filename.original_filename = "0000982.pdf"
+    entity = _doc("entity", title="Other")
+    fulltext = _doc("fulltext", title="Other")
+    fulltext.metadata = {"extracted_text": "only-in-extracted-text"}
+    repo = _repo(title, filename, entity, fulltext)
+    repo.tokens_by_doc = {
+        "title": {("CUSTOM_TOKEN", "2026")},
+        "entity": {("ORG", "acme gmbh")},
+    }
+    client = _client(repo)
+
+    def matching_ids(query: str) -> set[str]:
+        response = client.get("/api/v1/documents", params={"q": query}, headers=AUTH)
+        assert response.status_code == 200
+        return {d["id"] for d in response.json()["items"]}
+
+    assert matching_ids("northstar") == {"title"}
+    assert matching_ids("0000982.pdf") == {"filename"}
+    assert matching_ids("ACME") == {"entity"}
+    assert matching_ids("northstar \t 2026") == {"title"}
+    assert matching_ids("northstar missing") == set()
+    assert matching_ids("only-in-extracted-text") == set()
+
+
+def test_repeated_status_and_category_filters_match_list_and_ids() -> None:
+    active = _doc("active", title="Northstar", status=DocumentStatus.ACTIVE)
+    failed = _doc("failed", title="Northstar", status=DocumentStatus.FAILED)
+    processing = _doc("processing", title="Northstar", status=DocumentStatus.PROCESSING)
+    other = _doc("other", title="Other", status=DocumentStatus.ACTIVE)
+    repo = _repo(active, failed, processing, other)
+    repo.categories_by_doc = {
+        "active": {"Invoices"},
+        "failed": {"Contracts"},
+        "processing": {"Invoices"},
+        "other": {"Invoices"},
+    }
+    repo.tokens_by_doc = {
+        "active": {("ORG", "Acme")},
+        "failed": {("PERSON", "Bob")},
+        "processing": {("ORG", "Acme")},
+        "other": {("ORG", "Acme")},
+    }
+    client = _client(repo)
+    query = (
+        "q=northstar&status=active&status=failed"
+        "&category=Invoices&category=Contracts&token=Acme&token=Bob&token_match=any"
+    )
+
+    page = client.get(f"/api/v1/documents?{query}", headers=AUTH).json()
+    selection = client.get(f"/api/v1/documents/ids?{query}", headers=AUTH).json()
+    assert {d["id"] for d in page["items"]} == {"active", "failed"}
+    assert page["total"] == 2
+    assert sorted(selection["ids"]) == ["active", "failed"]
+    assert selection["total"] == 2 and selection["truncated"] is False
+
+    legacy = client.get(
+        "/api/v1/documents?status=active&category=Invoices", headers=AUTH
+    ).json()
+    assert {d["id"] for d in legacy["items"]} == {"active", "other"}

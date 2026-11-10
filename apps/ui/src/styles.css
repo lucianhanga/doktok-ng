@@ -83,6 +83,7 @@ body {
   height: 100vh;
 }
 .app-inner {
+  box-sizing: border-box;
   width: 90%;
   max-width: 1600px;
   margin: 0 auto;
@@ -2320,6 +2321,182 @@ tr.row-selected {
   gap: 0.5rem 1rem;
   margin: 0.5rem 0;
 }
+.docs-filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.docs-query {
+  flex: 1 1 18rem;
+  max-width: 36rem;
+}
+.docs-query label,
+.docs-query input {
+  display: block;
+  width: 100%;
+}
+.docs-query-label,
+.docs-query-hint {
+  display: block;
+}
+.docs-query-hint {
+  font-size: 0.85rem;
+}
+.docs-filter-disclosure {
+  position: relative;
+}
+.docs-filter-popover {
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: min(70vh, 36rem);
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+.docs-filter-popover[data-fallback="true"] {
+  display: none;
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  margin: 0;
+}
+.docs-filter-popover[data-fallback="true"][data-open="true"] {
+  display: block;
+}
+.docs-filter-popover[popover]:is(:popover-open, .\:popover-open) {
+  display: block;
+}
+@supports (position-area: block-end) {
+  .docs-filter-popover[popover] {
+    inset: auto;
+    position-area: block-end span-inline-end;
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+  }
+}
+.docs-filter-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.docs-filter-fields fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+.docs-filter-fields legend {
+  margin-bottom: 0.3rem;
+  font-weight: 600;
+}
+.docs-filter-fields fieldset > label {
+  display: block;
+  min-height: 24px;
+  padding: 0.2rem 0;
+}
+.docs-tag-match {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+.docs-applied-filters,
+.docs-applied-filters ul {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.docs-applied-filters ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.docs-applied-chip {
+  min-height: 24px;
+  border: 1px solid rgba(80, 130, 255, 0.35);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  background: rgba(80, 130, 255, 0.18);
+  color: inherit;
+}
+.docs-filter-dialog {
+  width: min(38rem, 100%);
+  max-width: 100%;
+  max-height: 88vh;
+  max-height: 88dvh;
+  margin: auto 0 0;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  padding: 0;
+  background: var(--surface);
+  color: inherit;
+}
+.docs-filter-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.docs-filter-dialog:modal {
+  overscroll-behavior: contain;
+}
+.docs-filter-dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: rgba(0, 0, 0, 0.45);
+}
+.docs-filter-dialog-head,
+.docs-filter-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+.docs-filter-dialog-head {
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25);
+}
+.docs-filter-dialog-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.docs-filter-dialog-body {
+  overflow: auto;
+  padding: 0.75rem;
+  overscroll-behavior: contain;
+}
+.docs-filter-dialog-body .docs-query {
+  max-width: none;
+  margin-bottom: 0.75rem;
+}
+.docs-filter-dialog-actions {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(127, 127, 127, 0.25);
+}
+.docs-empty-recovery {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.docs-empty-recovery p {
+  margin: 0;
+}
+@media (pointer: coarse) {
+  .docs-filter-controls button,
+  .docs-filter-controls input {
+    min-height: 44px;
+  }
+  .docs-filter-fields input[type="checkbox"],
+  .docs-filter-fields input[type="radio"] {
+    min-width: 24px;
+    min-height: 24px;
+  }
+}
 .sort-control {
   display: inline-flex;
   align-items: center;
@@ -2338,6 +2515,8 @@ tr.row-selected {
   overflow: hidden;
 }
 .thumb-size button {
+  min-width: 24px;
+  min-height: 24px;
   border: none;
   border-left: 1px solid rgba(127, 127, 127, 0.4);
   padding: 0.15rem 0.5rem;
@@ -2362,11 +2541,12 @@ tr.row-selected {
   font-size: 0.85rem;
 }
 
-/* Thumbnail gallery grid. The S/M/L data-size sets the min card width. */
+/* Thumbnail gallery grid. Intrinsic minimums collapse below the chosen card width. */
 .docs-grid {
   display: grid;
+  min-width: 0;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-min, 180px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--thumb-min, 180px)), 1fr));
 }
 .docs-grid[data-size="s"] {
   --thumb-min: 120px;
@@ -2381,6 +2561,7 @@ tr.row-selected {
 .doc-card-grid {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   gap: 0.35rem;
   border: 1px solid rgba(127, 127, 127, 0.2);
   border-radius: 8px;
@@ -2393,10 +2574,26 @@ tr.row-selected {
 }
 .doc-card-thumb-wrap {
   position: relative;
+  min-width: 0;
   aspect-ratio: 3 / 4;
   background: var(--thumb-bg);
   border-radius: 6px;
   overflow: hidden;
+}
+.doc-card-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.doc-card-preview:focus-visible {
+  outline: 2px solid var(--accent, #6ea8fe);
+  outline-offset: -2px;
 }
 .doc-card-thumb {
   width: 100%;
@@ -2404,7 +2601,6 @@ tr.row-selected {
   object-fit: contain;
   object-position: top;
   display: block;
-  cursor: pointer;
 }
 .doc-card-thumb.doc-thumb-fallback {
   display: flex;
@@ -2415,7 +2611,7 @@ tr.row-selected {
   color: rgba(80, 80, 80, 0.7);
   background: rgba(127, 127, 127, 0.12);
 }
-/* Enhancement 3: hover-revealed controls — checkbox (top-left) and open button (bottom-right).
+/* Advanced hover-revealed controls — checkbox (top-left) and open button (bottom-right).
    opacity:0 by default so they stay keyboard-operable but don't clutter the card at rest.
    Revealed on hover, :focus-within, when the card is selected (.selected), or when any doc in
    the panel is selected (.bulk-active — Drive/Photos pattern). Touch devices always show them.
@@ -2447,6 +2643,28 @@ tr.row-selected {
   .doc-card-check,
   .doc-card-open {
     opacity: 1;
+  }
+}
+
+@media (pointer: coarse) {
+  .thumb-size button,
+  .tile-fields-btn,
+  .doc-card-open,
+  .doc-card-reprocess,
+  .doc-card-badges button.chip,
+  .doc-card-tags button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .doc-card-check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .doc-card-title {
+    min-height: 44px;
   }
 }
 
@@ -2522,9 +2740,39 @@ tr.row-selected {
   flex-wrap: wrap;
   gap: 0.2rem;
 }
+.doc-card-heading {
+  min-width: 0;
+  margin: 0;
+  font-size: inherit;
+}
 .doc-card-title {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
   font-weight: 600;
   text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-card-simple-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  gap: 0.35rem;
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+}
+.doc-card-simple-fields > div {
+  min-width: 0;
+}
+.doc-card-simple-fields dt {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.doc-card-simple-fields dd {
+  min-width: 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7602,6 +7850,46 @@ tr.row-selected {
   margin-top: 4px;
 }
 
+.doc-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.doc-health::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: none;
+}
+.doc-health.processing {
+  color: var(--accent);
+}
+.doc-health.processing::before {
+  background: var(--accent);
+}
+.doc-health.attention {
+  color: var(--warning);
+}
+.doc-health.attention::before {
+  background: var(--warning);
+}
+.doc-health.failed {
+  color: var(--danger);
+}
+.doc-health.failed::before {
+  background: var(--danger);
+}
+.doc-health.neutral {
+  color: var(--muted);
+}
+.doc-health.neutral::before {
+  background: var(--muted);
+}
+
 /* Failed-document reprocess affordance (audit F6). */
 .doc-status-cell {
   display: inline-flex;
@@ -7645,8 +7933,9 @@ tr.row-selected {
 }
 
 /* Per-stage colors (#848): each pipeline stage has its own hue - the same class colors the
- * per-document bar segments, the stage-queue bars, and the legend swatches. Pending segments
- * stay on the bare track (no seg-f-* class), so color always means "this stage ran/is running". */
+ * per-document bar segments, the stage-queue bars, and the legend swatches. Per-document pending
+ * segments stay on the bare track (no seg-f-* class); softened queued stage-queue items retain
+ * their seg-f-* class so color identifies their stage rather than only completed/running work. */
 .seg-f-extract { background: #5aa0e6; }
 .seg-f-thumbnail { background: #8a93a6; }
 .seg-f-chunk_embed { background: #3fb8af; }
@@ -7659,8 +7948,9 @@ tr.row-selected {
 .seg-f-structured_records { background: #4cc266; }
 
 /* Stage-queue and Pipeline bars (advanced overview): one fixed-width segment per item so the
- * remaining work is countable at a glance. Queued = soft blue, upstream-blocked = track gray,
- * running keeps the stage hue and pulses. Large queues scroll instead of stretching or shrinking. */
+ * remaining work is countable at a glance. Queued = softened stage hue, upstream-blocked = track
+ * gray, running keeps the full-intensity stage hue and pulses. Large queues scroll instead of
+ * stretching or shrinking. */
 .queue-bar {
   box-sizing: content-box;
   height: 14px;
@@ -7686,7 +7976,7 @@ tr.row-selected {
     animation: none;
   }
 }
-.seg-queued { background: var(--source); opacity: 0.55; }
+.seg-queued { opacity: 0.55; }
 .seg-blocked { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--border); }
 
 /* Legend swatch demonstrating the blue->green stage gradient. */

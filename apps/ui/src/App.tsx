@@ -70,7 +70,7 @@ const TAB_IDS = new Set<string>(TABS.map((t) => t.id));
  * falls back to overview. Two-segment hashes like "#/insights/map" match on the first segment so
  * InsightsPanel owns the sub-segment. */
 function viewFromHash(): View {
-  const raw = window.location.hash.replace(/^#\/?/, "");
+  const raw = window.location.hash.replace(/^#\/?/, "").split("?")[0] ?? "";
   const first = raw.split("/")[0] ?? "";
   return TAB_IDS.has(first) ? (first as View) : "overview";
 }
@@ -206,6 +206,7 @@ export default function App() {
               <DocumentsPanel
                 key={`docs-${docsNeedsAttention}-${docsCategoryFilter}`}
                 onOpenDocument={setOpenDoc}
+                mode={uiMode}
                 initialNeedsAttention={docsNeedsAttention}
                 initialCategory={docsCategoryFilter}
               />

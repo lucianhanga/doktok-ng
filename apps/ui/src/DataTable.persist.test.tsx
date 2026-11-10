@@ -122,3 +122,14 @@ test("column sizing survives a mount under React StrictMode (#522 root cause)", 
   const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
   expect(saved.columnSizing?.name).toBe(230);
 });
+
+
+test("the horizontal scroll region has a caller-provided name and is keyboard focusable", () => {
+  render(<DataTable<Row> data={DATA} columns={COLS} label="Inventory table" />);
+
+  const region = screen.getByRole("region", { name: "Inventory table" });
+  expect(region).toHaveClass("datatable-scroll");
+  expect(region).toHaveAttribute("tabindex", "0");
+  region.focus();
+  expect(region).toHaveFocus();
+});

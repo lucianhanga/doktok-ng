@@ -315,8 +315,9 @@ def _like_contains(value: str) -> str:
 def _doc_filter_sql(
     tenant_id: str,
     *,
-    status: DocumentStatus | None,
-    category: str | None,
+    q: str | None,
+    status: DocumentStatus | tuple[DocumentStatus, ...] | None,
+    category: str | tuple[str, ...] | None,
     needs_attention: bool,
     unidentifiable: bool | None,
     title: str | None,
@@ -326,17 +327,19 @@ def _doc_filter_sql(
     tag_ids: tuple[str, ...],
     tag_match: TokenMatch,
 ) -> tuple[str, dict[str, Any]]:
-    """Build the shared document-filter WHERE clause (status + category + needs-attention +
-    unidentifiable + title + tokens + tags) and its parameters. Used by both ``list_documents``
-    (adds keyset + order) and ``list_document_ids``. All values are parameterized; tokens and tag
-    ids go in as ``text[]``."""
+    """Build the shared document-filter WHERE clause and parameters for list and id selection."""
     distinct_tokens = tuple(dict.fromkeys(tokens))  # dedupe, keep order
     distinct_tags = tuple(dict.fromkeys(tag_ids))
+    statuses = (status,) if isinstance(status, DocumentStatus) else tuple(status or ())
+    categories = (category,) if isinstance(category, str) else tuple(category or ())
+    query_terms = tuple(dict.fromkeys(q.split())) if q else ()
     title_clean = title.strip() if title else None
     params: dict[str, Any] = {
         "tenant": tenant_id,
-        "status": status.value if status else None,
-        "category": category,
+        "statuses": [s.value for s in statuses],
+        "status_count": len(statuses),
+        "categories": list(categories),
+        "category_count": len(categories),
         "needs_attention": needs_attention,
         "unidentifiable": unidentifiable,
         "title": title_clean,
@@ -349,12 +352,13 @@ def _doc_filter_sql(
     }
     where = (
         "d.tenant_id = %(tenant)s "
-        "AND (%(status)s::text IS NULL OR d.status = %(status)s) "
+        "AND (%(status_count)s = 0 OR d.status = ANY(%(statuses)s)) "
         "AND (%(title)s::text IS NULL OR d.title ILIKE %(title_like)s) "
-        "AND (%(category)s::text IS NULL OR EXISTS ("
+        "AND (%(category_count)s = 0 OR EXISTS ("
         "  SELECT 1 FROM document_category_links l JOIN categories c ON c.id = l.category_id "
+        "  AND c.tenant_id = l.tenant_id "
         "  WHERE l.document_id = d.id AND l.tenant_id = d.tenant_id "
-        "  AND c.name = %(category)s AND c.status = 'active')) "
+        "  AND c.name = ANY(%(categories)s) AND c.status = 'active')) "
         # 'Needs attention' = a real problem: a FAILED feature (red badge). Pending/running features
         # are still processing (not a problem), and a not-yet-created feature is seeded pending then
         # finishes or fails - so 'failed' is the steady-state actionable signal.
@@ -366,6 +370,15 @@ def _doc_filter_sql(
         "  OR (%(unidentifiable)s::boolean IS TRUE AND d.unidentifiable IS TRUE) "
         "  OR (%(unidentifiable)s::boolean IS FALSE AND d.unidentifiable IS NOT TRUE))"
     )
+    for index, term in enumerate(query_terms):
+        key = f"q_{index}"
+        params[key] = _like_contains(term)
+        where += (
+            f" AND (d.title ILIKE %({key})s OR d.original_filename ILIKE %({key})s OR EXISTS ("
+            "SELECT 1 FROM document_entities e "
+            "WHERE e.tenant_id = d.tenant_id AND e.document_id = d.id "
+            f"AND e.normalized_value ILIKE %({key})s))"
+        )
     if distinct_tokens:
         # Tenant-scoped EXISTS over document_entities; ALL counts distinct matches == requested.
         entity_pred = (
@@ -591,8 +604,9 @@ class PostgresDocumentRepository:
         *,
         limit: int = 50,
         cursor: ListAnchor | None = None,
-        status: DocumentStatus | None = None,
-        category: str | None = None,
+        q: str | None = None,
+        status: DocumentStatus | tuple[DocumentStatus, ...] | None = None,
+        category: str | tuple[str, ...] | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
         sort: DocumentSort = DocumentSort.ACQUIRED,
@@ -606,6 +620,7 @@ class PostgresDocumentRepository:
     ) -> tuple[list[Document], int, ListAnchor | None]:
         where, params = _doc_filter_sql(
             tenant_id,
+            q=q,
             status=status,
             category=category,
             needs_attention=needs_attention,
@@ -666,8 +681,9 @@ class PostgresDocumentRepository:
         self,
         tenant_id: str,
         *,
-        status: DocumentStatus | None = None,
-        category: str | None = None,
+        q: str | None = None,
+        status: DocumentStatus | tuple[DocumentStatus, ...] | None = None,
+        category: str | tuple[str, ...] | None = None,
         needs_attention: bool = False,
         unidentifiable: bool | None = None,
         title: str | None = None,
@@ -680,6 +696,7 @@ class PostgresDocumentRepository:
     ) -> tuple[list[str], int, bool]:
         where, params = _doc_filter_sql(
             tenant_id,
+            q=q,
             status=status,
             category=category,
             needs_attention=needs_attention,

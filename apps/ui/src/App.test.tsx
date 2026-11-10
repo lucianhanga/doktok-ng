@@ -30,7 +30,12 @@ function mockRoutes() {
       if (url.includes("/health")) {
         return new Response(JSON.stringify(HEALTH), { status: 200 });
       }
-      // jobs / documents / audit / search / entities
+      if (url.includes("/api/v1/documents")) {
+        return new Response(JSON.stringify({ items: [], total: 0, next_cursor: null }), {
+          status: 200,
+        });
+      }
+      // jobs / audit / search / entities
       return new Response(JSON.stringify([]), { status: 200 });
     }),
   );
@@ -72,6 +77,67 @@ test("opens directly on the section named in the URL hash (a fresh tab)", async 
     expect(screen.getByRole("tab", { name: "Documents" })).toHaveAttribute("aria-selected", "true"),
   );
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "false");
+});
+
+test("Documents deep links resolve the tab and pass mode without remounting the panel", async () => {
+  mockRoutes();
+  localStorage.setItem("doktok-ui-mode", '"simple"');
+  window.location.hash = "#/documents?view=thumbnails&status=failed";
+  render(<App />);
+
+  const panel = await screen.findByRole("region", { name: "Documents" });
+  expect(screen.getByRole("tab", { name: "Documents" })).toHaveAttribute("aria-selected", "true");
+  expect(panel).toHaveAttribute("data-mode", "simple");
+  expect(screen.getByRole("button", { name: "Thumbnails" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Filters (1)" }));
+  expect(screen.getByRole("checkbox", { name: "Failed" })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  const search = screen.getByLabelText("Search documents");
+  fireEvent.change(search, { target: { value: "keep this query" } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect(panel).toHaveAttribute("data-mode", "advanced");
+  expect(screen.getByLabelText("Search documents")).toBe(search);
+  expect(search).toHaveValue("keep this query");
+
+  fireEvent.click(screen.getByRole("button", { name: "Simple" }));
+  expect(panel).toHaveAttribute("data-mode", "simple");
+  expect(screen.getByLabelText("Search documents")).toBe(search);
+  expect(search).toHaveValue("keep this query");
+});
+
+test("Back and Forward restore committed Documents ordering without URL write-back loops", async () => {
+  localStorage.clear();
+  mockRoutes();
+  window.history.replaceState(null, "", "#/documents?order=title-asc");
+  const replace = vi.spyOn(window.history, "replaceState");
+  render(<App />);
+  expect(await screen.findByLabelText("Sort by")).toHaveValue("title-asc");
+
+  fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "category-desc" } });
+  await waitFor(() =>
+    expect(new URLSearchParams(window.location.hash.split("?")[1]).get("order")).toBe("category-desc"),
+  );
+  const committedWrites = replace.mock.calls.length;
+  fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true"));
+  window.location.hash = "#/documents?order=oldest";
+  expect(await screen.findByLabelText("Sort by")).toHaveValue("oldest");
+
+  window.history.back();
+  await waitFor(() => expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true"));
+  window.history.back();
+  expect(await screen.findByLabelText("Sort by")).toHaveValue("category-desc");
+  expect(replace).toHaveBeenCalledTimes(committedWrites);
+
+  window.history.forward();
+  await waitFor(() => expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true"));
+  window.history.forward();
+  expect(await screen.findByLabelText("Sort by")).toHaveValue("oldest");
+  expect(replace).toHaveBeenCalledTimes(committedWrites);
 });
 
 test("the fixed status bar shows backend health (no Status tab)", async () => {
@@ -148,8 +214,68 @@ test("keeps the chat conversation when opening a cited document and going back",
   expect(screen.getByText(/The total is 42/)).toBeInTheDocument();
 });
 
+test("opening and closing DocumentDetail preserves every loaded Documents page", async () => {
+  localStorage.clear();
+  localStorage.setItem("doktok-ui-mode", '"advanced"');
+  window.history.replaceState(null, "", "#/documents");
+  const docs = Array.from({ length: 60 }, (_, index) => ({
+    id: `d${index}`,
+    original_filename: `d${index}.pdf`,
+    detected_mime: "application/pdf",
+    title: null,
+    status: "active",
+    created_at: "2026-06-10T00:00:00Z",
+    metadata: {},
+  }));
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/v1/documents/d0/detail") {
+      return new Response(JSON.stringify({
+        document: docs[0],
+        features: [],
+        categories: [],
+        entities: { total: 0, by_type: [], top: [] },
+        content: { length: 0, excerpt: "" },
+        recent_activity: [],
+      }), { status: 200 });
+    }
+    if (url === "/api/v1/documents/d0/relations") {
+      return new Response(JSON.stringify({ entities: [], relations: [] }), { status: 200 });
+    }
+    if (url.startsWith("/api/v1/documents?")) {
+      const cursor = Number(new URL(url, "http://x").searchParams.get("cursor") ?? "0");
+      return new Response(JSON.stringify({
+        items: docs.slice(cursor, cursor + 50),
+        total: docs.length,
+        next_cursor: cursor + 50 < docs.length ? String(cursor + 50) : null,
+      }), { status: 200 });
+    }
+    if (url.includes("/health")) return new Response(JSON.stringify(HEALTH), { status: 200 });
+    if (url.includes("/api/v1/stats")) {
+      return new Response(JSON.stringify({ documents: 0, jobs: {}, entities: 0 }), { status: 200 });
+    }
+    return new Response("[]", { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+
+  await screen.findByText("Showing 50 of 60 documents");
+  fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  await screen.findByText("Showing 60 of 60 documents");
+  const listCalls = fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/documents?")).length;
+
+  fireEvent.click(screen.getByRole("button", { name: "d0.pdf" }));
+  await screen.findByRole("heading", { name: /d0\.pdf/ });
+  fireEvent.click(await screen.findByRole("button", { name: /Back to documents/ }));
+
+  expect(screen.getByText("Showing 60 of 60 documents")).toBeVisible();
+  expect(screen.getByText("d59.pdf")).toBeVisible();
+  expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/documents?"))).toHaveLength(listCalls);
+});
+
 test("a resized Documents column survives navigating to Chat and back (#522)", async () => {
   localStorage.clear();
+  localStorage.setItem("doktok-ui-mode", '"advanced"');
   const DOC = {
     id: "d1",
     original_filename: "report.pdf",

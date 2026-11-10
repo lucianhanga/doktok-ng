@@ -50,6 +50,10 @@ export interface DataTableProps<T> {
   manualSorting?: boolean;
   /** Extra class(es) per row, e.g. selected/unidentifiable decorations. Kept out of the core. */
   rowClassName?: (row: T) => string | undefined;
+  /** Show column visibility, reorder, and resize controls. */
+  showColumnControls?: boolean;
+  /** Accessible name for the keyboard-scrollable table region. */
+  label?: string;
 }
 
 /**
@@ -93,6 +97,8 @@ export function DataTable<T>({
   onSortingChange,
   manualSorting,
   rowClassName,
+  showColumnControls = true,
+  label = "Data table",
 }: DataTableProps<T>) {
   const persisted = useMemo<PersistedTableState>(
     () => (persistKey ? loadJSON<PersistedTableState>(persistKey, {}) : {}),
@@ -174,7 +180,7 @@ export function DataTable<T>({
     onColumnOrderChange: setColumnOrder,
     getRowId,
     columnResizeMode: "onChange",
-    enableColumnResizing: true,
+    enableColumnResizing: showColumnControls,
     manualSorting: manualSorting ?? false,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -201,33 +207,35 @@ export function DataTable<T>({
 
   return (
     <div className="datatable">
-      <div className="datatable-toolbar">
-        <button
-          type="button"
-          className="datatable-cols-toggle"
-          aria-expanded={showColumns}
-          onClick={() => setShowColumns((v) => !v)}
-        >
-          Columns
-        </button>
-        {showColumns && (
-          <div className="datatable-cols-menu" role="menu">
-            {table.getAllLeafColumns().map((column) => (
-              <label key={column.id} className="datatable-col-option">
-                <input
-                  type="checkbox"
-                  checked={column.getIsVisible()}
-                  disabled={!column.getCanHide()}
-                  onChange={column.getToggleVisibilityHandler()}
-                />
-                {typeof column.columnDef.header === "string" ? column.columnDef.header : column.id}
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
+      {showColumnControls && (
+        <div className="datatable-toolbar">
+          <button
+            type="button"
+            className="datatable-cols-toggle"
+            aria-expanded={showColumns}
+            onClick={() => setShowColumns((v) => !v)}
+          >
+            Columns
+          </button>
+          {showColumns && (
+            <div className="datatable-cols-menu" role="menu">
+              {table.getAllLeafColumns().map((column) => (
+                <label key={column.id} className="datatable-col-option">
+                  <input
+                    type="checkbox"
+                    checked={column.getIsVisible()}
+                    disabled={!column.getCanHide()}
+                    onChange={column.getToggleVisibilityHandler()}
+                  />
+                  {typeof column.columnDef.header === "string" ? column.columnDef.header : column.id}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
-      <div className="datatable-scroll">
+      <div className="datatable-scroll" role="region" aria-label={label} tabIndex={0}>
         <table className="jobs datatable-table" style={{ width: table.getTotalSize() }}>
           <thead>
             {table.getHeaderGroups().map((group) => (
@@ -264,13 +272,13 @@ export function DataTable<T>({
                     >
                       <span
                         className="datatable-th-label"
-                        draggable
+                        draggable={showColumnControls}
                         onDragStart={(e) => {
                           setDraggingCol(header.column.id);
                           e.dataTransfer.effectAllowed = "move";
                         }}
                         onDragEnd={() => setDraggingCol(null)}
-                        title="Drag to reorder column"
+                        title={showColumnControls ? "Drag to reorder column" : undefined}
                         onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}

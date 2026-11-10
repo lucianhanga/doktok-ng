@@ -177,8 +177,9 @@ def list_documents(
     tag_repo: TagRepo,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: Annotated[str | None, Query()] = None,
-    category: Annotated[str | None, Query(max_length=500)] = None,
-    status: Annotated[DocumentStatus | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=500)] = None,
+    category: Annotated[list[str] | None, Query()] = None,
+    status: Annotated[list[DocumentStatus] | None, Query()] = None,
     needs_attention: Annotated[bool, Query()] = False,
     unidentifiable: Annotated[bool | None, Query()] = None,
     sort: Annotated[DocumentSort, Query()] = DocumentSort.ACQUIRED,
@@ -195,8 +196,9 @@ def list_documents(
         tenant.tenant_id,
         limit=limit,
         cursor=_decode_cursor(cursor, sort, direction),
-        status=status,
-        category=category,
+        q=q,
+        status=tuple(status or ()),
+        category=_validated_categories(category),
         needs_attention=needs_attention,
         unidentifiable=unidentifiable,
         sort=sort,
@@ -251,12 +253,20 @@ def _validated_tokens(token: list[str] | None) -> tuple[str, ...]:
     return tokens
 
 
+def _validated_categories(category: list[str] | None) -> tuple[str, ...]:
+    categories = tuple(category or ())
+    if any(len(value) > 500 for value in categories):
+        raise HTTPException(status_code=422, detail="category must be at most 500 characters")
+    return categories
+
+
 @router.get("/ids", response_model=DocumentIdSelection)
 def list_document_ids(
     tenant: Tenant,
     repo: Repo,
-    category: Annotated[str | None, Query(max_length=500)] = None,
-    status: Annotated[DocumentStatus | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=500)] = None,
+    category: Annotated[list[str] | None, Query()] = None,
+    status: Annotated[list[DocumentStatus] | None, Query()] = None,
     needs_attention: Annotated[bool, Query()] = False,
     unidentifiable: Annotated[bool | None, Query()] = None,
     title: Annotated[str | None, Query(max_length=500)] = None,
@@ -269,8 +279,9 @@ def list_document_ids(
     """All document ids matching the filters (for 'select all matching' bulk actions)."""
     ids, total, truncated = repo.list_document_ids(
         tenant.tenant_id,
-        status=status,
-        category=category,
+        q=q,
+        status=tuple(status or ()),
+        category=_validated_categories(category),
         needs_attention=needs_attention,
         unidentifiable=unidentifiable,
         title=title,

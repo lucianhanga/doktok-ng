@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documents · Simple / Advanced decision board</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14171c; --surface: #1a1e25; --surface-2: #212630; --surface-3: #2a303b;
+    --border: #2e3540; --border-strong: #46515f; --text: #e7e9ee; --muted: #9aa2ae;
+    --accent: #5aa0e6; --accent-soft: rgba(90,160,230,.12); --danger: #e0656d;
+    --success: #4cc266; --warning: #d8a53f; --paper: #eeede8; --ink: #41444a;
+    --shadow: rgba(3,6,10,.45); --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f5f6f8; --surface: #fff; --surface-2: #eef1f5; --surface-3: #e2e7ed;
+    --border: #d6dce4; --border-strong: #b8c2ce; --text: #20242b; --muted: #667180;
+    --accent: #276fae; --accent-soft: rgba(39,111,174,.09); --danger: #b6404b;
+    --success: #27823d; --warning: #946c18; --paper: #f8f7f3; --ink: #41444a;
+    --shadow: rgba(30,35,42,.18);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input, select { font: inherit; }
+  button, select { color: var(--text); }
+  button { cursor: pointer; }
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .visually-hidden { position: absolute; clip-path: inset(50%); overflow: hidden; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; white-space: nowrap; }
+
+  .proto-bar { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 18px; background: var(--surface); border-bottom: 1px solid var(--border-strong); }
+  .proto-title { margin-right: auto; }
+  .proto-title strong { display: block; font-size: 13px; }
+  .proto-title span { display: block; color: var(--muted); font-size: 11px; }
+  .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .segmented button { min-height: 30px; border: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 5px 11px; font-size: 12px; }
+  .segmented button:last-child { border-right: 0; }
+  .segmented button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .plain-button { min-height: 30px; border: 1px solid var(--border); background: var(--surface); padding: 5px 10px; border-radius: 6px; }
+  .plain-button:hover { border-color: var(--accent); }
+  .primary-button { min-height: 34px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); padding: 6px 14px; border-radius: 6px; font-weight: 650; }
+
+  main { max-width: 1480px; margin: 0 auto; padding: 22px 20px 110px; }
+  .intro { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: end; margin-bottom: 20px; }
+  .eyebrow { margin: 0 0 4px; color: var(--accent); font: 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 650; }
+  .intro p:not(.eyebrow) { max-width: 760px; margin: 7px 0 0; color: var(--muted); }
+  .recommended-note { color: var(--accent); font-size: 12px; white-space: nowrap; }
+
+  .workspace { border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); overflow: clip; box-shadow: 0 12px 35px var(--shadow); }
+  .workspace-head { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .workspace-head h2 { margin: 0; font-size: 17px; font-weight: 650; }
+  .workspace-head .view-switch { margin-left: auto; }
+  .workspace-body { padding: 14px; }
+  .query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .search-box { flex: 1 1 310px; min-width: 0; display: flex; align-items: center; gap: 9px; min-height: 38px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg); padding: 0 10px; }
+  .search-box label { color: var(--muted); font-size: 12px; }
+  .search-box input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); padding: 8px 0; }
+  .search-box input::placeholder { color: var(--muted); }
+  .query-row select { min-height: 38px; max-width: 210px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 6px 9px; }
+  .filter-trigger { position: relative; }
+  .count-dot { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 4px; padding: 0 4px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font: 10px var(--mono); }
+  .quick-filters { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .quick-filters select { min-height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 4px 8px; font-size: 12px; }
+  .search-hint { margin: 6px 1px 0; color: var(--muted); font-size: 11px; }
+  .active-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 11px; }
+  .filter-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text); padding: 3px 9px; font-size: 11px; }
+  .filter-chip span { color: var(--muted); }
+  .clear-button { border: 0; background: transparent; color: var(--accent); padding: 4px 6px; font-size: 11px; }
+  .result-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 13px 0 8px; }
+  .result-line strong { font-size: 12px; font-weight: 600; }
+  .result-line span { color: var(--muted); font-size: 11px; }
+  .result-line .persist-note { margin-left: auto; }
+  .advanced-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); font-size: 11px; }
+  .advanced-strip strong { margin-right: 5px; }
+  .advanced-strip .spacer { flex: 1; }
+
+  .results-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .results-layout.with-rail { grid-template-columns: 190px minmax(0, 1fr); }
+  .filter-rail { border-right: 1px solid var(--border); padding-right: 12px; }
+  .filter-rail h3 { margin: 0 0 10px; font-size: 12px; }
+  .filter-rail fieldset { margin: 0 0 14px; padding: 0; border: 0; }
+  .filter-rail legend { margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 600; }
+  .filter-rail label { display: flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; }
+  .filter-rail input { accent-color: var(--accent); }
+  .results-region { min-width: 0; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 7px; }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { padding: 8px 10px; border-bottom: 1px solid var(--border-strong); background: var(--surface-2); color: var(--muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: 12px; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--accent-soft); }
+  .density-compact td { padding-block: 6px; }
+  .doc-name { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .doc-sub { display: block; max-width: 360px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
+  .file-label { color: var(--muted); font: 10px var(--mono); }
+  .doc-health { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 11px; }
+  .doc-health::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+  .doc-health.attention { color: var(--warning); }
+  .doc-health.attention::before { background: var(--warning); }
+  .doc-health.failed { color: var(--danger); }
+  .doc-health.failed::before { background: var(--danger); }
+  .badge-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .badge { display: inline-flex; align-items: center; min-height: 20px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--muted); padding: 1px 5px; font-size: 9px; white-space: nowrap; }
+  .badge.ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+  .badge.warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
+  .badge.fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+  .tag { border-radius: 999px; color: var(--accent); }
+
+  .thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .doc-card { min-width: 0; container-type: inline-size; }
+  .thumb { position: relative; aspect-ratio: 3 / 4; overflow: clip; border: 1px solid var(--border); border-radius: 7px; background: var(--paper); }
+  .paper { position: absolute; inset: 0; padding: 15% 12%; color: var(--ink); font-family: Georgia, serif; }
+  .paper strong { display: block; margin-bottom: 9%; font-size: clamp(10px, 8cqi, 17px); line-height: 1.25; }
+  .paper .paper-line { height: 2px; margin: 6% 0; background: #c9c8c2; }
+  .paper .paper-line.short { width: 63%; }
+  .paper .paper-total { width: 55%; margin-top: 16%; margin-left: auto; border-top: 1px solid #999; padding-top: 5%; text-align: right; font-size: clamp(9px, 7cqi, 15px); }
+  .thumb .doc-health { position: absolute; top: 7px; right: 7px; border: 1px solid var(--border); border-radius: 4px; background: rgba(20,23,28,.86); color: #e7e9ee; padding: 2px 5px; font-size: 9px; }
+  .thumb-badges { position: absolute; inset-inline: 0; bottom: 0; display: flex; flex-wrap: wrap; gap: 3px; padding: 18px 6px 6px; background: linear-gradient(transparent, rgba(10,12,16,.88)); }
+  .thumb-badges .badge { background: rgba(26,30,37,.92); }
+  .card-title { display: block; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+  .card-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 2px; color: var(--muted); font-size: 10px; }
+  .empty-state { padding: 35px 15px; border: 1px dashed var(--border-strong); border-radius: 7px; text-align: center; color: var(--muted); }
+
+  .decisions-intro { margin: 34px 0 12px; }
+  .decisions-intro h2 { margin: 0; font-size: 18px; }
+  .decisions-intro p { margin: 5px 0 0; color: var(--muted); }
+  .decision { padding: 22px 0; border-top: 1px solid var(--border); }
+  .decision-head { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: start; margin-bottom: 12px; }
+  .decision-number { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--muted); font: 11px var(--mono); }
+  .decision-head h3 { margin: 2px 0 0; font-size: 15px; }
+  .decision-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+  .choice-label { color: var(--accent); font: 11px var(--mono); }
+  .option-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .option-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .option { position: relative; min-height: 142px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 13px; text-align: left; }
+  .option:hover { border-color: var(--accent); }
+  .option.selected { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+  .option-top { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+  .radio-dot { width: 13px; height: 13px; flex: none; border: 1px solid var(--border-strong); border-radius: 50%; background: var(--surface); }
+  .selected .radio-dot { border: 4px solid var(--accent); }
+  .option-letter { color: var(--muted); font: 10px var(--mono); }
+  .option-recommended { margin-left: auto; color: var(--accent); font-size: 10px; }
+  .option strong { display: block; margin-bottom: 4px; font-size: 13px; }
+  .option-description { display: block; color: var(--muted); font-size: 11px; line-height: 1.45; }
+  .option-effort { display: block; margin-top: 9px; color: var(--muted); font: 10px var(--mono); }
+  .option-sketch { display: flex; gap: 3px; margin-top: 10px; }
+  .option-sketch i { display: block; height: 4px; flex: 1; border-radius: 2px; background: var(--border-strong); }
+  .option-sketch i:first-child { flex: 2; background: var(--accent); }
+  .option-sketch.vertical { height: 20px; align-items: stretch; }
+  .option-sketch.vertical i { height: auto; }
+  .option-sketch.vertical i:first-child { flex: .65; }
+
+  .epic { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--border-strong); }
+  .epic h2 { margin: 0 0 5px; font-size: 18px; }
+  .epic > p { margin: 0 0 15px; color: var(--muted); }
+  .epic ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 22px; margin: 0; padding-left: 22px; }
+  .epic li { padding: 5px 0; }
+  .epic li strong { display: block; font-size: 12px; }
+  .epic li span { color: var(--muted); font-size: 11px; }
+  .research { margin-top: 18px; padding: 12px 14px; border-left: 2px solid var(--accent); background: var(--accent-soft); color: var(--muted); font-size: 11px; }
+  .research strong { color: var(--text); }
+
+  .selection-bar { position: fixed; z-index: 60; inset-inline: 0; bottom: 0; display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 9px 20px; border-top: 1px solid var(--border-strong); background: var(--surface); box-shadow: 0 -8px 25px var(--shadow); }
+  .selection-copy { flex: 1; min-width: 0; }
+  .selection-copy strong { display: block; font-size: 12px; }
+  .selection-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
+  .toast { position: fixed; z-index: 100; left: 50%; bottom: 72px; transform: translateX(-50%); max-width: calc(100vw - 30px); border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-2); box-shadow: 0 8px 25px var(--shadow); padding: 8px 12px; font-size: 12px; }
+
+  dialog { width: min(440px, calc(100vw - 28px)); max-height: calc(100dvh - 40px); border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); color: var(--text); padding: 0; box-shadow: 0 20px 70px var(--shadow); }
+  dialog::backdrop { background: rgba(5,8,12,.66); }
+  .dialog-head { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--border); }
+  .dialog-head h2 { flex: 1; margin: 0; font-size: 16px; }
+  .dialog-body { padding: 15px 16px; }
+  .dialog-body fieldset { margin: 0 0 16px; padding: 0; border: 0; }
+  .dialog-body legend { margin-bottom: 7px; font-size: 12px; font-weight: 600; }
+  .dialog-body label { display: flex; align-items: center; gap: 8px; min-height: 34px; color: var(--muted); }
+  .dialog-body input { accent-color: var(--accent); }
+  .dialog-actions { display: flex; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+
+  @media (max-width: 980px) {
+    .option-grid { grid-template-columns: 1fr; }
+    .option-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .option { min-height: 0; }
+    .results-layout.with-rail { grid-template-columns: 160px minmax(0, 1fr); }
+  }
+  @media (max-width: 700px) {
+    main { padding: 15px 10px 110px; }
+    .intro { grid-template-columns: 1fr; gap: 8px; }
+    .recommended-note { white-space: normal; }
+    .proto-title { flex: 1 1 100%; }
+    .workspace-head #mode-caption { display: none; }
+    .workspace-body { padding: 10px; }
+    .query-row .search-box { flex-basis: 100%; }
+    .table-wrap table { min-width: 600px; }
+    .results-layout.with-rail { grid-template-columns: 1fr; }
+    .filter-rail { border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 10px; }
+    .result-line .persist-note { flex-basis: 100%; margin-left: 0; }
+    .thumb-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .option-grid.two { grid-template-columns: 1fr; }
+    .epic ol { grid-template-columns: 1fr; }
+    .decision-head { grid-template-columns: 28px minmax(0, 1fr); }
+    .choice-label { grid-column: 2; }
+    .selection-bar { padding-inline: 10px; }
+    .selection-copy span { max-width: none; }
+    #reset-recommended { display: none; }
+  }
+  @media (pointer: coarse) {
+    .plain-button, .segmented button, .query-row select { min-height: 40px; }
+    .filter-chip { min-height: 34px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<nav class="proto-bar" aria-label="Prototype controls">
+  <div class="proto-title"><strong>Documents · epic decision board</strong><span>Throwaway mockup · mock data only · no production API calls</span></div>
+  <div class="segmented" aria-label="UI mode">
+    <button type="button" data-mode="simple" class="active" aria-pressed="true">Simple</button>
+    <button type="button" data-mode="advanced" aria-pressed="false">Advanced</button>
+  </div>
+  <div class="segmented" aria-label="Document layout">
+    <button type="button" data-view="list" class="active" aria-pressed="true">List</button>
+    <button type="button" data-view="thumbnails" aria-pressed="false">Thumbnails</button>
+  </div>
+  <button type="button" id="theme-toggle" class="plain-button" aria-label="Switch to light theme">Light</button>
+</nav>
+
+<main>
+  <section class="intro" aria-labelledby="page-title">
+    <div>
+      <p class="eyebrow">Spartan, modern, progressive</p>
+      <h1 id="page-title">One Documents workspace. Two detail levels.</h1>
+      <p>Simple keeps browsing calm. Advanced reveals operational depth without becoming a separate tool. List and Thumbnails remain available in both.</p>
+    </div>
+    <span class="recommended-note">Recommended choices are preselected below.</span>
+  </section>
+
+  <section class="workspace" aria-label="Interactive Documents preview">
+    <div class="workspace-head">
+      <h2>Documents</h2>
+      <span class="muted" id="mode-caption">Simple · essential browsing</span>
+      <div class="segmented view-switch" aria-label="Preview result layout">
+        <button type="button" data-view="list" class="active" aria-pressed="true">List</button>
+        <button type="button" data-view="thumbnails" aria-pressed="false">Thumbnails</button>
+      </div>
+    </div>
+    <div class="workspace-body">
+      <div class="query-row">
+        <div class="search-box">
+          <label for="doc-search">Search</label>
+          <input id="doc-search" type="search" name="q" placeholder="Title, filename, person, organisation…" autocomplete="off" enterkeyhint="search">
+        </div>
+        <button type="button" id="filter-trigger" class="plain-button filter-trigger" aria-haspopup="dialog">Filters <span class="count-dot" id="filter-count">2</span></button>
+        <div id="quick-filters" class="quick-filters" hidden>
+          <select aria-label="Quick status filter"><option>Status: Active</option><option>Status: Failed</option><option>Status: All</option></select>
+          <select aria-label="Quick category filter"><option>Category: Invoices</option><option>Category: Contracts</option><option>Category: All</option></select>
+          <button type="button" id="more-filters" class="plain-button">More filters</button>
+        </div>
+        <label class="visually-hidden" for="sort-select">Sort documents</label>
+        <select id="sort-select">
+          <option value="newest">Newest imported</option>
+          <option value="oldest">Oldest imported</option>
+          <option value="title-asc">Title A–Z</option>
+          <option value="title-desc">Title Z–A</option>
+          <option value="document-newest">Document date, newest</option>
+        </select>
+        <button type="button" id="direction-button" class="plain-button" aria-label="Descending, switch to ascending" hidden>↓</button>
+        <select id="sort-select-secondary" aria-label="Then sort by" hidden>
+          <option>Then: Title A–Z</option><option>Then: Newest imported</option>
+        </select>
+      </div>
+      <p class="search-hint" id="search-hint">Matches title, filename, and extracted people / organisations · updates after a short pause</p>
+      <div class="active-row" id="active-filters" aria-label="Applied filters">
+        <button type="button" class="filter-chip" data-filter="status" aria-label="Remove Status Active filter"><span>Status</span> Active ×</button>
+        <button type="button" class="filter-chip" data-filter="category" aria-label="Remove Category Invoices filter"><span>Category</span> Invoices ×</button>
+        <button type="button" id="query-chip" class="filter-chip" aria-label="Clear search" hidden><span>Search</span> <b id="query-chip-text"></b> ×</button>
+        <button type="button" class="clear-button" id="clear-filters">Clear all</button>
+      </div>
+      <div class="result-line">
+        <strong id="result-count" aria-live="polite">6 documents</strong>
+        <span id="result-context">filtered from 1,284</span>
+        <span class="persist-note" id="persist-note">URL shareable · per-user defaults restored</span>
+      </div>
+      <div class="advanced-strip" id="advanced-strip" hidden>
+        <strong>Advanced</strong><span>0 selected</span><button type="button" class="plain-button">Tags</button><button type="button" class="plain-button">Reprocess</button><span class="spacer"></span><button type="button" class="plain-button">Columns</button><button type="button" class="plain-button">Reprocess all</button>
+      </div>
+      <div class="results-layout" id="results-layout">
+        <aside class="filter-rail" id="filter-rail" aria-label="Document filters" hidden>
+          <h3>Filters</h3>
+          <fieldset><legend>Status</legend><label><input type="checkbox" checked> Active <span class="muted">(1,102)</span></label><label><input type="checkbox"> Needs attention <span class="muted">(12)</span></label><label><input type="checkbox"> Failed <span class="muted">(4)</span></label></fieldset>
+          <fieldset><legend>Category</legend><label><input type="checkbox" checked> Invoices <span class="muted">(190)</span></label><label><input type="checkbox"> Contracts <span class="muted">(208)</span></label><label><input type="checkbox"> Personal <span class="muted">(141)</span></label></fieldset>
+          <button type="button" class="clear-button">Reset filters</button>
+        </aside>
+        <div class="results-region" id="results-region" tabindex="0" role="region" aria-label="Document results"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="decisions-intro" aria-labelledby="decisions-title">
+    <h2 id="decisions-title">Choose each implementation direction</h2>
+    <p>Click one option per row. The preview updates immediately; your selections are recorded for the next design pass.</p>
+  </section>
+
+  <section class="decision" data-decision="list" aria-labelledby="decision-list">
+    <div class="decision-head"><span class="decision-number">1</span><div><h3 id="decision-list">What belongs in a Simple list row?</h3><p>Advanced can always expose the remaining columns.</p></div><span class="choice-label" data-choice-label>Document-first</span></div>
+    <div class="option-grid">
+      <button type="button" class="option selected" data-choice="list:document" data-value="document" data-label="Document-first" aria-pressed="true"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">A</span><span class="option-recommended">Recommended</span></span><strong>Document-first</strong><span class="option-description">Title, category, document date, and status. Best for recognizing documents by meaning rather than storage details.</span><span class="option-effort">UI only · calm default</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="list:file" data-value="file" data-label="File-first" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">B</span></span><strong>File-first</strong><span class="option-description">Filename, type, import date, and status. Best if your mental model is a file system rather than a document library.</span><span class="option-effort">UI only · familiar</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="list:metadata" data-value="metadata" data-label="Metadata-rich" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">C</span></span><strong>Metadata-rich</strong><span class="option-description">Title, short summary, tags, date, and status. More context per row, but taller and visually busier.</span><span class="option-effort">UI only · denser</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></button>
+    </div>
+  </section>
+
+  <section class="decision" data-decision="badges" aria-labelledby="decision-badges">
+    <div class="decision-head"><span class="decision-number">2</span><div><h3 id="decision-badges">How visible should thumbnail badges be?</h3><p>All options keep badges visible; none relies on hover to reveal health.</p></div><span class="choice-label" data-choice-label>Essential status</span></div>
+    <div class="option-grid">
+      <button type="button" class="option selected" data-choice="badges:essential" data-value="essential" data-label="Essential status" aria-pressed="true"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">A</span><span class="option-recommended">Recommended</span></span><strong>Essential status</strong><span class="option-description">Ready, processing, or needs attention on the image. Full feature badges appear only in Advanced.</span><span class="option-effort">UI only · cleanest</span><span class="option-sketch" aria-hidden="true"><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="badges:rollup" data-value="rollup" data-label="Processing rollup" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">B</span></span><strong>Processing rollup</strong><span class="option-description">One compact “7/8 done” or “1 failed” badge. More informative without a row of feature chips.</span><span class="option-effort">Uses existing summary API</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="badges:all" data-value="all" data-label="All feature badges" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">C</span></span><strong>All feature badges</strong><span class="option-description">Text, RAG, metadata, entities, and more remain visible in Simple, similar to today’s thumbnail grid.</span><span class="option-effort">UI only · busiest</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></button>
+    </div>
+  </section>
+
+  <section class="decision" data-decision="filters" aria-labelledby="decision-filters">
+    <div class="decision-head"><span class="decision-number">3</span><div><h3 id="decision-filters">Where do filters live?</h3><p>Every option keeps active filters visible as removable chips and offers Clear all.</p></div><span class="choice-label" data-choice-label>Filter disclosure</span></div>
+    <div class="option-grid">
+      <button type="button" class="option selected" data-choice="filters:disclosure" data-value="disclosure" data-label="Filter disclosure" aria-pressed="true"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">A</span><span class="option-recommended">Recommended</span></span><strong>Search + Filters disclosure</strong><span class="option-description">One uncluttered toolbar. Filters open in a popover on desktop and a modal sheet on small screens.</span><span class="option-effort">UI + responsive dialog</span><span class="option-sketch vertical" aria-hidden="true"><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="filters:quick" data-value="quick" data-label="Inline quick filters" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">B</span></span><strong>Inline quick filters</strong><span class="option-description">Status, Category, and Tags stay in the toolbar; less common filters move behind More filters.</span><span class="option-effort">UI only · fastest access</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="filters:rail" data-value="rail" data-label="Persistent filter rail" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">C</span></span><strong>Persistent filter rail</strong><span class="option-description">A left rail on wide screens and a drawer on mobile. Powerful for exploration, but consumes library space.</span><span class="option-effort">UI + responsive rail</span><span class="option-sketch vertical" aria-hidden="true"><i></i><i></i><i></i></span></button>
+    </div>
+  </section>
+
+  <section class="decision" data-decision="search" aria-labelledby="decision-search">
+    <div class="decision-head"><span class="decision-number">4</span><div><h3 id="decision-search">What does one search box mean?</h3><p>Search narrows the library; filters refine attributes; sorting only reorders the result.</p></div><span class="choice-label" data-choice-label>Unified metadata</span></div>
+    <div class="option-grid">
+      <button type="button" class="option selected" data-choice="search:unified" data-value="unified" data-label="Unified metadata" aria-pressed="true"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">A</span><span class="option-recommended">Recommended</span></span><strong>Unified metadata search</strong><span class="option-description">One debounced box for title, filename, and extracted people / organisations, with token suggestions where useful.</span><span class="option-effort">Backend query + UI · medium</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="search:split" data-value="split" data-label="Progressive search" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">B</span></span><strong>Progressive search</strong><span class="option-description">Simple searches titles; Advanced adds the existing entity-token search. Smallest change, but two mental models.</span><span class="option-effort">Mostly UI · smallest</span><span class="option-sketch" aria-hidden="true"><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="search:fulltext" data-value="fulltext" data-label="Unified full text" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">C</span></span><strong>Unified full-text search</strong><span class="option-description">One box also searches extracted document content and returns highlighted matches. Most capable, largest query and ranking work.</span><span class="option-effort">Backend search + ranking · large</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></button>
+    </div>
+  </section>
+
+  <section class="decision" data-decision="state" aria-labelledby="decision-state">
+    <div class="decision-head"><span class="decision-number">5</span><div><h3 id="decision-state">How should filtering and sorting survive?</h3><p>Explicit deep links always win over saved defaults; opening a document must not reset the library.</p></div><span class="choice-label" data-choice-label>URL + synced defaults</span></div>
+    <div class="option-grid">
+      <button type="button" class="option selected" data-choice="state:url" data-value="url" data-label="URL + synced defaults" aria-pressed="true"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">A</span><span class="option-recommended">Recommended</span></span><strong>URL + synced defaults</strong><span class="option-description">Query, filters, sort, and layout live in the URL; per-user preferences supply defaults. Back/forward and sharing work.</span><span class="option-effort">Versioned state + migration</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="state:preferences" data-value="preferences" data-label="Synced defaults only" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">B</span></span><strong>Synced defaults only</strong><span class="option-description">Extend today’s per-user store to every filter and sort. Restoration works, but URLs are not shareable.</span><span class="option-effort">UI preference schema · smaller</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="state:session" data-value="session" data-label="Session only" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">C</span></span><strong>Session only</strong><span class="option-description">Keep state while navigating this tab, but intentionally reset on a fresh visit. Simplest, yet loses cross-device continuity.</span><span class="option-effort">UI state only · least durable</span><span class="option-sketch" aria-hidden="true"><i></i><i></i></span></button>
+    </div>
+  </section>
+
+  <section class="decision" data-decision="sort" aria-labelledby="decision-sort">
+    <div class="decision-head"><span class="decision-number">6</span><div><h3 id="decision-sort">How should ordering be expressed?</h3><p>Defaults and labels should describe the outcome, not expose database terminology.</p></div><span class="choice-label" data-choice-label>Named sort outcomes</span></div>
+    <div class="option-grid">
+      <button type="button" class="option selected" data-choice="sort:named" data-value="named" data-label="Named sort outcomes" aria-pressed="true"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">A</span><span class="option-recommended">Recommended</span></span><strong>Named sort outcomes</strong><span class="option-description">One menu: Newest imported, Oldest imported, Title A–Z, Document date. Clear in Simple and Advanced.</span><span class="option-effort">Existing keyset sorts · UI</span><span class="option-sketch" aria-hidden="true"><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="sort:field" data-value="field" data-label="Field + direction" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">B</span></span><strong>Field + direction</strong><span class="option-description">Keep today’s field menu and arrow toggle, with clearer labels and saved direction. Flexible but less self-explanatory.</span><span class="option-effort">Small UI refinement</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="sort:multi" data-value="multi" data-label="Advanced multi-sort" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">C</span></span><strong>Advanced multi-sort</strong><span class="option-description">Simple uses named outcomes; Advanced adds “then by” ordering. Useful for operations, but needs cursor contract changes.</span><span class="option-effort">Backend cursor + UI · larger</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i></span></button>
+    </div>
+  </section>
+
+  <section class="decision" data-decision="advanced" aria-labelledby="decision-advanced">
+    <div class="decision-head"><span class="decision-number">7</span><div><h3 id="decision-advanced">What changes in Advanced?</h3><p>Advanced should add capability without invalidating what users learned in Simple.</p></div><span class="choice-label" data-choice-label>Progressive disclosure</span></div>
+    <div class="option-grid two">
+      <button type="button" class="option selected" data-choice="advanced:progressive" data-value="progressive" data-label="Progressive disclosure" aria-pressed="true"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">A</span><span class="option-recommended">Recommended</span></span><strong>Same library, more depth</strong><span class="option-description">Keep search, filters, sorting, and both layouts. Add selection, all badges, column controls, bulk actions, and reprocessing.</span><span class="option-effort">Shared components · consistent</span><span class="option-sketch" aria-hidden="true"><i></i><i></i><i></i><i></i></span></button>
+      <button type="button" class="option" data-choice="advanced:operations" data-value="operations" data-label="Operations workspace" aria-pressed="false"><span class="option-top"><span class="radio-dot"></span><span class="option-letter">B</span></span><strong>Dense operations workspace</strong><span class="option-description">Advanced prioritizes a compact processing table, diagnostics, and bulk work. Thumbnails remain available but secondary.</span><span class="option-effort">More mode-specific UI · denser</span><span class="option-sketch vertical" aria-hidden="true"><i></i><i></i><i></i></span></button>
+    </div>
+  </section>
+
+  <section class="epic" aria-labelledby="epic-title">
+    <h2 id="epic-title">Draft epic breakdown</h2>
+    <p>Sequenced so state and query behavior are fixed before the visual variants multiply.</p>
+    <ol>
+      <li><strong>State and query contract</strong><span>Version preferences, URL state, deep-link precedence, reset behavior, shared list/select-all filters.</span></li>
+      <li><strong>Simple shell and list</strong><span>Global mode wiring, selected row content, responsive table, layout switch, empty/loading states.</span></li>
+      <li><strong>Thumbnail system</strong><span>Responsive cards, visible badges, processing summary, fallbacks, fields and sizes.</span></li>
+      <li><strong>Search and filtering</strong><span>Chosen search scope, suggestions, filter disclosure/rail, removable chips, zero-result recovery.</span></li>
+      <li><strong>Ordering and navigation</strong><span>Named sorts or multi-sort, stable cursors, Back/Forward, restored scroll and Load more.</span></li>
+      <li><strong>Advanced operations</strong><span>Selection, bulk actions, reprocessing, column customization, full processing diagnostics.</span></li>
+      <li><strong>Accessibility and performance</strong><span>Keyboard/focus, screen readers, mobile, reduced motion, large-library and query tests.</span></li>
+      <li><strong>Migration and rollout</strong><span>Preference migration, regression coverage, staged PRs, final end-to-end verification.</span></li>
+    </ol>
+    <div class="research"><strong>Research applied:</strong> visible applied-filter overview; per-filter and global reset; filter state preserved through Back navigation; desktop instant updates with non-disruptive feedback; explicit Apply on mobile; search, filter, and sort kept conceptually distinct.</div>
+  </section>
+</main>
+
+<div class="selection-bar" aria-label="Current design selections">
+  <div class="selection-copy"><strong id="selection-title">Recommended set · 7 of 7 selected</strong><span id="selection-summary">Document-first · Essential status · Filter disclosure · Unified metadata · URL + synced defaults · Named sort outcomes · Progressive disclosure</span></div>
+  <button type="button" id="reset-recommended" class="plain-button">Reset recommended</button>
+  <button type="button" id="confirm-selection" class="primary-button">Record choices</button>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<dialog id="filter-dialog" aria-labelledby="filter-dialog-title">
+  <div class="dialog-head"><h2 id="filter-dialog-title">Filter documents</h2><button type="button" class="plain-button" id="close-filter-dialog">Close</button></div>
+  <div class="dialog-body">
+    <fieldset><legend>Status</legend><label><input type="checkbox" checked> Active <span class="muted">1,102</span></label><label><input type="checkbox"> Needs attention <span class="muted">12</span></label><label><input type="checkbox"> Failed <span class="muted">4</span></label><label><input type="checkbox"> Unidentifiable <span class="muted">8</span></label></fieldset>
+    <fieldset><legend>Category</legend><label><input type="checkbox" checked> Invoices <span class="muted">190</span></label><label><input type="checkbox"> Contracts <span class="muted">208</span></label><label><input type="checkbox"> Personal <span class="muted">141</span></label></fieldset>
+    <fieldset><legend>Tags</legend><label><input type="checkbox"> Finance <span class="muted">312</span></label><label><input type="checkbox"> 2026 <span class="muted">422</span></label><label><input type="checkbox"> Tax <span class="muted">86</span></label></fieldset>
+  </div>
+  <div class="dialog-actions"><button type="button" class="clear-button" id="dialog-clear">Clear all</button><button type="button" class="primary-button" id="apply-filters">Show 6 documents</button></div>
+</dialog>
+
+<script>
+(() => {
+  const recommended = { list: 'document', badges: 'essential', filters: 'disclosure', search: 'unified', state: 'url', sort: 'named', advanced: 'progressive' };
+  const state = { ...recommended, mode: 'simple', view: 'list', query: '' };
+  const docs = [
+    { id: 1, title: 'Northstar Consulting · September', file: 'consulting-invoice-sept.pdf', category: 'Invoices', date: '30 Sep 2026', imported: '2 Nov 2026', status: 'Ready', health: 'ready', summary: 'Professional advisory services and management reporting.', tags: ['Finance', 'Tax'], entity: 'Northstar Consulting', content: 'Professional services September advisory net amount 2400', done: 8, failed: 0 },
+    { id: 2, title: 'Harbor Legal · Contract review', file: 'legal-services-q3.pdf', category: 'Invoices', date: '28 Sep 2026', imported: '2 Nov 2026', status: 'Ready', health: 'ready', summary: 'Contract review and professional legal services.', tags: ['Legal', 'Q3'], entity: 'Harbor Legal', content: 'Contract review professional legal services total 850', done: 8, failed: 0 },
+    { id: 3, title: 'Riverside Insurance · Renewal', file: 'insurance-renewal-2027.pdf', category: 'Contracts', date: '15 Oct 2026', imported: '1 Nov 2026', status: 'Attention', health: 'attention', summary: 'Annual policy renewal and coverage schedule.', tags: ['Insurance'], entity: 'Riverside Insurance', content: 'Annual policy renewal coverage schedule premium', done: 7, failed: 1 },
+    { id: 4, title: 'Municipal tax assessment 2026', file: 'tax-assessment-2026.pdf', category: 'Invoices', date: '4 Oct 2026', imported: '31 Oct 2026', status: 'Ready', health: 'ready', summary: 'Annual municipal tax assessment and payment notice.', tags: ['Tax', '2026'], entity: 'Municipal Revenue Office', content: 'Municipal tax assessment annual payment notice', done: 8, failed: 0 },
+    { id: 5, title: 'Warehouse lease agreement', file: 'warehouse-lease-signed.pdf', category: 'Contracts', date: '18 Aug 2026', imported: '29 Oct 2026', status: 'Ready', health: 'ready', summary: 'Signed commercial lease and service obligations.', tags: ['Property', 'Legal'], entity: 'Atlas Property Group', content: 'Commercial warehouse lease service obligations signed', done: 8, failed: 0 },
+    { id: 6, title: 'Scanned supplier receipt', file: 'scan-0043.pdf', category: 'Invoices', date: '12 Oct 2026', imported: '28 Oct 2026', status: 'Failed', health: 'failed', summary: 'OCR requires attention before metadata can be extracted.', tags: ['Receipts'], entity: 'Office Supply House', content: 'Supplier receipt paper office materials total', done: 5, failed: 1 }
+  ];
+
+  const results = document.getElementById('results-region');
+  const dialog = document.getElementById('filter-dialog');
+  let toastTimer;
+  let searchTimer;
+
+  function notify(message) {
+    const toast = document.getElementById('toast');
+    clearTimeout(toastTimer);
+    toast.textContent = message;
+    toast.hidden = false;
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
+  }
+
+  function pressed(selector, key, value) {
+    document.querySelectorAll(selector).forEach((button) => {
+      const active = button.dataset[key] === value;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  function statusBadge(doc) {
+    const cls = doc.health === 'failed' ? 'failed' : doc.health === 'attention' ? 'attention' : '';
+    return `<span class="doc-health ${cls}">${doc.status}</span>`;
+  }
+
+  function featureBadges(doc) {
+    if (state.badges === 'essential' && state.mode === 'simple') return '';
+    if (state.badges === 'rollup' || (state.badges === 'essential' && state.mode === 'advanced')) {
+      return `<span class="badge ${doc.failed ? 'fail' : 'ok'}">${doc.done}/8 done${doc.failed ? ` · ${doc.failed} failed` : ''}</span>`;
+    }
+    return `<span class="badge ok">Text ✓</span><span class="badge ok">RAG ✓</span><span class="badge ok">Meta ✓</span><span class="badge ${doc.failed ? 'fail' : 'ok'}">Entities ${doc.failed ? '×' : '✓'}</span>`;
+  }
+
+  function listMarkup(items) {
+    const advanced = state.mode === 'advanced';
+    const operations = advanced && state.advanced === 'operations';
+    if (state.list === 'file' && !advanced) {
+      return `<div class="table-wrap"><table><thead><tr><th scope="col">Filename</th><th scope="col">Type</th><th scope="col">Imported</th><th scope="col">Status</th></tr></thead><tbody>${items.map((doc) => `<tr><td><span class="doc-name">${doc.file}</span></td><td class="file-label">PDF</td><td>${doc.imported}</td><td>${statusBadge(doc)}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    if (state.list === 'metadata' && !advanced) {
+      return `<div class="table-wrap"><table><thead><tr><th scope="col">Document</th><th scope="col">Tags</th><th scope="col">Date</th><th scope="col">Status</th></tr></thead><tbody>${items.map((doc) => `<tr><td><span class="doc-name">${doc.title}</span><span class="doc-sub">${doc.summary}</span></td><td><span class="badge-row">${doc.tags.map((tag) => `<span class="badge tag">${tag}</span>`).join('')}</span></td><td>${doc.date}</td><td>${statusBadge(doc)}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    return `<div class="table-wrap"><table class="${operations ? 'density-compact' : ''}"><thead><tr>${advanced ? '<th scope="col">Select</th>' : ''}<th scope="col">Document</th><th scope="col">Category</th>${advanced ? '<th scope="col">Filename</th><th scope="col">Processing</th>' : ''}<th scope="col">Date</th><th scope="col">Status</th></tr></thead><tbody>${items.map((doc) => `<tr>${advanced ? '<td><input type="checkbox" aria-label="Select ' + escapeHtml(doc.title) + '"></td>' : ''}<td><span class="doc-name">${doc.title}</span>${advanced ? `<span class="doc-sub">${doc.entity}</span>` : ''}</td><td>${doc.category}</td>${advanced ? `<td><span class="file-label">${doc.file}</span></td><td><span class="badge-row">${featureBadges(doc)}</span></td>` : ''}<td>${doc.date}</td><td>${statusBadge(doc)}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+
+  function thumbnailsMarkup(items) {
+    return `<div class="thumb-grid">${items.map((doc) => `<article class="doc-card"><div class="thumb"><div class="paper"><strong>${doc.category === 'Contracts' ? 'AGREEMENT' : 'INVOICE'}</strong><div class="paper-line"></div><div class="paper-line"></div><div class="paper-line short"></div><div class="paper-line"></div><div class="paper-total">${doc.category === 'Contracts' ? doc.entity : doc.date}</div></div>${statusBadge(doc)}<div class="thumb-badges">${featureBadges(doc)}</div></div><span class="card-title" title="${escapeHtml(doc.title)}">${doc.title}</span><span class="card-meta"><span>${doc.category}</span><span>${doc.date}</span></span>${state.mode === 'advanced' ? `<span class="doc-sub">${doc.file}</span>` : ''}</article>`).join('')}</div>`;
+  }
+
+  function filteredDocs() {
+    const query = state.query.trim().toLowerCase();
+    if (!query) return docs;
+    return docs.filter((doc) => {
+      const metadata = `${doc.title} ${doc.file} ${doc.entity} ${doc.tags.join(' ')}`.toLowerCase();
+      if (state.search === 'split') return `${doc.title} ${doc.file}`.toLowerCase().includes(query);
+      if (state.search === 'fulltext') return `${metadata} ${doc.content}`.toLowerCase().includes(query);
+      return metadata.includes(query);
+    });
+  }
+
+  function renderResults() {
+    const items = filteredDocs();
+    document.getElementById('result-count').textContent = `${items.length} document${items.length === 1 ? '' : 's'}`;
+    document.getElementById('result-context').textContent = state.query ? `matching “${state.query}”` : 'filtered from 1,284';
+    if (!items.length) {
+      results.innerHTML = `<div class="empty-state"><strong>No documents match</strong><p>Try removing a filter or broadening your search.</p><button type="button" class="plain-button" id="empty-clear">Clear search and filters</button></div>`;
+      document.getElementById('empty-clear').addEventListener('click', clearSearchAndFilters);
+      return;
+    }
+    results.innerHTML = state.view === 'list' ? listMarkup(items) : thumbnailsMarkup(items);
+  }
+
+  function renderMode() {
+    pressed('[data-mode]', 'mode', state.mode);
+    document.getElementById('mode-caption').textContent = state.mode === 'simple' ? 'Simple · essential browsing' : state.advanced === 'operations' ? 'Advanced · operations workspace' : 'Advanced · full library controls';
+    document.getElementById('advanced-strip').hidden = state.mode !== 'advanced';
+    document.getElementById('sort-select-secondary').hidden = !(state.sort === 'multi' && state.mode === 'advanced');
+    renderResults();
+  }
+
+  function renderView() {
+    pressed('[data-view]', 'view', state.view);
+    renderResults();
+  }
+
+  function renderFilters() {
+    const disclosure = state.filters === 'disclosure';
+    document.getElementById('filter-trigger').hidden = !disclosure;
+    document.getElementById('quick-filters').hidden = state.filters !== 'quick';
+    document.getElementById('filter-rail').hidden = state.filters !== 'rail';
+    document.getElementById('results-layout').classList.toggle('with-rail', state.filters === 'rail');
+  }
+
+  function renderSearch() {
+    const input = document.getElementById('doc-search');
+    const hints = {
+      unified: ['Title, filename, person, organisation…', 'Matches title, filename, and extracted people / organisations · updates after a short pause'],
+      split: [state.mode === 'simple' ? 'Search document titles…' : 'Search titles or extracted entity tokens…', state.mode === 'simple' ? 'Title and filename search · entity-token search is available in Advanced' : 'Title and extracted entity search · separate matching semantics remain explicit'],
+      fulltext: ['Search titles, entities, and full text…', 'Matches metadata and extracted content · match snippets and relevance ranking required']
+    };
+    input.placeholder = hints[state.search][0];
+    document.getElementById('search-hint').textContent = hints[state.search][1];
+  }
+
+  function renderState() {
+    const notes = { url: 'URL shareable · per-user defaults restored', preferences: 'Per-user defaults restored · URL stays clean', session: 'Kept for this session · resets on a fresh visit' };
+    document.getElementById('persist-note').textContent = notes[state.state];
+  }
+
+  function renderSort() {
+    document.getElementById('direction-button').hidden = state.sort !== 'field';
+    document.getElementById('sort-select-secondary').hidden = !(state.sort === 'multi' && state.mode === 'advanced');
+  }
+
+  function updateSelectionSummary() {
+    const labels = [...document.querySelectorAll('.decision')].map((section) => section.querySelector('.option.selected').dataset.label);
+    const custom = Object.keys(recommended).some((key) => state[key] !== recommended[key]);
+    document.getElementById('selection-title').textContent = `${custom ? 'Your custom set' : 'Recommended set'} · 7 of 7 selected`;
+    document.getElementById('selection-summary').textContent = labels.join(' · ');
+  }
+
+  function selectOption(section, option, record = true) {
+    const decision = section.dataset.decision;
+    const value = option.dataset.value;
+    state[decision] = value;
+    section.querySelectorAll('.option').forEach((item) => {
+      const active = item === option;
+      item.classList.toggle('selected', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    section.querySelector('[data-choice-label]').textContent = option.dataset.label;
+    if (decision === 'filters') renderFilters();
+    if (decision === 'search') { renderSearch(); renderResults(); }
+    if (decision === 'state') renderState();
+    if (decision === 'sort') renderSort();
+    if (decision === 'advanced') renderMode();
+    if (decision === 'list' || decision === 'badges') renderResults();
+    updateSelectionSummary();
+    if (record && window.brainstorm) window.brainstorm.choice(option.dataset.choice, { decision, value, label: option.dataset.label });
+  }
+
+  function clearSearchAndFilters() {
+    state.query = '';
+    document.getElementById('doc-search').value = '';
+    document.getElementById('query-chip').hidden = true;
+    document.querySelectorAll('[data-filter]').forEach((chip) => { chip.hidden = false; });
+    document.getElementById('filter-count').textContent = '2';
+    renderResults();
+  }
+
+  document.querySelectorAll('.decision').forEach((section) => {
+    section.querySelectorAll('.option').forEach((option) => option.addEventListener('click', () => selectOption(section, option)));
+  });
+  document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => { state.mode = button.dataset.mode; renderSearch(); renderMode(); }));
+  document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => { state.view = button.dataset.view; renderView(); }));
+  document.getElementById('theme-toggle').addEventListener('click', (event) => {
+    const light = document.documentElement.dataset.theme !== 'light';
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    event.currentTarget.textContent = light ? 'Dark' : 'Light';
+    event.currentTarget.setAttribute('aria-label', `Switch to ${light ? 'dark' : 'light'} theme`);
+  });
+
+  function openFilters() { dialog.showModal(); }
+  document.getElementById('filter-trigger').addEventListener('click', openFilters);
+  document.getElementById('more-filters').addEventListener('click', openFilters);
+  document.getElementById('close-filter-dialog').addEventListener('click', () => dialog.close());
+  document.getElementById('apply-filters').addEventListener('click', () => { dialog.close(); notify('Filters applied in the mockup'); });
+  document.getElementById('dialog-clear').addEventListener('click', () => { dialog.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; }); });
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+
+  document.getElementById('doc-search').addEventListener('input', (event) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      state.query = event.target.value.trim();
+      document.getElementById('query-chip').hidden = !state.query;
+      document.getElementById('query-chip-text').textContent = state.query;
+      renderResults();
+    }, 250);
+  });
+  document.getElementById('query-chip').addEventListener('click', () => { state.query = ''; document.getElementById('doc-search').value = ''; document.getElementById('query-chip').hidden = true; renderResults(); });
+  document.getElementById('clear-filters').addEventListener('click', clearSearchAndFilters);
+  document.querySelectorAll('[data-filter]').forEach((chip) => chip.addEventListener('click', () => {
+    chip.hidden = true;
+    const count = [...document.querySelectorAll('[data-filter]')].filter((item) => !item.hidden).length;
+    document.getElementById('filter-count').textContent = String(count);
+    notify('Filter removed · applied-filter chips stay visible');
+  }));
+  document.getElementById('direction-button').addEventListener('click', (event) => {
+    const descending = event.currentTarget.textContent.trim() === '↓';
+    event.currentTarget.textContent = descending ? '↑' : '↓';
+    event.currentTarget.setAttribute('aria-label', descending ? 'Ascending, switch to descending' : 'Descending, switch to ascending');
+  });
+
+  document.getElementById('reset-recommended').addEventListener('click', () => {
+    Object.entries(recommended).forEach(([decision, value]) => {
+      const section = document.querySelector(`[data-decision="${decision}"]`);
+      const option = section.querySelector(`[data-value="${value}"]`);
+      selectOption(section, option, false);
+    });
+    notify('Recommended choices restored');
+  });
+  document.getElementById('confirm-selection').addEventListener('click', () => {
+    const selection = Object.fromEntries(Object.keys(recommended).map((key) => [key, state[key]]));
+    if (window.brainstorm) window.brainstorm.choice('documents-epic-selection', { selection, confirmed: true });
+    notify('Choices recorded · return to the terminal to continue');
+  });
+
+  renderFilters();
+  renderSearch();
+  renderState();
+  renderSort();
+  renderMode();
+  renderView();
+  updateSelectionSummary();
+})();
+</script>
+</body>
+</html>
